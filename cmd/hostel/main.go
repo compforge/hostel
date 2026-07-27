@@ -37,6 +37,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bedinit"
 	"github.com/qiankunli/hostel/internal/config"
 	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/resource"
 	"github.com/qiankunli/hostel/internal/store"
 	"github.com/qiankunli/hostel/internal/web"
 )
@@ -108,6 +109,15 @@ func main() {
 	mgr, err := bed.NewManager(cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st)
 	if err != nil {
 		log.Fatalf("hostel: init bed manager: %v", err)
+	}
+	resources := resource.New()
+	mgr.SetResourceTracker(resources)
+	resourceReport := resources.Report()
+	if resourceReport.Available {
+		log.Printf("hostel: per-bed resource accounting enabled (backend=%s)", resourceReport.Backend)
+	} else {
+		log.Printf("hostel: per-bed resource accounting unavailable (backend=%s reason=%s)",
+			resourceReport.Backend, resourceReport.Reason)
 	}
 	mgr.SetLuggageLimits(cfg.LuggageHighBytes, cfg.LuggageLowBytes)
 	// Per-bed browser endpoint injection (PLAYWRIGHT_MCP_CDP_ENDPOINT): beds

@@ -110,6 +110,7 @@ func (s *Server) bedDelete(c *gin.Context) {
 // GET /v1/beds/capabilities — what this hostel can do (SDK feature detection).
 func (s *Server) capabilities(c *gin.Context) {
 	iso := s.mgr.Isolator()
+	resources := s.mgr.ResourceReport()
 	amenities := map[string]string{} // name → lifecycle state
 	for _, a := range s.mgr.Amenities().List() {
 		amenities[a.Name()] = a.State()
@@ -123,13 +124,18 @@ func (s *Server) capabilities(c *gin.Context) {
 		"workspace_mount": iso.MountPoint() != "",
 		"max_beds":        s.mgr.MaxBeds(),
 		"persistence":     s.mgr.StoreName(),
-		"files":           true,
-		"directories":     true,
-		"command":         true,
-		"session":         true,
-		"beds":            true,
-		"inventory":       true,
-		"amenities":       amenities, // name → unavailable|idle|running
+		"resource_accounting": gin.H{
+			"backend":   resources.Backend,
+			"available": resources.Available,
+			"reason":    resources.Reason,
+		},
+		"files":       true,
+		"directories": true,
+		"command":     true,
+		"session":     true,
+		"beds":        true,
+		"inventory":   true,
+		"amenities":   amenities, // name → unavailable|idle|running
 		// Explicitly-not-yet capabilities, so SDKs don't probe blindly.
 		"pty":            false,
 		"code":           false,

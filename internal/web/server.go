@@ -21,6 +21,7 @@ package web
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -44,8 +45,9 @@ const BedHeader = "X-Hostel-Bed"
 
 // Server wires the bed manager into gin routes.
 type Server struct {
-	mgr    *bed.Manager
-	engine *gin.Engine
+	mgr                  *bed.Manager
+	engine               *gin.Engine
+	metricSampleInterval time.Duration
 }
 
 // NewServer builds the gin engine with all routes registered.
@@ -53,7 +55,7 @@ func NewServer(mgr *bed.Manager) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	e := gin.New()
 	e.Use(gin.Recovery())
-	s := &Server{mgr: mgr, engine: e}
+	s := &Server{mgr: mgr, engine: e, metricSampleInterval: time.Second}
 	s.routes()
 	return s
 }
@@ -65,6 +67,12 @@ func (s *Server) routes() {
 	e := s.engine
 	e.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
 	e.GET("/healthz", s.healthz)
+
+	metrics := e.Group("/metrics")
+	{
+		metrics.GET("", s.getMetrics)
+		metrics.GET("/watch", s.watchMetrics)
+	}
 
 	files := e.Group("/files")
 	{
@@ -154,6 +162,7 @@ func (s *Server) opsOf(c *gin.Context) (*bed.Bed, *fsops.Ops) {
 func (s *Server) healthz(c *gin.Context) {
 	iso := s.mgr.Isolator()
 	high, low := s.mgr.LuggageLimits()
+	resources := s.mgr.ResourceReport()
 	c.JSON(http.StatusOK, gin.H{
 		"ok":              true,
 		"isolator":        iso.Name(),
@@ -162,8 +171,13 @@ func (s *Server) healthz(c *gin.Context) {
 		"beds":            len(s.mgr.List()),
 		"max_beds":        s.mgr.MaxBeds(),
 		"persistence":     s.mgr.StoreName(),
-		"isolation":       isolationView(iso),
-		"default_bed":     s.mgr.DefaultBedID(),
+		"resource_accounting": gin.H{
+			"backend":   resources.Backend,
+			"available": resources.Available,
+			"reason":    resources.Reason,
+		},
+		"isolation":   isolationView(iso),
+		"default_bed": s.mgr.DefaultBedID(),
 		// Watermarks only — live luggage bytes require a scan; poll
 		// /v1/inventory for those.
 		"luggage_high_bytes": high,

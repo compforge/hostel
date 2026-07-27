@@ -64,6 +64,7 @@ internal/
 │   └── command.go     一次性命令 registry：前台/后台、status、logs（cursor 增量、环形缓冲）
 ├── fsops/             bed_home rooted 文件操作；Resolve 把任意客户端路径单射 rebase 进 bed_home + 拒逃逸；新建路径按属主 chown（单一属主不变式）
 ├── store/             workspace 持久化：Store 接口 + noop/s3(desync 内容寻址增量,只传变更块)，默认 auto 按 bucket 有无解析；见 docs/persistence.md
+├── resource/          per-bed cgroup v2 资源记账；只归因不设限，未委派时诚实降级
 ├── amenity/           Amenity 接口(生命周期 State)+ Registry；chromium 实例(共享浏览器/每 bed BrowserContext)；见 docs/amenity.md
 └── web/               gin 薄适配层：server(路由+bedOf 解析) / errors / sse / files / command / beds
 ```
@@ -85,7 +86,7 @@ internal/
 - 设计文档（定位、bed 模型、managed-service 框架、决策表、v1 范围与 roadmap）：`docs/design.md`
 - 数据隔离方案（tmpfs 遮蔽兄弟 bed、`/workspace` 规范挂载统一两套路径语义、降级与测试策略）：`docs/data-isolation.md`
 - 数据持久化方案（本地 workspace=工作副本、S3 快照=持久身份、边界同步、Store 抽象）：`docs/persistence.md`
-- 资源隔离方案（per-bed cgroup v2 子组、Limiter 抽象、委派前提与降级；实现推后）：`docs/resource-isolation.md`
+- 资源记账与隔离方案（per-bed cgroup v2；accounting 已落地，limits 待实现）：`docs/resource-isolation.md`
 - 快速上手 / API 一览 / 配置：`README.md`
 - 归属（execd 参考的具体设计点）：`NOTICE`
 - API 契约来源：上游 OpenSandbox 仓库的 `specs/execd-api.yaml`（https://github.com/alibaba/opensandbox）

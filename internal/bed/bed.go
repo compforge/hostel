@@ -38,6 +38,7 @@ import (
 	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/fsops"
 	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/resource"
 	"github.com/qiankunli/hostel/internal/store"
 )
 
@@ -138,6 +139,7 @@ type Manager struct {
 	amenities  *amenity.Registry // nil-safe; ReleaseAll on bed teardown
 	commands   *CommandRegistry  // one-shot commands, daemon-global ids
 	spawner    Spawner           // forks bed processes; owns the teardown sweep
+	resources  resource.Tracker  // per-bed cgroup accounting; noop when unavailable
 	maxBeds    int               // cap on concurrent beds; 0 = unlimited
 	store      store.Store       // workspace persistence (Noop when disabled)
 	// luggage disk watermarks (bytes; high 0 = GC off). Set once at startup
@@ -168,6 +170,7 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 	if st == nil {
 		st = store.Noop{}
 	}
+	resources := resource.Noop("resource tracker not configured")
 	return &Manager{
 		root:       root,
 		defaultBed: defaultBed,
@@ -175,11 +178,31 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		shellPath:  shellPath,
 		amenities:  amenities,
 		commands:   newCommandRegistry(),
-		spawner:    newInProcSpawner(),
+		spawner:    newInProcSpawner(resources),
+		resources:  resources,
 		maxBeds:    maxBeds,
 		store:      st,
 		beds:       make(map[string]*Bed),
 	}, nil
+}
+
+// SetResourceTracker installs host resource accounting before any bed process
+// starts. cmd/hostel calls it once during assembly; keeping it out of
+// NewManager avoids probing/mutating cgroups in ordinary unit tests.
+func (m *Manager) SetResourceTracker(tracker resource.Tracker) {
+	if tracker == nil {
+		tracker = resource.Noop("resource tracker not configured")
+	}
+	m.resources = tracker
+	m.spawner = newInProcSpawner(tracker)
+}
+
+// ResourceReport describes whether exact per-bed accounting is active.
+func (m *Manager) ResourceReport() resource.Report { return m.resources.Report() }
+
+// ResourceUsage returns one cumulative usage snapshot for a bed.
+func (m *Manager) ResourceUsage(id string) (resource.Usage, error) {
+	return m.resources.Usage(id)
 }
 
 // Isolator exposes the configured isolator (for /healthz + capabilities).
@@ -440,6 +463,7 @@ func (m *Manager) teardown(b *Bed) {
 	// The spawner sweep is the authoritative kill: it also catches processes
 	// the registry never saw (foreground RunForeground runs are unregistered).
 	m.spawner.KillBed(b.ID)
+	_ = m.resources.Release(b.ID)
 	m.amenities.ReleaseAll(b.ID)
 }
 
