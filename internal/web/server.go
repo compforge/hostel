@@ -178,7 +178,7 @@ func (s *Server) healthz(c *gin.Context) {
 		"isolator":        iso.Name(),
 		"isolator_ok":     iso.Available(),
 		"workspace_mount": iso.MountPoint() != "",
-		"beds":            len(s.mgr.List()),
+		"beds":            s.mgr.ResidentBedCount(),
 		"max_beds":        s.mgr.MaxBeds(),
 		"persistence":     s.mgr.StoreName(),
 		"resource_accounting": gin.H{

@@ -74,6 +74,51 @@ func TestResolveDefaultBedAndValidation(t *testing.T) {
 	if b2.ID != "conv-123" || b2.Workspace == b.Workspace {
 		t.Fatalf("distinct bed expected, got %+v", b2)
 	}
+	if got := m.ResidentBedCount(); got != 2 {
+		t.Fatalf("ResidentBedCount = %d, want 2", got)
+	}
+}
+
+func TestResidentBedCountDoesNotWaitForManagerLock(t *testing.T) {
+	m := newTestManager(t)
+	if _, err := m.Resolve("conv-atomic"); err != nil {
+		t.Fatal(err)
+	}
+
+	m.mu.Lock()
+	done := make(chan int64, 1)
+	go func() { done <- m.ResidentBedCount() }()
+	select {
+	case got := <-done:
+		if got != 1 {
+			t.Fatalf("ResidentBedCount = %d, want 1", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ResidentBedCount waited for manager lock")
+	}
+	m.mu.Unlock()
+}
+
+func TestResidentBedCountTracksRemoval(t *testing.T) {
+	m := newTestManager(t)
+	if _, err := m.Resolve("evict-me"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Resolve("purge-me"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.ResidentBedCount(); got != 2 {
+		t.Fatalf("ResidentBedCount before removal = %d, want 2", got)
+	}
+	if evicted, err := m.Evict("evict-me"); err != nil || !evicted {
+		t.Fatalf("Evict: evicted=%v err=%v", evicted, err)
+	}
+	if err := m.Purge("purge-me"); err != nil {
+		t.Fatalf("Purge: %v", err)
+	}
+	if got := m.ResidentBedCount(); got != 0 {
+		t.Fatalf("ResidentBedCount after removal = %d, want 0", got)
+	}
 }
 
 func TestLifecycleObservations(t *testing.T) {
