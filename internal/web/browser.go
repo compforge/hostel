@@ -30,20 +30,25 @@ import (
 // browserOf resolves the bed from the :bedId path param and the Browser
 // amenity, writing the error response when either is missing. The raw CDP
 // socket is never exposed — only these bed-scoped verbs (docs/amenity.md §2).
-func (s *Server) browserOf(c *gin.Context) (*bed.Bed, amenity.Browser) {
+func (s *Server) browserOf(c *gin.Context) (*bed.Bed, amenity.Browser, func()) {
 	a := s.mgr.Amenities().Find("chromium")
 	br, ok := a.(amenity.Browser)
 	if a == nil || !ok {
 		respondError(c, http.StatusServiceUnavailable, ErrServiceUnavailable,
 			"browser amenity is not available on this hostel (no chromium binary or CDP endpoint)")
-		return nil, nil
+		return nil, nil, nil
 	}
 	b, err := s.mgr.Resolve(c.Param("bedId"))
 	if err != nil {
 		respondBedError(c, err)
-		return nil, nil
+		return nil, nil, nil
 	}
-	return b, br
+	finish, err := s.mgr.BeginOperation(b, 0)
+	if err != nil {
+		respondBedError(c, err)
+		return nil, nil, nil
+	}
+	return b, br, finish
 }
 
 // GET /v1/beds/:bedId/browser/info — per-bed CDP endpoint (execd-compatible
@@ -52,10 +57,11 @@ func (s *Server) browserOf(c *gin.Context) (*bed.Bed, amenity.Browser) {
 // to a proxied socket that shows only this bed's slice of the shared browser.
 // The url is bed-local (127.0.0.1): the bed shares the pod net ns with hostel.
 func (s *Server) browserInfo(c *gin.Context) {
-	b, br := s.browserOf(c)
+	b, br, finishOperation := s.browserOf(c)
 	if br == nil {
 		return
 	}
+	defer finishOperation()
 	token, err := br.CDPToken(b.ID)
 	if err != nil {
 		runtimeError(c, err.Error())
@@ -100,6 +106,12 @@ func (s *Server) browserCDP(c *gin.Context) {
 		respondBedError(c, err)
 		return
 	}
+	finishOperation, err := s.mgr.BeginOperation(b, 0)
+	if err != nil {
+		respondBedError(c, err)
+		return
+	}
+	defer finishOperation()
 	conn, _, _, err := ws.UpgradeHTTP(c.Request, c.Writer)
 	if err != nil {
 		// Response already partially written by the upgrader on failure.
@@ -113,10 +125,11 @@ func (s *Server) browserCDP(c *gin.Context) {
 
 // POST /v1/beds/:bedId/browser/goto {url}
 func (s *Server) browserGoto(c *gin.Context) {
-	b, br := s.browserOf(c)
+	b, br, finishOperation := s.browserOf(c)
 	if br == nil {
 		return
 	}
+	defer finishOperation()
 	var req struct {
 		URL string `json:"url"`
 	}
@@ -134,10 +147,11 @@ func (s *Server) browserGoto(c *gin.Context) {
 
 // POST /v1/beds/:bedId/browser/screenshot {path?}
 func (s *Server) browserScreenshot(c *gin.Context) {
-	b, br := s.browserOf(c)
+	b, br, finishOperation := s.browserOf(c)
 	if br == nil {
 		return
 	}
+	defer finishOperation()
 	var req struct {
 		Path string `json:"path,omitempty"`
 	}
@@ -152,10 +166,11 @@ func (s *Server) browserScreenshot(c *gin.Context) {
 
 // POST /v1/beds/:bedId/browser/text
 func (s *Server) browserText(c *gin.Context) {
-	b, br := s.browserOf(c)
+	b, br, finishOperation := s.browserOf(c)
 	if br == nil {
 		return
 	}
+	defer finishOperation()
 	text, err := br.Text(c.Request.Context(), b.ID, b.Workspace)
 	if err != nil {
 		runtimeError(c, err.Error())
@@ -166,10 +181,11 @@ func (s *Server) browserText(c *gin.Context) {
 
 // POST /v1/beds/:bedId/browser/close — release this bed's browser context.
 func (s *Server) browserClose(c *gin.Context) {
-	b, br := s.browserOf(c)
+	b, br, finishOperation := s.browserOf(c)
 	if br == nil {
 		return
 	}
+	defer finishOperation()
 	if err := br.ReleaseTenant(b.ID); err != nil {
 		runtimeError(c, err.Error())
 		return
@@ -179,10 +195,11 @@ func (s *Server) browserClose(c *gin.Context) {
 
 // POST /v1/beds/:bedId/browser/click {selector}
 func (s *Server) browserClick(c *gin.Context) {
-	b, br := s.browserOf(c)
+	b, br, finishOperation := s.browserOf(c)
 	if br == nil {
 		return
 	}
+	defer finishOperation()
 	var req struct {
 		Selector string `json:"selector"`
 	}
@@ -199,10 +216,11 @@ func (s *Server) browserClick(c *gin.Context) {
 
 // POST /v1/beds/:bedId/browser/type {selector, text, clear?}
 func (s *Server) browserType(c *gin.Context) {
-	b, br := s.browserOf(c)
+	b, br, finishOperation := s.browserOf(c)
 	if br == nil {
 		return
 	}
+	defer finishOperation()
 	var req struct {
 		Selector string `json:"selector"`
 		Text     string `json:"text"`
@@ -221,10 +239,11 @@ func (s *Server) browserType(c *gin.Context) {
 
 // POST /v1/beds/:bedId/browser/press {key}
 func (s *Server) browserPress(c *gin.Context) {
-	b, br := s.browserOf(c)
+	b, br, finishOperation := s.browserOf(c)
 	if br == nil {
 		return
 	}
+	defer finishOperation()
 	var req struct {
 		Key string `json:"key"`
 	}
@@ -241,10 +260,11 @@ func (s *Server) browserPress(c *gin.Context) {
 
 // POST /v1/beds/:bedId/browser/scroll {dx?, dy?}
 func (s *Server) browserScroll(c *gin.Context) {
-	b, br := s.browserOf(c)
+	b, br, finishOperation := s.browserOf(c)
 	if br == nil {
 		return
 	}
+	defer finishOperation()
 	var req struct {
 		DX int `json:"dx,omitempty"`
 		DY int `json:"dy,omitempty"`
@@ -259,10 +279,11 @@ func (s *Server) browserScroll(c *gin.Context) {
 
 // POST /v1/beds/:bedId/browser/wait {selector}
 func (s *Server) browserWait(c *gin.Context) {
-	b, br := s.browserOf(c)
+	b, br, finishOperation := s.browserOf(c)
 	if br == nil {
 		return
 	}
+	defer finishOperation()
 	var req struct {
 		Selector string `json:"selector"`
 	}

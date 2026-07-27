@@ -172,18 +172,16 @@ func TestRunForegroundIsolatesFailure(t *testing.T) {
 }
 
 // TestTeardownKillsInflightForeground locks in the spawner sweep: an in-flight
-// foreground command (which is NOT in the command registry) must die with its
-// bed. Before the Spawner seam, teardown only swept registry entries, so a
-// long-running foreground exec survived bed eviction — a process leak the pod
-// tier never had (deleting the pod kills everything).
-func TestTeardownKillsInflightForeground(t *testing.T) {
+// Explicit eviction is cooperative and refuses active work. The teardown path
+// still kills every process once lifecycle ownership has been claimed.
+func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 	m := newTestManager(t)
 	b, _ := m.Resolve("conv-kill")
 
 	started := make(chan struct{})
 	done := make(chan int, 1)
 	go func() {
-		code, _ := m.RunForeground(context.Background(), b, "echo up; sleep 30", "", nil, 0, func(string) {
+		code, _ := m.RunForeground(context.Background(), b, `sleep 30 & child=$!; echo up; wait "$child"`, "", nil, 0, func(string) {
 			select {
 			case <-started:
 			default:
@@ -197,20 +195,21 @@ func TestTeardownKillsInflightForeground(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("foreground command did not start")
 	}
-	if got := b.RunningExecs(); got != 1 {
-		t.Fatalf("running execs = %d, want 1", got)
+	if got := b.ActiveOperations(); got != 1 {
+		t.Fatalf("active operations = %d, want 1", got)
 	}
 
-	if ok, err := m.Evict("conv-kill"); err != nil || !ok {
-		t.Fatalf("Evict: ok=%v err=%v", ok, err)
+	if ok, err := m.Evict("conv-kill"); err != nil || ok {
+		t.Fatalf("Evict active bed: ok=%v err=%v", ok, err)
 	}
+	m.teardown(b)
 	select {
 	case code := <-done:
 		if code == 0 {
 			t.Fatalf("killed command reported exit 0")
 		}
-		if got := b.RunningExecs(); got != 0 {
-			t.Fatalf("running execs after teardown = %d, want 0", got)
+		if got := b.ActiveOperations(); got != 0 {
+			t.Fatalf("active operations after teardown = %d, want 0", got)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("in-flight foreground command escaped bed teardown")
@@ -271,7 +270,7 @@ func TestCollectExpiredSkipsDefault(t *testing.T) {
 	}
 }
 
-func TestExecExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
+func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	m := newTestManager(t)
 	idleTTL := 50 * time.Millisecond
 	execTimeout := 500 * time.Millisecond
@@ -280,29 +279,44 @@ func TestExecExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
+	if got := b.State(); got != StateIdle {
+		t.Fatalf("new bed state = %q, want idle", got)
+	}
 
 	startedAt := time.Now()
-	finishExec := m.BeginExec(b, execTimeout)
+	finishOperation, err := m.BeginOperation(b, execTimeout)
+	if err != nil {
+		t.Fatalf("BeginOperation: %v", err)
+	}
 	expiresAt := b.ExpiresAt()
 	if want := startedAt.Add(execTimeout + idleTTL); expiresAt.Before(want) {
 		t.Fatalf("expires_at = %s, want >= %s", expiresAt, want)
 	}
-	if got := b.RunningExecs(); got != 1 {
-		t.Fatalf("running execs = %d, want 1", got)
+	if got := b.ActiveOperations(); got != 1 {
+		t.Fatalf("active operations = %d, want 1", got)
 	}
-	finishShortExec := m.BeginExec(b, time.Millisecond)
+	if got := b.State(); got != StateActive {
+		t.Fatalf("operation state = %q, want active", got)
+	}
+	finishShortOperation, err := m.BeginOperation(b, time.Millisecond)
+	if err != nil {
+		t.Fatalf("BeginOperation short: %v", err)
+	}
 	if got := b.ExpiresAt(); got.Before(expiresAt) {
-		t.Fatalf("shorter exec shortened expires_at: got %s, previous %s", got, expiresAt)
+		t.Fatalf("shorter operation shortened expires_at: got %s, previous %s", got, expiresAt)
 	}
-	finishShortExec()
+	finishShortOperation()
 
 	// Even a delayed collector must not reap a command still in flight.
 	if reaped := m.CollectExpired(expiresAt.Add(time.Hour)); len(reaped) != 0 {
 		t.Fatalf("CollectExpired reaped running bed: %v", reaped)
 	}
-	finishExec()
-	if got := b.RunningExecs(); got != 0 {
-		t.Fatalf("running execs after finish = %d, want 0", got)
+	finishOperation()
+	if got := b.ActiveOperations(); got != 0 {
+		t.Fatalf("active operations after finish = %d, want 0", got)
+	}
+	if got := b.State(); got != StateIdle {
+		t.Fatalf("finished operation state = %q, want idle", got)
 	}
 	if reaped := m.CollectExpired(expiresAt.Add(time.Hour)); len(reaped) != 1 || reaped[0] != b.ID {
 		t.Fatalf("CollectExpired after finish = %v, want [%s]", reaped, b.ID)
@@ -623,24 +637,31 @@ func TestEvictCanceledByActivity(t *testing.T) {
 		}{ok, err}
 	}()
 
-	// While persist is blocked on the gate, the bed sees new activity.
+	// While persist is blocked on the gate, a new operation wins admission.
 	time.Sleep(10 * time.Millisecond) // let Evict reach Persist
-	if b.State() != "evicting" {
+	if b.State() != StateEvicting {
 		t.Fatalf("state during persist = %q, want evicting", b.State())
 	}
-	b.touch(0)
+	finishOperation, err := m.BeginOperation(b, time.Second)
+	if err != nil {
+		t.Fatalf("BeginOperation during eviction: %v", err)
+	}
+	if b.State() != StateActive {
+		t.Fatalf("state after operation admission = %q, want active", b.State())
+	}
 	close(ss.gate)
 
 	r := <-res
 	if r.err != nil || r.ok {
 		t.Fatalf("Evict = (%v, %v), want canceled (false, nil)", r.ok, r.err)
 	}
-	// Bed survived, back to active, still resolvable.
-	if b.State() != "active" {
+	finishOperation()
+	// Bed survived, back to idle, still resolvable.
+	if b.State() != StateIdle {
 		t.Fatalf("state after canceled evict = %q", b.State())
 	}
 	if _, ok := m.Get("conv-race"); !ok {
-		t.Fatal("bed should still be ACTIVE after canceled evict")
+		t.Fatal("bed should still be resident after canceled evict")
 	}
 }
 
@@ -810,8 +831,8 @@ func TestInventory(t *testing.T) {
 	for _, e := range m.Inventory() {
 		byID[e.ID] = e
 	}
-	if e := byID["conv-live"]; e.State != "active" || e.Generation != 0 {
-		t.Fatalf("conv-live = %+v, want active gen 0", e)
+	if e := byID["conv-live"]; e.State != StateIdle || e.Generation != 0 {
+		t.Fatalf("conv-live = %+v, want idle gen 0", e)
 	}
 	cold := byID["conv-cold"]
 	if cold.State != "luggage" || cold.Generation != 1 || cold.Bytes == 0 || cold.LastActiveAt.IsZero() {

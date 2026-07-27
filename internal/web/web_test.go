@@ -406,6 +406,10 @@ func TestInventoryEndpoint(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("create live = %d", rec.Code)
 	}
+	rec = do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"inv-idle"}`), map[string]string{"Content-Type": "application/json"})
+	if rec.Code != 200 {
+		t.Fatalf("create idle = %d", rec.Code)
+	}
 	rec = do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"inv-cold"}`), map[string]string{"Content-Type": "application/json"})
 	if rec.Code != 200 {
 		t.Fatalf("create cold = %d", rec.Code)
@@ -417,8 +421,11 @@ func TestInventoryEndpoint(t *testing.T) {
 	if !ok {
 		t.Fatal("inv-live bed missing")
 	}
-	finishExec := s.mgr.BeginExec(live, time.Minute)
-	defer finishExec()
+	finishOperation, err := s.mgr.BeginOperation(live, time.Minute)
+	if err != nil {
+		t.Fatalf("BeginOperation: %v", err)
+	}
+	defer finishOperation()
 
 	rec = do(t, s, "GET", "/v1/inventory", nil, nil)
 	if rec.Code != 200 {
@@ -426,11 +433,11 @@ func TestInventoryEndpoint(t *testing.T) {
 	}
 	var body struct {
 		Instance struct {
-			Store            string    `json:"store"`
-			MaxBeds          int       `json:"max_beds"`
-			ActiveBeds       int       `json:"active_beds"`
-			ExpiresAt        time.Time `json:"expires_at"`
-			LuggageHighBytes int64     `json:"luggage_high_bytes"`
+			Store            string         `json:"store"`
+			MaxBeds          int            `json:"max_beds"`
+			BedCounts        map[string]int `json:"bed_counts"`
+			ExpiresAt        time.Time      `json:"expires_at"`
+			LuggageHighBytes int64          `json:"luggage_high_bytes"`
 		} `json:"instance"`
 		Beds []struct {
 			ID           string    `json:"id"`
@@ -442,10 +449,13 @@ func TestInventoryEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if strings.Contains(rec.Body.String(), `"busy_beds"`) {
-		t.Fatalf("inventory should use active_beds, not busy_beds: %s", rec.Body.String())
+	if strings.Contains(rec.Body.String(), `"active_beds"`) {
+		t.Fatalf("inventory should report state counts, not a second active concept: %s", rec.Body.String())
 	}
-	if body.Instance.Store != "noop" || body.Instance.ActiveBeds != 1 || body.Instance.ExpiresAt.IsZero() || body.Instance.LuggageHighBytes != 1000 {
+	if body.Instance.Store != "noop" || body.Instance.BedCounts["active"] != 1 ||
+		body.Instance.BedCounts["idle"] != 1 || body.Instance.BedCounts["evicting"] != 0 ||
+		body.Instance.BedCounts["luggage"] != 1 || body.Instance.ExpiresAt.IsZero() ||
+		body.Instance.LuggageHighBytes != 1000 {
 		t.Fatalf("instance = %+v", body.Instance)
 	}
 	if want := live.ExpiresAt(); !body.Instance.ExpiresAt.Equal(want) {
@@ -458,8 +468,8 @@ func TestInventoryEndpoint(t *testing.T) {
 			t.Fatalf("inv-live lifecycle fields = %+v", b)
 		}
 	}
-	if states["inv-live"] != "active" || states["inv-cold"] != "luggage" {
-		t.Fatalf("bed states = %v, want inv-live active / inv-cold luggage", states)
+	if states["inv-live"] != "active" || states["inv-idle"] != "idle" || states["inv-cold"] != "luggage" {
+		t.Fatalf("bed states = %v, want active / idle / luggage", states)
 	}
 }
 
@@ -467,7 +477,7 @@ func TestDeleteEvictVsPurge(t *testing.T) {
 	s := newTestServer(t)
 	// Create, then default DELETE = evict (noop store: no snapshot, but 200).
 	rec := do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"lifecycle"}`), map[string]string{"Content-Type": "application/json"})
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"state":"active"`) {
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"state":"idle"`) {
 		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
 	}
 	rec = do(t, s, "DELETE", "/v1/beds/lifecycle", nil, nil)

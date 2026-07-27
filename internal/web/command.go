@@ -72,10 +72,11 @@ func (s *Server) resolveCwd(c *gin.Context, b *bed.Bed, ops *fsops.Ops, cwd stri
 // POST /command — SSE stream. Foreground runs in the bed's shared stateful
 // shell; background detaches and returns an init event with the command id.
 func (s *Server) runCommand(c *gin.Context) {
-	b, ops := s.opsOf(c)
+	b, ops, finishRequest := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishRequest()
 	var req RunCommandRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, err.Error())
@@ -229,10 +230,11 @@ type runInSessionRequest struct {
 
 // POST /session
 func (s *Server) sessionCreate(c *gin.Context) {
-	b, ops := s.opsOf(c)
+	b, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	var req createSessionRequest
 	_ = c.ShouldBindJSON(&req)
 	cwdInBed, ok := s.resolveCwd(c, b, ops, req.Cwd)
@@ -249,10 +251,11 @@ func (s *Server) sessionCreate(c *gin.Context) {
 
 // POST /session/:sessionId/run — SSE stream.
 func (s *Server) sessionRun(c *gin.Context) {
-	b, ops := s.opsOf(c)
+	b, ops, finishRequest := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishRequest()
 	sh, ok := b.GetShell(c.Param("sessionId"))
 	if !ok {
 		respondError(c, http.StatusNotFound, ErrSessionNotFound, "session not found")
@@ -277,8 +280,12 @@ func (s *Server) sessionRun(c *gin.Context) {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.Timeout)*time.Millisecond)
 		defer cancel()
 	}
-	finishExec := s.mgr.BeginExec(b, time.Duration(req.Timeout)*time.Millisecond)
-	defer finishExec()
+	finishOperation, err := s.mgr.BeginOperation(b, time.Duration(req.Timeout)*time.Millisecond)
+	if err != nil {
+		respondBedError(c, err)
+		return
+	}
+	defer finishOperation()
 	log.Printf("hostel session run: bed=%s session=%s cwd=%q cmd=%q", b.Short(), c.Param("sessionId"), req.Cwd, logSummary(req.Command))
 	sse := newSSE(c)
 	start := time.Now()
@@ -305,6 +312,12 @@ func (s *Server) sessionDelete(c *gin.Context) {
 	if b == nil {
 		return
 	}
+	finishOperation, err := s.mgr.BeginOperation(b, 0)
+	if err != nil {
+		respondBedError(c, err)
+		return
+	}
+	defer finishOperation()
 	if !b.DeleteShell(c.Param("sessionId")) {
 		respondError(c, http.StatusNotFound, ErrSessionNotFound, "session not found")
 		return

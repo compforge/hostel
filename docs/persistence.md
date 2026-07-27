@@ -64,24 +64,28 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 ### 状态
 
 ```
-                Resolve(新 id)
-   ABSENT ──────────────────────→ ACTIVE ←─────────────┐
-   （无快照）                        │                   │ 新请求 touch
-                                    │ idle 超时 / 显式驱逐│ （驱逐被取消）
-                                    ▼                   │
-                                 EVICTING ──────────────┘
-                                    │ persist 成功 且 期间无新活动
-                                    ▼
-   DORMANT（不占内存、不占 max-beds 名额；快照即身份）
-      │                                    │
-      │ Resolve(同 id) → restore → ACTIVE  │ purge（连快照删除）
-      ▼                                    ▼
-   ACTIVE                               ABSENT
+   ABSENT / DORMANT ── Resolve ──→ IDLE ←──────────────┐
+                                      │ BeginOperation │ EndOperation
+                                      ▼                │
+                                    ACTIVE ─────────────┘
+
+   IDLE ── expires_at 到期 / 显式驱逐 ──→ EVICTING
+     ▲                                     │       │
+     └──── 新 operation 取消驱逐 ───────────┘       │ persist 成功
+                                                   ▼
+                                                LUGGAGE
+                                                   │ Resolve
+                                                   └────────→ IDLE
 ```
 
-- **ACTIVE**：在内存 map 里、正常服务、占 max-beds 名额。
-- **EVICTING**（过渡态）：persist 进行中。**期间新请求不被拒绝**——touch 即取消驱逐（服务优先于回收）；persist 完成后原子复查"期间是否有新活动"，有则中止移除、留在 ACTIVE（本轮快照仍有效，不白传）。这关掉了"persist 窗口写入丢失"的竞态。
-- **DORMANT**：不在任何 hostel 内存里，唯一存在形式是 S3 快照。判定 = `store.Exists`，**不落额外注册表**——快照本身就是权威记录（哪台 hostel 都能凭 bedID 复活它）。
+`state` 只表达当前操作态，四个值互斥：
+
+- **ACTIVE**：至少一个 Bed operation 正在执行。operation 包括 Exec、文件、浏览器/CDP、checkpoint 等所有会使用 Bed runtime 或数据的动作。
+- **IDLE**：Bed 仍 resident、占 `max-beds` 名额，但没有 operation。
+- **EVICTING**：正在 persist 和释放 runtime。期间新 operation 优先获得服务权并取消驱逐；最终移除与 operation 准入使用同一锁序，二者只能有一个获胜。
+- **LUGGAGE**：不再占 runtime 名额，只保留本机数据副本。
+
+`generation`（数据版本）和 `expires_at`（最早安全回收期限）是与 `state` 正交的事实，不能塞进 state。**DORMANT** 也不是某个 hostel 持有的 state：它表示只有共享快照、当前没有本机 inventory 行。
 - **RESTORING 不是对外状态**：restore 在 `Resolve` 内同步完成，调用方只看到"第一个请求慢一点"。
 
 ### 动词与 API 语义
@@ -90,18 +94,18 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 |---|---|---|
 | **evict**（驱逐） | 释放计算、保留身份：persist → 出 map → 名额释放 | idle GC 自动；`DELETE /v1/beds/:id`（默认） |
 | **purge**（清除） | 身份终结：驱逐 + 删除 S3 快照 | `DELETE /v1/beds/:id?purge=true` |
-| **checkpoint** | 打快照，不动状态 | `POST /v1/beds/:id/checkpoint` |
-| **resume** | DORMANT → ACTIVE（对调用方透明） | 任意携带该 bedID 的请求 |
+| **checkpoint** | 作为 operation 打快照，完成后回到 IDLE | `POST /v1/beds/:id/checkpoint` |
+| **resume** | DORMANT/LUGGAGE → IDLE（对调用方透明） | 任意携带该 bedID 的请求 |
 
-`GET /v1/beds` 只列 ACTIVE：DORMANT 集合的权威在对象存储（及上层调度系统的记账），hostel 不维护第二份全量索引。调度器要的"本机全图"（含 luggage）走 `GET /v1/inventory`（见下节）。
+`GET /v1/beds` 列出 resident Bed（ACTIVE/IDLE/EVICTING）；DORMANT 集合的权威在对象存储和上层调度系统。调度器要的本机全图（含 LUGGAGE）走 `GET /v1/inventory`。
 
 ### luggage：现场缓存与 generation
 
-**原则：快照是唯一事实，其余一切都是缓存。** evict 不再删本地目录——它留下来成为 **luggage**（寄存行李）：DORMANT bed 的本机热副本。同机 resume 时若现场足够新就直接用（warm start，免下载）；判"够新"用 **generation**——meta.json 里单调递增的 persist 计数，随快照进对象元数据（`Stat` 一次 HEAD 就能比对）。现场落后于快照（bed 期间在别的实例跑过）则整目录丢弃后重新 Restore，**只换不合**。为什么不用时间戳判序：bed 跨机迁移时钟有偏差，序会反转；时间戳只做观测（`last_persisted_at` / `last_active_at`），判序只认 generation。
+**共享 store 模式下，快照是唯一事实，其余一切都是缓存。** evict 不再删本地目录——它留下来成为 **luggage**（寄存行李）：DORMANT bed 的本机热副本。同机 resume 时若现场足够新就直接用（warm start，免下载）；判"够新"用 **generation**——meta.json 里单调递增的 persist 计数，随快照进对象元数据（`Stat` 一次 HEAD 就能比对）。现场落后于快照（bed 期间在别的实例跑过）则整目录丢弃后重新 Restore，**只换不合**。为什么不用时间戳判序：bed 跨机迁移时钟有偏差，序会反转；时间戳只做观测（`last_persisted_at` / `last_active_at`），判序只认 generation。
 
-luggage 是纯缓存，删错零正确性代价（多付一次 Restore），所以磁盘上限走独立水位而不占 max-beds：超过 `--luggage-high-bytes` 时按"generation 过期优先（纯垃圾）→ LRU"的顺序删到 `--luggage-low-bytes` 以下。这个排序是 cost-aware 驱逐的演化缝，v1 只认新旧。
+共享 store 模式下 luggage 是纯缓存，删错只会多付一次 Restore，所以磁盘上限走独立水位而不占 max-beds：超过 `--luggage-high-bytes` 时按"generation 过期优先（纯垃圾）→ LRU"的顺序删到 `--luggage-low-bytes` 以下。这个排序是 cost-aware 驱逐的演化缝，v1 只认新旧。
 
-`GET /v1/inventory` 把容量 + 全部本机 bed（active/evicting/luggage + generation）一次给上层调度器：谁有新鲜现场就优先派谁（省下载），但这只是 hint——新鲜度在激活时兜底复查，调度器拿着过期数据路由也只是慢、不会错。**单写者约束（§三.5）不变**：同 bedID 双活的防线在调度器租约 + store 侧 generation 冲突探测，inventory 不承担正确性。
+`GET /v1/inventory` 把容量、`bed_counts`（active/idle/evicting/luggage）和每个本机 Bed 的 `state/generation/expires_at` 一次给上层调度器。上游据此优先命中 resident Bed，其次选择最高 generation 的 luggage；回收 carrier 前则确认不存在 resident Bed。inventory 是一次事实快照，不代替上游的单写者约束：同 bedID 双活仍由调度器归属 + store 侧 generation 冲突探测兜底。
 
 ### noop store 下的退化语义
 
@@ -132,7 +136,7 @@ meta 对 bed 内代码**不可见**（bwrap 只 bind `data/`，root 整体被 tm
 
 - `Store` 接口 + `noop` / `s3`（aws-sdk-go-v2，`--s3-endpoint` 支持 S3 兼容存储，凭据走 AWS SDK 标准链）；默认 `auto` 按 bucket 有无解析
 - restore-on-create（`Resolve` 新建时，restore 失败即拒绝服务——静默空启动等于数据丢失）、**persist 失败中止 Evict**（毁掉唯一副本比留着 bed 重试更糟）、`POST /v1/beds/:id/checkpoint`、`--persist-interval` 周期兜底（只传 dirty bed，watermark 落 meta.json 跨重启有效）
-- **生命周期已落地**（§四）：`Evict`（EVICTING 期间新活动**取消驱逐**——关掉 persist 窗口写丢竞态）、`Purge`（`DELETE ?purge=true`，default bed 拒绝）、快照根 = bed 目录（可移植 meta + bed_home，排除顶层 `*.local` 与 bed_home `/tmp`）、`GET /v1/beds` 报 `state: active|evicting`、驱逐被并发活动取消时 API 返回 409 `BED_BUSY`
+- **生命周期已落地**（§四）：`BeginOperation` 统一 Exec/文件/浏览器/checkpoint 活跃度，`state: active|idle|evicting|luggage` 与 generation/expiry 正交；`Evict` 不杀 active operation，EVICTING 期间新 operation 取消驱逐；`Purge`（`DELETE ?purge=true`）终结身份
 - capabilities / healthz 报 `persistence: noop|s3`
 - **luggage 已落地**：evict 留现场 + `LastActiveAt` 盖章、`Resolve` 按 generation 判新鲜（warm start / 丢弃重拉）、`--luggage-high/low-bytes` 水位 GC（stale 优先 → LRU，rename-under-lock 防与 Resolve 竞态）、`GET /v1/inventory` 报容量与全部本机 bed；generation 存 S3 object user metadata（`Stat`=HEAD 免下载）
 - **双活冲突探测**（§三.5）：`Persist` 写前 HEAD 比对 generation，远端更新则 `store.ErrConflict` 拒绝覆盖（first-writer-wins；evict 路径因 persist 失败自然中止，bed 留在本机继续服务）

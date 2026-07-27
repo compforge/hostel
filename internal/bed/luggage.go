@@ -53,7 +53,7 @@ type LuggageEntry struct {
 	Profile Profile
 }
 
-// ListLuggage scans the workspace root for bed dirs that are not ACTIVE —
+// ListLuggage scans the workspace root for bed dirs that are not resident —
 // the local copies of DORMANT beds. The default bed is never luggage (its
 // dir is permanent by contract).
 func (m *Manager) ListLuggage() []LuggageEntry {
@@ -184,19 +184,16 @@ func (m *Manager) sweepGCLeftovers() {
 }
 
 // InventoryBed is one row of the scheduler-facing inventory: every bed this
-// instance holds, in memory (active/evicting) or as luggage. Generation is
+// instance holds, resident (active/idle/evicting) or as luggage. Generation is
 // the last PERSISTED counter — an active bed's workspace may be ahead of it,
 // which is exactly what "the authoritative copy is here" means.
 type InventoryBed struct {
 	ID           string    `json:"id"`
-	State        string    `json:"state"` // active | evicting | luggage
+	State        State     `json:"state"` // active | idle | evicting | luggage
 	Generation   int64     `json:"generation"`
-	Bytes        int64     `json:"bytes,omitempty"` // luggage only (active dirs aren't sized)
+	Bytes        int64     `json:"bytes,omitempty"` // luggage only (resident dirs aren't sized)
 	LastActiveAt time.Time `json:"last_active_at"`
-	ExpiresAt    time.Time `json:"expires_at,omitzero"` // active beds only
-	// RunningExecs is folded into instance.active_beds by the web adapter; callers
-	// only need the aggregate scheduling signal.
-	RunningExecs int `json:"-"`
+	ExpiresAt    time.Time `json:"expires_at,omitzero"` // resident beds only
 	// Profile lets the scheduler weigh placement and migration: command
 	// rate/duration derive from deltas between polls; Last{Persist,Restore}Ms
 	// approximate this bed's migration cost (node-specific — see Profile).
@@ -212,24 +209,18 @@ func (m *Manager) Inventory() []InventoryBed {
 	beds := m.List()
 	out := make([]InventoryBed, 0, len(beds))
 	for _, b := range beds {
-		var gen int64
-		if meta, ok := loadMeta(b.Dir); ok {
-			gen = meta.Generation
-		}
-		// The in-memory profile, not meta's: an active bed's counters run
-		// ahead of the last flush, and fresher is better for a hint.
+		snapshot := b.Snapshot()
 		out = append(out, InventoryBed{
 			ID:           b.ID,
-			State:        b.State(),
-			Generation:   gen,
-			LastActiveAt: b.LastActiveAt(),
-			ExpiresAt:    b.ExpiresAt(),
-			RunningExecs: b.RunningExecs(),
-			Profile:      b.Profile(),
+			State:        snapshot.State,
+			Generation:   snapshot.Generation,
+			LastActiveAt: snapshot.LastActiveAt,
+			ExpiresAt:    snapshot.ExpiresAt,
+			Profile:      snapshot.Profile,
 		})
 	}
 	for _, l := range m.ListLuggage() {
-		out = append(out, InventoryBed{ID: l.BedID, State: "luggage", Generation: l.Generation, Bytes: l.Bytes, LastActiveAt: l.LastActiveAt, Profile: l.Profile})
+		out = append(out, InventoryBed{ID: l.BedID, State: StateLuggage, Generation: l.Generation, Bytes: l.Bytes, LastActiveAt: l.LastActiveAt, Profile: l.Profile})
 	}
 	return out
 }

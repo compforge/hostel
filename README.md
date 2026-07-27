@@ -64,7 +64,7 @@ curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv
 | Command | `POST /command` (SSE), `DELETE /command`, `GET /command/status/:id`, `GET /command/:id/logs` |
 | Session | `POST /session`, `POST /session/:id/run` (SSE), `DELETE /session/:id` |
 | Beds | `GET/POST /v1/beds`, `GET/DELETE /v1/beds/:id`, `POST /v1/beds/:id/checkpoint`, `GET /v1/beds/capabilities` |
-| Scheduler | `GET /v1/inventory` — capacity + every local bed (active and luggage) with its persisted generation |
+| Scheduler | `GET /v1/inventory` — state counts + every local bed's lifecycle, generation and expiry |
 
 Metrics follow the selected bed (`X-Hostel-Bed` / `?bed=`): with delegated
 cgroup v2, CPU usage and current memory come from that bed's accounting group,
