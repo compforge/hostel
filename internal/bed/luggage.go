@@ -46,9 +46,9 @@ type LuggageEntry struct {
 	Bytes int64
 	// Generation is the local copy's persist counter (0 when meta is missing).
 	Generation int64
-	// LastUsedAt orders LRU eviction: the evict-time stamp, falling back to
+	// LastActiveAt orders LRU eviction: the evict-time stamp, falling back to
 	// LastPersistedAt and then dir mtime for copies predating the stamp.
-	LastUsedAt time.Time
+	LastActiveAt time.Time
 	// Profile is the usage picture the bed left behind (from its meta).
 	Profile Profile
 }
@@ -78,15 +78,15 @@ func (m *Manager) ListLuggage() []LuggageEntry {
 		l := LuggageEntry{BedID: id, Bytes: filepathx.DirBytes(dir)}
 		if meta, ok := loadMeta(dir); ok {
 			l.Generation = meta.Generation
-			l.LastUsedAt = meta.LastUsedAt
+			l.LastActiveAt = meta.LastActiveAt
 			l.Profile = meta.Profile
-			if l.LastUsedAt.IsZero() {
-				l.LastUsedAt = meta.LastPersistedAt
+			if l.LastActiveAt.IsZero() {
+				l.LastActiveAt = meta.LastPersistedAt
 			}
 		}
-		if l.LastUsedAt.IsZero() {
+		if l.LastActiveAt.IsZero() {
 			if fi, err := e.Info(); err == nil {
-				l.LastUsedAt = fi.ModTime()
+				l.LastActiveAt = fi.ModTime()
 			}
 		}
 		out = append(out, l)
@@ -134,7 +134,7 @@ func (m *Manager) CollectLuggage(ctx context.Context) []string {
 		if stale[luggage[i].BedID] != stale[luggage[j].BedID] {
 			return stale[luggage[i].BedID]
 		}
-		return luggage[i].LastUsedAt.Before(luggage[j].LastUsedAt)
+		return luggage[i].LastActiveAt.Before(luggage[j].LastActiveAt)
 	})
 	var reaped []string
 	for _, l := range luggage {
@@ -188,11 +188,15 @@ func (m *Manager) sweepGCLeftovers() {
 // the last PERSISTED counter — an active bed's workspace may be ahead of it,
 // which is exactly what "the authoritative copy is here" means.
 type InventoryBed struct {
-	ID         string    `json:"id"`
-	State      string    `json:"state"` // active | evicting | luggage
-	Generation int64     `json:"generation"`
-	Bytes      int64     `json:"bytes,omitempty"` // luggage only (active dirs aren't sized)
-	LastUsedAt time.Time `json:"last_used_at"`
+	ID           string    `json:"id"`
+	State        string    `json:"state"` // active | evicting | luggage
+	Generation   int64     `json:"generation"`
+	Bytes        int64     `json:"bytes,omitempty"` // luggage only (active dirs aren't sized)
+	LastActiveAt time.Time `json:"last_active_at"`
+	ExpiresAt    time.Time `json:"expires_at,omitzero"` // active beds only
+	// RunningExecs is folded into instance.active_beds by the web adapter; callers
+	// only need the aggregate scheduling signal.
+	RunningExecs int `json:"-"`
 	// Profile lets the scheduler weigh placement and migration: command
 	// rate/duration derive from deltas between polls; Last{Persist,Restore}Ms
 	// approximate this bed's migration cost (node-specific — see Profile).
@@ -214,10 +218,18 @@ func (m *Manager) Inventory() []InventoryBed {
 		}
 		// The in-memory profile, not meta's: an active bed's counters run
 		// ahead of the last flush, and fresher is better for a hint.
-		out = append(out, InventoryBed{ID: b.ID, State: b.State(), Generation: gen, LastUsedAt: b.LastUsed(), Profile: b.Profile()})
+		out = append(out, InventoryBed{
+			ID:           b.ID,
+			State:        b.State(),
+			Generation:   gen,
+			LastActiveAt: b.LastActiveAt(),
+			ExpiresAt:    b.ExpiresAt(),
+			RunningExecs: b.RunningExecs(),
+			Profile:      b.Profile(),
+		})
 	}
 	for _, l := range m.ListLuggage() {
-		out = append(out, InventoryBed{ID: l.BedID, State: "luggage", Generation: l.Generation, Bytes: l.Bytes, LastUsedAt: l.LastUsedAt, Profile: l.Profile})
+		out = append(out, InventoryBed{ID: l.BedID, State: "luggage", Generation: l.Generation, Bytes: l.Bytes, LastActiveAt: l.LastActiveAt, Profile: l.Profile})
 	}
 	return out
 }

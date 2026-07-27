@@ -277,6 +277,8 @@ func (s *Server) sessionRun(c *gin.Context) {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.Timeout)*time.Millisecond)
 		defer cancel()
 	}
+	finishExec := s.mgr.BeginExec(b, time.Duration(req.Timeout)*time.Millisecond)
+	defer finishExec()
 	log.Printf("hostel session run: bed=%s session=%s cwd=%q cmd=%q", b.Short(), c.Param("sessionId"), req.Cwd, logSummary(req.Command))
 	sse := newSSE(c)
 	start := time.Now()

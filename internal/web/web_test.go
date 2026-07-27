@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/isolation"
@@ -398,6 +399,7 @@ func TestCheckpointEndpointAndPersistenceReporting(t *testing.T) {
 // every local bed — in-memory ones and luggage (evicted, dir kept).
 func TestInventoryEndpoint(t *testing.T) {
 	s := newTestServer(t)
+	s.mgr.SetBedIdleTTL(time.Minute)
 	s.mgr.SetLuggageLimits(1000, 800)
 
 	rec := do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"inv-live"}`), map[string]string{"Content-Type": "application/json"})
@@ -411,6 +413,12 @@ func TestInventoryEndpoint(t *testing.T) {
 	if rec = do(t, s, "DELETE", "/v1/beds/inv-cold", nil, nil); rec.Code != 200 {
 		t.Fatalf("evict cold = %d", rec.Code)
 	}
+	live, ok := s.mgr.Get("inv-live")
+	if !ok {
+		t.Fatal("inv-live bed missing")
+	}
+	finishExec := s.mgr.BeginExec(live, time.Minute)
+	defer finishExec()
 
 	rec = do(t, s, "GET", "/v1/inventory", nil, nil)
 	if rec.Code != 200 {
@@ -418,25 +426,37 @@ func TestInventoryEndpoint(t *testing.T) {
 	}
 	var body struct {
 		Instance struct {
-			Store            string `json:"store"`
-			MaxBeds          int    `json:"max_beds"`
-			ActiveBeds       int    `json:"active_beds"`
-			LuggageHighBytes int64  `json:"luggage_high_bytes"`
+			Store            string    `json:"store"`
+			MaxBeds          int       `json:"max_beds"`
+			ActiveBeds       int       `json:"active_beds"`
+			ExpiresAt        time.Time `json:"expires_at"`
+			LuggageHighBytes int64     `json:"luggage_high_bytes"`
 		} `json:"instance"`
 		Beds []struct {
-			ID    string `json:"id"`
-			State string `json:"state"`
+			ID           string    `json:"id"`
+			State        string    `json:"state"`
+			LastActiveAt time.Time `json:"last_active_at"`
+			ExpiresAt    time.Time `json:"expires_at"`
 		} `json:"beds"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if body.Instance.Store != "noop" || body.Instance.ActiveBeds != 1 || body.Instance.LuggageHighBytes != 1000 {
+	if strings.Contains(rec.Body.String(), `"busy_beds"`) {
+		t.Fatalf("inventory should use active_beds, not busy_beds: %s", rec.Body.String())
+	}
+	if body.Instance.Store != "noop" || body.Instance.ActiveBeds != 1 || body.Instance.ExpiresAt.IsZero() || body.Instance.LuggageHighBytes != 1000 {
 		t.Fatalf("instance = %+v", body.Instance)
+	}
+	if want := live.ExpiresAt(); !body.Instance.ExpiresAt.Equal(want) {
+		t.Fatalf("instance expires_at = %s, want max bed expiry %s", body.Instance.ExpiresAt, want)
 	}
 	states := map[string]string{}
 	for _, b := range body.Beds {
 		states[b.ID] = b.State
+		if b.ID == "inv-live" && (b.LastActiveAt.IsZero() || b.ExpiresAt.IsZero()) {
+			t.Fatalf("inv-live lifecycle fields = %+v", b)
+		}
 	}
 	if states["inv-live"] != "active" || states["inv-cold"] != "luggage" {
 		t.Fatalf("bed states = %v, want inv-live active / inv-cold luggage", states)

@@ -197,6 +197,9 @@ func TestTeardownKillsInflightForeground(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("foreground command did not start")
 	}
+	if got := b.RunningExecs(); got != 1 {
+		t.Fatalf("running execs = %d, want 1", got)
+	}
 
 	if ok, err := m.Evict("conv-kill"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
@@ -205,6 +208,9 @@ func TestTeardownKillsInflightForeground(t *testing.T) {
 	case code := <-done:
 		if code == 0 {
 			t.Fatalf("killed command reported exit 0")
+		}
+		if got := b.RunningExecs(); got != 0 {
+			t.Fatalf("running execs after teardown = %d, want 0", got)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("in-flight foreground command escaped bed teardown")
@@ -250,17 +256,56 @@ func TestDeleteBedReleasesAndRemoves(t *testing.T) {
 	}
 }
 
-func TestCollectIdleSkipsDefault(t *testing.T) {
+func TestCollectExpiredSkipsDefault(t *testing.T) {
 	m := newTestManager(t)
+	m.SetBedIdleTTL(time.Millisecond)
 	_, _ = m.Resolve("default")
 	_, _ = m.Resolve("conv-idle")
 	time.Sleep(10 * time.Millisecond)
-	reaped := m.CollectIdle(time.Millisecond)
+	reaped := m.CollectExpired(time.Now())
 	if len(reaped) != 1 || reaped[0] != "conv-idle" {
-		t.Fatalf("CollectIdle reaped %v, want [conv-idle]", reaped)
+		t.Fatalf("CollectExpired reaped %v, want [conv-idle]", reaped)
 	}
 	if _, ok := m.Get("default"); !ok {
 		t.Fatal("default bed must never be reaped")
+	}
+}
+
+func TestExecExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
+	m := newTestManager(t)
+	idleTTL := 50 * time.Millisecond
+	execTimeout := 500 * time.Millisecond
+	m.SetBedIdleTTL(idleTTL)
+	b, err := m.Resolve("conv-running")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	startedAt := time.Now()
+	finishExec := m.BeginExec(b, execTimeout)
+	expiresAt := b.ExpiresAt()
+	if want := startedAt.Add(execTimeout + idleTTL); expiresAt.Before(want) {
+		t.Fatalf("expires_at = %s, want >= %s", expiresAt, want)
+	}
+	if got := b.RunningExecs(); got != 1 {
+		t.Fatalf("running execs = %d, want 1", got)
+	}
+	finishShortExec := m.BeginExec(b, time.Millisecond)
+	if got := b.ExpiresAt(); got.Before(expiresAt) {
+		t.Fatalf("shorter exec shortened expires_at: got %s, previous %s", got, expiresAt)
+	}
+	finishShortExec()
+
+	// Even a delayed collector must not reap a command still in flight.
+	if reaped := m.CollectExpired(expiresAt.Add(time.Hour)); len(reaped) != 0 {
+		t.Fatalf("CollectExpired reaped running bed: %v", reaped)
+	}
+	finishExec()
+	if got := b.RunningExecs(); got != 0 {
+		t.Fatalf("running execs after finish = %d, want 0", got)
+	}
+	if reaped := m.CollectExpired(expiresAt.Add(time.Hour)); len(reaped) != 1 || reaped[0] != b.ID {
+		t.Fatalf("CollectExpired after finish = %v, want [%s]", reaped, b.ID)
 	}
 }
 
@@ -379,8 +424,8 @@ func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 		t.Fatalf("snapshot content = %q", fs.snaps["conv-1"])
 	}
 	meta, ok := loadMeta(b.Dir)
-	if !ok || meta.LastUsedAt.IsZero() {
-		t.Fatalf("luggage meta should carry LastUsedAt, got %+v (ok=%v)", meta, ok)
+	if !ok || meta.LastActiveAt.IsZero() {
+		t.Fatalf("luggage meta should carry LastActiveAt, got %+v (ok=%v)", meta, ok)
 	}
 
 	// Re-resolve the same bed id → warm start from luggage: the real file is
@@ -482,7 +527,7 @@ func TestPersistDirty(t *testing.T) {
 
 	// Freshly created bed: persistedAt == created time; touch to mark dirty.
 	time.Sleep(5 * time.Millisecond)
-	b.touch()
+	b.touch(0)
 	done := m.PersistDirty(context.Background())
 	if len(done) != 1 || done[0] != "conv-3" {
 		t.Fatalf("PersistDirty = %v, want [conv-3]", done)
@@ -583,7 +628,7 @@ func TestEvictCanceledByActivity(t *testing.T) {
 	if b.State() != "evicting" {
 		t.Fatalf("state during persist = %q, want evicting", b.State())
 	}
-	b.touch()
+	b.touch(0)
 	close(ss.gate)
 
 	r := <-res
@@ -694,7 +739,7 @@ func TestCollectLuggageWatermarks(t *testing.T) {
 		if ok, err := m.Evict(id); err != nil || !ok {
 			t.Fatalf("evict %s: ok=%v err=%v", id, ok, err)
 		}
-		time.Sleep(5 * time.Millisecond) // distinct LastUsedAt ordering
+		time.Sleep(5 * time.Millisecond) // distinct LastActiveAt ordering
 	}
 	mkLuggage("conv-old", 10_000)
 	mkLuggage("conv-mid", 10_000)
@@ -769,8 +814,8 @@ func TestInventory(t *testing.T) {
 		t.Fatalf("conv-live = %+v, want active gen 0", e)
 	}
 	cold := byID["conv-cold"]
-	if cold.State != "luggage" || cold.Generation != 1 || cold.Bytes == 0 || cold.LastUsedAt.IsZero() {
-		t.Fatalf("conv-cold = %+v, want luggage gen 1 with bytes and last_used_at", cold)
+	if cold.State != "luggage" || cold.Generation != 1 || cold.Bytes == 0 || cold.LastActiveAt.IsZero() {
+		t.Fatalf("conv-cold = %+v, want luggage gen 1 with bytes and last_active_at", cold)
 	}
 }
 
