@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bedinit"
+	"github.com/qiankunli/hostel/internal/resource"
 )
 
 // initSpawner forks bed processes through the bed's own init (`hostel
@@ -33,8 +34,9 @@ import (
 // side stays protocol-thin: build the command as usual, hand argv+env+fds over
 // the bed's socket.
 type initSpawner struct {
-	exe     string // the hostel binary to re-exec as __bedinit
-	sockDir string // LOCAL dir for per-bed sockets (workspace may be network FS)
+	exe       string // the hostel binary to re-exec as __bedinit
+	sockDir   string // LOCAL dir for per-bed sockets (workspace may be network FS)
+	resources resource.Tracker
 
 	mu    sync.Mutex
 	inits map[string]*initHandle // bedID → live bedinit
@@ -46,13 +48,18 @@ type initHandle struct {
 	done   chan struct{} // closed once the bedinit process exited
 }
 
-func newInitSpawner(exe string) (*initSpawner, error) {
+func newInitSpawner(exe string, resources resource.Tracker) (*initSpawner, error) {
 	// Unix sockets don't belong on the (possibly network) workspace FS.
 	dir, err := os.MkdirTemp("", "hostel-bedinit-*")
 	if err != nil {
 		return nil, err
 	}
-	return &initSpawner{exe: exe, sockDir: dir, inits: make(map[string]*initHandle)}, nil
+	return &initSpawner{
+		exe:       exe,
+		sockDir:   dir,
+		resources: resources,
+		inits:     make(map[string]*initHandle),
+	}, nil
 }
 
 // ensure returns the bed's live init, starting one on first use (or after a
@@ -73,6 +80,11 @@ func (s *initSpawner) ensure(bedID string) (*initHandle, error) {
 	cmd.Stdout = os.Stderr // bedinit logs join the daemon's stream
 	cmd.Stderr = os.Stderr
 	setPdeathsig(cmd) // daemon death → SIGTERM → the init takes its tree along
+	releaseGroup, err := bindProcessCgroup(cmd, s.resources, bedID)
+	if err != nil {
+		return nil, fmt.Errorf("bed: prepare cgroup for %s: %w", bedID, err)
+	}
+	defer releaseGroup()
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("bed: start bedinit for %s: %w", bedID, err)
 	}
@@ -193,11 +205,12 @@ func (p *initProc) Wait() (int, error) { return p.h.WaitExit() }
 // deployments where bedinit can't serve, the error lets the caller log and stay
 // on the in-process spawner — "auto" semantics, decided once at boot.
 func (m *Manager) EnableBedInit(exe string) error {
-	sp, err := newInitSpawner(exe)
+	sp, err := newInitSpawner(exe, m.resources)
 	if err != nil {
 		return err
 	}
 	const probe = "bedinit-probe"
+	defer func() { _ = m.resources.Release(probe) }()
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
 		return err

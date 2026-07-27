@@ -10,7 +10,15 @@ require (
 	github.com/folbricht/desync v1.0.3
 	github.com/gin-gonic/gin v1.10.0
 	github.com/landlock-lsm/go-landlock v0.9.0
+	github.com/shirou/gopsutil v3.21.11+incompatible
 	golang.org/x/sys v0.42.0
+)
+
+require (
+	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/tklauser/go-sysconf v0.3.16 // indirect
+	github.com/tklauser/numcpus v0.11.0 // indirect
+	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 )
 
 require (

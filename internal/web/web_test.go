@@ -62,8 +62,12 @@ func TestPingAndHealthz(t *testing.T) {
 	var h map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &h)
 	iso, _ := h["isolation"].(map[string]any)
+	accounting, _ := h["resource_accounting"].(map[string]any)
 	if h["ok"] != true || iso == nil || iso["level"] != "dorm" || iso["mechanism"] != "direct" {
 		t.Fatalf("/healthz body = %v", h)
+	}
+	if accounting == nil || accounting["backend"] != "noop" || accounting["available"] != false {
+		t.Fatalf("/healthz resource_accounting = %v", accounting)
 	}
 }
 
@@ -312,7 +316,9 @@ func TestCapabilities(t *testing.T) {
 	rec := do(t, s, "GET", "/v1/beds/capabilities", nil, nil)
 	var caps map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &caps)
-	if caps["command"] != true || caps["pty"] != false {
+	accounting, _ := caps["resource_accounting"].(map[string]any)
+	if caps["command"] != true || caps["pty"] != false ||
+		accounting == nil || accounting["backend"] != "noop" {
 		t.Fatalf("capabilities = %v", caps)
 	}
 }

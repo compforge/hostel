@@ -40,11 +40,17 @@ curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv
 | 组 | 端点 |
 |---|---|
 | 基础 | `GET /ping`、`GET /healthz` |
+| 指标 | `GET /metrics`、`GET /metrics/watch`（SSE） |
 | 文件 | `GET /files/info`、`DELETE /files`、`POST /files/mv`、`POST /files/permissions`、`GET /files/search`、`POST /files/replace`、`POST /files/upload`、`GET /files/download` |
 | 目录 | `GET /directories/list`、`POST /directories`、`DELETE /directories` |
 | 命令 | `POST /command`(SSE)、`DELETE /command`、`GET /command/status/:id`、`GET /command/:id/logs` |
 | 会话 | `POST /session`、`POST /session/:id/run`(SSE)、`DELETE /session/:id` |
 | bed 管理 | `GET/POST /v1/beds`、`GET/DELETE /v1/beds/:id`、`POST /v1/beds/:id/checkpoint`、`GET /v1/beds/capabilities` |
+
+指标跟随目标 bed（`X-Hostel-Bed` / `?bed=`）：cgroup v2 已委派时，CPU 用量和当前内存来自该
+bed 的记账组，CPU 数量和总内存仍表示共享 carrier 容量；当前不施加限额。未委派 cgroup v2
+时保留 execd 兼容的实例级 fallback，`/healthz` 和 capabilities 的 `resource_accounting`
+会如实报告实际 backend。
 
 路径语义：客户端用 `/workspace/...` 寻址，hostel rebase 到该 bed 的 workspace 目录；相对路径即 workspace 相对；workspace 之外的绝对路径被拒绝（bed 看不到宿主）。`bwrap` 下 workspace 还会**真实挂载**在沙箱内 `/workspace`——shell 路径与 file API 路径同名同物；`direct` 下（无 mount namespace）shell cwd 是宿主真实目录。以 capabilities 的 `workspace_mount` 区分两种模式。
 

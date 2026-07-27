@@ -1,34 +1,52 @@
-# bed 资源隔离方案（per-bed cgroup）
+# bed 资源记账与隔离方案（per-bed cgroup）
 
-> **状态：方案先记，实现推后**（当前优先级：数据隔离 > 持久化 > 资源隔离）。
+> **状态：Phase 1 资源记账已落地；Phase 2 限额待实现。**
 
-聚焦**资源消耗隔离**：一个 bed 跑飞 CPU/内存/进程数，不能拖垮同一 hostel 里的其它 bed。数据隔离见 `data-isolation.md`，持久化见 `persistence.md`。
+资源治理分两阶段：先建立可信的 **per-bed 记账**，再基于同一 cgroup 边界增加限额，避免一个
+bed 跑飞后拖垮同一 hostel 的其它 bed。数据隔离见 `data-isolation.md`，持久化见
+`persistence.md`。
 
 ## 一、理念
 
-1. **多 bed 密度成立的前提是资源公平**：把 N 个 bed 挤进一个 pod，第一个坏掉的不是安全，是"吵闹邻居"——一个 `while(1)` 或内存泄漏就吃光整个 pod 配额，殃及全部租户。cgroup 是密度目标的地基；seccomp/setuid 那类安全纵深是加高，单独设计。
+1. **多 bed 密度最终需要资源公平**：当前记账能定位"吵闹邻居"，但尚不会阻止一个 `while(1)` 或内存泄漏吃光 pod 配额；限额是下一阶段。cgroup 是两阶段共用的边界，避免先做一套观测、再为隔离推倒重来。
 2. **复用内核原语，不发明配额器**：cgroup v2 已提供层级化的 cpu/memory/pids 控制，hostel 只做两件事——**给每个 bed 建一个子组、把 bed 的进程放进去**。不在用户态做任何"测量-驳回"式的自制限流。
-3. **与 Isolator 正交**：隔离（namespace 视图）与限额（资源上限）是两个维度——bwrap 不管 cgroup。故新设 `Limiter` 接口与 `Isolator` 并列，而不是塞进 Isolator；direct 模式（无 bwrap）同样可以有 cgroup 限额，两者自由组合。
+3. **与 Isolator 正交**：隔离（namespace 视图）与资源治理（记账 / 限额）是两个维度——bwrap 不管 cgroup。当前 `Tracker` 与 `Isolator` 并列，未来 `Limiter` 延续同一边界；direct 模式（无 bwrap）同样可记账和加限额。
+
+### 当前落地：只记账，不设限
+
+hostel 启动时探测当前容器是否获得 cgroup v2 的 `cpu` / `memory` 委派。可用时为每个 bed
+创建子 cgroup，并用 `CLONE_INTO_CGROUP` 让 bed-init（或非 Linux fallback 前的直接命令）
+从第一条指令起落入该组；不写 `cpu.max`、`memory.max`、`pids.max`，所有 bed 仍共享 carrier
+的大 cgroup 盘子。
+
+OpenSandbox-compatible `GET /metrics` / `GET /metrics/watch` 读取目标 bed 的 `cpu.stat` 与
+`memory.current`。cgroup 的累计 CPU 记账覆盖已退出的短命令，避免 `/proc` 周期扫描漏掉瞬时
+进程；`healthz` / capabilities 的 `resource_accounting` 如实报告 cgroupv2 或 noop。非 Linux
+或未委派环境保留 execd 的实例级 CPU/内存 fallback，仅用于协议兼容，不声称 per-bed 精确归因。
 
 ## 二、流程
 
 ```
-hostel 启动 → 探测 cgroup v2 可写（/sys/fs/cgroup/<hostel-scope>/ 能建子目录且
-              cgroup.subtree_control 可开 cpu memory pids）
-                ├─ 否 → Limiter=noop，capabilities 报 resource_limits: false
+hostel 启动 → 探测 cgroup v2 可写（当前容器 cgroup 能建子目录且
+              cgroup.subtree_control 可开 cpu memory）
+                ├─ 否 → Tracker=noop，capabilities 报 resource_accounting.available: false
                 └─ 是 → 每个 bed 首次启动进程时：
-                        1. mkdir <scope>/beds/<bedID>/
-                        2. 写 cpu.max / memory.max / memory.swap.max / pids.max
-                        3. 启动进程时经 CLONE_INTO_CGROUP 直接落入该组
+                        1. mkdir <scope>/hostel-bed-<bedID>/
+                        2. 启动进程时经 CLONE_INTO_CGROUP 直接落入该组
                            （Go: SysProcAttr{UseCgroupFD, CgroupFD}，Linux 5.7+）
+                        3. Phase 1 只读 cpu.stat / memory.current
+                        4. Phase 2 再写 cpu.max / memory.max / pids.max
 bed 删除 / idle GC → 杀进程组 → rmdir cgroup 子目录
 ```
 
-关键点：用 `CLONE_INTO_CGROUP` 而非"启动后写 `cgroup.procs`"——后者在 fork 与写入之间有窗口，进程可能已 fork 出子进程逃出限额。
+关键点：用 `CLONE_INTO_CGROUP` 而非"启动后写 `cgroup.procs`"——后者在 fork 与写入之间有窗口，短进程可能已退出，或已 fork 出逃离记账边界的子进程（未来也会逃出限额）。
 
 ## 三、关键设计
 
-### 1. Limiter 抽象
+### 1. Tracker → Limiter
+
+Phase 1 的 `Tracker` 只负责建组、读取累计用量和回收。Phase 2 在同一 package 增加以下限额
+契约，不把策略塞进 bed 或 HTTP 层：
 
 ```go
 type Limits struct {
@@ -62,8 +80,9 @@ Chromium/Jupyter 等共享服务**不进任何 bed 的 cgroup**（它们是 per-
 
 ### 5. 测试策略
 
-- **mac/CI 可跑**：Limits→文件内容的构造单测；noop 降级路径。
-- **Linux 真验证**（devbox）：bed 内 `stress`/fork 炸弹，断言限额生效（CPU throttle、OOM kill、EAGAIN）且邻居 bed 命令延迟不受显著影响；删除 bed 后 cgroup 目录回收。
+- **mac/CI 可跑**：metrics 契约、bed 选择、累计 CPU 解析和 noop 降级路径。
+- **Linux 真验证**（devbox）：Phase 1 断言短进程计入目标 bed 且删除后 cgroup 回收；Phase 2
+  再用 `stress` / fork 炸弹断言 CPU throttle、OOM kill、EAGAIN 和邻居延迟。
 
 ## 非目标
 

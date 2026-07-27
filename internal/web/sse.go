@@ -89,11 +89,15 @@ func (s *sseStream) send(ev StreamEvent) {
 }
 
 func (s *sseStream) flush() {
-	if f, ok := s.c.Writer.(http.Flusher); ok {
-		f.Flush()
-	}
+	flush(s.c.Writer)
 }
 
 // started reports whether any SSE header/frame has been committed — callers use
 // it to decide between a JSON error (nothing sent yet) and an error event.
 func (s *sseStream) hasStarted() bool { return s.started }
+
+func flush(w http.ResponseWriter) {
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+}

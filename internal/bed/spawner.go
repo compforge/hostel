@@ -18,6 +18,8 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
+
+	"github.com/qiankunli/hostel/internal/resource"
 )
 
 // Spawner is the seam between "what to run" and "who forks it"
@@ -54,12 +56,13 @@ type Proc interface {
 // started with Setpgid, so pid == pgid and Kill(-pid) takes the whole tree
 // (modulo setsid escapees — the bed-init spawner closes that gap on linux).
 type inProcSpawner struct {
-	mu   sync.Mutex
-	live map[string]map[int]struct{} // bedID → live pids (== pgids)
+	resources resource.Tracker
+	mu        sync.Mutex
+	live      map[string]map[int]struct{} // bedID → live pids (== pgids)
 }
 
-func newInProcSpawner() *inProcSpawner {
-	return &inProcSpawner{live: make(map[string]map[int]struct{})}
+func newInProcSpawner(resources resource.Tracker) *inProcSpawner {
+	return &inProcSpawner{resources: resources, live: make(map[string]map[int]struct{})}
 }
 
 func (s *inProcSpawner) Start(bedID string, cmd *exec.Cmd) (Proc, error) {
@@ -67,6 +70,11 @@ func (s *inProcSpawner) Start(bedID string, cmd *exec.Cmd) (Proc, error) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.Setpgid = true // one pgid per command: kill takes the tree
+	releaseGroup, err := bindProcessCgroup(cmd, s.resources, bedID)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseGroup()
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

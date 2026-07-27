@@ -58,12 +58,20 @@ curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv
 | Group | Endpoints |
 |---|---|
 | Basic | `GET /ping`, `GET /healthz` |
+| Metrics | `GET /metrics`, `GET /metrics/watch` (SSE) |
 | Files | `GET /files/info`, `DELETE /files`, `POST /files/mv`, `POST /files/permissions`, `GET /files/search`, `POST /files/replace`, `POST /files/upload`, `GET /files/download` |
 | Directories | `GET /directories/list`, `POST /directories`, `DELETE /directories` |
 | Command | `POST /command` (SSE), `DELETE /command`, `GET /command/status/:id`, `GET /command/:id/logs` |
 | Session | `POST /session`, `POST /session/:id/run` (SSE), `DELETE /session/:id` |
 | Beds | `GET/POST /v1/beds`, `GET/DELETE /v1/beds/:id`, `POST /v1/beds/:id/checkpoint`, `GET /v1/beds/capabilities` |
 | Scheduler | `GET /v1/inventory` — capacity + every local bed (active and luggage) with its persisted generation |
+
+Metrics follow the selected bed (`X-Hostel-Bed` / `?bed=`): with delegated
+cgroup v2, CPU usage and current memory come from that bed's accounting group,
+while CPU count and total memory describe the shared carrier capacity. No
+limits are applied. On hosts without delegated cgroup v2, the same response
+falls back to execd-compatible instance metrics; `/healthz` and capabilities
+report the active `resource_accounting` backend.
 
 Path semantics: the bed is picked by the `X-Hostel-Bed` header first; after
 that the bed behaves as if it owned the whole filesystem. The client's `/` is
