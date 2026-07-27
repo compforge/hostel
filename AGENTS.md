@@ -59,6 +59,7 @@ internal/
 ├── isolation/         数据隔离房型档：New 按 env ceiling 路由；direct(dorm/全平台) + landlock(room/linux) + bwrap(suite/linux)
 ├── bed/               ★核心。bed=隔离单元=对外一个 sandbox
 │   ├── bed.go         Manager：Resolve(空→default，按 generation 判 luggage 新鲜)/BeginOperation/Evict/Purge/CollectExpired；ForegroundShell；StartCommand
+│   ├── observability.go Bed 生命周期记录：activate/persist/evict 的结构化 stage 日志与最近摘要
 │   ├── luggage.go     luggage（evict 留下的现场缓存）：磁盘水位 GC（stale 优先→LRU）、Inventory（调度器视图）
 │   ├── shell.go       常驻 bash：单 reader goroutine→lines chan，Run 用 marker 分帧、单消费（状态跨 run 保持）
 │   └── command.go     一次性命令 registry：前台/后台、status、logs（cursor 增量、环形缓冲）
@@ -87,6 +88,7 @@ internal/
 - 数据隔离方案（tmpfs 遮蔽兄弟 bed、`/workspace` 规范挂载统一两套路径语义、降级与测试策略）：`docs/data-isolation.md`
 - 数据持久化方案（本地 workspace=工作副本、S3 快照=持久身份、边界同步、Store 抽象）：`docs/persistence.md`
 - 资源记账与隔离方案（per-bed cgroup v2；accounting 已落地，limits 待实现）：`docs/resource-isolation.md`
+- 可观测性设计（统一生命周期事实，并投影到日志、接口和 metric）：`docs/observability.md`
 - 快速上手 / API 一览 / 配置：`README.md`
 - 归属（execd 参考的具体设计点）：`NOTICE`
 - API 契约来源：上游 OpenSandbox 仓库的 `specs/execd-api.yaml`（https://github.com/alibaba/opensandbox）

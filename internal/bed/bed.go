@@ -46,7 +46,7 @@ import (
 // ids look like "sandbox-<uuidv7>": the shared prefix carries no information
 // (uuidv7 leads with a timestamp) while the entropy sits at the tail, so keep
 // the tail. Display only — the full id stays the identity everywhere; the
-// "bed active" line logged at activation anchors the full↔short mapping, and
+// "bed resident" line logged at activation anchors the full↔short mapping, and
 // grepping a tail also hits lines that print the full id.
 func ShortID(id string) string {
 	const tail = 8
@@ -75,17 +75,19 @@ type Bed struct {
 	// MountPoint()+Rel+Join by hand (that's how the exec-cwd ENOENT happened).
 	paths fsops.Paths
 
-	mu           sync.Mutex
-	persistMu    sync.Mutex // serializes generation bumps and snapshot uploads
-	lastActiveAt time.Time
-	expiresAt    time.Time         // latest safe eviction time promised to accepted operations
-	activeOps    int               // bed-scoped operations still in flight
-	activitySeq  uint64            // changes whenever activity starts or finishes
-	generation   int64             // latest local data generation
-	persistedAt  time.Time         // last successful snapshot (zero = never)
-	evicting     bool              // an evict's persist is in flight
-	shells       map[string]*Shell // stateful bash sessions (spec /session)
-	profile      Profile           // cumulative; seeded from meta, flushed at persist
+	mu             sync.Mutex
+	persistMu      sync.Mutex // serializes generation bumps and snapshot uploads
+	lastActiveAt   time.Time
+	expiresAt      time.Time         // latest safe eviction time promised to accepted operations
+	activeOps      int               // bed-scoped operations still in flight
+	activitySeq    uint64            // changes whenever activity starts or finishes
+	generation     int64             // latest local data generation
+	persistedAt    time.Time         // last successful snapshot (zero = never)
+	evicting       bool              // an evict's persist is in flight
+	shells         map[string]*Shell // stateful bash sessions (spec /session)
+	profile        Profile           // cumulative; seeded from meta, flushed at persist
+	lastActivation *LifecycleRecord  // bounded diagnostics, never historical
+	lastPersist    *LifecycleRecord
 }
 
 // State is the mutually-exclusive operational state reported to the scheduler.
@@ -349,7 +351,7 @@ func (m *Manager) BeginOperation(b *Bed, timeout time.Duration) (func(), error) 
 
 // Resolve returns the bed for id, creating it on first use. An empty id maps to
 // the default bed — so callers that don't know about beds still get one.
-func (m *Manager) Resolve(id string) (*Bed, error) {
+func (m *Manager) Resolve(id string) (resolved *Bed, retErr error) {
 	if id == "" {
 		id = m.defaultBed
 	}
@@ -375,6 +377,13 @@ func (m *Manager) Resolve(id string) (*Bed, error) {
 			return nil, ErrBedLimit
 		}
 	}
+	trace := beginLifecycle(id, lifecycleActivate)
+	defer func() {
+		record := trace.finish(lifecycleResult(retErr), retErr)
+		if resolved != nil {
+			resolved.recordLifecycle(record)
+		}
+	}()
 	bedDir := filepath.Join(m.root, id)
 	dataDir := filepath.Join(bedDir, "data")
 	if err := os.MkdirAll(bedDir, 0o755); err != nil {
@@ -388,68 +397,98 @@ func (m *Manager) Resolve(id string) (*Bed, error) {
 	// like data loss.
 	restored := false
 	var restoreMs int64
-	if info, err := m.store.Stat(context.Background(), id); err != nil {
+	var snapshot *store.SnapshotInfo
+	if err := trace.stage("stat_snapshot", func() error {
+		var err error
+		snapshot, err = m.store.Stat(context.Background(), id)
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("bed: check snapshot %s: %w", id, err)
-	} else if info != nil {
+	}
+	_ = trace.stage("select_source", func() error {
+		trace.source = "fresh"
+		if snapshot == nil {
+			return nil
+		}
+		trace.source = "luggage"
 		local, ok := loadMeta(bedDir)
-		if !ok || local.Generation < info.Generation {
+		if !ok || local.Generation < snapshot.Generation {
+			trace.source = "snapshot"
+		}
+		return nil
+	})
+	if trace.source == "snapshot" {
+		if err := trace.stage("restore", func() error {
 			if err := os.RemoveAll(bedDir); err != nil {
-				return nil, fmt.Errorf("bed: drop stale luggage %s: %w", id, err)
+				return fmt.Errorf("drop stale luggage: %w", err)
 			}
 			if err := os.MkdirAll(bedDir, 0o755); err != nil {
-				return nil, fmt.Errorf("bed: recreate bed dir %s: %w", bedDir, err)
+				return fmt.Errorf("recreate bed dir: %w", err)
 			}
 			t0 := time.Now()
 			if err := m.store.Restore(context.Background(), id, bedDir); err != nil {
-				return nil, fmt.Errorf("bed: restore %s: %w", id, err)
+				return err
 			}
 			restoreMs = time.Since(t0).Milliseconds()
 			restored = true
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("bed: restore %s: %w", id, err)
 		}
 	}
 	wsDir := filepath.Join(dataDir, "workspace")
-	if err := os.MkdirAll(wsDir, 0o755); err != nil {
-		return nil, fmt.Errorf("bed: create workspace %s: %w", wsDir, err)
-	}
-	// Let the isolator prepare the freshly (re)created bed_home — uid
-	// isolation chowns it to the bed's dedicated uid; other mechanisms no-op.
-	// Must run after any restore repopulated the tree, before the bed serves.
-	if p, ok := m.iso.(isolation.Preparer); ok {
-		if err := p.Prepare(isolation.Workspace{Home: dataDir, Path: wsDir}); err != nil {
-			return nil, fmt.Errorf("bed: prepare workspace %s: %w", id, err)
+	if err := trace.stage("prepare_workspace", func() error {
+		if err := os.MkdirAll(wsDir, 0o755); err != nil {
+			return err
 		}
+		// Prepare after restore repopulates the tree and before the bed serves.
+		if p, ok := m.iso.(isolation.Preparer); ok {
+			return p.Prepare(isolation.Workspace{Home: dataDir, Path: wsDir})
+		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("bed: prepare workspace %s: %w", id, err)
 	}
 
 	now := time.Now()
-	meta, ok := loadMeta(bedDir)
-	if !ok {
-		meta = bedMeta{Version: 1, BedID: id, CreatedAt: now}
-		if err := saveMeta(bedDir, meta); err != nil {
-			return nil, fmt.Errorf("bed: write meta %s: %w", id, err)
+	var meta bedMeta
+	var b *Bed
+	if err := trace.stage("commit_resident", func() error {
+		var ok bool
+		meta, ok = loadMeta(bedDir)
+		if !ok {
+			meta = bedMeta{Version: 1, BedID: id, CreatedAt: now}
+			if err := saveMeta(bedDir, meta); err != nil {
+				return err
+			}
 		}
+		// Dirty-tracking baseline: a just-restored bed is in sync NOW; a dir
+		// that survived a process restart trusts its on-disk timestamp.
+		persistedAt := meta.LastPersistedAt
+		if restored || persistedAt.IsZero() {
+			persistedAt = now
+		}
+		profile := meta.Profile
+		if restored {
+			profile.LastRestoreMs = restoreMs
+		}
+		expiresAt := time.Time{}
+		if m.bedIdleTTL > 0 {
+			expiresAt = now.Add(m.bedIdleTTL)
+		}
+		b = &Bed{
+			ID: id, Dir: bedDir, Home: dataDir, Workspace: wsDir,
+			CreatedAt: meta.CreatedAt, lastActiveAt: now, expiresAt: expiresAt,
+			generation: meta.Generation, persistedAt: persistedAt, profile: profile,
+			shells: make(map[string]*Shell),
+			paths:  fsops.NewPaths(dataDir, m.iso.MountPoint()),
+		}
+		m.beds[id] = b
+		resolved = b
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("bed: write meta %s: %w", id, err)
 	}
-	// Dirty-tracking baseline: a just-restored bed is in sync NOW; a dir that
-	// survived a process restart (default bed) trusts its on-disk timestamp,
-	// so the periodic safety net stays correct across restarts.
-	persistedAt := meta.LastPersistedAt
-	if restored || persistedAt.IsZero() {
-		persistedAt = now
-	}
-	// The snapshot's profile keeps accumulating in memory; a fresh restore
-	// measurement replaces whatever host measured the previous one. In-memory
-	// only until the next persist flushes it — losing it to a crash is fine,
-	// it's a hint.
-	profile := meta.Profile
-	if restored {
-		profile.LastRestoreMs = restoreMs
-	}
-	expiresAt := time.Time{}
-	if m.bedIdleTTL > 0 {
-		expiresAt = now.Add(m.bedIdleTTL)
-	}
-	b := &Bed{ID: id, Dir: bedDir, Home: dataDir, Workspace: wsDir, CreatedAt: meta.CreatedAt, lastActiveAt: now, expiresAt: expiresAt, generation: meta.Generation, persistedAt: persistedAt, profile: profile, shells: make(map[string]*Shell),
-		paths: fsops.NewPaths(dataDir, m.iso.MountPoint())}
-	m.beds[id] = b
 	// The one place the full id is logged: everything downstream logs Short(),
 	// so this line is the grep anchor from a control-plane sandbox id.
 	log.Printf("hostel bed resident: bed=%s short=%s restored=%v", id, b.Short(), restored)
@@ -497,7 +536,7 @@ func (m *Manager) evictExpired(id string, now time.Time) (bool, error) {
 	return m.evict(id, &now)
 }
 
-func (m *Manager) evict(id string, expiryCutoff *time.Time) (bool, error) {
+func (m *Manager) evict(id string, expiryCutoff *time.Time) (evicted bool, retErr error) {
 	if id == "" {
 		id = m.defaultBed
 	}
@@ -507,6 +546,14 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (bool, error) {
 	if !ok {
 		return false, nil // not resident; nothing to evict
 	}
+	trace := beginLifecycle(id, lifecycleEvict)
+	defer func() {
+		result := lifecycleResult(retErr)
+		if retErr == nil && !evicted {
+			result = lifecycleCanceled
+		}
+		trace.finish(result, retErr)
+	}()
 
 	// Enter EVICTING: remember the activity watermark we snapshot against.
 	b.mu.Lock()
@@ -523,7 +570,7 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (bool, error) {
 	watermark := b.lastActiveAt
 	b.mu.Unlock()
 
-	if err := m.persistBed(context.Background(), b); err != nil {
+	if err := m.persistBed(context.Background(), b, "evict"); err != nil {
 		b.mu.Lock()
 		b.evicting = false
 		b.mu.Unlock()
@@ -621,37 +668,67 @@ func (m *Manager) teardown(b *Bed) {
 // successful upload — a failed upload leaving the local generation ahead is
 // accurate ("locally dirty"), while a falsely-advanced LastPersistedAt would
 // make restart-time dirty tracking skip data that never reached the store.
-func (m *Manager) persistBed(ctx context.Context, b *Bed) error {
-	b.persistMu.Lock()
-	defer b.persistMu.Unlock()
+func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retErr error) {
+	trace := beginLifecycle(b.ID, lifecyclePersist)
+	trace.trigger = trigger
+	defer func() {
+		b.recordLifecycle(trace.finish(lifecycleResult(retErr), retErr))
+	}()
 
-	meta, ok := loadMeta(b.Dir)
-	if !ok {
-		meta = bedMeta{Version: 1, BedID: b.ID, CreatedAt: b.CreatedAt}
-	}
-	meta.Generation++
-	// Flush the in-memory counters pre-pack so the snapshot carries them.
-	// LastPersistMs necessarily lags one persist behind in the snapshot (this
-	// persist's duration is only known after the upload) — fine for a hint.
-	meta.Profile = b.Profile()
-	if err := saveMeta(b.Dir, meta); err != nil {
-		return fmt.Errorf("bed: bump generation %s: %w", b.ID, err)
-	}
-	b.mu.Lock()
-	b.generation = meta.Generation
-	b.mu.Unlock()
-	t0 := time.Now()
-	if err := m.store.Persist(ctx, b.ID, b.Dir, meta.Generation); err != nil {
+	if err := trace.stage("wait_persist_lock", func() error {
+		b.persistMu.Lock()
+		return nil
+	}); err != nil {
 		return err
 	}
-	now := time.Now()
-	b.mu.Lock()
-	b.persistedAt = now
-	b.profile.LastPersistMs = now.Sub(t0).Milliseconds()
-	meta.Profile = b.profile
-	b.mu.Unlock()
-	meta.LastPersistedAt = now
-	_ = saveMeta(b.Dir, meta) // best-effort; in-memory watermark is set
+	defer b.persistMu.Unlock()
+
+	var meta bedMeta
+	if err := trace.stage("prepare_snapshot", func() error {
+		var ok bool
+		meta, ok = loadMeta(b.Dir)
+		if !ok {
+			meta = bedMeta{Version: 1, BedID: b.ID, CreatedAt: b.CreatedAt}
+		}
+		meta.Generation++
+		// Flush counters before packing so they travel with the snapshot.
+		// LastPersistMs necessarily lags one persist behind because this
+		// upload's duration is not known until after packing.
+		meta.Profile = b.Profile()
+		if err := saveMeta(b.Dir, meta); err != nil {
+			return err
+		}
+		b.mu.Lock()
+		b.generation = meta.Generation
+		b.mu.Unlock()
+		return nil
+	}); err != nil {
+		return fmt.Errorf("bed: bump generation %s: %w", b.ID, err)
+	}
+
+	var persistedAt time.Time
+	var persistStarted time.Time
+	if err := trace.stage("persist_store", func() error {
+		persistStarted = time.Now()
+		if err := m.store.Persist(ctx, b.ID, b.Dir, meta.Generation); err != nil {
+			return err
+		}
+		persistedAt = time.Now()
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	_ = trace.stage("commit_watermark", func() error {
+		b.mu.Lock()
+		b.persistedAt = persistedAt
+		b.profile.LastPersistMs = persistedAt.Sub(persistStarted).Milliseconds()
+		meta.Profile = b.profile
+		b.mu.Unlock()
+		meta.LastPersistedAt = persistedAt
+		_ = saveMeta(b.Dir, meta) // best-effort; in-memory watermark is set
+		return nil
+	})
 	return nil
 }
 
@@ -666,7 +743,7 @@ func (m *Manager) Checkpoint(ctx context.Context, id string) error {
 		return err
 	}
 	defer finish()
-	return m.persistBed(ctx, b)
+	return m.persistBed(ctx, b, "checkpoint")
 }
 
 // PersistDirty is the periodic safety net: snapshot every bed touched since
@@ -681,7 +758,7 @@ func (m *Manager) PersistDirty(ctx context.Context) []string {
 		if !dirty {
 			continue
 		}
-		if err := m.persistBed(ctx, b); err != nil {
+		if err := m.persistBed(ctx, b, "periodic"); err != nil {
 			continue
 		}
 		done = append(done, b.ID)
