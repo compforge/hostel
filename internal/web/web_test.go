@@ -70,6 +70,9 @@ func TestPingAndHealthz(t *testing.T) {
 	if accounting == nil || accounting["backend"] != "noop" || accounting["available"] != false {
 		t.Fatalf("/healthz resource_accounting = %v", accounting)
 	}
+	if h["beds"] != float64(0) {
+		t.Fatalf("/healthz beds = %v, want 0", h["beds"])
+	}
 }
 
 func TestUploadInfoDownloadRoundTrip(t *testing.T) {

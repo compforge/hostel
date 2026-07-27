@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
@@ -222,6 +223,10 @@ type Manager struct {
 
 	mu   sync.Mutex
 	beds map[string]*Bed
+	// residentBeds mirrors len(beds) for lock-free instance health reads.
+	// Map mutations update it under mu; healthz may observe either side of an
+	// in-flight mutation, but never waits behind activation or restore work.
+	residentBeds atomic.Int64
 }
 
 // ErrBedLimit is returned when creating a new bed would exceed the configured
@@ -290,6 +295,10 @@ func (m *Manager) Commands() *CommandRegistry { return m.commands }
 
 // MaxBeds reports the configured cap (0 = unlimited) for capacity reporting.
 func (m *Manager) MaxBeds() int { return m.maxBeds }
+
+// ResidentBedCount reports the current in-memory bed count without taking the
+// manager lock. It is an instance-health fact, not an admission decision.
+func (m *Manager) ResidentBedCount() int64 { return m.residentBeds.Load() }
 
 // StoreName reports the persistence backend for capabilities reporting.
 func (m *Manager) StoreName() string { return m.store.Name() }
@@ -484,6 +493,7 @@ func (m *Manager) Resolve(id string) (resolved *Bed, retErr error) {
 			paths:  fsops.NewPaths(dataDir, m.iso.MountPoint()),
 		}
 		m.beds[id] = b
+		m.residentBeds.Add(1)
 		resolved = b
 		return nil
 	}); err != nil {
@@ -593,6 +603,7 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (evicted bool, retEr
 		return false, nil
 	}
 	delete(m.beds, id)
+	m.residentBeds.Add(-1)
 	b.mu.Unlock()
 	m.mu.Unlock()
 	m.teardown(b)
@@ -630,6 +641,7 @@ func (m *Manager) Purge(id string) error {
 	b, ok := m.beds[id]
 	if ok {
 		delete(m.beds, id)
+		m.residentBeds.Add(-1)
 	}
 	m.mu.Unlock()
 	if ok {
