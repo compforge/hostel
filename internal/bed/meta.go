@@ -62,9 +62,9 @@ type bedMeta struct {
 	// which reads as "locally dirty" — accurate, and the next persist re-bumps.
 	// It orders snapshots where wall clocks cannot (beds migrate across hosts).
 	Generation int64 `json:"generation,omitempty"`
-	// LastUsedAt is stamped at evict time so luggage GC can order cold local
+	// LastActiveAt is stamped at evict time so luggage GC can order cold local
 	// copies by recency without any in-memory state.
-	LastUsedAt time.Time `json:"last_used_at,omitzero"`
+	LastActiveAt time.Time `json:"last_active_at,omitzero"`
 	// Profile accumulates in memory while the bed is ACTIVE and is flushed
 	// here at persist time — the snapshot carries the counters, so they
 	// survive evict/resume and migration.

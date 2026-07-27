@@ -27,11 +27,12 @@ import (
 
 // bedView is the JSON shape for a bed in the management API.
 type bedView struct {
-	ID        string    `json:"id"`
-	State     string    `json:"state"` // active | evicting (dormant beds aren't listed)
-	Workspace string    `json:"workspace"`
-	CreatedAt time.Time `json:"created_at"`
-	LastUsed  time.Time `json:"last_used"`
+	ID           string    `json:"id"`
+	State        string    `json:"state"` // active | evicting (dormant beds aren't listed)
+	Workspace    string    `json:"workspace"`
+	CreatedAt    time.Time `json:"created_at"`
+	LastActiveAt time.Time `json:"last_active_at"`
+	ExpiresAt    time.Time `json:"expires_at,omitzero"`
 }
 
 // GET /v1/beds
@@ -39,7 +40,7 @@ func (s *Server) bedList(c *gin.Context) {
 	beds := s.mgr.List()
 	out := make([]bedView, 0, len(beds))
 	for _, b := range beds {
-		out = append(out, bedView{ID: b.ID, State: b.State(), Workspace: b.Workspace, CreatedAt: b.CreatedAt, LastUsed: b.LastUsed()})
+		out = append(out, bedView{ID: b.ID, State: b.State(), Workspace: b.Workspace, CreatedAt: b.CreatedAt, LastActiveAt: b.LastActiveAt(), ExpiresAt: b.ExpiresAt()})
 	}
 	c.JSON(http.StatusOK, gin.H{"beds": out})
 }
@@ -61,7 +62,7 @@ func (s *Server) bedCreate(c *gin.Context) {
 		respondBedError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, bedView{ID: b.ID, State: b.State(), Workspace: b.Workspace, CreatedAt: b.CreatedAt, LastUsed: b.LastUsed()})
+	c.JSON(http.StatusOK, bedView{ID: b.ID, State: b.State(), Workspace: b.Workspace, CreatedAt: b.CreatedAt, LastActiveAt: b.LastActiveAt(), ExpiresAt: b.ExpiresAt()})
 }
 
 // GET /v1/beds/:bedId
@@ -71,7 +72,7 @@ func (s *Server) bedGet(c *gin.Context) {
 		respondError(c, http.StatusNotFound, ErrBedInvalid, "bed not found")
 		return
 	}
-	c.JSON(http.StatusOK, bedView{ID: b.ID, State: b.State(), Workspace: b.Workspace, CreatedAt: b.CreatedAt, LastUsed: b.LastUsed()})
+	c.JSON(http.StatusOK, bedView{ID: b.ID, State: b.State(), Workspace: b.Workspace, CreatedAt: b.CreatedAt, LastActiveAt: b.LastActiveAt(), ExpiresAt: b.ExpiresAt()})
 }
 
 // DELETE /v1/beds/:bedId — evict by default (persist, release compute, keep

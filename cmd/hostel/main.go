@@ -119,6 +119,7 @@ func main() {
 		log.Printf("hostel: per-bed resource accounting unavailable (backend=%s reason=%s)",
 			resourceReport.Backend, resourceReport.Reason)
 	}
+	mgr.SetBedIdleTTL(cfg.BedIdleTTL)
 	mgr.SetLuggageLimits(cfg.LuggageHighBytes, cfg.LuggageLowBytes)
 	// Per-bed browser endpoint injection (PLAYWRIGHT_MCP_CDP_ENDPOINT): beds
 	// reach hostel over loopback (shared pod net ns). Minting is lazy-safe, so
@@ -144,16 +145,16 @@ func main() {
 	defer stop()
 
 	// Idle bed reaper.
-	if cfg.BedIdleTimeout > 0 {
+	if cfg.BedIdleTTL > 0 {
 		go func() {
-			t := time.NewTicker(cfg.BedIdleTimeout / 2)
+			t := time.NewTicker(cfg.BedIdleTTL / 2)
 			defer t.Stop()
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case <-t.C:
-					if reaped := mgr.CollectIdle(cfg.BedIdleTimeout); len(reaped) > 0 {
+					if reaped := mgr.CollectExpired(time.Now()); len(reaped) > 0 {
 						log.Printf("hostel: reaped idle beds: %v", reaped)
 					}
 				}

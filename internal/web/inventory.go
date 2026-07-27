@@ -16,6 +16,7 @@ package web
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,22 +29,38 @@ import (
 // here": no snapshot exists elsewhere to migrate from.
 func (s *Server) inventory(c *gin.Context) {
 	beds := s.mgr.Inventory()
-	active := 0
+	hasBeds := false
+	activeBeds := 0
 	var luggageBytes int64
+	var expiresAt time.Time
+	expiryKnown := true
 	for _, b := range beds {
 		if b.State == "luggage" {
 			luggageBytes += b.Bytes
 		} else {
-			active++
+			hasBeds = true
+			if b.RunningExecs > 0 {
+				activeBeds++
+			}
+			if b.ExpiresAt.IsZero() {
+				expiryKnown = false
+			} else if b.ExpiresAt.After(expiresAt) {
+				expiresAt = b.ExpiresAt
+			}
 		}
 	}
 	high, low := s.mgr.LuggageLimits()
+	var instanceExpiresAt any
+	if hasBeds && expiryKnown {
+		instanceExpiresAt = expiresAt
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"instance": gin.H{
 			"store":              s.mgr.StoreName(),
 			"isolation":          s.mgr.Isolator().Level().String(),
 			"max_beds":           s.mgr.MaxBeds(),
-			"active_beds":        active,
+			"active_beds":        activeBeds,
+			"expires_at":         instanceExpiresAt,
 			"luggage_bytes":      luggageBytes,
 			"luggage_high_bytes": high,
 			"luggage_low_bytes":  low,

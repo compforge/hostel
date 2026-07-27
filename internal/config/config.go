@@ -44,8 +44,9 @@ type Config struct {
 	// DefaultBed is the bed id used when a request omits one — lets simple
 	// single-tenant callers ignore the bed concept entirely.
 	DefaultBed string
-	// BedIdleTimeout reaps a bed whose shell has been idle this long (0 = never).
-	BedIdleTimeout time.Duration
+	// BedIdleTTL is the retention added after a bed's latest accepted operation.
+	// Zero disables automatic expiry.
+	BedIdleTTL time.Duration
 	// MaxBeds caps how many beds may exist at once (0 = unlimited). Applies to
 	// NEW bed creation only, never to the default bed; the 429 it produces is
 	// the backpressure/placement signal for an upstream scheduler.
@@ -117,7 +118,7 @@ func Load(args []string) *Config {
 	fs.IntVar(&c.ChromiumDebugPort, "chromium-debug-port", osx.EnvInt("HOSTEL_CHROMIUM_DEBUG_PORT", 9222), "fixed remote-debugging-port for a launched Chromium so the per-bed CDP proxy has a stable upstream, 0=disable proxy")
 	// Ignore parse errors for unknown flags in tests; flag prints usage itself.
 	_ = fs.Parse(args)
-	c.BedIdleTimeout = *idle
+	c.BedIdleTTL = *idle
 	c.PersistInterval = *persist
 	c.ChromiumIdleStop = *idleStop
 	// Low defaults to 80% of high so a bare --luggage-high-bytes works; a low

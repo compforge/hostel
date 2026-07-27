@@ -75,12 +75,14 @@ type Bed struct {
 	// MountPoint()+Rel+Join by hand (that's how the exec-cwd ENOENT happened).
 	paths fsops.Paths
 
-	mu          sync.Mutex
-	lastUsed    time.Time
-	persistedAt time.Time         // last successful snapshot (zero = never)
-	evicting    bool              // an evict's persist is in flight
-	shells      map[string]*Shell // stateful bash sessions (spec /session)
-	profile     Profile           // cumulative; seeded from meta, flushed at persist
+	mu           sync.Mutex
+	lastActiveAt time.Time
+	expiresAt    time.Time         // latest safe eviction time promised to accepted execs
+	runningExecs int               // foreground/background/session runs still in flight
+	persistedAt  time.Time         // last successful snapshot (zero = never)
+	evicting     bool              // an evict's persist is in flight
+	shells       map[string]*Shell // stateful bash sessions (spec /session)
+	profile      Profile           // cumulative; seeded from meta, flushed at persist
 }
 
 // State reports the lifecycle state for observability: "active" or "evicting".
@@ -97,17 +99,63 @@ func (b *Bed) State() string {
 // Short is ShortID(b.ID) — the log-friendly form of this bed's id.
 func (b *Bed) Short() string { return ShortID(b.ID) }
 
-func (b *Bed) touch() {
+func (b *Bed) touch(idleTTL time.Duration) {
+	now := time.Now()
 	b.mu.Lock()
-	b.lastUsed = time.Now()
+	b.lastActiveAt = now
+	if idleTTL > 0 {
+		expiresAt := now.Add(idleTTL)
+		if expiresAt.After(b.expiresAt) {
+			b.expiresAt = expiresAt
+		}
+	}
 	b.mu.Unlock()
 }
 
-// LastUsed reports the last activity time (for idle GC).
-func (b *Bed) LastUsed() time.Time {
+// LastActiveAt reports the most recent request or command activity.
+func (b *Bed) LastActiveAt() time.Time {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.lastUsed
+	return b.lastActiveAt
+}
+
+// ExpiresAt is the latest safe eviction time promised to accepted work. It is
+// conservative: an exec that finishes early keeps the deadline derived from
+// its full timeout, while RunningExecs lets an upstream scheduler observe that
+// the bed became idle sooner.
+func (b *Bed) ExpiresAt() time.Time {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.expiresAt
+}
+
+// RunningExecs reports foreground, background and session runs still in flight.
+func (b *Bed) RunningExecs() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.runningExecs
+}
+
+func (b *Bed) beginExec(timeout, idleTTL time.Duration) func() {
+	now := time.Now()
+	expiresAt := now.Add(idleTTL)
+	if timeout > 0 {
+		expiresAt = expiresAt.Add(timeout)
+	}
+	b.mu.Lock()
+	b.lastActiveAt = now
+	if idleTTL > 0 && expiresAt.After(b.expiresAt) {
+		b.expiresAt = expiresAt
+	}
+	b.runningExecs++
+	b.mu.Unlock()
+
+	return func() {
+		b.mu.Lock()
+		b.runningExecs--
+		b.lastActiveAt = time.Now()
+		b.mu.Unlock()
+	}
 }
 
 // Paths converts between this bed's path spaces (client / host / in-bed).
@@ -142,6 +190,9 @@ type Manager struct {
 	resources  resource.Tracker  // per-bed cgroup accounting; noop when unavailable
 	maxBeds    int               // cap on concurrent beds; 0 = unlimited
 	store      store.Store       // workspace persistence (Noop when disabled)
+	// bedIdleTTL is set once at startup. Accepted execs extend their bed through
+	// timeout+idleTTL so the idle reaper cannot kill a command mid-flight.
+	bedIdleTTL time.Duration
 	// luggage disk watermarks (bytes; high 0 = GC off). Set once at startup
 	// via SetLuggageLimits — not synchronized.
 	luggageHigh int64
@@ -224,6 +275,16 @@ func (m *Manager) StoreName() string { return m.store.Name() }
 // DefaultBedID reports the id used when a request omits a bed.
 func (m *Manager) DefaultBedID() string { return m.defaultBed }
 
+// SetBedIdleTTL configures the idle retention used for new beds and exec
+// deadlines. It is startup configuration and must be called before serving.
+func (m *Manager) SetBedIdleTTL(ttl time.Duration) { m.bedIdleTTL = ttl }
+
+// BeginExec reserves a bed through timeout plus its configured idle TTL.
+// Call the returned function exactly once when the execution finishes.
+func (m *Manager) BeginExec(b *Bed, timeout time.Duration) func() {
+	return b.beginExec(timeout, m.bedIdleTTL)
+}
+
 // Resolve returns the bed for id, creating it on first use. An empty id maps to
 // the default bed — so callers that don't know about beds still get one.
 func (m *Manager) Resolve(id string) (*Bed, error) {
@@ -236,7 +297,7 @@ func (m *Manager) Resolve(id string) (*Bed, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if b, ok := m.beds[id]; ok {
-		b.touch()
+		b.touch(m.bedIdleTTL)
 		return b, nil
 	}
 	// Cap NEW beds only; the default bed is the single-tenant fallback and
@@ -320,7 +381,11 @@ func (m *Manager) Resolve(id string) (*Bed, error) {
 	if restored {
 		profile.LastRestoreMs = restoreMs
 	}
-	b := &Bed{ID: id, Dir: bedDir, Home: dataDir, Workspace: wsDir, CreatedAt: meta.CreatedAt, lastUsed: now, persistedAt: persistedAt, profile: profile, shells: make(map[string]*Shell),
+	expiresAt := time.Time{}
+	if m.bedIdleTTL > 0 {
+		expiresAt = now.Add(m.bedIdleTTL)
+	}
+	b := &Bed{ID: id, Dir: bedDir, Home: dataDir, Workspace: wsDir, CreatedAt: meta.CreatedAt, lastActiveAt: now, expiresAt: expiresAt, persistedAt: persistedAt, profile: profile, shells: make(map[string]*Shell),
 		paths: fsops.NewPaths(dataDir, m.iso.MountPoint())}
 	m.beds[id] = b
 	// The one place the full id is logged: everything downstream logs Short(),
@@ -361,6 +426,16 @@ func (m *Manager) List() []*Bed {
 // removing runtime state after a mid-persist write would silently drop that
 // write. A persist failure aborts the evict (never destroy the only copy).
 func (m *Manager) Evict(id string) (bool, error) {
+	return m.evict(id, nil)
+}
+
+// evictExpired is the idle-GC path. Unlike explicit Evict, it atomically
+// re-checks the bed's deadline and running exec count before entering EVICTING.
+func (m *Manager) evictExpired(id string, now time.Time) (bool, error) {
+	return m.evict(id, &now)
+}
+
+func (m *Manager) evict(id string, expiryCutoff *time.Time) (bool, error) {
 	if id == "" {
 		id = m.defaultBed
 	}
@@ -377,8 +452,12 @@ func (m *Manager) Evict(id string) (bool, error) {
 		b.mu.Unlock()
 		return false, nil // another evict is already in flight
 	}
+	if expiryCutoff != nil && (b.expiresAt.IsZero() || b.expiresAt.After(*expiryCutoff) || b.runningExecs > 0) {
+		b.mu.Unlock()
+		return false, nil
+	}
 	b.evicting = true
-	watermark := b.lastUsed
+	watermark := b.lastActiveAt
 	b.mu.Unlock()
 
 	if err := m.persistBed(context.Background(), b); err != nil {
@@ -392,7 +471,7 @@ func (m *Manager) Evict(id string) (bool, error) {
 	// The snapshot we just took is still valid (it's simply not the final
 	// word), so nothing is wasted.
 	b.mu.Lock()
-	if b.lastUsed.After(watermark) {
+	if b.lastActiveAt.After(watermark) {
 		b.evicting = false
 		b.mu.Unlock()
 		return false, nil
@@ -407,7 +486,7 @@ func (m *Manager) Evict(id string) (bool, error) {
 	// copies by recency with no in-memory state. Best-effort — a missing
 	// stamp only weakens GC ordering, never correctness.
 	if meta, ok := loadMeta(b.Dir); ok {
-		meta.LastUsedAt = watermark
+		meta.LastActiveAt = watermark
 		_ = saveMeta(b.Dir, meta)
 	}
 	b.mu.Lock()
@@ -521,7 +600,7 @@ func (m *Manager) PersistDirty(ctx context.Context) []string {
 	var done []string
 	for _, b := range m.List() {
 		b.mu.Lock()
-		dirty := b.lastUsed.After(b.persistedAt)
+		dirty := b.lastActiveAt.After(b.persistedAt)
 		b.mu.Unlock()
 		if !dirty {
 			continue
@@ -534,27 +613,26 @@ func (m *Manager) PersistDirty(ctx context.Context) []string {
 	return done
 }
 
-// CollectIdle reaps beds idle longer than timeout (0 disables). Returns reaped
-// ids. The default bed is never reaped.
-func (m *Manager) CollectIdle(timeout time.Duration) []string {
-	if timeout <= 0 {
-		return nil
-	}
-	now := time.Now()
+// CollectExpired reaps beds whose promised expiry has elapsed. The final
+// expiry/running-exec check happens again under the bed lock in evictExpired,
+// closing the scan→evict race with a concurrent command.
+// The default bed is never reaped.
+func (m *Manager) CollectExpired(now time.Time) []string {
 	var stale []string
 	m.mu.Lock()
 	for id, b := range m.beds {
 		if id == m.defaultBed {
 			continue
 		}
-		if now.Sub(b.LastUsed()) > timeout {
+		expiresAt := b.ExpiresAt()
+		if !expiresAt.IsZero() && !expiresAt.After(now) {
 			stale = append(stale, id)
 		}
 	}
 	m.mu.Unlock()
 	var reaped []string
 	for _, id := range stale {
-		if ok, _ := m.Evict(id); ok {
+		if ok, _ := m.evictExpired(id, now); ok {
 			reaped = append(reaped, id)
 		}
 	}
@@ -567,7 +645,7 @@ func (m *Manager) CollectIdle(timeout time.Duration) []string {
 // cwdInBed, when non-empty, is the starting directory (already resolved+confined
 // by the caller via fsops).
 func (m *Manager) CreateShell(b *Bed, cwdInBed string) (string, error) {
-	b.touch()
+	b.touch(m.bedIdleTTL)
 	sh, err := startShell(m.spawner, b.ID, m.shellPath, m.bedEnv(b.ID), m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, cwdInBed)
 	if err != nil {
 		return "", err
@@ -589,7 +667,7 @@ const foregroundShellID = "session-foreground"
 // ForegroundShell returns the bed's implicit foreground shell, starting it
 // once and reusing it (restarting if it died).
 func (m *Manager) ForegroundShell(b *Bed) (*Shell, error) {
-	b.touch()
+	b.touch(m.bedIdleTTL)
 	b.mu.Lock()
 	if sh, ok := b.shells[foregroundShellID]; ok && !sh.Dead() {
 		b.mu.Unlock()
@@ -641,7 +719,7 @@ func (b *Bed) DeleteShell(id string) bool {
 // buildCommand constructs an isolated `bash -c <command>` for the bed. envs are
 // appended to the daemon environment; cwd (host path) overrides the workspace.
 func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string]string) (*exec.Cmd, error) {
-	b.touch()
+	b.touch(m.bedIdleTTL)
 	// Apply cwd with a `cd` INSIDE the command (same mechanism the session shell
 	// uses), NOT via cmd.Dir. Under suite cwdInBed is a sandbox-internal path
 	// (/workspace/…) that doesn't exist on the carrier host, so setting it as
@@ -730,13 +808,16 @@ func (m *Manager) startOneShot(b *Bed, command, cwdInBed string, envs map[string
 
 // StartCommand launches a one-shot command in the bed and registers it.
 func (m *Manager) StartCommand(b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(string)) (*Command, error) {
+	finishExec := m.BeginExec(b, timeout)
 	proc, out, err := m.startOneShot(b, command, cwdInBed, envs)
 	if err != nil {
+		finishExec()
 		return nil, err
 	}
 	c := m.commands.track(b.ID, proc, out, timeout, onLine)
 	go func() { // profile the run once it is reaped (background = async)
 		c.Wait()
+		finishExec()
 		st := c.Status()
 		if st.FinishedAt != nil {
 			b.RecordCommand(st.FinishedAt.Sub(st.StartedAt))
@@ -758,6 +839,8 @@ func (m *Manager) StartCommand(b *Bed, command, cwdInBed string, envs map[string
 // down ("shell: session exited during run"); the persistent shell now serves
 // only the explicit /session endpoint.
 func (m *Manager) RunForeground(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(string)) (int, error) {
+	finishExec := m.BeginExec(b, timeout)
+	defer finishExec()
 	proc, out, err := m.startOneShot(b, command, cwdInBed, envs)
 	if err != nil {
 		return -1, err
@@ -818,6 +901,8 @@ type OutputLine struct {
 // on either stream. The callback may be invoked concurrently for the two
 // streams and must return promptly.
 func (m *Manager) RunForegroundTyped(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(OutputLine)) (int, error) {
+	finishExec := m.BeginExec(b, timeout)
+	defer finishExec()
 	cmd, err := m.buildCommand(b, command, cwdInBed, envs)
 	if err != nil {
 		return -1, err
