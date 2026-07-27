@@ -65,7 +65,7 @@ type bedMeta struct {
 	// LastActiveAt is stamped at evict time so luggage GC can order cold local
 	// copies by recency without any in-memory state.
 	LastActiveAt time.Time `json:"last_active_at,omitzero"`
-	// Profile accumulates in memory while the bed is ACTIVE and is flushed
+	// Profile accumulates in memory while the bed is resident and is flushed
 	// here at persist time — the snapshot carries the counters, so they
 	// survive evict/resume and migration.
 	Profile Profile `json:"profile,omitzero"`

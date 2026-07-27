@@ -37,6 +37,10 @@ func respondBedError(c *gin.Context, err error) {
 		respondError(c, http.StatusTooManyRequests, ErrBedLimitExceeded, err.Error())
 		return
 	}
+	if errors.Is(err, bed.ErrBedUnavailable) {
+		respondError(c, http.StatusConflict, ErrBedBusy, err.Error())
+		return
+	}
 	respondError(c, http.StatusBadRequest, ErrBedInvalid, err.Error())
 }
 
@@ -150,13 +154,19 @@ func (s *Server) bedOf(c *gin.Context) *bed.Bed {
 	return b
 }
 
-// opsOf returns filesystem ops rooted at the request's bed (or nil after error).
-func (s *Server) opsOf(c *gin.Context) (*bed.Bed, *fsops.Ops) {
+// opsOf returns filesystem ops rooted at the request's bed and holds one
+// operation reference until finish is called.
+func (s *Server) opsOf(c *gin.Context) (*bed.Bed, *fsops.Ops, func()) {
 	b := s.bedOf(c)
 	if b == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return b, fsops.New(b.Home)
+	finish, err := s.mgr.BeginOperation(b, 0)
+	if err != nil {
+		respondBedError(c, err)
+		return nil, nil, nil
+	}
+	return b, fsops.New(b.Home), finish
 }
 
 func (s *Server) healthz(c *gin.Context) {

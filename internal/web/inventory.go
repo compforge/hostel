@@ -19,10 +19,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/qiankunli/hostel/internal/bed"
 )
 
 // GET /v1/inventory — the scheduler-facing snapshot: capacity plus every bed
-// this instance holds (active/evicting in memory, luggage on disk) with its
+// this instance holds (active/idle/evicting in memory, luggage on disk) with its
 // last persisted generation. Everything here is a stale-tolerant hint —
 // freshness is re-enforced at activation, so routing on outdated inventory
 // is slow, never wrong. Callers must treat store "noop" as "beds are pinned
@@ -30,18 +32,21 @@ import (
 func (s *Server) inventory(c *gin.Context) {
 	beds := s.mgr.Inventory()
 	hasBeds := false
-	activeBeds := 0
+	counts := map[string]int{
+		string(bed.StateActive):   0,
+		string(bed.StateIdle):     0,
+		string(bed.StateEvicting): 0,
+		string(bed.StateLuggage):  0,
+	}
 	var luggageBytes int64
 	var expiresAt time.Time
 	expiryKnown := true
 	for _, b := range beds {
-		if b.State == "luggage" {
+		counts[string(b.State)]++
+		if b.State == bed.StateLuggage {
 			luggageBytes += b.Bytes
 		} else {
 			hasBeds = true
-			if b.RunningExecs > 0 {
-				activeBeds++
-			}
 			if b.ExpiresAt.IsZero() {
 				expiryKnown = false
 			} else if b.ExpiresAt.After(expiresAt) {
@@ -59,7 +64,7 @@ func (s *Server) inventory(c *gin.Context) {
 			"store":              s.mgr.StoreName(),
 			"isolation":          s.mgr.Isolator().Level().String(),
 			"max_beds":           s.mgr.MaxBeds(),
-			"active_beds":        activeBeds,
+			"bed_counts":         counts,
 			"expires_at":         instanceExpiresAt,
 			"luggage_bytes":      luggageBytes,
 			"luggage_high_bytes": high,

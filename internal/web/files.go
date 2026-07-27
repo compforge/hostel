@@ -27,10 +27,11 @@ import (
 
 // GET /files/info?path=...(&path=...) → map[path]FileInfo
 func (s *Server) filesInfo(c *gin.Context) {
-	_, ops := s.opsOf(c)
+	_, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	paths := c.QueryArray("path")
 	if len(paths) == 0 {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing query parameter 'path'")
@@ -54,10 +55,11 @@ func (s *Server) filesInfo(c *gin.Context) {
 
 // DELETE /files?path=...(&path=...)
 func (s *Server) filesDelete(c *gin.Context) {
-	_, ops := s.opsOf(c)
+	_, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	paths := c.QueryArray("path")
 	if len(paths) == 0 {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing query parameter 'path'")
@@ -72,10 +74,11 @@ func (s *Server) filesDelete(c *gin.Context) {
 
 // POST /files/mv  body: [{src,dest}, ...]
 func (s *Server) filesRename(c *gin.Context) {
-	_, ops := s.opsOf(c)
+	_, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	var items []fsops.RenameItem
 	if err := c.ShouldBindJSON(&items); err != nil {
 		badRequest(c, err.Error())
@@ -92,10 +95,11 @@ func (s *Server) filesRename(c *gin.Context) {
 
 // POST /files/permissions  body: {path: {owner,group,mode}, ...}
 func (s *Server) filesChmod(c *gin.Context) {
-	_, ops := s.opsOf(c)
+	_, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	var m map[string]fsops.Permission
 	if err := c.ShouldBindJSON(&m); err != nil {
 		badRequest(c, err.Error())
@@ -112,10 +116,11 @@ func (s *Server) filesChmod(c *gin.Context) {
 
 // GET /files/search?path=...&pattern=... → []FileInfo
 func (s *Server) filesSearch(c *gin.Context) {
-	_, ops := s.opsOf(c)
+	_, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	p := c.Query("path")
 	if p == "" {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing query parameter 'path'")
@@ -131,10 +136,11 @@ func (s *Server) filesSearch(c *gin.Context) {
 
 // POST /files/replace  body: {path: {old,new}, ...} → map[path]ReplaceResult
 func (s *Server) filesReplace(c *gin.Context) {
-	_, ops := s.opsOf(c)
+	_, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	var m map[string]fsops.ReplaceItem
 	if err := c.ShouldBindJSON(&m); err != nil {
 		badRequest(c, err.Error())
@@ -154,10 +160,11 @@ func (s *Server) filesReplace(c *gin.Context) {
 
 // POST /files/upload  multipart: metadata (JSON {path,...}) + file (binary)
 func (s *Server) filesUpload(c *gin.Context) {
-	_, ops := s.opsOf(c)
+	_, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	// Accept either the execd shape (metadata JSON part with a "path") or a
 	// simpler ?path= query, whichever is present.
 	path := c.Query("path")
@@ -199,10 +206,11 @@ func (s *Server) filesUpload(c *gin.Context) {
 
 // GET /files/download?path=...&offset=&limit= → file bytes (or line slice)
 func (s *Server) filesDownload(c *gin.Context) {
-	_, ops := s.opsOf(c)
+	_, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	p := c.Query("path")
 	if p == "" {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing query parameter 'path'")
@@ -245,10 +253,11 @@ func downloadErr(c *gin.Context, err error) {
 
 // GET /directories/list?path=...&depth= → []FileInfo
 func (s *Server) dirList(c *gin.Context) {
-	_, ops := s.opsOf(c)
+	_, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	p := c.Query("path")
 	if p == "" {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing query parameter 'path'")
@@ -274,10 +283,11 @@ func (s *Server) dirList(c *gin.Context) {
 
 // POST /directories?path=...  (path also accepted in a JSON body {path})
 func (s *Server) dirCreate(c *gin.Context) {
-	_, ops := s.opsOf(c)
+	_, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	p := dirPathParam(c)
 	if p == "" {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing 'path'")
@@ -292,10 +302,11 @@ func (s *Server) dirCreate(c *gin.Context) {
 
 // DELETE /directories?path=...
 func (s *Server) dirDelete(c *gin.Context) {
-	_, ops := s.opsOf(c)
+	_, ops, finishOperation := s.opsOf(c)
 	if ops == nil {
 		return
 	}
+	defer finishOperation()
 	p := dirPathParam(c)
 	if p == "" {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing 'path'")

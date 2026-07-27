@@ -76,25 +76,65 @@ type Bed struct {
 	paths fsops.Paths
 
 	mu           sync.Mutex
+	persistMu    sync.Mutex // serializes generation bumps and snapshot uploads
 	lastActiveAt time.Time
-	expiresAt    time.Time         // latest safe eviction time promised to accepted execs
-	runningExecs int               // foreground/background/session runs still in flight
+	expiresAt    time.Time         // latest safe eviction time promised to accepted operations
+	activeOps    int               // bed-scoped operations still in flight
+	activitySeq  uint64            // changes whenever activity starts or finishes
+	generation   int64             // latest local data generation
 	persistedAt  time.Time         // last successful snapshot (zero = never)
 	evicting     bool              // an evict's persist is in flight
 	shells       map[string]*Shell // stateful bash sessions (spec /session)
 	profile      Profile           // cumulative; seeded from meta, flushed at persist
 }
 
-// State reports the lifecycle state for observability: "active" or "evicting".
-// DORMANT beds aren't in memory at all (their state is the snapshot itself).
-func (b *Bed) State() string {
+// State is the mutually-exclusive operational state reported to the scheduler.
+// Data freshness (Generation) and retention (ExpiresAt) are separate dimensions.
+type State string
+
+const (
+	StateActive   State = "active"
+	StateIdle     State = "idle"
+	StateEvicting State = "evicting"
+	StateLuggage  State = "luggage"
+)
+
+// Snapshot is one atomic view of a resident bed's scheduler-facing facts.
+type Snapshot struct {
+	State            State
+	Generation       int64
+	LastActiveAt     time.Time
+	ExpiresAt        time.Time
+	ActiveOperations int
+	Profile          Profile
+}
+
+func (b *Bed) stateLocked() State {
+	if b.activeOps > 0 {
+		return StateActive
+	}
+	if b.evicting {
+		return StateEvicting
+	}
+	return StateIdle
+}
+
+// Snapshot reports lifecycle, version and deadline from one lock acquisition.
+func (b *Bed) Snapshot() Snapshot {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.evicting {
-		return "evicting"
+	return Snapshot{
+		State:            b.stateLocked(),
+		Generation:       b.generation,
+		LastActiveAt:     b.lastActiveAt,
+		ExpiresAt:        b.expiresAt,
+		ActiveOperations: b.activeOps,
+		Profile:          b.profile,
 	}
-	return "active"
 }
+
+// State reports the current operational state.
+func (b *Bed) State() State { return b.Snapshot().State }
 
 // Short is ShortID(b.ID) — the log-friendly form of this bed's id.
 func (b *Bed) Short() string { return ShortID(b.ID) }
@@ -103,6 +143,7 @@ func (b *Bed) touch(idleTTL time.Duration) {
 	now := time.Now()
 	b.mu.Lock()
 	b.lastActiveAt = now
+	b.activitySeq++
 	if idleTTL > 0 {
 		expiresAt := now.Add(idleTTL)
 		if expiresAt.After(b.expiresAt) {
@@ -119,43 +160,18 @@ func (b *Bed) LastActiveAt() time.Time {
 	return b.lastActiveAt
 }
 
-// ExpiresAt is the latest safe eviction time promised to accepted work. It is
-// conservative: an exec that finishes early keeps the deadline derived from
-// its full timeout, while RunningExecs lets an upstream scheduler observe that
-// the bed became idle sooner.
+// ExpiresAt is the latest safe eviction time promised to accepted work.
 func (b *Bed) ExpiresAt() time.Time {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.expiresAt
 }
 
-// RunningExecs reports foreground, background and session runs still in flight.
-func (b *Bed) RunningExecs() int {
+// ActiveOperations reports bed-scoped operations still in flight.
+func (b *Bed) ActiveOperations() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.runningExecs
-}
-
-func (b *Bed) beginExec(timeout, idleTTL time.Duration) func() {
-	now := time.Now()
-	expiresAt := now.Add(idleTTL)
-	if timeout > 0 {
-		expiresAt = expiresAt.Add(timeout)
-	}
-	b.mu.Lock()
-	b.lastActiveAt = now
-	if idleTTL > 0 && expiresAt.After(b.expiresAt) {
-		b.expiresAt = expiresAt
-	}
-	b.runningExecs++
-	b.mu.Unlock()
-
-	return func() {
-		b.mu.Lock()
-		b.runningExecs--
-		b.lastActiveAt = time.Now()
-		b.mu.Unlock()
-	}
+	return b.activeOps
 }
 
 // Paths converts between this bed's path spaces (client / host / in-bed).
@@ -190,8 +206,8 @@ type Manager struct {
 	resources  resource.Tracker  // per-bed cgroup accounting; noop when unavailable
 	maxBeds    int               // cap on concurrent beds; 0 = unlimited
 	store      store.Store       // workspace persistence (Noop when disabled)
-	// bedIdleTTL is set once at startup. Accepted execs extend their bed through
-	// timeout+idleTTL so the idle reaper cannot kill a command mid-flight.
+	// bedIdleTTL is set once at startup. Accepted operations extend their bed
+	// through timeout+idleTTL so the idle reaper cannot kill in-flight work.
 	bedIdleTTL time.Duration
 	// luggage disk watermarks (bytes; high 0 = GC off). Set once at startup
 	// via SetLuggageLimits — not synchronized.
@@ -210,6 +226,10 @@ type Manager struct {
 // cap. Callers should surface it as backpressure (HTTP 429): the upstream
 // scheduler is expected to place the sandbox on another instance.
 var ErrBedLimit = errors.New("bed: max bed count reached")
+
+// ErrBedUnavailable means the caller holds a stale Bed pointer whose resident
+// entry has already been removed.
+var ErrBedUnavailable = errors.New("bed: no longer resident")
 
 // NewManager creates the bed manager and ensures the workspace root exists.
 // amenities and st may be nil; maxBeds 0 = unlimited.
@@ -275,14 +295,56 @@ func (m *Manager) StoreName() string { return m.store.Name() }
 // DefaultBedID reports the id used when a request omits a bed.
 func (m *Manager) DefaultBedID() string { return m.defaultBed }
 
-// SetBedIdleTTL configures the idle retention used for new beds and exec
+// SetBedIdleTTL configures the idle retention used for new beds and operation
 // deadlines. It is startup configuration and must be called before serving.
 func (m *Manager) SetBedIdleTTL(ttl time.Duration) { m.bedIdleTTL = ttl }
 
-// BeginExec reserves a bed through timeout plus its configured idle TTL.
-// Call the returned function exactly once when the execution finishes.
-func (m *Manager) BeginExec(b *Bed, timeout time.Duration) func() {
-	return b.beginExec(timeout, m.bedIdleTTL)
+// BeginOperation marks a bed active and reserves it through timeout plus the
+// configured idle TTL. Admission and final eviction both take m.mu then b.mu,
+// so an operation cannot start on a Bed after its resident entry is removed.
+// Call the returned function exactly once.
+func (m *Manager) BeginOperation(b *Bed, timeout time.Duration) (func(), error) {
+	now := time.Now()
+	expiresAt := now.Add(m.bedIdleTTL)
+	if timeout > 0 {
+		expiresAt = expiresAt.Add(timeout)
+	}
+
+	m.mu.Lock()
+	b.mu.Lock()
+	if current, ok := m.beds[b.ID]; !ok || current != b {
+		b.mu.Unlock()
+		m.mu.Unlock()
+		return nil, ErrBedUnavailable
+	}
+	b.lastActiveAt = now
+	b.activitySeq++
+	b.activeOps++
+	if m.bedIdleTTL > 0 && expiresAt.After(b.expiresAt) {
+		b.expiresAt = expiresAt
+	}
+	b.mu.Unlock()
+	m.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			now := time.Now()
+			b.mu.Lock()
+			if b.activeOps > 0 {
+				b.activeOps--
+			}
+			b.lastActiveAt = now
+			b.activitySeq++
+			if m.bedIdleTTL > 0 {
+				expiresAt := now.Add(m.bedIdleTTL)
+				if expiresAt.After(b.expiresAt) {
+					b.expiresAt = expiresAt
+				}
+			}
+			b.mu.Unlock()
+		})
+	}, nil
 }
 
 // Resolve returns the bed for id, creating it on first use. An empty id maps to
@@ -385,12 +447,12 @@ func (m *Manager) Resolve(id string) (*Bed, error) {
 	if m.bedIdleTTL > 0 {
 		expiresAt = now.Add(m.bedIdleTTL)
 	}
-	b := &Bed{ID: id, Dir: bedDir, Home: dataDir, Workspace: wsDir, CreatedAt: meta.CreatedAt, lastActiveAt: now, expiresAt: expiresAt, persistedAt: persistedAt, profile: profile, shells: make(map[string]*Shell),
+	b := &Bed{ID: id, Dir: bedDir, Home: dataDir, Workspace: wsDir, CreatedAt: meta.CreatedAt, lastActiveAt: now, expiresAt: expiresAt, generation: meta.Generation, persistedAt: persistedAt, profile: profile, shells: make(map[string]*Shell),
 		paths: fsops.NewPaths(dataDir, m.iso.MountPoint())}
 	m.beds[id] = b
 	// The one place the full id is logged: everything downstream logs Short(),
 	// so this line is the grep anchor from a control-plane sandbox id.
-	log.Printf("hostel bed active: bed=%s short=%s restored=%v", id, b.Short(), restored)
+	log.Printf("hostel bed resident: bed=%s short=%s restored=%v", id, b.Short(), restored)
 	return b, nil
 }
 
@@ -416,8 +478,8 @@ func (m *Manager) List() []*Bed {
 	return out
 }
 
-// Evict releases a bed's compute while keeping its identity (ACTIVE →
-// EVICTING → DORMANT, docs/persistence.md §4): persist, then tear down and
+// Evict releases a bed's compute while keeping its identity (IDLE →
+// EVICTING → LUGGAGE, docs/persistence.md §4): persist, then tear down and
 // free the max-beds slot. The local dir stays behind as luggage — a warm
 // cache of the DORMANT bed, so a same-instance resume skips the snapshot
 // download; luggage GC reclaims disk separately. Returns evicted=false
@@ -443,7 +505,7 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (bool, error) {
 	b, ok := m.beds[id]
 	m.mu.Unlock()
 	if !ok {
-		return false, nil // not ACTIVE; nothing to evict
+		return false, nil // not resident; nothing to evict
 	}
 
 	// Enter EVICTING: remember the activity watermark we snapshot against.
@@ -452,11 +514,12 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (bool, error) {
 		b.mu.Unlock()
 		return false, nil // another evict is already in flight
 	}
-	if expiryCutoff != nil && (b.expiresAt.IsZero() || b.expiresAt.After(*expiryCutoff) || b.runningExecs > 0) {
+	if b.activeOps > 0 || (expiryCutoff != nil && (b.expiresAt.IsZero() || b.expiresAt.After(*expiryCutoff))) {
 		b.mu.Unlock()
 		return false, nil
 	}
 	b.evicting = true
+	activitySeq := b.activitySeq
 	watermark := b.lastActiveAt
 	b.mu.Unlock()
 
@@ -470,16 +533,20 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (bool, error) {
 	// Atomic re-check: activity during the persist window cancels the evict.
 	// The snapshot we just took is still valid (it's simply not the final
 	// word), so nothing is wasted.
+	// Commit removal under the same lock order as BeginOperation. Either the
+	// operation is admitted first and changes activitySeq/activeOps, or this
+	// delete wins and later admission observes a stale Bed pointer.
+	m.mu.Lock()
 	b.mu.Lock()
-	if b.lastActiveAt.After(watermark) {
+	current, present := m.beds[id]
+	if !present || current != b || b.activitySeq != activitySeq || b.activeOps > 0 {
 		b.evicting = false
 		b.mu.Unlock()
+		m.mu.Unlock()
 		return false, nil
 	}
-	b.mu.Unlock()
-
-	m.mu.Lock()
 	delete(m.beds, id)
+	b.mu.Unlock()
 	m.mu.Unlock()
 	m.teardown(b)
 	// Stamp the luggage with its last activity so luggage GC can order cold
@@ -555,6 +622,9 @@ func (m *Manager) teardown(b *Bed) {
 // accurate ("locally dirty"), while a falsely-advanced LastPersistedAt would
 // make restart-time dirty tracking skip data that never reached the store.
 func (m *Manager) persistBed(ctx context.Context, b *Bed) error {
+	b.persistMu.Lock()
+	defer b.persistMu.Unlock()
+
 	meta, ok := loadMeta(b.Dir)
 	if !ok {
 		meta = bedMeta{Version: 1, BedID: b.ID, CreatedAt: b.CreatedAt}
@@ -567,6 +637,9 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed) error {
 	if err := saveMeta(b.Dir, meta); err != nil {
 		return fmt.Errorf("bed: bump generation %s: %w", b.ID, err)
 	}
+	b.mu.Lock()
+	b.generation = meta.Generation
+	b.mu.Unlock()
 	t0 := time.Now()
 	if err := m.store.Persist(ctx, b.ID, b.Dir, meta.Generation); err != nil {
 		return err
@@ -583,13 +656,16 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed) error {
 }
 
 // Checkpoint snapshots a bed's workspace now, without tearing it down.
-// Best-effort consistency: hostel does not quiesce running commands yet —
-// callers should checkpoint at their own idle points (docs/persistence.md §4).
 func (m *Manager) Checkpoint(ctx context.Context, id string) error {
 	b, ok := m.Get(id)
 	if !ok {
 		return fmt.Errorf("bed: unknown bed %q", id)
 	}
+	finish, err := m.BeginOperation(b, 0)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	return m.persistBed(ctx, b)
 }
 
@@ -808,16 +884,19 @@ func (m *Manager) startOneShot(b *Bed, command, cwdInBed string, envs map[string
 
 // StartCommand launches a one-shot command in the bed and registers it.
 func (m *Manager) StartCommand(b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(string)) (*Command, error) {
-	finishExec := m.BeginExec(b, timeout)
+	finishOperation, err := m.BeginOperation(b, timeout)
+	if err != nil {
+		return nil, err
+	}
 	proc, out, err := m.startOneShot(b, command, cwdInBed, envs)
 	if err != nil {
-		finishExec()
+		finishOperation()
 		return nil, err
 	}
 	c := m.commands.track(b.ID, proc, out, timeout, onLine)
 	go func() { // profile the run once it is reaped (background = async)
 		c.Wait()
-		finishExec()
+		finishOperation()
 		st := c.Status()
 		if st.FinishedAt != nil {
 			b.RecordCommand(st.FinishedAt.Sub(st.StartedAt))
@@ -839,8 +918,11 @@ func (m *Manager) StartCommand(b *Bed, command, cwdInBed string, envs map[string
 // down ("shell: session exited during run"); the persistent shell now serves
 // only the explicit /session endpoint.
 func (m *Manager) RunForeground(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(string)) (int, error) {
-	finishExec := m.BeginExec(b, timeout)
-	defer finishExec()
+	finishOperation, err := m.BeginOperation(b, timeout)
+	if err != nil {
+		return -1, err
+	}
+	defer finishOperation()
 	proc, out, err := m.startOneShot(b, command, cwdInBed, envs)
 	if err != nil {
 		return -1, err
@@ -901,8 +983,11 @@ type OutputLine struct {
 // on either stream. The callback may be invoked concurrently for the two
 // streams and must return promptly.
 func (m *Manager) RunForegroundTyped(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(OutputLine)) (int, error) {
-	finishExec := m.BeginExec(b, timeout)
-	defer finishExec()
+	finishOperation, err := m.BeginOperation(b, timeout)
+	if err != nil {
+		return -1, err
+	}
+	defer finishOperation()
 	cmd, err := m.buildCommand(b, command, cwdInBed, envs)
 	if err != nil {
 		return -1, err
