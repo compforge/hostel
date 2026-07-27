@@ -36,7 +36,10 @@ type bedView struct {
 }
 
 func viewOf(b *bed.Bed) bedView {
-	snapshot := b.Snapshot()
+	return viewFromSnapshot(b, b.Snapshot())
+}
+
+func viewFromSnapshot(b *bed.Bed, snapshot bed.Snapshot) bedView {
 	return bedView{
 		ID:           b.ID,
 		State:        snapshot.State,
@@ -45,6 +48,37 @@ func viewOf(b *bed.Bed) bedView {
 		LastActiveAt: snapshot.LastActiveAt,
 		ExpiresAt:    snapshot.ExpiresAt,
 	}
+}
+
+type lifecycleStageView struct {
+	Name       string `json:"name"`
+	Result     string `json:"result"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
+type lifecycleRecordView struct {
+	Action      string               `json:"action"`
+	Result      string               `json:"result"`
+	Source      string               `json:"source,omitempty"`
+	Trigger     string               `json:"trigger,omitempty"`
+	StartedAt   time.Time            `json:"started_at"`
+	FinishedAt  time.Time            `json:"finished_at"`
+	DurationMs  int64                `json:"duration_ms"`
+	Stages      []lifecycleStageView `json:"stages"`
+	FailedStage string               `json:"failed_stage,omitempty"`
+	Error       string               `json:"error,omitempty"`
+}
+
+type lifecycleView struct {
+	LastActivation *lifecycleRecordView `json:"last_activation,omitempty"`
+	LastPersist    *lifecycleRecordView `json:"last_persist,omitempty"`
+}
+
+type bedDetailView struct {
+	bedView
+	Generation       int64          `json:"generation"`
+	ActiveOperations int            `json:"active_operations"`
+	Lifecycle        *lifecycleView `json:"lifecycle,omitempty"`
 }
 
 // GET /v1/beds
@@ -84,7 +118,43 @@ func (s *Server) bedGet(c *gin.Context) {
 		respondError(c, http.StatusNotFound, ErrBedInvalid, "bed not found")
 		return
 	}
-	c.JSON(http.StatusOK, viewOf(b))
+	snapshot := b.Snapshot()
+	lifecycle := b.Lifecycle()
+	c.JSON(http.StatusOK, bedDetailView{
+		bedView:          viewFromSnapshot(b, snapshot),
+		Generation:       snapshot.Generation,
+		ActiveOperations: snapshot.ActiveOperations,
+		Lifecycle: &lifecycleView{
+			LastActivation: lifecycleRecordToView(lifecycle.LastActivation),
+			LastPersist:    lifecycleRecordToView(lifecycle.LastPersist),
+		},
+	})
+}
+
+func lifecycleRecordToView(record *bed.LifecycleRecord) *lifecycleRecordView {
+	if record == nil {
+		return nil
+	}
+	stages := make([]lifecycleStageView, 0, len(record.Stages))
+	for _, stage := range record.Stages {
+		stages = append(stages, lifecycleStageView{
+			Name:       stage.Name,
+			Result:     stage.Result,
+			DurationMs: stage.Duration.Milliseconds(),
+		})
+	}
+	return &lifecycleRecordView{
+		Action:      record.Action,
+		Result:      record.Result,
+		Source:      record.Source,
+		Trigger:     record.Trigger,
+		StartedAt:   record.StartedAt,
+		FinishedAt:  record.FinishedAt,
+		DurationMs:  record.Duration.Milliseconds(),
+		Stages:      stages,
+		FailedStage: record.FailedStage,
+		Error:       record.Error,
+	}
 }
 
 // DELETE /v1/beds/:bedId — evict by default (persist, release compute, keep

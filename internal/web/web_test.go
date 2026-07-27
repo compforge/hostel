@@ -302,6 +302,52 @@ func TestBedsCRUD(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "conv-1") {
 		t.Fatalf("list beds = %d %s", rec.Code, rec.Body.String())
 	}
+	rec = do(t, s, "GET", "/v1/beds/conv-1", nil, nil)
+	var detail struct {
+		Generation       int64 `json:"generation"`
+		ActiveOperations int   `json:"active_operations"`
+		Lifecycle        *struct {
+			LastActivation *struct {
+				Action string `json:"action"`
+				Result string `json:"result"`
+				Source string `json:"source"`
+				Stages []struct {
+					Name string `json:"name"`
+				} `json:"stages"`
+			} `json:"last_activation"`
+			LastPersist *struct {
+				Trigger string `json:"trigger"`
+			} `json:"last_persist"`
+		} `json:"lifecycle"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode bed detail: %v", err)
+	}
+	if detail.Lifecycle == nil || detail.Lifecycle.LastActivation == nil ||
+		detail.Lifecycle.LastActivation.Action != "activate" ||
+		detail.Lifecycle.LastActivation.Result != "success" ||
+		detail.Lifecycle.LastActivation.Source != "fresh" ||
+		len(detail.Lifecycle.LastActivation.Stages) == 0 {
+		t.Fatalf("bed detail activation = %+v", detail.Lifecycle)
+	}
+	if detail.Generation != 0 || detail.ActiveOperations != 0 {
+		t.Fatalf("bed detail current state = generation %d active_operations %d", detail.Generation, detail.ActiveOperations)
+	}
+
+	rec = do(t, s, "POST", "/v1/beds/conv-1/checkpoint", nil, nil)
+	if rec.Code != 200 {
+		t.Fatalf("checkpoint bed = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, s, "GET", "/v1/beds/conv-1", nil, nil)
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode checkpointed bed detail: %v", err)
+	}
+	if detail.Generation != 1 || detail.ActiveOperations != 0 ||
+		detail.Lifecycle == nil || detail.Lifecycle.LastPersist == nil ||
+		detail.Lifecycle.LastPersist.Trigger != "checkpoint" {
+		t.Fatalf("checkpointed bed detail = %+v", detail)
+	}
+
 	rec = do(t, s, "DELETE", "/v1/beds/conv-1", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("delete bed = %d", rec.Code)

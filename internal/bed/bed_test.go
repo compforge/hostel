@@ -15,8 +15,10 @@
 package bed
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,6 +74,69 @@ func TestResolveDefaultBedAndValidation(t *testing.T) {
 	if b2.ID != "conv-123" || b2.Workspace == b.Workspace {
 		t.Fatalf("distinct bed expected, got %+v", b2)
 	}
+}
+
+func TestLifecycleObservations(t *testing.T) {
+	root := t.TempDir()
+	fs := newFakeStore()
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	var logs bytes.Buffer
+	previousWriter := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousWriter) })
+
+	b, err := m.Resolve("observed")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	lifecycle := b.Lifecycle()
+	if lifecycle.LastActivation == nil || lifecycle.LastActivation.Result != "success" || lifecycle.LastActivation.Source != "fresh" {
+		t.Fatalf("LastActivation = %+v", lifecycle.LastActivation)
+	}
+	if got := lifecycleStageNames(lifecycle.LastActivation); got != "stat_snapshot,select_source,prepare_workspace,commit_resident" {
+		t.Fatalf("activation stages = %q", got)
+	}
+
+	if err := m.Checkpoint(context.Background(), b.ID); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	lifecycle = b.Lifecycle()
+	if lifecycle.LastPersist == nil || lifecycle.LastPersist.Result != "success" || lifecycle.LastPersist.Trigger != "checkpoint" {
+		t.Fatalf("LastPersist success = %+v", lifecycle.LastPersist)
+	}
+	if got := lifecycleStageNames(lifecycle.LastPersist); got != "wait_persist_lock,prepare_snapshot,persist_store,commit_watermark" {
+		t.Fatalf("persist stages = %q", got)
+	}
+
+	fs.fail = true
+	if err := m.Checkpoint(context.Background(), b.ID); err == nil {
+		t.Fatal("Checkpoint failure: want error")
+	}
+	lifecycle = b.Lifecycle()
+	if lifecycle.LastPersist == nil || lifecycle.LastPersist.Result != "error" || lifecycle.LastPersist.FailedStage != "persist_store" {
+		t.Fatalf("LastPersist failure = %+v", lifecycle.LastPersist)
+	}
+	fs.fail = false
+	if ok, err := m.Evict(b.ID); err != nil || !ok {
+		t.Fatalf("Evict: ok=%v err=%v", ok, err)
+	}
+	if !strings.Contains(logs.String(), "action=activate stage=stat_snapshot event=start") ||
+		!strings.Contains(logs.String(), "action=persist result=error") ||
+		!strings.Contains(logs.String(), "action=evict result=success") {
+		t.Fatalf("lifecycle logs missing structured context:\n%s", logs.String())
+	}
+}
+
+func lifecycleStageNames(record *LifecycleRecord) string {
+	names := make([]string, 0, len(record.Stages))
+	for _, stage := range record.Stages {
+		names = append(names, stage.Name)
+	}
+	return strings.Join(names, ",")
 }
 
 func TestForegroundShellPersistsState(t *testing.T) {
@@ -447,6 +512,9 @@ func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 	b2, err := m.Resolve("conv-1")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
+	}
+	if record := b2.Lifecycle().LastActivation; record == nil || record.Source != "luggage" {
+		t.Fatalf("warm activation = %+v, want luggage", record)
 	}
 	if _, err := os.Stat(filepath.Join(b2.Workspace, "data.txt")); err != nil {
 		t.Fatalf("warm resume lost workspace data: %v", err)
@@ -919,6 +987,10 @@ func TestProfileRecordsMigrationCost(t *testing.T) {
 	b2, err := m.Resolve("conv-cost")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
+	}
+	if record := b2.Lifecycle().LastActivation; record == nil || record.Source != "snapshot" ||
+		!strings.Contains(lifecycleStageNames(record), "restore") {
+		t.Fatalf("cold activation = %+v, want snapshot restore", record)
 	}
 	if p := b2.Profile(); p.LastRestoreMs < 10 {
 		t.Fatalf("LastRestoreMs = %d, want >= 10", p.LastRestoreMs)
