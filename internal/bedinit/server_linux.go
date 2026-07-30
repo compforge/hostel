@@ -58,7 +58,7 @@ func Run(args []string) int {
 	}
 	defer os.Remove(*socket)
 
-	s := &server{bed: *bed, watchers: make(map[int]chan int), unclaimed: make(map[int]int)}
+	s := &server{bed: *bed, watchers: make(map[int]chan int)}
 	go s.reap()
 
 	// SIGTERM = bed teardown: stop serving, kill the whole tree, exit.
@@ -86,9 +86,8 @@ func Run(args []string) int {
 type server struct {
 	bed string
 
-	mu        sync.Mutex
-	watchers  map[int]chan int // pid → exit-code delivery
-	unclaimed map[int]int      // exited before the watcher registered
+	mu       sync.Mutex
+	watchers map[int]chan int // pid → exit-code delivery
 }
 
 // reap is the single wait loop: dispatches exit codes for spawned children and
@@ -99,26 +98,27 @@ func (s *server) reap() {
 	signal.Notify(sigc, syscall.SIGCHLD)
 	for range sigc {
 		for {
+			// Fork+registration, group signalling, and reaping share this
+			// lock. Therefore a numeric PID can never be signalled after
+			// Wait4 releases it for reuse.
+			s.mu.Lock()
 			var ws syscall.WaitStatus
 			pid, err := syscall.Wait4(-1, &ws, syscall.WNOHANG, nil)
 			if pid <= 0 || err != nil {
+				s.mu.Unlock()
 				break
 			}
 			if !ws.Exited() && !ws.Signaled() {
+				s.mu.Unlock()
 				continue // stopped/continued: not terminal
 			}
 			code := ws.ExitStatus()
 			if ws.Signaled() {
 				code = 128 + int(ws.Signal())
 			}
-			s.mu.Lock()
 			if ch, ok := s.watchers[pid]; ok {
 				delete(s.watchers, pid)
 				ch <- code
-			} else {
-				// Either an adopted orphan (fine, reaped) or a spawn racing
-				// its watcher registration (claimed under the same lock).
-				s.unclaimed[pid] = code
 			}
 			s.mu.Unlock()
 		}
@@ -160,12 +160,7 @@ func (s *server) serveSpawn(conn *net.UnixConn) {
 		},
 	})
 	if err == nil {
-		if code, done := s.unclaimed[pid]; done { // exited before we got here
-			delete(s.unclaimed, pid)
-			exitc <- code
-		} else {
-			s.watchers[pid] = exitc
-		}
+		s.watchers[pid] = exitc
 	}
 	s.mu.Unlock()
 	if err != nil {
@@ -175,8 +170,41 @@ func (s *server) serveSpawn(conn *net.UnixConn) {
 	if err := writeMsg(conn, reply{Pid: pid}, nil); err != nil {
 		return // daemon gone; the reaper still collects the child
 	}
-	code := <-exitc
-	_ = writeMsg(conn, reply{Exit: &code}, nil)
+	signalc := make(chan signalRequest, 1)
+	go func() {
+		var req signalRequest
+		fds, err := readMsg(conn, &req)
+		for _, fd := range fds {
+			_ = syscall.Close(fd)
+		}
+		if err == nil && len(fds) == 0 {
+			signalc <- req
+		}
+	}()
+	for {
+		select {
+		case code := <-exitc:
+			_ = writeMsg(conn, reply{Exit: &code}, nil)
+			return
+		case req := <-signalc:
+			if req.Signal == int(syscall.SIGKILL) {
+				s.signalProcessGroupIfRunning(pid, syscall.SIGKILL)
+			}
+		}
+	}
+}
+
+func (s *server) signalProcessGroupIfRunning(pid int, signal syscall.Signal) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.watchers[pid]; !ok {
+		return
+	}
+	_ = signalSpawnedProcessGroup(pid, signal)
+}
+
+var signalSpawnedProcessGroup = func(pid int, signal syscall.Signal) error {
+	return syscall.Kill(-pid, signal)
 }
 
 // killAll force-kills every descendant. The /proc ppid scan enumerates both

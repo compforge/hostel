@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"syscall"
 )
 
 // Spawn is the daemon side of one spawn: dial the bed's init, hand over the
@@ -58,6 +59,13 @@ type Handle struct {
 
 // Pid returns the child's pid (valid in the daemon's pid namespace at S1).
 func (h *Handle) Pid() int { return h.pid }
+
+// Kill asks bedinit to signal the child process group. Bedinit owns reaping,
+// so it can reject the request after the numeric PID/PGID stops identifying
+// this child.
+func (h *Handle) Kill() error {
+	return writeMsg(h.conn, signalRequest{Signal: int(syscall.SIGKILL)}, nil)
+}
 
 // WaitExit blocks until bedinit reports the child's exit code. Call at most
 // once; the connection is closed on return.
