@@ -18,8 +18,10 @@ package bed
 
 import "os/exec"
 
-func waitCommandBeforeReap(cmd *exec.Cmd, markBeforeReap func(error)) error {
+func waitCommandBeforeReap(cmd *exec.Cmd, markBeforeReap func(error) error) error {
 	err := cmd.Wait()
-	markBeforeReap(nil)
+	if markErr := markBeforeReap(nil); markErr != nil {
+		return markErr
+	}
 	return err
 }

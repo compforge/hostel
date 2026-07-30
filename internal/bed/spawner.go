@@ -15,6 +15,8 @@
 package bed
 
 import (
+	"errors"
+	"fmt"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -150,11 +152,22 @@ func (p *inProcProc) Wait() (int, error) {
 // markExitedBeforeReap publishes the terminal state while Linux still
 // reserves the numeric PID/PGID. Kill and KillBed use the same mutex, so a
 // signal either happens before reap or is skipped after this point.
-func (p *inProcProc) markExitedBeforeReap(_ error) {
+func (p *inProcProc) markExitedBeforeReap(barrierErr error) error {
 	p.signalMu.Lock()
 	defer p.signalMu.Unlock()
+	if barrierErr != nil {
+		// Without the WNOWAIT barrier the child may still be running. Force it
+		// terminal before publishing exited; cmd.Wait will reap it immediately
+		// after this callback returns, so its numeric PID remains reserved
+		// throughout the transition.
+		if err := signalProcessGroup(p.pid, syscall.SIGKILL); err != nil &&
+			!errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("bed: kill pid %d after exit barrier failure: %w", p.pid, err)
+		}
+	}
 	p.exited = true
 	p.once.Do(p.untrack)
+	return nil
 }
 
 var signalProcessGroup = func(pid int, signal syscall.Signal) error {

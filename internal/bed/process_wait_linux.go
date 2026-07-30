@@ -24,16 +24,18 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var waitid = unix.Waitid
+
 // waitCommandBeforeReap observes exit without reaping, publishes the terminal
 // state, then lets os/exec reap. The callback can therefore serialize numeric
 // PID/PGID signals while the kernel still reserves the group leader's PID.
-func waitCommandBeforeReap(cmd *exec.Cmd, markBeforeReap func(error)) error {
+func waitCommandBeforeReap(cmd *exec.Cmd, markBeforeReap func(error) error) error {
 	var (
 		info       unix.Siginfo
 		barrierErr error
 	)
 	for {
-		err := unix.Waitid(
+		err := waitid(
 			unix.P_PID,
 			cmd.Process.Pid,
 			&info,
@@ -53,7 +55,12 @@ func waitCommandBeforeReap(cmd *exec.Cmd, markBeforeReap func(error)) error {
 		)
 		break
 	}
-	markBeforeReap(barrierErr)
+	if err := markBeforeReap(barrierErr); err != nil {
+		// The callback could not make signalling safe. Do not reap: retaining
+		// the zombie keeps the numeric PID reserved instead of exposing a
+		// reused process group to a later Kill.
+		return errors.Join(barrierErr, err)
+	}
 	if barrierErr != nil {
 		return errors.Join(barrierErr, cmd.Wait())
 	}

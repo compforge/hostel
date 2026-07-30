@@ -15,6 +15,7 @@
 package bed
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -190,10 +191,16 @@ func (s *initSpawner) KillBed(bedID string) {
 	_ = os.Remove(h.socket)
 }
 
-func (h *initHandle) markExitedBeforeReap(_ error) {
+func (h *initHandle) markExitedBeforeReap(barrierErr error) error {
 	h.signalMu.Lock()
 	defer h.signalMu.Unlock()
+	if barrierErr != nil {
+		if err := h.proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("bed: kill bedinit after exit barrier failure: %w", err)
+		}
+	}
 	h.exited = true
+	return nil
 }
 
 func (h *initHandle) signal(signal syscall.Signal) error {

@@ -17,11 +17,15 @@
 package bed
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestWaitCommandBeforeReapKeepsPIDReservedDuringCallback(t *testing.T) {
@@ -35,12 +39,13 @@ func TestWaitCommandBeforeReapKeepsPIDReservedDuringCallback(t *testing.T) {
 	releaseBarrier := make(chan struct{})
 	waitDone := make(chan error, 1)
 	go func() {
-		waitDone <- waitCommandBeforeReap(cmd, func(err error) {
+		waitDone <- waitCommandBeforeReap(cmd, func(err error) error {
 			if err != nil {
 				t.Errorf("exit barrier: %v", err)
 			}
 			close(barrierEntered)
 			<-releaseBarrier
+			return nil
 		})
 	}()
 
@@ -61,5 +66,35 @@ func TestWaitCommandBeforeReapKeepsPIDReservedDuringCallback(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out reaping process after exit barrier")
+	}
+}
+
+func TestWaitCommandBarrierFailureKillsBeforePublishingExit(t *testing.T) {
+	originalWaitid := waitid
+	waitid = func(int, int, *unix.Siginfo, int, *unix.Rusage) error {
+		return syscall.EINVAL
+	}
+	defer func() { waitid = originalWaitid }()
+
+	cmd := exec.Command("/bin/sh", "-c", "sleep 30")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	proc := &inProcProc{
+		cmd:     cmd,
+		pid:     cmd.Process.Pid,
+		untrack: func() {},
+	}
+
+	exitCode, err := proc.Wait()
+	if err == nil || !errors.Is(err, syscall.EINVAL) {
+		t.Fatalf("Wait = (%d, %v), want exit barrier error", exitCode, err)
+	}
+	if !proc.exited {
+		t.Fatal("process was not marked exited after forced termination")
+	}
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatal("process was not reaped after forced termination")
 	}
 }
