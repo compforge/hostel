@@ -55,6 +55,12 @@ type spawnRequest struct {
 	Env  []string `json:"env"`
 }
 
+// signalRequest is daemon → bedinit after a successful spawn. Bedinit accepts
+// the signal only while pid is still present in its live-child table.
+type signalRequest struct {
+	Signal int `json:"signal"`
+}
+
 // reply is bedinit → daemon. Exactly two replies per connection: {pid} once
 // the child is running (or {error}), then {exit} when it is reaped.
 type reply struct {
