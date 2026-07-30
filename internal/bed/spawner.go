@@ -15,6 +15,8 @@
 package bed
 
 import (
+	"errors"
+	"fmt"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -58,11 +60,11 @@ type Proc interface {
 type inProcSpawner struct {
 	resources resource.Tracker
 	mu        sync.Mutex
-	live      map[string]map[int]struct{} // bedID → live pids (== pgids)
+	live      map[string]map[int]*inProcProc // bedID → live process groups
 }
 
 func newInProcSpawner(resources resource.Tracker) *inProcSpawner {
-	return &inProcSpawner{resources: resources, live: make(map[string]map[int]struct{})}
+	return &inProcSpawner{resources: resources, live: make(map[string]map[int]*inProcProc)}
 }
 
 func (s *inProcSpawner) Start(bedID string, cmd *exec.Cmd) (Proc, error) {
@@ -79,13 +81,18 @@ func (s *inProcSpawner) Start(bedID string, cmd *exec.Cmd) (Proc, error) {
 		return nil, err
 	}
 	pid := cmd.Process.Pid
+	proc := &inProcProc{
+		cmd:     cmd,
+		pid:     pid,
+		untrack: func() { s.untrack(bedID, pid) },
+	}
 	s.mu.Lock()
 	if s.live[bedID] == nil {
-		s.live[bedID] = make(map[int]struct{})
+		s.live[bedID] = make(map[int]*inProcProc)
 	}
-	s.live[bedID][pid] = struct{}{}
+	s.live[bedID][pid] = proc
 	s.mu.Unlock()
-	return &inProcProc{cmd: cmd, pid: pid, untrack: func() { s.untrack(bedID, pid) }}, nil
+	return proc, nil
 }
 
 func (s *inProcSpawner) untrack(bedID string, pid int) {
@@ -101,30 +108,38 @@ func (s *inProcSpawner) untrack(bedID string, pid int) {
 
 func (s *inProcSpawner) KillBed(bedID string) {
 	s.mu.Lock()
-	pids := make([]int, 0, len(s.live[bedID]))
-	for pid := range s.live[bedID] {
-		pids = append(pids, pid)
+	procs := make([]*inProcProc, 0, len(s.live[bedID]))
+	for _, proc := range s.live[bedID] {
+		procs = append(procs, proc)
 	}
 	s.mu.Unlock()
-	for _, pid := range pids {
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
+	for _, proc := range procs {
+		proc.Kill()
 	}
 }
 
 type inProcProc struct {
-	cmd     *exec.Cmd
-	pid     int
-	untrack func()
-	once    sync.Once
+	cmd      *exec.Cmd
+	pid      int
+	untrack  func()
+	once     sync.Once
+	signalMu sync.Mutex
+	exited   bool
 }
 
 func (p *inProcProc) Pid() int { return p.pid }
 
-func (p *inProcProc) Kill() { _ = syscall.Kill(-p.pid, syscall.SIGKILL) }
+func (p *inProcProc) Kill() {
+	p.signalMu.Lock()
+	defer p.signalMu.Unlock()
+	if p.exited {
+		return
+	}
+	_ = signalProcessGroup(p.pid, syscall.SIGKILL)
+}
 
 func (p *inProcProc) Wait() (int, error) {
-	err := p.cmd.Wait()
-	p.once.Do(p.untrack)
+	err := waitCommandBeforeReap(p.cmd, p.markExitedBeforeReap)
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode(), nil
@@ -132,4 +147,29 @@ func (p *inProcProc) Wait() (int, error) {
 		return -1, err
 	}
 	return 0, nil
+}
+
+// markExitedBeforeReap publishes the terminal state while Linux still
+// reserves the numeric PID/PGID. Kill and KillBed use the same mutex, so a
+// signal either happens before reap or is skipped after this point.
+func (p *inProcProc) markExitedBeforeReap(barrierErr error) error {
+	p.signalMu.Lock()
+	defer p.signalMu.Unlock()
+	if barrierErr != nil {
+		// Without the WNOWAIT barrier the child may still be running. Force it
+		// terminal before publishing exited; cmd.Wait will reap it immediately
+		// after this callback returns, so its numeric PID remains reserved
+		// throughout the transition.
+		if err := signalProcessGroup(p.pid, syscall.SIGKILL); err != nil &&
+			!errors.Is(err, syscall.ESRCH) {
+			return fmt.Errorf("bed: kill pid %d after exit barrier failure: %w", p.pid, err)
+		}
+	}
+	p.exited = true
+	p.once.Do(p.untrack)
+	return nil
+}
+
+var signalProcessGroup = func(pid int, signal syscall.Signal) error {
+	return syscall.Kill(-pid, signal)
 }

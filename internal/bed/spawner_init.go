@@ -15,6 +15,7 @@
 package bed
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,9 +44,11 @@ type initSpawner struct {
 }
 
 type initHandle struct {
-	proc   *os.Process
-	socket string
-	done   chan struct{} // closed once the bedinit process exited
+	proc     *os.Process
+	socket   string
+	done     chan struct{} // closed once the bedinit process exited
+	signalMu sync.Mutex
+	exited   bool
 }
 
 func newInitSpawner(exe string, resources resource.Tracker) (*initSpawner, error) {
@@ -90,7 +93,7 @@ func (s *initSpawner) ensure(bedID string) (*initHandle, error) {
 	}
 	h := &initHandle{proc: cmd.Process, socket: socket, done: make(chan struct{})}
 	go func() {
-		_, _ = cmd.Process.Wait()
+		_ = waitCommandBeforeReap(cmd, h.markExitedBeforeReap)
 		close(h.done)
 		s.mu.Lock()
 		if s.inits[bedID] == h {
@@ -110,7 +113,7 @@ func (s *initSpawner) ensure(bedID string) (*initHandle, error) {
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
-	_ = cmd.Process.Kill()
+	_ = h.signal(syscall.SIGKILL)
 	return nil, fmt.Errorf("bed: bedinit for %s never came up", bedID)
 }
 
@@ -179,13 +182,34 @@ func (s *initSpawner) KillBed(bedID string) {
 	if !ok {
 		return
 	}
-	_ = h.proc.Signal(syscall.SIGTERM)
+	_ = h.signal(syscall.SIGTERM)
 	select {
 	case <-h.done:
 	case <-time.After(3 * time.Second):
-		_ = h.proc.Kill()
+		_ = h.signal(syscall.SIGKILL)
 	}
 	_ = os.Remove(h.socket)
+}
+
+func (h *initHandle) markExitedBeforeReap(barrierErr error) error {
+	h.signalMu.Lock()
+	defer h.signalMu.Unlock()
+	if barrierErr != nil {
+		if err := h.proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("bed: kill bedinit after exit barrier failure: %w", err)
+		}
+	}
+	h.exited = true
+	return nil
+}
+
+func (h *initHandle) signal(signal syscall.Signal) error {
+	h.signalMu.Lock()
+	defer h.signalMu.Unlock()
+	if h.exited {
+		return nil
+	}
+	return h.proc.Signal(signal)
 }
 
 type initProc struct {
@@ -194,9 +218,9 @@ type initProc struct {
 
 func (p *initProc) Pid() int { return p.h.Pid() }
 
-// Kill takes the command's process group directly — at S1 the daemon shares
-// the pid namespace with the child, so no round-trip through the init.
-func (p *initProc) Kill() { _ = syscall.Kill(-p.h.Pid(), syscall.SIGKILL) }
+// Kill is validated by bedinit against its live-child table before signalling;
+// the daemon never acts on a numeric child PID after bedinit may have reaped it.
+func (p *initProc) Kill() { _ = p.h.Kill() }
 
 func (p *initProc) Wait() (int, error) { return p.h.WaitExit() }
 
