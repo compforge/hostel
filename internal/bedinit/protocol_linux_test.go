@@ -16,7 +16,9 @@ package bedinit
 
 import (
 	"net"
+	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -67,4 +69,55 @@ func TestUnixpacketKeepsRepliesSeparate(t *testing.T) {
 	if err := <-serverErr; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestReadMsgClosesRightsOnInvalidFrame(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "protocol.sock")
+	addr := &net.UnixAddr{Name: socket, Net: socketNetwork}
+	ln, err := net.ListenUnix(socketNetwork, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	client, err := net.DialUnix(socketNetwork, nil, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	server, err := ln.AcceptUnix()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+
+	before := openFDCount(t)
+	if _, _, err := server.WriteMsgUnix(
+		[]byte{0, 0, 0}, syscall.UnixRights(int(r.Fd())), nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var rep reply
+	if _, err := readMsg(client, &rep); err == nil {
+		t.Fatal("readMsg accepted a short frame")
+	}
+	if after := openFDCount(t); after != before {
+		t.Fatalf("open fd count after invalid frame = %d, want %d", after, before)
+	}
+}
+
+func openFDCount(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(entries)
 }

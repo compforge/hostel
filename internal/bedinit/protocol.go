@@ -100,30 +100,37 @@ func readMsg(conn *net.UnixConn, v any) ([]int, error) {
 	buf := make([]byte, 4+maxMessageSize)
 	oob := make([]byte, syscall.CmsgSpace(16*4))
 	n, oobn, flags, _, err := conn.ReadMsgUnix(buf, oob)
-	if err != nil {
+	fds, rightsErr := parseRights(oob[:oobn])
+	fail := func(err error) ([]int, error) {
+		closeFDs(fds)
 		return nil, err
 	}
+	if err != nil {
+		return fail(err)
+	}
+	if rightsErr != nil {
+		return fail(rightsErr)
+	}
 	if flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 {
-		return nil, fmt.Errorf("bedinit: message or control data truncated")
+		return fail(fmt.Errorf("bedinit: message or control data truncated"))
 	}
 	if n < 4 {
-		return nil, fmt.Errorf("bedinit: short message: %d bytes", n)
+		return fail(fmt.Errorf("bedinit: short message: %d bytes", n))
 	}
 	need := int(binary.BigEndian.Uint32(buf[:4]))
 	if need != n-4 {
-		return nil, fmt.Errorf("bedinit: message length mismatch: header=%d payload=%d", need, n-4)
-	}
-	fds, err := parseRights(oob[:oobn])
-	if err != nil {
-		return nil, err
+		return fail(fmt.Errorf("bedinit: message length mismatch: header=%d payload=%d", need, n-4))
 	}
 	if err := json.Unmarshal(buf[4:n], v); err != nil {
-		return fds, fmt.Errorf("bedinit: decode message: %w", err)
+		return fail(fmt.Errorf("bedinit: decode message: %w", err))
 	}
 	return fds, nil
 }
 
 func parseRights(oob []byte) ([]int, error) {
+	if len(oob) == 0 {
+		return nil, nil
+	}
 	msgs, err := syscall.ParseSocketControlMessage(oob)
 	if err != nil {
 		return nil, fmt.Errorf("bedinit: parse control message: %w", err)
@@ -132,9 +139,15 @@ func parseRights(oob []byte) ([]int, error) {
 	for _, m := range msgs {
 		got, err := syscall.ParseUnixRights(&m)
 		if err != nil {
-			return nil, fmt.Errorf("bedinit: parse rights: %w", err)
+			return fds, fmt.Errorf("bedinit: parse rights: %w", err)
 		}
 		fds = append(fds, got...)
 	}
 	return fds, nil
+}
+
+func closeFDs(fds []int) {
+	for _, fd := range fds {
+		_ = syscall.Close(fd)
+	}
 }
