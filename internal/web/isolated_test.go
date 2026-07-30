@@ -175,6 +175,9 @@ func TestIsolatedUnsupportedOptionsAndCapabilities(t *testing.T) {
 		t.Fatalf("isolated capabilities = %v", capabilities)
 	}
 
+	if _, err := s.mgr.Resolve("any"); err != nil {
+		t.Fatalf("resolve session for unsupported routes: %v", err)
+	}
 	rec = do(t, s, http.MethodGet, "/v1/isolated/session/any/diff", nil, nil)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("isolated diff = %d %s", rec.Code, rec.Body.String())
@@ -185,21 +188,38 @@ func TestIsolatedUnsupportedOptionsAndCapabilities(t *testing.T) {
 	}
 }
 
-func TestIsolatedDeleteDefaultBedIsBadRequest(t *testing.T) {
+func TestDefaultBedIsNotAnIsolatedSession(t *testing.T) {
 	s := newTestServer(t)
 	if _, err := s.mgr.Resolve(""); err != nil {
 		t.Fatalf("resolve default bed: %v", err)
 	}
+	visible, err := s.mgr.Resolve("native-bed")
+	if err != nil {
+		t.Fatalf("resolve non-default bed: %v", err)
+	}
 
-	rec := do(t, s, http.MethodDelete, "/v1/isolated/session/default", nil, nil)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("delete default isolated session = %d %s", rec.Code, rec.Body.String())
+	rec := do(t, s, http.MethodGet, "/v1/isolated/sessions", nil, nil)
+	var list isolatedListResponse
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil ||
+		len(list.Sessions) != 1 || list.Sessions[0].SessionID != visible.ID {
+		t.Fatalf("list isolated sessions with default bed = %d %s", rec.Code, rec.Body.String())
 	}
-	var response ErrorResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode error response: %v", err)
+
+	for _, request := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/v1/isolated/session/default"},
+		{http.MethodDelete, "/v1/isolated/session/default"},
+		{http.MethodGet, "/v1/isolated/session/default/diff"},
+		{http.MethodPost, "/v1/isolated/session/default/commit"},
+	} {
+		rec = do(t, s, request.method, request.path, nil, nil)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s %s = %d %s", request.method, request.path, rec.Code, rec.Body.String())
+		}
 	}
-	if response.Code != ErrInvalidRequest {
-		t.Fatalf("delete default error = %+v", response)
+	if _, ok := s.mgr.Get(""); !ok {
+		t.Fatal("isolated delete removed the default bed")
 	}
 }
