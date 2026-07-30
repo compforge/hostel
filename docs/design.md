@@ -99,9 +99,10 @@ type ManagedService interface {
 - `/directories/*`：list、create、delete
 - `/command`（SSE）：前台/后台都是一次性隔离进程（见〈exec 模型〉），只差 wait 模式；后台带 `/command/status/{id}` + `/command/{id}/logs`
 - `/session`：bash 会话 create / run / delete（显式有状态会话，常驻 shell 只存在于此）
+- `/v1/isolated/*`：OpenSandbox isolated-session 兼容视图，`session_id` 与 bed ID 一一对应；复用 bed 的生命周期、常驻 shell 与文件/目录能力，不再维护一套平行 session 状态。当前支持 balanced + 读写 `/workspace` + 共享网络，超出能力边界的参数明确返回 `NOT_SUPPORTED`
 - `/v1/beds`：CRUD + capabilities（hostel 特有，bed 管理）
 
-**v1 不做（v1.1+）**：`/code`（委托 Jupyter，AS 用不上，砍）、`/pty` WS、`/v1/isolated/*` 的 diff/commit/persist（execd 自己也没实现）。
+**v1 不做（v1.1+）**：`/code`（委托 Jupyter，AS 用不上，砍）、`/pty` WS。`/v1/isolated/*` 的 diff / commit 路由为兼容性保留并明确报告不支持；持久身份仍由 bed 快照负责，不另造 isolated-session persist。
 
 ## 五、isolation
 

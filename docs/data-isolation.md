@@ -45,6 +45,8 @@ bwrap --unshare-user --unshare-uts --unshare-ipc \
 
 **第三道闸——AppArmor（部署项，非 hostel 能自解）**：节点启用 AppArmor 时，containerd 默认 profile（`cri-containerd.apparmor.d`）**deny mount**——userns 开着、上面 argv 也对，bwrap 仍死在 `Failed to make / slave: Permission denied`。hostel 探不过就诚实降级到 room/dorm，并把 `HostFacts.apparmor_profile` 报进 `/healthz`、boot 日志点名（"userns 在、疑似 AppArmor 拦截"）。放开需给 carrier pod 打 `container.apparmor.security.beta.kubernetes.io/<容器>: unconfined` annotation——**不作为 hostel 的硬性部署要求**（客户集群未必接受该 annotation），由上层（sandctl 建 carrier 时按 k8s 版本+准入策略自适应）决定带不带。三点全不需要特权（无 CAP_SYS_ADMIN、无 privileged）。
 
+> **Tip — fail-closed workload lifecycle gate**：OpenSandbox 在 bwrap 完成和用户命令执行之间放一个可信 gate；daemon 先验证实际 workload identity、装好跟踪与清理，再发送 `READY`，任一校验失败、超时或控制连接断开都让 workload 在执行用户代码前退出。它解决的是“代码先跑、daemon 后登记”的启动竞态，不是额外的数据隔离墙。Hostel 当前 S1 把 workload 生命周期留在 bed-init 拥有的进程树内，并在派生边界完成登记与回收，也不需要拿到 namespace 内 PID 后再补 cgroup / netns 设置，因此不重复引入这套 gate。到 S2 持久 namespace + PID-1，或开始依赖真实 workload identity 安装隔离与记账设施时，再把它作为发布 session 前的必备检查点。
+
 ## 三、关键设计
 
 ### 1. 为什么要遮蔽，而不是只依赖 RO

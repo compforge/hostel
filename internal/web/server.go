@@ -112,6 +112,29 @@ func (s *Server) routes() {
 	// Scheduler-facing: capacity + all local beds (incl. luggage) in one poll.
 	e.GET("/v1/inventory", s.inventory)
 
+	isolated := e.Group("/v1/isolated")
+	{
+		isolated.POST("/session", s.isolatedCreate)
+		isolated.GET("/sessions", s.isolatedList)
+		isolated.GET("/capabilities", s.isolatedCapabilities)
+		isolated.GET("/session/:sessionId", s.withIsolatedBed(s.isolatedGet))
+		isolated.POST("/session/:sessionId/run", s.withIsolatedBed(s.isolatedRun))
+		isolated.DELETE("/session/:sessionId", s.withIsolatedBed(s.isolatedDelete))
+		isolated.GET("/session/:sessionId/diff", s.isolatedDiff)
+		isolated.POST("/session/:sessionId/commit", s.isolatedCommit)
+		isolated.GET("/session/:sessionId/files/info", s.withIsolatedBed(s.filesInfo))
+		isolated.GET("/session/:sessionId/files/download", s.withIsolatedBed(s.filesDownload))
+		isolated.POST("/session/:sessionId/files/upload", s.withIsolatedBed(s.filesUpload))
+		isolated.DELETE("/session/:sessionId/files", s.withIsolatedBed(s.filesDelete))
+		isolated.POST("/session/:sessionId/files/mv", s.withIsolatedBed(s.filesRename))
+		isolated.POST("/session/:sessionId/files/permissions", s.withIsolatedBed(s.filesChmod))
+		isolated.POST("/session/:sessionId/files/replace", s.withIsolatedBed(s.filesReplace))
+		isolated.GET("/session/:sessionId/files/search", s.withIsolatedBed(s.filesSearch))
+		isolated.GET("/session/:sessionId/directories/list", s.withIsolatedBed(s.dirList))
+		isolated.POST("/session/:sessionId/directories", s.withIsolatedBed(s.dirCreate))
+		isolated.DELETE("/session/:sessionId/directories", s.withIsolatedBed(s.dirDelete))
+	}
+
 	// Per-bed CDP proxy websocket (bed + token in query; playwright can't set
 	// headers). Top-level, not under /v1/beds — the client passes the whole URL.
 	e.GET("/v1/cdp", s.browserCDP)
@@ -139,9 +162,18 @@ func (s *Server) routes() {
 	}
 }
 
+const resolvedBedContextKey = "hostel.resolved-bed"
+
 // bedOf resolves the target bed from the request (header/query → default),
-// creating it on first use. On invalid id it writes an error and returns nil.
+// creating it on first use. Adapters that require an existing bed may inject a
+// pre-resolved value, which also prevents their read paths from creating one.
+// On invalid id it writes an error and returns nil.
 func (s *Server) bedOf(c *gin.Context) *bed.Bed {
+	if resolved, ok := c.Get(resolvedBedContextKey); ok {
+		if b, ok := resolved.(*bed.Bed); ok {
+			return b
+		}
+	}
 	id := c.GetHeader(BedHeader)
 	if id == "" {
 		id = c.Query("bed")
