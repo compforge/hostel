@@ -184,3 +184,22 @@ func TestIsolatedUnsupportedOptionsAndCapabilities(t *testing.T) {
 		t.Fatalf("isolated commit = %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestIsolatedDeleteDefaultBedIsBadRequest(t *testing.T) {
+	s := newTestServer(t)
+	if _, err := s.mgr.Resolve(""); err != nil {
+		t.Fatalf("resolve default bed: %v", err)
+	}
+
+	rec := do(t, s, http.MethodDelete, "/v1/isolated/session/default", nil, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("delete default isolated session = %d %s", rec.Code, rec.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if response.Code != ErrInvalidRequest {
+		t.Fatalf("delete default error = %+v", response)
+	}
+}

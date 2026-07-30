@@ -16,6 +16,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -351,6 +352,10 @@ func isolatedRunScript(code string, envs map[string]string) string {
 // DELETE /v1/isolated/session/:sessionId
 func (s *Server) isolatedDelete(c *gin.Context) {
 	if err := s.mgr.Purge(c.Param("sessionId")); err != nil {
+		if errors.Is(err, bed.ErrPurgeDefault) {
+			badRequest(c, err.Error())
+			return
+		}
 		runtimeError(c, err.Error())
 		return
 	}
