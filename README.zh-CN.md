@@ -48,9 +48,11 @@ curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv
 | 隔离会话 | `/v1/isolated/session(s)`、`run`(SSE)、会话级文件/目录接口、`capabilities` |
 | bed 管理 | `GET/POST /v1/beds`、`GET/DELETE /v1/beds/:id`、`POST /v1/beds/:id/checkpoint`、`GET /v1/beds/capabilities` |
 
-OpenSandbox 隔离会话接口是一层兼容视图：一个 isolated session 直接对应一个 bed，不额外引入第二套
-生命周期对象。创建当前支持 balanced profile、bed 自有的读写 `/workspace` 和共享网络；做不到的
-隔离参数会明确拒绝，不会静默忽略。diff / commit 返回 `NOT_SUPPORTED`。
+OpenSandbox 隔离会话接口是一层兼容视图：一个 isolated session 直接对应一个非 default bed，
+不额外引入第二套生命周期对象。default bed 只服务原生 API 未指定 bed 的请求，不会出现在 session
+列表中，也不能通过 session 接口 attach。创建当前支持 balanced profile、bed 自有的读写
+`/workspace` 和共享网络；做不到的隔离参数会明确拒绝，不会静默忽略。diff / commit 返回
+`NOT_SUPPORTED`。
 
 指标跟随目标 bed（`X-Hostel-Bed` / `?bed=`）：cgroup v2 已委派时，CPU 用量和当前内存来自该
 bed 的记账组，CPU 数量和总内存仍表示共享 carrier 容量；当前不施加限额。未委派 cgroup v2

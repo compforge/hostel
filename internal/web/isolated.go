@@ -16,7 +16,6 @@ package web
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -92,11 +91,16 @@ type isolatedListResponse struct {
 	Sessions []isolatedSessionSummary `json:"sessions"`
 }
 
-// withIsolatedBed resolves only an already-resident bed. Unlike the native
-// routes, an attach/read request must never create a missing session.
+// withIsolatedBed resolves only an already-resident, non-default bed. The
+// default bed is the native API fallback, not an isolated session.
 func (s *Server) withIsolatedBed(next gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		b, ok := s.mgr.Get(c.Param("sessionId"))
+		id := c.Param("sessionId")
+		if id == s.mgr.DefaultBedID() {
+			respondError(c, http.StatusNotFound, ErrSessionNotFound, "session not found")
+			return
+		}
+		b, ok := s.mgr.Get(id)
 		if !ok {
 			respondError(c, http.StatusNotFound, ErrSessionNotFound, "session not found")
 			return
@@ -107,7 +111,8 @@ func (s *Server) withIsolatedBed(next gin.HandlerFunc) gin.HandlerFunc {
 }
 
 // POST /v1/isolated/session. The compatibility identity is deliberately
-// one-to-one: an isolated session is a bed, not a second lifecycle object.
+// one-to-one: an isolated session is a non-default bed, not a second lifecycle
+// object.
 func (s *Server) isolatedCreate(c *gin.Context) {
 	if !s.mgr.Isolator().Available() {
 		respondError(c, http.StatusServiceUnavailable, ErrServiceUnavailable, "isolation unavailable")
@@ -217,6 +222,9 @@ func (s *Server) isolatedList(c *gin.Context) {
 	sort.Slice(beds, func(i, j int) bool { return beds[i].ID < beds[j].ID })
 	items := make([]isolatedSessionSummary, 0, len(beds))
 	for _, b := range beds {
+		if b.ID == s.mgr.DefaultBedID() {
+			continue
+		}
 		state := isolatedState(b)
 		items = append(items, isolatedSessionSummary{
 			SessionID:            b.ID,
@@ -352,10 +360,6 @@ func isolatedRunScript(code string, envs map[string]string) string {
 // DELETE /v1/isolated/session/:sessionId
 func (s *Server) isolatedDelete(c *gin.Context) {
 	if err := s.mgr.Purge(c.Param("sessionId")); err != nil {
-		if errors.Is(err, bed.ErrPurgeDefault) {
-			badRequest(c, err.Error())
-			return
-		}
 		runtimeError(c, err.Error())
 		return
 	}

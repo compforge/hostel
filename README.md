@@ -68,11 +68,12 @@ curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv
 | Scheduler | `GET /v1/inventory` — state counts + every local bed's lifecycle, generation and expiry |
 
 The OpenSandbox isolated-session surface is a compatibility view: one isolated
-session maps directly to one bed, so it does not introduce a second lifecycle
-object. Creation currently supports the balanced profile with the bed-owned
-read-write `/workspace` and shared network; unsupported isolation options are
-rejected instead of being silently ignored. Diff and commit report
-`NOT_SUPPORTED`.
+session maps directly to one non-default bed, so it does not introduce a second
+lifecycle object. The default bed only serves native requests that omit a bed
+id and is never listed or attached as an isolated session. Creation currently
+supports the balanced profile with the bed-owned read-write `/workspace` and
+shared network; unsupported isolation options are rejected instead of being
+silently ignored. Diff and commit report `NOT_SUPPORTED`.
 
 Metrics follow the selected bed (`X-Hostel-Bed` / `?bed=`): with delegated
 cgroup v2, CPU usage and current memory come from that bed's accounting group,

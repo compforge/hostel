@@ -15,7 +15,7 @@ OpenSandbox execd 是主要设计参考。
 ## 二、核心模型：bed
 
 - **bed = 隔离单元 = 对外一个 sandbox**：一个 workspace 目录 + 自己的 mount namespace（bwrap 下）+ 归属于它的进程（一次性 exec、显式 session shell、amenity 租约）。名字与 hostel 对称。
-- **默认 bed 兜底**：请求不带 bed id → 落到 `default` bed。调用方可完全无视 bed 概念（单租户体验）。OpenSandbox spec 不强制 session 概念，故 bed 不与其冲突。
+- **默认 bed 兜底**：原生请求不带 bed id → 落到 `default` bed。调用方可完全无视 bed 概念（单租户体验）；它不属于 `/v1/isolated/*` 的 session 视图。
 - **bed 路由**：HTTP header `X-Hostel-Bed`（或 query `bed`），缺省 default。
 - 一个 pod 只用 default bed = 独占；多 bed = 共享，每 bed 仍有私有 ns / workspace / shell state。
 - **idle GC**：bed 空闲超时回收（默认 30min，可配；default bed 永不回收）。
@@ -99,7 +99,7 @@ type ManagedService interface {
 - `/directories/*`：list、create、delete
 - `/command`（SSE）：前台/后台都是一次性隔离进程（见〈exec 模型〉），只差 wait 模式；后台带 `/command/status/{id}` + `/command/{id}/logs`
 - `/session`：bash 会话 create / run / delete（显式有状态会话，常驻 shell 只存在于此）
-- `/v1/isolated/*`：OpenSandbox isolated-session 兼容视图，`session_id` 与 bed ID 一一对应；复用 bed 的生命周期、常驻 shell 与文件/目录能力，不再维护一套平行 session 状态。当前支持 balanced + 读写 `/workspace` + 共享网络，超出能力边界的参数明确返回 `NOT_SUPPORTED`
+- `/v1/isolated/*`：OpenSandbox isolated-session 兼容视图，`session_id` 与非 default bed ID 一一对应；default 只服务原生 API 的缺省路由，不向 session list / attach 暴露。兼容视图复用 bed 的生命周期、常驻 shell 与文件/目录能力，不再维护一套平行 session 状态。当前支持 balanced + 读写 `/workspace` + 共享网络，超出能力边界的参数明确返回 `NOT_SUPPORTED`
 - `/v1/beds`：CRUD + capabilities（hostel 特有，bed 管理）
 
 **v1 不做（v1.1+）**：`/code`（委托 Jupyter，AS 用不上，砍）、`/pty` WS。`/v1/isolated/*` 的 diff / commit 路由为兼容性保留并明确报告不支持；持久身份仍由 bed 快照负责，不另造 isolated-session persist。
