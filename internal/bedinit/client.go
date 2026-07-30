@@ -26,8 +26,8 @@ import (
 // ownership of the *os.File ends it passed (close your copies as usual — the
 // fds are dup'ed across the socket).
 func Spawn(socket string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File) (*Handle, error) {
-	raddr := &net.UnixAddr{Name: socket, Net: "unix"}
-	conn, err := net.DialUnix("unix", nil, raddr)
+	raddr := &net.UnixAddr{Name: socket, Net: socketNetwork}
+	conn, err := net.DialUnix(socketNetwork, nil, raddr)
 	if err != nil {
 		return nil, fmt.Errorf("bedinit: dial %s: %w", socket, err)
 	}
