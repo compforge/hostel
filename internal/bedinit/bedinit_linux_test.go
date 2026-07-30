@@ -104,6 +104,23 @@ func TestSpawnExitCodeAndOutput(t *testing.T) {
 	}
 }
 
+func TestKillSpawnedProcess(t *testing.T) {
+	socket, _ := startInit(t)
+
+	h, out := spawnSh(t, socket, "sleep 60")
+	defer out.Close()
+	if err := h.Kill(); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	code, err := h.WaitExit()
+	if err != nil {
+		t.Fatalf("WaitExit: %v", err)
+	}
+	if code != 128+int(syscall.SIGKILL) {
+		t.Fatalf("exit = %d, want %d", code, 128+int(syscall.SIGKILL))
+	}
+}
+
 func TestConcurrentShortLivedSpawns(t *testing.T) {
 	socket, _ := startInit(t)
 	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
