@@ -94,7 +94,11 @@ func TestWaitCommandBarrierFailureKillsBeforePublishingExit(t *testing.T) {
 	if !proc.exited {
 		t.Fatal("process was not marked exited after forced termination")
 	}
-	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+	if cmd.ProcessState == nil {
 		t.Fatal("process was not reaped after forced termination")
+	}
+	status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() || status.Signal() != syscall.SIGKILL {
+		t.Fatalf("process status = %v, want SIGKILL", cmd.ProcessState)
 	}
 }
