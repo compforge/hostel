@@ -63,8 +63,16 @@ curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv
 | Directories | `GET /directories/list`, `POST /directories`, `DELETE /directories` |
 | Command | `POST /command` (SSE), `DELETE /command`, `GET /command/status/:id`, `GET /command/:id/logs` |
 | Session | `POST /session`, `POST /session/:id/run` (SSE), `DELETE /session/:id` |
+| Isolated session | `/v1/isolated/session(s)`, `run` (SSE), session-scoped files/directories, `capabilities` |
 | Beds | `GET/POST /v1/beds`, `GET/DELETE /v1/beds/:id`, `POST /v1/beds/:id/checkpoint`, `GET /v1/beds/capabilities` |
 | Scheduler | `GET /v1/inventory` — state counts + every local bed's lifecycle, generation and expiry |
+
+The OpenSandbox isolated-session surface is a compatibility view: one isolated
+session maps directly to one bed, so it does not introduce a second lifecycle
+object. Creation currently supports the balanced profile with the bed-owned
+read-write `/workspace` and shared network; unsupported isolation options are
+rejected instead of being silently ignored. Diff and commit report
+`NOT_SUPPORTED`.
 
 Metrics follow the selected bed (`X-Hostel-Bed` / `?bed=`): with delegated
 cgroup v2, CPU usage and current memory come from that bed's accounting group,
