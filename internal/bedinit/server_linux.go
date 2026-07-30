@@ -49,7 +49,9 @@ func Run(args []string) int {
 	}
 
 	_ = os.Remove(*socket)
-	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: *socket, Net: "unix"})
+	// SOCK_SEQPACKET keeps the pid and exit replies as distinct frames even
+	// when a short-lived command exits before the daemon reads either reply.
+	ln, err := net.ListenUnix(socketNetwork, &net.UnixAddr{Name: *socket, Net: socketNetwork})
 	if err != nil {
 		log.Printf("bedinit[%s]: listen %s: %v", *bed, *socket, err)
 		return 1

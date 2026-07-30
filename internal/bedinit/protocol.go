@@ -30,13 +30,21 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // InitArg is the hidden subcommand hostel re-execs into to become a bed's
 // init: `hostel __bedinit --socket <path> --bed <id>`.
 const InitArg = "__bedinit"
+
+const (
+	socketNetwork  = "unixpacket"
+	maxMessageSize = 128 << 10
+)
 
 // spawnRequest asks bedinit to fork one fully-specified command. Argv[0] is an
 // absolute path (the daemon resolves via exec.LookPath); Env is the COMPLETE
@@ -56,11 +64,14 @@ type reply struct {
 }
 
 // writeMsg sends one length-prefixed JSON message, with fds attached as
-// SCM_RIGHTS on the first write when given.
+// SCM_RIGHTS. unixpacket preserves this write as one protocol frame.
 func writeMsg(conn *net.UnixConn, v any, fds []int) error {
 	payload, err := json.Marshal(v)
 	if err != nil {
 		return err
+	}
+	if len(payload) > maxMessageSize {
+		return fmt.Errorf("bedinit: message too large: %d bytes", len(payload))
 	}
 	buf := make([]byte, 4+len(payload))
 	binary.BigEndian.PutUint32(buf, uint32(len(payload)))
@@ -69,51 +80,44 @@ func writeMsg(conn *net.UnixConn, v any, fds []int) error {
 	if len(fds) > 0 {
 		oob = syscall.UnixRights(fds...)
 	}
-	n, _, err := conn.WriteMsgUnix(buf, oob, nil)
+	n, oobn, err := conn.WriteMsgUnix(buf, oob, nil)
 	if err != nil {
 		return err
 	}
-	// The rights went with the first fragment; push any remainder plainly.
-	for n < len(buf) {
-		m, err := conn.Write(buf[n:])
-		if err != nil {
-			return err
-		}
-		n += m
+	if n != len(buf) {
+		return io.ErrShortWrite
+	}
+	if oobn != len(oob) {
+		return fmt.Errorf("bedinit: short control write: got %d, want %d", oobn, len(oob))
 	}
 	return nil
 }
 
-// readMsg reads one length-prefixed JSON message, collecting any SCM_RIGHTS
-// fds that arrive with it (a stream read may fragment; rights can ride any
-// fragment, in practice the first).
+// readMsg reads exactly one unixpacket frame and collects any SCM_RIGHTS fds
+// attached to it. Message boundaries are part of the protocol: accepting
+// trailing bytes would hide a sender that accidentally combined two replies.
 func readMsg(conn *net.UnixConn, v any) ([]int, error) {
-	var fds []int
-	buf := make([]byte, 0, 4096)
-	need := -1 // unknown until the 4-byte header is complete
-	chunk := make([]byte, 64<<10)
+	buf := make([]byte, 4+maxMessageSize)
 	oob := make([]byte, syscall.CmsgSpace(16*4))
-	for {
-		if need >= 0 && len(buf) >= 4+need {
-			break
-		}
-		n, oobn, _, _, err := conn.ReadMsgUnix(chunk, oob)
-		if err != nil {
-			return fds, err
-		}
-		if oobn > 0 {
-			got, err := parseRights(oob[:oobn])
-			if err != nil {
-				return fds, err
-			}
-			fds = append(fds, got...)
-		}
-		buf = append(buf, chunk[:n]...)
-		if need < 0 && len(buf) >= 4 {
-			need = int(binary.BigEndian.Uint32(buf))
-		}
+	n, oobn, flags, _, err := conn.ReadMsgUnix(buf, oob)
+	if err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(buf[4:4+need], v); err != nil {
+	if flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 {
+		return nil, fmt.Errorf("bedinit: message or control data truncated")
+	}
+	if n < 4 {
+		return nil, fmt.Errorf("bedinit: short message: %d bytes", n)
+	}
+	need := int(binary.BigEndian.Uint32(buf[:4]))
+	if need != n-4 {
+		return nil, fmt.Errorf("bedinit: message length mismatch: header=%d payload=%d", need, n-4)
+	}
+	fds, err := parseRights(oob[:oobn])
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(buf[4:n], v); err != nil {
 		return fds, fmt.Errorf("bedinit: decode message: %w", err)
 	}
 	return fds, nil

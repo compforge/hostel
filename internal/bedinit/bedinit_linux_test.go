@@ -15,12 +15,14 @@
 package bedinit
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -99,6 +101,43 @@ func TestSpawnExitCodeAndOutput(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "hi from bedinit") {
 		t.Fatalf("output = %q", data)
+	}
+}
+
+func TestConcurrentShortLivedSpawns(t *testing.T) {
+	socket, _ := startInit(t)
+	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devnull.Close()
+
+	const count = 128
+	errs := make(chan error, count)
+	var wg sync.WaitGroup
+	for range count {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, err := Spawn(socket, []string{"/bin/true"}, "", os.Environ(), devnull, devnull, devnull)
+			if err != nil {
+				errs <- err
+				return
+			}
+			code, err := h.WaitExit()
+			if err != nil {
+				errs <- err
+				return
+			}
+			if code != 0 {
+				errs <- fmt.Errorf("exit = %d, want 0", code)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
 	}
 }
 
