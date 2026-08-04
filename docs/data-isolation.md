@@ -8,6 +8,7 @@
 2. **bed 的全部数据 = 一个目录**：`bed_home = <workspace-root>/<bedID>/data` 是 bed 的统一数据家目录——客户端视角的 `/`，bed 表现得像独占了整个 pod 文件系统。OpenSandbox workspace 是它下面的真实子目录 `bed_home/workspace`，不是 `bed_home` 的别名。隔离方案只需回答一个问题：**如何让 bed 的文件视图按当前房型兑现访问边界**。持久化（S3 快照/恢复）建立在同一个目录之上，见 `persistence.md`。
 3. **路径映射是三档共同的基础契约，不是高档房型的附加能力**：请求先由 `X-Hostel-Bed` 确定 bed，再把 file API、cwd 等显式路径映射到该 bed 的 `bed_home`；hostel 不靠路径判断请求属于哪个 bed。`dorm / room / suite` 只决定映射后的数据能否被兄弟 bed 看见、访问，不得改变同一个客户端路径落到哪个 bed-local 位置。
 4. **两套进程路径语义应当收敛**：客户端的任意绝对路径都按同一条规则 rebase 到 `bed_home` 下（`/workspace/x` 也不例外——它落到真实子目录 `bed_home/workspace/x`），映射是**单射**，回显因此天然对称。底层可以按房型使用宿主真实路径、Landlock/UID 或 mount namespace，但对调用方暴露的路径结果必须一致；不能因为 room/direct 没有 `/workspace` bind，就拒绝本可安全映射到 `bed_home` 的路径。
+5. **软件环境默认归 carrier 共享，隔离由真实问题驱动**：hostel 的首要目标是用一份运行时承载多个 bed，不为尚未出现的版本冲突预建 per-bed 软件目录、环境引用、manifest 或 GC。系统软件、可执行文件以及全局安装的 Python/Node 包在模型上都属于 carrier；当 carrier 提供全局安装能力时，安装结果对其中所有 bed 可见。确有版本冲突时，再由对应 bed 在自己的 `bed_home` 内使用 venv、conda、本地 `node_modules` 等生态原生方案局部隔离；需要独占完整系统环境时交给 pod 等强档 runtime。这个取舍只放宽共享软件环境，不改变 workspace、用户文件和程序产物仍须按 bed 隔离的底线。
 
 ## 二、流程（bwrap 模式下启动 bed 内进程）
 
@@ -15,6 +16,7 @@
 
 ```
 /            ← 宿主根，只读（工具链、解释器可用）
+/usr/local   ← carrier 软件环境，所有 bed 共享且可写
 /workspace   ← 只有自己：bind <bed_home>/workspace → /workspace（rw）
 /tmp         ← per-process tmpfs（不跨 bed、不落盘）
 /dev /proc   ← 全新挂载
@@ -28,6 +30,7 @@ cwd          ← /workspace
 ```
 bwrap --unshare-user --unshare-uts --unshare-ipc \
   --ro-bind / / \
+  --bind /usr/local /usr/local \          # 重新开放 carrier 共享软件目录
   --dev /dev --ro-bind /proc /proc --tmpfs /tmp \
   --tmpfs <workspace-root> \            # 遮蔽所有 bed 目录
   --tmpfs /root --tmpfs /home \         # 遮蔽宿主用户数据（及存在时的 /run/secrets、/var/run/secrets）
@@ -36,7 +39,7 @@ bwrap --unshare-user --unshare-uts --unshare-ipc \
   --chdir /workspace --die-with-parent -- <cmd>
 ```
 
-顺序敏感：`--tmpfs <workspace-root>` 必须在 `--ro-bind / /` 之后（后挂的盖前面的），`--bind ... /workspace` 与遮蔽无冲突（挂载点不同）。
+顺序敏感：`--bind /usr/local /usr/local` 必须在 `--ro-bind / /` 之后，才能把只读根里的共享软件目录重新开放为可写；`--tmpfs <workspace-root>` 同样必须在只读根之后（后挂的盖前面的）。`--bind ... /workspace` 与两者无冲突（挂载点不同）。
 
 **k8s pod 内可达性（真实集群踩点）**：以上 argv 有两处不是随手选的，是让 suite 在**普通非特权 pod** 里够得着的硬前提——
 
@@ -52,6 +55,10 @@ bwrap --unshare-user --unshare-uts --unshare-ipc \
 ### 1. 为什么要遮蔽，而不是只依赖 RO
 
 v1 的 argv 是 `--ro-bind / /` + bind 自己的 workspace（宿主路径原位）。RO 根挡住了写，但 `<workspace-root>/` 下**所有兄弟 bed 目录仍然可读**——多租户下这是真实的数据泄漏洞。修法不是给兄弟目录改权限（同 uid 下权限位挡不住），而是**让它们从视图里消失**：tmpfs 盖住 workspace-root，再只把自己的目录 bind 回来。
+
+共享软件是这个只读根的窄例外：suite 把 `/usr/local` 在只读根之上重新 bind 为可写，让普通 `pip install`、`pip --user`、`npm -g` 等安装在后续命令和其他 bed 中继续可见；room 的 Landlock 规则也把同一路径列为共享可写。Hostel 不为此维护 per-bed 环境；carrier 镜像负责把该目录的属主以及 `PYTHONUSERBASE`、`NPM_CONFIG_PREFIX`、`UV_TOOL_DIR`、`PATH` 等生态入口配到同一位置。`/home` 仍保持遮蔽，不能靠共享整个用户家目录解决安装持久性。
+
+这是有意放宽的 carrier 级信任边界：任一 bed 都能修改其他 bed 使用的全局包和可执行文件，因此 daemon 自身及不可覆盖的基础工具不应放在这个可写目录。动态安装只跟随 carrier 实例生命周期，不进入任何 bed 快照；carrier 重建后回到镜像基线。版本冲突、并发安装或包名覆盖先按真实 case 处理，不在 Hostel 里提前增加 manifest、锁或回滚系统。apt 等系统包安装仍属于特权 carrier 操作，使用系统自身的 dpkg 锁；普通语言包安装不应依赖 agent 主动补 `sudo`。
 
 ### 2. 统一路径映射：先选 bed，再落到 bed_home
 
@@ -111,7 +118,7 @@ bed 已由 `X-Hostel-Bed` 选定后，所有房型共用同一套客户端路径
 
 ## 实现状态
 
-已实现（`internal/isolation/`）：boot 时 bwrap probe（binary + **全形态 smoke**——用真实 argv 起 `true`，namespace/遮蔽/`/workspace` bind 全过一遍；宿主挂载点缺失等问题在 boot 即暴露并诚实降 direct，不再误报 `workspace_mount`）、遮蔽 argv、`/workspace` 规范挂载、cwd 模式感知映射（`web` 层 `resolveCwd`）、env 剥除、capabilities/healthz 报 `workspace_mount`。mac argv 单测绿；**Linux 真机双 bed 验证已通过**（devbox，bwrap 0.8.0 / kernel 5.15：兄弟遮蔽、规范挂载、敏感路径+env 剥除、direct 负面对照全 PASS）。真机验证同时暴露两个 bug 均已修复：宿主缺 `/workspace` 挂载点（probe 改全形态 + boot 时确保挂载点）；shell 死亡 + 未断开客户端导致全 daemon 死锁（Shell 锁职责拆分，见 `internal/bed/shell.go` LOCKING 注释）。
+已实现（`internal/isolation/`）：boot 时 bwrap probe（binary + **全形态 smoke**——用真实 argv 起 `true`，namespace/遮蔽、carrier 共享 `/usr/local`、`/workspace` bind 全过一遍；宿主挂载点缺失等问题在 boot 即暴露并诚实降 direct，不再误报 `workspace_mount`）、遮蔽 argv、carrier 软件目录共享写、`/workspace` 规范挂载、cwd 模式感知映射（`web` 层 `resolveCwd`）、env 剥除、capabilities/healthz 报 `workspace_mount`。mac argv 单测覆盖共享挂载顺序；**Linux 真机双 bed 验证已通过**（devbox，bwrap 0.8.0 / kernel 5.15：兄弟遮蔽、规范挂载、敏感路径+env 剥除、direct 负面对照全 PASS；共享软件写入尚待随 carrier 镜像联调）。真机验证同时暴露两个 bug 均已修复：宿主缺 `/workspace` 挂载点（probe 改全形态 + boot 时确保挂载点）；shell 死亡 + 未断开客户端导致全 daemon 死锁（Shell 锁职责拆分，见 `internal/bed/shell.go` LOCKING 注释）。
 
 **共同路径契约的兑现状态**：`fsops.Paths` 已实现 bed_home 模型——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对。尚未补齐的部分：命令字面量的 bed-local 投影（约定入口可经 env 注入统一：`HOME`/`TMPDIR` 指进 bed_home；字面量本身只有 suite 能靠追加 bind 兑现）；daemon 文件操作的 symlink 防逃逸；suite 下 workspace 外的 cwd 没有进程视图（当前诚实拒绝，追加 bind 后可放开）。这些都不算某一房型的能力差异，应在三档共用层或 bwrap argv 层补齐。
 

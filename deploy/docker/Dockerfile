@@ -59,7 +59,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fi \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /out/hostel /usr/local/bin/hostel
+# /usr/local is the carrier-wide mutable software environment exposed to beds.
+# Keep the daemon itself in the read-only system image so a package install
+# cannot replace the binary used by future confiner re-execs or restarts.
+COPY --from=builder /out/hostel /usr/bin/hostel
 
 # Runs as root by default (like execd): bwrap must mkdir the /workspace mount
 # point on the read-only root and needs user namespaces, and chromium runs with
