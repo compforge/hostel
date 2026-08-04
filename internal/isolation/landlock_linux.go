@@ -150,10 +150,11 @@ var landlockRODirs = []string{
 	"/etc", "/proc", "/sys", "/run", "/opt",
 }
 
-// landlockRWDirs: the bed's own data (private), plus shared host scratch —
-// /tmp and /dev are the "shared toilet": writable but common to all beds.
+// landlockRWDirs: the bed's own data (private), plus carrier-wide shared
+// software and scratch. /usr/local is intentionally shared across beds; its
+// ownership and package-manager environment belong to the carrier image.
 func landlockRWDirs(dataDir string) []string {
-	return []string{dataDir, "/tmp", "/dev", "/var/tmp"}
+	return []string{dataDir, carrierSoftwareRoot, "/tmp", "/dev", "/var/tmp"}
 }
 
 // applyLandlock restricts the current process to the bed data dir (rw) + system

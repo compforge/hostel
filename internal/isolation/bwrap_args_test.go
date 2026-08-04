@@ -82,6 +82,15 @@ func TestBuildBwrapArgsK8sReachable(t *testing.T) {
 	}
 }
 
+func TestBuildBwrapArgsSharesCarrierSoftware(t *testing.T) {
+	argv := buildBwrapArgs("/ws", "/ws/b", nil, nil)
+	roRoot := indexOfSeq(argv, "--ro-bind", "/", "/")
+	sharedSoftware := indexOfSeq(argv, "--bind", carrierSoftwareRoot, carrierSoftwareRoot)
+	if roRoot < 0 || sharedSoftware < 0 || roRoot >= sharedSoftware {
+		t.Fatalf("carrier software must be reopened rw after the ro root bind: roRoot=%d sharedSoftware=%d argv=%v", roRoot, sharedSoftware, argv)
+	}
+}
+
 // The workspace root may itself be /workspace (default config). The sequence
 // must still be mask-then-bind so the bed's own dir replaces the mount point.
 func TestBuildBwrapArgsRootEqualsMountPoint(t *testing.T) {

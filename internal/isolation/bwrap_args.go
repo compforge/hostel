@@ -27,6 +27,12 @@ import "strings"
 // in sync by hand.
 const BwrapMountPoint = "/workspace"
 
+// carrierSoftwareRoot is shared by every bed in the carrier. The host root is
+// otherwise read-only under suite, so this path must be re-bound read-write for
+// installs made by one command to remain available to later commands and beds.
+// The carrier image owns its permissions and package-manager environment.
+const carrierSoftwareRoot = "/usr/local"
+
 // buildBwrapArgs assembles the bwrap argv (between the binary and the user
 // command). Segment order is a contract — bwrap applies mounts in argv order
 // and later mounts cover earlier ones (the masking below depends on it):
@@ -42,15 +48,16 @@ const BwrapMountPoint = "/workspace"
 //     bind the host /proc read-only instead. (uts/ipc unshares are cheap and
 //     don't touch mounts.)
 //  2. --ro-bind / /            — RO host root: toolchains stay usable
-//  3. --dev /dev, --ro-bind /proc /proc, --tmpfs /tmp — fresh dev/tmp; /proc
+//  3. --bind /usr/local /usr/local — carrier-wide shared software, writable
+//  4. --dev /dev, --ro-bind /proc /proc, --tmpfs /tmp — fresh dev/tmp; /proc
 //     is bound (not --proc) so no procfs remount is needed under masked /proc
-//  4. Masking: --tmpfs over workspaceRoot (sibling beds cease to exist),
+//  5. Masking: --tmpfs over workspaceRoot (sibling beds cease to exist),
 //     and over each maskPath (host user data / mounted secrets)
-//  5. --bind <bed workspace> /workspace — own data only, canonical name
+//  6. --bind <bed workspace> /workspace — own data only, canonical name
 //     (must come AFTER the workspaceRoot mask so it re-opens only our dir)
-//  6. --unsetenv for secret-looking env vars (host credentials must not
+//  7. --unsetenv for secret-looking env vars (host credentials must not
 //     leak into bed code; list borrowed from execd's strict profile)
-//  7. --chdir /workspace, --die-with-parent, --
+//  8. --chdir /workspace, --die-with-parent, --
 //
 // environ is os.Environ()-shaped; maskPaths are host paths that exist.
 func buildBwrapArgs(workspaceRoot, wsPath string, maskPaths, environ []string) []string {
@@ -60,21 +67,23 @@ func buildBwrapArgs(workspaceRoot, wsPath string, maskPaths, environ []string) [
 		// 2.
 		"--ro-bind", "/", "/",
 		// 3.
+		"--bind", carrierSoftwareRoot, carrierSoftwareRoot,
+		// 4.
 		"--dev", "/dev",
 		"--ro-bind", "/proc", "/proc",
 		"--tmpfs", "/tmp",
 	}
-	// 4. Mask BEFORE binding our workspace: if workspaceRoot were masked after,
+	// 5. Mask BEFORE binding our workspace: if workspaceRoot were masked after,
 	// the tmpfs would swallow the bed's own mount too.
 	argv = append(argv, "--tmpfs", workspaceRoot)
 	for _, p := range maskPaths {
 		argv = append(argv, "--tmpfs", p)
 	}
-	// 5.
-	argv = append(argv, "--bind", wsPath, BwrapMountPoint)
 	// 6.
-	argv = append(argv, unsetSecretEnvArgs(environ)...)
+	argv = append(argv, "--bind", wsPath, BwrapMountPoint)
 	// 7.
+	argv = append(argv, unsetSecretEnvArgs(environ)...)
+	// 8.
 	argv = append(argv,
 		"--chdir", BwrapMountPoint,
 		"--die-with-parent",
