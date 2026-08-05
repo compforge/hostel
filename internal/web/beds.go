@@ -171,6 +171,8 @@ func (s *Server) bedList(c *gin.Context) {
 			"store":              s.mgr.StoreName(),
 			"isolation":          s.mgr.Isolator().Level().String(),
 			"max_beds":           s.mgr.MaxBeds(),
+			"active_beds":        s.mgr.ActiveBedCount(),
+			"max_active_beds":    s.mgr.MaxActiveBeds(),
 			"bed_counts":         counts,
 			"retained_until":     instanceRetainUntil,
 			"luggage_bytes":      luggageBytes,
@@ -299,6 +301,7 @@ func (s *Server) capabilities(c *gin.Context) {
 		// under direct, where /workspace is only the file-API virtual prefix.
 		"workspace_mount": iso.MountPoint() != "",
 		"max_beds":        s.mgr.MaxBeds(),
+		"max_active_beds": s.mgr.MaxActiveBeds(),
 		"persistence":     s.mgr.StoreName(),
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,
@@ -323,6 +326,10 @@ func (s *Server) capabilities(c *gin.Context) {
 func (s *Server) bedCheckpoint(c *gin.Context) {
 	id := c.Param("bedId")
 	if err := s.mgr.Checkpoint(c.Request.Context(), id); err != nil {
+		if errors.Is(err, bed.ErrActiveBedLimit) {
+			respondBedError(c, err)
+			return
+		}
 		runtimeError(c, err.Error())
 		return
 	}

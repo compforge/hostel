@@ -86,6 +86,10 @@ func (s *Server) runCommand(c *gin.Context) {
 		badRequest(c, "missing 'command'")
 		return
 	}
+	if err := bed.ValidateRequestEnv(req.Envs); err != nil {
+		badRequest(c, err.Error())
+		return
+	}
 	cwdInBed, ok := s.resolveCwd(c, b, ops, req.Cwd)
 	if !ok {
 		return

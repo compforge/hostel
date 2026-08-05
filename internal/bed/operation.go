@@ -59,10 +59,19 @@ func (m *Manager) BeginOperation(b *Bed, kind OperationKind, timeout time.Durati
 		m.mu.Unlock()
 		return nil, ErrBedUnavailable
 	}
+	becomingActive := b.inflight == 0 && b.ID != m.defaultBed
+	if becomingActive && m.maxActiveBeds > 0 && m.activeBeds.Load() >= int64(m.maxActiveBeds) {
+		b.mu.Unlock()
+		m.mu.Unlock()
+		return nil, ErrActiveBedLimit
+	}
 	b.lastActiveAt = now
 	b.activitySeq++
 	b.inflight++
 	b.inflightByKind[kind]++
+	if becomingActive {
+		m.activeBeds.Add(1)
+	}
 	if m.bedIdleTTL > 0 && retainUntil.After(b.retainUntil) {
 		b.retainUntil = retainUntil
 	}
@@ -73,9 +82,15 @@ func (m *Manager) BeginOperation(b *Bed, kind OperationKind, timeout time.Durati
 	return func() {
 		once.Do(func() {
 			now := time.Now()
+			m.mu.Lock()
 			b.mu.Lock()
 			if b.inflight > 0 {
 				b.inflight--
+				if b.inflight == 0 && b.ID != m.defaultBed {
+					if current, ok := m.beds[b.ID]; ok && current == b {
+						m.activeBeds.Add(-1)
+					}
+				}
 			}
 			if n := b.inflightByKind[kind]; n > 1 {
 				b.inflightByKind[kind] = n - 1
@@ -91,6 +106,7 @@ func (m *Manager) BeginOperation(b *Bed, kind OperationKind, timeout time.Durati
 				}
 			}
 			b.mu.Unlock()
+			m.mu.Unlock()
 		})
 	}, nil
 }

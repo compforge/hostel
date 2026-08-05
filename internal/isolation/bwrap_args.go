@@ -17,8 +17,6 @@ package isolation
 // This file has no build tag: the argv builder is pure string assembly so its
 // tests run on every platform (the exec-ing side lives in bwrap_linux.go).
 
-import "strings"
-
 // BwrapMountPoint is where a bed's workspace is bind-mounted inside the
 // sandbox. Fixed and canonical: it makes shell paths and file-API paths the
 // same string, matching OpenSandbox SDK expectations. Must stay equal to
@@ -55,12 +53,11 @@ const carrierSoftwareRoot = "/usr/local"
 //     and over each maskPath (host user data / mounted secrets)
 //  6. --bind <bed workspace> /workspace — own data only, canonical name
 //     (must come AFTER the workspaceRoot mask so it re-opens only our dir)
-//  7. --unsetenv for secret-looking env vars (host credentials must not
-//     leak into bed code; list borrowed from execd's strict profile)
-//  8. --chdir /workspace, --die-with-parent, --
+//  7. --chdir /workspace, --die-with-parent, --
 //
-// environ is os.Environ()-shaped; maskPaths are host paths that exist.
-func buildBwrapArgs(workspaceRoot, wsPath string, maskPaths, environ []string) []string {
+// maskPaths are host paths that exist. Environment ownership lives in bed's
+// process-env builder, so isolation mechanisms never inherit or filter it.
+func buildBwrapArgs(workspaceRoot, wsPath string, maskPaths []string) []string {
 	argv := []string{
 		// 1.
 		"--unshare-user", "--unshare-uts", "--unshare-ipc",
@@ -82,51 +79,12 @@ func buildBwrapArgs(workspaceRoot, wsPath string, maskPaths, environ []string) [
 	// 6.
 	argv = append(argv, "--bind", wsPath, BwrapMountPoint)
 	// 7.
-	argv = append(argv, unsetSecretEnvArgs(environ)...)
-	// 8.
 	argv = append(argv,
 		"--chdir", BwrapMountPoint,
 		"--die-with-parent",
 		"--",
 	)
 	return argv
-}
-
-// secretEnvPatterns are env-name globs whose values must not reach bed code.
-// Borrowed from OpenSandbox execd's strict-profile blacklist.
-var secretEnvPatterns = []string{
-	"*_API_KEY", "*_TOKEN", "*_SECRET", "*_PASSWORD",
-	"AWS_*", "K8S_*", "KUBE_*",
-}
-
-// unsetSecretEnvArgs returns --unsetenv args for every env var in environ
-// matching secretEnvPatterns.
-func unsetSecretEnvArgs(environ []string) []string {
-	var argv []string
-	for _, env := range environ {
-		name, _, _ := strings.Cut(env, "=")
-		for _, pattern := range secretEnvPatterns {
-			if matchEnvPattern(name, pattern) {
-				argv = append(argv, "--unsetenv", name)
-				break
-			}
-		}
-	}
-	return argv
-}
-
-// matchEnvPattern is a case-insensitive glob supporting a single leading or
-// trailing "*" (the only shapes secretEnvPatterns uses).
-func matchEnvPattern(name, pattern string) bool {
-	name = strings.ToUpper(name)
-	pattern = strings.ToUpper(pattern)
-	if suffix, ok := strings.CutPrefix(pattern, "*"); ok {
-		return strings.HasSuffix(name, suffix)
-	}
-	if prefix, ok := strings.CutSuffix(pattern, "*"); ok {
-		return strings.HasPrefix(name, prefix)
-	}
-	return name == pattern
 }
 
 // defaultMaskCandidates are host paths masked when they exist: host user data

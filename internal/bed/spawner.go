@@ -68,6 +68,9 @@ func newInProcSpawner(resources resource.Tracker) *inProcSpawner {
 }
 
 func (s *inProcSpawner) Start(bedID string, cmd *exec.Cmd) (Proc, error) {
+	if cmd.Env == nil {
+		return nil, errors.New("bed: process environment must be explicit")
+	}
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}

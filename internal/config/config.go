@@ -17,6 +17,7 @@ package config
 
 import (
 	"flag"
+	"strings"
 	"time"
 
 	"github.com/qiankunli/go-stdx/osx"
@@ -27,6 +28,8 @@ import (
 // meant to run inside a pod, serving one or many beds (isolation units).
 // DefaultAddr is the default HTTP listen address.
 const DefaultAddr = ":8872"
+
+const defaultBedEnvPassthrough = "PATH,LANG,LC_ALL,LC_CTYPE,TZ,TERM,COLORTERM,SSL_CERT_FILE,SSL_CERT_DIR,PYTHONUSERBASE,NPM_CONFIG_PREFIX,UV_TOOL_DIR,UV_TOOL_BIN_DIR"
 
 type Config struct {
 	ShowVersion bool
@@ -51,6 +54,10 @@ type Config struct {
 	// NEW bed creation only, never to the default bed; the 429 it produces is
 	// the backpressure/placement signal for an upstream scheduler.
 	MaxBeds int
+	// MaxActiveBeds caps tenant beds with at least one in-flight operation.
+	// Zero inherits MaxBeds (and is unlimited when MaxBeds is also zero). A
+	// finite MaxBeds is always the effective ceiling. The default bed is exempt.
+	MaxActiveBeds int
 	// BedInit selects the process spawner: "auto" (default) probes the per-bed
 	// init (docs/kernel.md 〈进程树〉) at boot and falls back to in-process
 	// forking where it can't serve; "off" forces in-process.
@@ -86,6 +93,10 @@ type Config struct {
 	ChromiumDebugPort int
 	// ShellPath is the shell binary a bed's long-running session runs.
 	ShellPath string
+	// BedEnvPassthrough names standard carrier-software variables selected from
+	// the daemon environment. HOSTEL_* and BED_* are reserved namespaces and
+	// cannot be passed through.
+	BedEnvPassthrough []string
 }
 
 // Load builds Config from flags, with env fallbacks (HOSTEL_*).
@@ -101,8 +112,10 @@ func Load(args []string) *Config {
 	fs.StringVar(&c.IsolationMode, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "data-isolation level: dorm | room | suite | auto (auto=env ceiling)")
 	fs.StringVar(&c.DefaultBed, "default-bed", osx.EnvStr("HOSTEL_DEFAULT_BED", "default"), "bed id used when a request omits one")
 	fs.StringVar(&c.ShellPath, "shell", osx.EnvStr("HOSTEL_SHELL", "/bin/bash"), "shell for bed sessions")
+	bedEnvPassthrough := fs.String("bed-env-passthrough", osx.EnvStr("HOSTEL_BED_ENV_PASSTHROUGH", defaultBedEnvPassthrough), "comma-separated carrier env names exposed to bed processes")
 	idle := fs.Duration("bed-idle-timeout", osx.EnvDuration("HOSTEL_BED_IDLE_TIMEOUT", 30*time.Minute), "reap a bed after this idle duration (0=never)")
 	fs.IntVar(&c.MaxBeds, "max-beds", osx.EnvInt("HOSTEL_MAX_BEDS", 0), "max concurrent beds, 0=unlimited (default bed exempt)")
+	fs.IntVar(&c.MaxActiveBeds, "max-active-beds", osx.EnvInt("HOSTEL_MAX_ACTIVE_BEDS", 0), "max active beds, 0=inherit max-beds (default bed exempt)")
 	fs.StringVar(&c.BedInit, "bed-init", osx.EnvStr("HOSTEL_BED_INIT", "auto"), "per-bed init spawner: auto (probe at boot, fall back in-process) | off")
 	fs.StringVar(&c.StoreBackend, "store", osx.EnvStr("HOSTEL_STORE", "auto"), "workspace persistence backend: auto (s3 when --s3-bucket is set, else noop) | noop | s3")
 	fs.StringVar(&c.S3Bucket, "s3-bucket", osx.EnvStr("HOSTEL_S3_BUCKET", ""), "S3 bucket for bed snapshots")
@@ -121,10 +134,31 @@ func Load(args []string) *Config {
 	c.BedIdleTTL = *idle
 	c.PersistInterval = *persist
 	c.ChromiumIdleStop = *idleStop
+	c.BedEnvPassthrough = splitCommaList(*bedEnvPassthrough)
 	// Low defaults to 80% of high so a bare --luggage-high-bytes works; a low
 	// above high would make GC loop uselessly, so clamp it.
 	if c.LuggageHighBytes > 0 && (c.LuggageLowBytes <= 0 || c.LuggageLowBytes > c.LuggageHighBytes) {
 		c.LuggageLowBytes = c.LuggageHighBytes * 8 / 10
 	}
 	return c
+}
+
+func splitCommaList(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	items := make([]string, 0, strings.Count(value, ",")+1)
+	for _, raw := range strings.Split(value, ",") {
+		item := strings.TrimSpace(raw)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		items = append(items, item)
+	}
+	return items
 }

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestIsolationAndManagedServiceConfigContract(t *testing.T) {
 	// The three north-facing room types are configuration values; resolution to
@@ -21,5 +24,34 @@ func TestIsolationAndManagedServiceConfigContract(t *testing.T) {
 	attach := Load([]string{"-chromium-cdp-url", "http://chromium:9222", "-chromium-debug-port", "0"})
 	if attach.ChromiumCDPURL != "http://chromium:9222" || attach.ChromiumDebugPort != 0 {
 		t.Fatalf("attach config: %+v", attach)
+	}
+}
+
+func TestBedEnvPassthroughConfig(t *testing.T) {
+	t.Setenv("HOSTEL_BED_ENV_PASSTHROUGH", "PATH, LANG,PATH,UV_TOOL_DIR")
+	c := Load(nil)
+	want := []string{"PATH", "LANG", "UV_TOOL_DIR"}
+	if !slices.Equal(c.BedEnvPassthrough, want) {
+		t.Fatalf("BedEnvPassthrough = %v, want %v", c.BedEnvPassthrough, want)
+	}
+
+	c = Load([]string{"-bed-env-passthrough", "PATH,TERM"})
+	want = []string{"PATH", "TERM"}
+	if !slices.Equal(c.BedEnvPassthrough, want) {
+		t.Fatalf("flag BedEnvPassthrough = %v, want %v", c.BedEnvPassthrough, want)
+	}
+}
+
+func TestBedCapacityConfig(t *testing.T) {
+	t.Setenv("HOSTEL_MAX_BEDS", "12")
+	t.Setenv("HOSTEL_MAX_ACTIVE_BEDS", "4")
+	c := Load(nil)
+	if c.MaxBeds != 12 || c.MaxActiveBeds != 4 {
+		t.Fatalf("env capacity = max %d active %d, want 12/4", c.MaxBeds, c.MaxActiveBeds)
+	}
+
+	c = Load([]string{"-max-beds", "20", "-max-active-beds", "7"})
+	if c.MaxBeds != 20 || c.MaxActiveBeds != 7 {
+		t.Fatalf("flag capacity = max %d active %d, want 20/7", c.MaxBeds, c.MaxActiveBeds)
 	}
 }

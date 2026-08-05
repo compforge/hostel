@@ -9,6 +9,7 @@
 3. **路径映射是三档共同的基础契约，不是高档房型的附加能力**：请求先由 `X-Hostel-Bed` 确定 bed，再把 file API、cwd 等显式路径映射到该 bed 的 `bed_home`；hostel 不靠路径判断请求属于哪个 bed。`dorm / room / suite` 只决定映射后的数据能否被兄弟 bed 看见、访问，不得改变同一个客户端路径落到哪个 bed-local 位置。
 4. **两套进程路径语义应当收敛**：客户端的任意绝对路径都按同一条规则 rebase 到 `bed_home` 下（`/workspace/x` 也不例外——它落到真实子目录 `bed_home/workspace/x`），映射是**单射**，回显因此天然对称。底层可以按房型使用宿主真实路径、Landlock/UID 或 mount namespace，但对调用方暴露的路径结果必须一致；不能因为 room/direct 没有 `/workspace` bind，就拒绝本可安全映射到 `bed_home` 的路径。
 5. **软件环境默认归 carrier 共享，隔离由真实问题驱动**：hostel 的首要目标是用一份运行时承载多个 bed，不为尚未出现的版本冲突预建 per-bed 软件目录、环境引用、manifest 或 GC。系统软件、可执行文件以及全局安装的 Python/Node 包在模型上都属于 carrier；当 carrier 提供全局安装能力时，安装结果对其中所有 bed 可见。确有版本冲突时，再由对应 bed 在自己的 `bed_home` 内使用 venv、conda、本地 `node_modules` 等生态原生方案局部隔离；需要独占完整系统环境时交给 pod 等强档 runtime。这个取舍只放宽共享软件环境，不改变 workspace、用户文件和程序产物仍须按 bed 隔离的底线。
+6. **进程环境按 owner 显式组装，不随房型继承 daemon**：`HOSTEL_*` 是 daemon 配置命名空间，`BED_*` 是 bed 内身份/能力命名空间，`PATH`、`HOME`、`PYTHONUSERBASE` 等保持生态标准名称。bed 进程环境统一由 `carrierSoftwareEnv + bedContextEnv + requestEnv` 组成；daemon 的完整 `os.Environ()` 不属于任何 bed，env 安全因此不依赖 dorm/room/suite 的实现机制。
 
 ## 二、流程（bwrap 模式下启动 bed 内进程）
 
@@ -35,7 +36,6 @@ bwrap --unshare-user --unshare-uts --unshare-ipc \
   --tmpfs <workspace-root> \            # 遮蔽所有 bed 目录
   --tmpfs /root --tmpfs /home \         # 遮蔽宿主用户数据（及存在时的 /run/secrets、/var/run/secrets）
   --bind <bed_home>/workspace /workspace \  # 只挂自己的 workspace，且给规范名
-  --unsetenv <密钥形 env>... \           # 见 §4：宿主凭据不进 bed
   --chdir /workspace --die-with-parent -- <cmd>
 ```
 
@@ -91,11 +91,23 @@ bed 已由 `X-Hostel-Bed` 选定后，所有房型共用同一套客户端路径
 
 注意 workspace-root 与规范挂载点重名时（宿主 `/workspace` 作 root、bed 内也叫 `/workspace`）bwrap 序列依然成立：先 tmpfs 盖 `/workspace`，再 bind `<bed_home>/workspace` → `/workspace`，自身目录作为挂载点被替换、兄弟目录被 tmpfs 吞掉。
 
-### 4. 敏感数据遮蔽清单：文件路径 + 环境变量
+### 4. 敏感数据边界：文件遮蔽 + 显式进程环境
 
 文件路径最小集合：`/root`、`/home`（宿主用户数据）+ 存在时的 `/run/secrets`、`/var/run/secrets`（K8s serviceaccount token 等平台挂载凭据）——**默认遮蔽**，需要网络凭据的场景由 managed-service 层代持，而不是把凭据暴露给 bed 内任意代码。
 
-环境变量同理（借鉴 execd strict profile 的黑名单）：hostel 进程自身 env 里密钥形变量（`*_API_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD` / `AWS_*` / `K8S_*` / `KUBE_*`）经 `--unsetenv` 剥除后才进 bed。文件遮蔽挡"挂载进来的凭据"，env 剥除挡"进程继承的凭据"，两条泄漏通道都要关。
+环境变量不走黑名单，也不归 bwrap/landlock/uid 任一隔离机制处理。唯一入口在 `internal/bed/env.go`：
+
+```text
+bedProcessEnv = carrierSoftwareEnv + bedContextEnv + requestEnv
+```
+
+- **carrierSoftwareEnv**：Hostel 只从 daemon env 中挑选 `HOSTEL_BED_ENV_PASSTHROUGH` 指定的标准变量；默认覆盖 PATH、locale、证书和 `/usr/local` 对应的 Python/npm/uv 入口。未点名的 AWS/K8s/宿主凭据天然不进入 bed，而不是先继承再猜哪些像密钥。
+- **bedContextEnv**：Hostel 注入 `BED_ID`、`HOME`、`TMPDIR`、`USER`、`LOGNAME`、`SHELL`，以及设施可用时的标准工具变量 `PLAYWRIGHT_MCP_CDP_ENDPOINT`。`BED_*` 属 bed，`HOSTEL_*` 属 daemon；两者都是保留命名空间，carrier passthrough 与 request env 均不可占用。
+- **requestEnv**：`/command.envs` 与 isolated run 的 `envs` 是调用方对单次执行的显式 overlay，可以携带调用方自己命名的密钥；Hostel 只校验变量名/值与保留命名空间，不用后缀黑名单误删合法输入。显式 session 的跨 run 环境仍由调用方在 shell 中 `export`，不写入 bed meta 或快照。
+
+这条边界三档完全相同：文件遮蔽解决挂载凭据，显式组装解决进程环境泄漏；不能因为降到 room/dorm 就把 daemon env 暴露给 bed。
+
+显式组装只保证变量**不作为子进程环境继承**，不是 PID/用户身份隔离的替代品。dorm 以及同 uid 的机制仍可能经宿主 `/proc/<pid>/environ` 观察其他进程；uid room 会额外挡住这条路径，需要对抗性凭据隔离时应选择具备独立身份/PID 边界的更强 runtime。
 
 ### 5. 降级行为（与 v1 一致的哲学）
 
@@ -104,7 +116,8 @@ bed 已由 `X-Hostel-Bed` 选定后，所有房型共用同一套客户端路径
 
 ### 6. 测试策略
 
-- **mac/CI 可跑**：argv 构造单测——给定 root/bedID，断言遮蔽序列、bind 目标、顺序敏感项、env 剥除（argv 构造放在无 build tag 的 `bwrap_args.go`，exec 侧才是 `bwrap_linux.go`）。
+- **mac/CI 可跑**：argv 构造单测——给定 root/bedID，断言遮蔽序列、bind 目标和顺序敏感项（argv 构造放在无 build tag 的 `bwrap_args.go`，exec 侧才是 `bwrap_linux.go`）。
+- **三档共同 env 契约**：同一组测试断言 daemon 的 `HOSTEL_*`/AWS 凭据不进入 bed、allowlist 标准变量可见、`BED_ID` 正确且请求不可伪造、request env 只在本次执行生效。
 - **三档共同契约**：对 dorm/room/suite 跑同一组路径表，断言 `/workspace/a`、`/tmp/workspace/a` 和相对路径都落到对应 `bed_home`，并覆盖 `..` 与 symlink 逃逸；隔离等级只改变跨 bed 访问结果，不改变映射结果。
 - **Linux 真验证**（devbox）：起两个 bed，A 写文件，断言 B 内 `ls <workspace-root>` 看不到 A 的目录、`cat` A 的宿主路径报不存在；`/workspace` 内读写互通 file API。
 - 回归：direct 模式行为不变（现有 web/bed 测试全绿）。
@@ -118,9 +131,9 @@ bed 已由 `X-Hostel-Bed` 选定后，所有房型共用同一套客户端路径
 
 ## 实现状态
 
-已实现（`internal/isolation/`）：boot 时 bwrap probe（binary + **全形态 smoke**——用真实 argv 起 `true`，namespace/遮蔽、carrier 共享 `/usr/local`、`/workspace` bind 全过一遍；宿主挂载点缺失等问题在 boot 即暴露并诚实降 direct，不再误报 `workspace_mount`）、遮蔽 argv、carrier 软件目录共享写、`/workspace` 规范挂载、cwd 模式感知映射（`web` 层 `resolveCwd`）、env 剥除、capabilities/healthz 报 `workspace_mount`。mac argv 单测覆盖共享挂载顺序；**Linux 真机双 bed 验证已通过**（devbox，bwrap 0.8.0 / kernel 5.15：兄弟遮蔽、规范挂载、敏感路径+env 剥除、direct 负面对照全 PASS；共享软件写入尚待随 carrier 镜像联调）。真机验证同时暴露两个 bug 均已修复：宿主缺 `/workspace` 挂载点（probe 改全形态 + boot 时确保挂载点）；shell 死亡 + 未断开客户端导致全 daemon 死锁（Shell 锁职责拆分，见 `internal/bed/shell.go` LOCKING 注释）。
+已实现：`internal/isolation/` 在 boot 时做 bwrap 全形态 smoke，负责 namespace/遮蔽、carrier 共享 `/usr/local`、`/workspace` bind 与诚实降级；`internal/bed/env.go` 统一负责三档进程环境的 allowlist、bed context 和 request overlay。mac argv 单测覆盖共享挂载顺序，bed/web 单测覆盖命名空间与泄漏边界；**Linux 真机双 bed 验证已通过**（devbox，bwrap 0.8.0 / kernel 5.15：兄弟遮蔽、规范挂载、敏感路径、direct 负面对照全 PASS；共享软件写入尚待随 carrier 镜像联调）。
 
-**共同路径契约的兑现状态**：`fsops.Paths` 已实现 bed_home 模型——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对。尚未补齐的部分：命令字面量的 bed-local 投影（约定入口可经 env 注入统一：`HOME`/`TMPDIR` 指进 bed_home；字面量本身只有 suite 能靠追加 bind 兑现）；daemon 文件操作的 symlink 防逃逸；suite 下 workspace 外的 cwd 没有进程视图（当前诚实拒绝，追加 bind 后可放开）。这些都不算某一房型的能力差异，应在三档共用层或 bwrap argv 层补齐。
+**共同路径契约的兑现状态**：`fsops.Paths` 已实现 bed_home 模型——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对；进程 env 已给 `HOME`/`TMPDIR` 提供各房型内可用的标准入口。尚未补齐的部分：命令字面量的 bed-local 投影（只有 suite 能靠追加 bind 兑现）、daemon 文件操作的 symlink 防逃逸、suite 下 workspace 外的 cwd 进程视图。这些都不算某一房型的能力差异，应在三档共用层或 bwrap argv 层补齐。
 
 ## 隔离分档模型：青年旅社房型（档 / 机制 / 上限 / 请求）
 
@@ -149,7 +162,7 @@ effective = min(requested, ceiling)
 |---|---|---|---|---|
 | **`dorm`** | 上下铺 / 通铺 | **无私人空间**：床位名义是你的但无屏障，伸手够到隔壁铺（仅组织性分隔，见 §5） | direct（chdir only） | 无 |
 | **`room`** | 单间（可锁门，**厕所公用**） | 别人**进不了你的房间**（数据 open EACCES），但走廊看得见你的门牌（存在可见），且 `/tmp`、`/usr`、系统路径等**公共设施仍共享** | landlock（优先）/ per-bed uid | 内核 ≥5.13 / `CAP_SETUID` |
-| **`suite`** | 套房（**全私有**） | 别人**看不见你的单元** + 私有 mount 视图（自己的 `/tmp`）+ `/workspace` 规范挂载 + env 剥除 | bwrap（mount ns） | userns 或 `CAP_SYS_ADMIN` |
+| **`suite`** | 套房（**全私有**） | 别人**看不见你的单元** + 私有 mount 视图（自己的 `/tmp`）+ `/workspace` 规范挂载 | bwrap（mount ns） | userns 或 `CAP_SYS_ADMIN` |
 
 无论住哪种房型，前台都先按 bed header 把客人的路径送到同一个 `bed_home`；表中的高低只描述兄弟 bed 能否看见、进入或读写该位置。路径映射不是 Level，也不参与 `effective = min(requested, ceiling)` 的降级。
 
@@ -201,7 +214,7 @@ landlock 依赖内核编译了 `CONFIG_SECURITY_LANDLOCK`，我们两个真实�
 
 **uid 档的诚实边界**（都是 room 通性或部署假设，不是 bug，但要说清）：
 
-- **env 不剥离**：bed 继承 daemon 的全部环境变量（room 一档本就不承诺 env 剥离，只 suite/bwrap 承诺）——所以 daemon 侧密钥别放 env，或需要 env 私密时上 suite。`__asuser` 只补了 `HOME`/`USER`，没删任何东西。
+- **env 与 uid 正交**：uid 只负责进程身份和 DAC；bed 进程仍使用三档共用的显式环境组装，不继承 daemon 全量环境。`__asuser` 只在未知 uid 场景兜底修正 `HOME`/`USER`/`LOGNAME`，不拥有 passthrough 策略。
 - **uid 段是假设不是保证**：`[200000,300000)` 可能与 `/etc/subuid` 的 userns 映射（第二个默认用户起 231072）或 LDAP/服务账号重叠。撞上真实身份 → bed 能碰那个身份的文件。当前威胁模型（bed 误串门，非对抗性 uid 抢占）下可接受，属部署需核对项。
 - **依赖 `fs.protected_hardlinks=1`**：`chownTree` 已跳过 `Nlink>1` 的普通文件（防 bed 硬链接宿主文件后被 `Prepare` chown 走属主提权），但纵深上仍建议部署侧保持内核默认的 `protected_hardlinks=1`——尤其 uid 档正是面向可能关掉它的老/定制内核。
 

@@ -118,6 +118,9 @@ func (s *initSpawner) ensure(bedID string) (*initHandle, error) {
 }
 
 func (s *initSpawner) Start(bedID string, cmd *exec.Cmd) (Proc, error) {
+	if cmd.Env == nil {
+		return nil, errors.New("bed: process environment must be explicit")
+	}
 	h, err := s.ensure(bedID)
 	if err != nil {
 		return nil, err
@@ -142,14 +145,10 @@ func (s *initSpawner) Start(bedID string, cmd *exec.Cmd) (Proc, error) {
 		defer devnull.Close()
 		stdin = devnull
 	}
-	env := cmd.Env
-	if env == nil {
-		env = os.Environ()
-	}
 	// bedinit execs Argv[0] as the path — exec.Command resolved it into
 	// cmd.Path, while cmd.Args[0] may still be the bare name.
 	argv := append([]string{cmd.Path}, cmd.Args[1:]...)
-	handle, err := bedinit.Spawn(h.socket, argv, cmd.Dir, env, stdin, stdout, stderr)
+	handle, err := bedinit.Spawn(h.socket, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr)
 	if err != nil {
 		return nil, err
 	}

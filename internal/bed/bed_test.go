@@ -466,6 +466,171 @@ func TestMaxBedsCap(t *testing.T) {
 	}
 }
 
+func TestMaxActiveBedsAdmission(t *testing.T) {
+	root := t.TempDir()
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, nil)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if err := m.SetMaxActiveBeds(1); err != nil {
+		t.Fatalf("SetMaxActiveBeds: %v", err)
+	}
+	a, _ := m.Ensure("a")
+	b, _ := m.Ensure("b")
+
+	finishA1, err := m.BeginOperation(a, OpExec, 0)
+	if err != nil {
+		t.Fatalf("activate a: %v", err)
+	}
+	finishA2, err := m.BeginOperation(a, OpFile, 0)
+	if err != nil {
+		t.Fatalf("second operation on active a: %v", err)
+	}
+	if got := m.ActiveBedCount(); got != 1 {
+		t.Fatalf("active beds = %d, want 1", got)
+	}
+	if _, err := m.BeginOperation(b, OpExec, 0); !errors.Is(err, ErrActiveBedLimit) {
+		t.Fatalf("activate b: want ErrActiveBedLimit, got %v", err)
+	}
+	if b.State() != StateIdle || b.Inflight() != 0 {
+		t.Fatalf("rejected b changed state: state=%s inflight=%d", b.State(), b.Inflight())
+	}
+
+	// The default bed is outside both capacity limits.
+	defaultBed, _ := m.Ensure("")
+	finishDefault, err := m.BeginOperation(defaultBed, OpExec, 0)
+	if err != nil {
+		t.Fatalf("activate default bed: %v", err)
+	}
+	if got := m.ActiveBedCount(); got != 1 {
+		t.Fatalf("default bed changed active count to %d", got)
+	}
+	finishDefault()
+
+	finishA1()
+	if got := m.ActiveBedCount(); got != 1 {
+		t.Fatalf("finishing one of two operations released a: active=%d", got)
+	}
+	finishA2()
+	if got := m.ActiveBedCount(); got != 0 {
+		t.Fatalf("finishing a = active %d, want 0", got)
+	}
+	finishB, err := m.BeginOperation(b, OpExec, 0)
+	if err != nil {
+		t.Fatalf("activate b after release: %v", err)
+	}
+	finishB()
+}
+
+func TestMaxActiveBedsResolution(t *testing.T) {
+	root := t.TempDir()
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, nil)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	for _, tc := range []struct {
+		configured int
+		want       int
+	}{{0, 3}, {2, 2}, {3, 3}, {4, 3}} {
+		if err := m.SetMaxActiveBeds(tc.configured); err != nil || m.MaxActiveBeds() != tc.want {
+			t.Fatalf("SetMaxActiveBeds(%d) = limit %d err %v, want %d", tc.configured, m.MaxActiveBeds(), err, tc.want)
+		}
+	}
+	if err := m.SetMaxActiveBeds(-1); err == nil {
+		t.Fatal("SetMaxActiveBeds(-1): want error")
+	}
+
+	unlimitedRoot := t.TempDir()
+	unlimited, err := NewManager(unlimitedRoot, "default", "/bin/bash", isolation.New("dorm", unlimitedRoot), nil, 0, nil)
+	if err != nil {
+		t.Fatalf("NewManager unlimited: %v", err)
+	}
+	if err := unlimited.SetMaxActiveBeds(0); err != nil || unlimited.MaxActiveBeds() != 0 {
+		t.Fatalf("unlimited defaults = limit %d err %v, want 0", unlimited.MaxActiveBeds(), err)
+	}
+	if err := unlimited.SetMaxActiveBeds(10); err != nil {
+		t.Fatalf("finite active cap with unlimited resident cap: %v", err)
+	}
+}
+
+func TestMaxActiveBedsConcurrentAdmission(t *testing.T) {
+	root := t.TempDir()
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, nil)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if err := m.SetMaxActiveBeds(1); err != nil {
+		t.Fatalf("SetMaxActiveBeds: %v", err)
+	}
+	a, _ := m.Ensure("a")
+	b, _ := m.Ensure("b")
+
+	start := make(chan struct{})
+	type result struct {
+		finish func()
+		err    error
+	}
+	results := make(chan result, 2)
+	for _, candidate := range []*Bed{a, b} {
+		go func(candidate *Bed) {
+			<-start
+			finish, err := m.BeginOperation(candidate, OpExec, 0)
+			results <- result{finish: finish, err: err}
+		}(candidate)
+	}
+	close(start)
+
+	admitted, rejected := 0, 0
+	var finishes []func()
+	for range 2 {
+		result := <-results
+		switch {
+		case result.err == nil:
+			admitted++
+			finishes = append(finishes, result.finish)
+		case errors.Is(result.err, ErrActiveBedLimit):
+			rejected++
+		default:
+			t.Fatalf("unexpected admission error: %v", result.err)
+		}
+	}
+	if admitted != 1 || rejected != 1 || m.ActiveBedCount() != 1 {
+		t.Fatalf("concurrent admission: admitted=%d rejected=%d active=%d", admitted, rejected, m.ActiveBedCount())
+	}
+	for _, finish := range finishes {
+		finish()
+	}
+	if got := m.ActiveBedCount(); got != 0 {
+		t.Fatalf("active beds after finish = %d, want 0", got)
+	}
+}
+
+func TestPurgeActiveBedReleasesCapacity(t *testing.T) {
+	root := t.TempDir()
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 2, nil)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if err := m.SetMaxActiveBeds(1); err != nil {
+		t.Fatalf("SetMaxActiveBeds: %v", err)
+	}
+	a, _ := m.Ensure("a")
+	finish, err := m.BeginOperation(a, OpExec, 0)
+	if err != nil {
+		t.Fatalf("activate a: %v", err)
+	}
+	if err := m.Purge("a"); err != nil {
+		t.Fatalf("Purge a: %v", err)
+	}
+	if got := m.ActiveBedCount(); got != 0 {
+		t.Fatalf("active beds after purge = %d, want 0", got)
+	}
+	finish() // must not double-decrement after the resident entry is gone.
+	if got := m.ActiveBedCount(); got != 0 {
+		t.Fatalf("active beds after late finish = %d, want 0", got)
+	}
+}
+
 // fakeStore is an in-memory Store for lifecycle tests.
 type fakeStore struct {
 	mu    sync.Mutex

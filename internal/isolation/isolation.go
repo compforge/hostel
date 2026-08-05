@@ -39,7 +39,7 @@ const (
 	// (EACCES) but siblings stay visible and host paths (/tmp, /usr) are shared.
 	Room
 	// Suite — fully private: siblings invisible, private mount view, canonical
-	// /workspace, env scrubbed.
+	// /workspace. Process env ownership is isolation-independent (bed/env.go).
 	Suite
 )
 

@@ -89,7 +89,7 @@ type Shell struct {
 
 // startShell launches the shell confined by iso to ws via the spawner. cwdInBed,
 // when set, becomes the starting directory via an initial `cd`. env is the
-// bed-scoped environment (Manager.bedEnv) — the session shell would otherwise
+// bed-scoped environment (Manager.buildBedEnv) — the session shell would otherwise
 // inherit the daemon env, which lacks the bed identity and endpoints. Stdio is
 // explicit os.Pipe pairs (not StdinPipe/StdoutPipe) so the raw fds can cross a
 // process boundary when the spawner is the bed's init.
@@ -221,7 +221,11 @@ func (s *Shell) Run(ctx context.Context, command string, onLine func(string)) (*
 // by the caller via fsops).
 func (m *Manager) CreateShell(b *Bed, cwdInBed string) (string, error) {
 	b.touch(m.bedIdleTTL)
-	sh, err := startShell(m.spawner, b.ID, m.shellPath, m.bedEnv(b.ID), m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, cwdInBed)
+	env, err := m.buildBedEnv(b, nil)
+	if err != nil {
+		return "", err
+	}
+	sh, err := startShell(m.spawner, b.ID, m.shellPath, env, m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, cwdInBed)
 	if err != nil {
 		return "", err
 	}
@@ -250,7 +254,11 @@ func (m *Manager) ForegroundShell(b *Bed) (*Shell, error) {
 	}
 	b.mu.Unlock()
 
-	sh, err := startShell(m.spawner, b.ID, m.shellPath, m.bedEnv(b.ID), m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, "")
+	env, err := m.buildBedEnv(b, nil)
+	if err != nil {
+		return nil, err
+	}
+	sh, err := startShell(m.spawner, b.ID, m.shellPath, env, m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, "")
 	if err != nil {
 		return nil, err
 	}

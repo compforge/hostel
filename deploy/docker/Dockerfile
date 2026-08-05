@@ -70,8 +70,14 @@ COPY --from=builder /out/hostel /usr/bin/hostel
 # a dropped-capability securityContext, or build a non-root variant once your
 # pod grants bwrap the specific caps it needs.
 
-# Sensible in-container defaults; every one is overridable via HOSTEL_* env.
-ENV HOSTEL_WORKSPACE_ROOT=/workspace \
+# Carrier software uses ecosystem-standard env names; Hostel selects these for
+# beds through its default allowlist instead of passing the whole daemon env.
+ENV PYTHONUSERBASE=/usr/local \
+    NPM_CONFIG_PREFIX=/usr/local \
+    UV_TOOL_DIR=/usr/local/share/uv/tools \
+    UV_TOOL_BIN_DIR=/usr/local/bin \
+    PATH=/usr/local/bin:${PATH} \
+    HOSTEL_WORKSPACE_ROOT=/workspace \
     HOSTEL_ISOLATION=suite \
     HOSTEL_CHROMIUM_PATH=/usr/bin/chromium
 # No VOLUME: it would bake the default path in at build time and silently

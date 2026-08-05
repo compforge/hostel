@@ -27,8 +27,8 @@ import (
 // bwrap confines each command under bubblewrap. Mount view per
 // docs/data-isolation.md: RO host root with shared software rw at /usr/local,
 // sibling beds masked out of existence, own workspace rw at the canonical
-// /workspace, host user data and mounted secrets masked, secret-looking env
-// vars stripped.
+// /workspace, host user data and mounted secrets masked. Process environment
+// ownership is enforced before this boundary by bed's process-env builder.
 type bwrap struct {
 	path      string   // bwrap binary (probed at boot)
 	root      string   // parent dir of all bed workspaces (masked in-sandbox)
@@ -117,7 +117,7 @@ func bwrapSmoke(path, workspaceRoot string, masks []string) error {
 	}
 	defer os.RemoveAll(probeWs)
 
-	argv := buildBwrapArgs(workspaceRoot, probeWs, masks, nil)
+	argv := buildBwrapArgs(workspaceRoot, probeWs, masks)
 	cmd := exec.Command(path, append(argv, "true")...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -134,7 +134,7 @@ func (b *bwrap) MountPoint() string { return BwrapMountPoint }
 func (b *bwrap) Wrap(cmd *exec.Cmd, ws Workspace) error {
 	// No silent degradation past this point: this isolator passed the boot
 	// probe, so any failure to build the sandbox is a hard error.
-	argv := buildBwrapArgs(b.root, ws.Path, b.maskPaths, os.Environ())
+	argv := buildBwrapArgs(b.root, ws.Path, b.maskPaths)
 	userArgs := cmd.Args
 	cmd.Args = make([]string, 0, len(argv)+len(userArgs)+1)
 	cmd.Args = append(cmd.Args, b.path)
