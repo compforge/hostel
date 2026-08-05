@@ -123,7 +123,7 @@ type chromium struct {
 	idleTimer  *time.Timer
 
 	// Crash supervision (the supervisor is the amenity itself, in-daemon —
-	// docs/design.md 〈进程树〉): a watcher on the master context detects the
+	// docs/kernel.md 〈进程树〉): a watcher on the master context detects the
 	// browser dying and flips back to idle with tenants dropped, so the NEXT
 	// AcquireTenant lazily rebuilds its slice — no restart storm, and a bed
 	// simply sees a fresh browser. notBefore gates ensureRunning with

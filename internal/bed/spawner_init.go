@@ -29,7 +29,7 @@ import (
 )
 
 // initSpawner forks bed processes through the bed's own init (`hostel
-// __bedinit`, docs/design.md 〈进程树〉 S1): every command becomes a child of
+// __bedinit`, docs/kernel.md 〈进程树〉 S1): every command becomes a child of
 // that init, so the bed owns a real process tree — KillBed terminates the init,
 // which kills every descendant including reparented setsid daemons. The daemon
 // side stays protocol-thin: build the command as usual, hand argv+env+fds over

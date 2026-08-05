@@ -127,7 +127,7 @@ hostel/
 │   ├── fsops/       bed-workspace-rooted 文件操作（路径逃逸防护）
 │   ├── service/     ManagedService 接口 + registry（v1 空）
 │   └── web/         gin：router / sse / files / command / beds / errors（薄适配层）
-├── docs/design.md
+├── docs/kernel.md
 ├── Makefile / README.md / NOTICE / .gitignore
 ```
 

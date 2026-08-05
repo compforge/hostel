@@ -6,7 +6,7 @@
 
 - **做**：bed 生命周期、exec / file、共享多租服务（Chromium/Jupyter…）管理。
 - **不做**（留给上层调度系统）：实例调度、跨实例路由、计费配额。
-- 参考 OpenSandbox execd（Apache-2.0）净重写，非其 fork；归属见 `NOTICE`。设计与 roadmap 见 `docs/design.md`。
+- 参考 OpenSandbox execd（Apache-2.0）净重写，非其 fork；归属见 `NOTICE`。设计与 roadmap 见 `docs/kernel.md`。
 
 ## 概念与命名约定
 
@@ -22,7 +22,7 @@
 - **luggage**：bed evict 后留在本机的现场缓存（快照才是身份，luggage 只是加速）。
 - **amenity**：bed 外由 hostel 统一管理的共享重资产设施（Chromium / Jupyter…）。
 
-**进程模型**（进程归属树；详见 `docs/design.md`〈进程树〉）：
+**进程模型**（进程归属树；详见 `docs/kernel.md`〈进程树〉）：
 
 ```
 tini (pid1)                       pod 级收尸兜底
@@ -84,7 +84,8 @@ internal/
 
 ## References
 
-- 设计文档（定位、bed 模型、managed-service 框架、决策表、v1 范围与 roadmap）：`docs/design.md`
+- 设计文档（定位、bed 模型、managed-service 框架、决策表、v1 范围与 roadmap）：`docs/kernel.md`
+- 生命周期（request / bed / hostel 三粒度、operation 与 session 两类请求、status 推导链）：`docs/lifecycle.md`
 - 数据隔离方案（tmpfs 遮蔽兄弟 bed、`/workspace` 规范挂载统一两套路径语义、降级与测试策略）：`docs/data-isolation.md`
 - 数据持久化方案（本地 workspace=工作副本、S3 快照=持久身份、边界同步、Store 抽象）：`docs/persistence.md`
 - 资源记账与隔离方案（per-bed cgroup v2；accounting 已落地，limits 待实现）：`docs/resource-isolation.md`
