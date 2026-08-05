@@ -58,7 +58,8 @@ internal/
 ├── config/            flags + HOSTEL_* env
 ├── isolation/         数据隔离房型档：New 按 env ceiling 路由；direct(dorm/全平台) + landlock(room/linux) + bwrap(suite/linux)
 ├── bed/               ★核心。bed=隔离单元=对外一个 sandbox
-│   ├── bed.go         Manager：Ensure(空→default，按 generation 判 luggage 新鲜)/BeginOperation/OpenSession/Evict/Purge/CollectExpired；ForegroundShell；StartCommand
+│   ├── bed.go         Manager：Ensure(空→default，按 generation 判 luggage 新鲜)/OpenSession/Evict/Purge/CollectExpired；ForegroundShell；StartCommand
+│   ├── operation.go   operation（无状态请求，kind=exec/file/browser/checkpoint/control）：BeginOperation + timeout 截断
 │   ├── session.go     session（可撤销有状态持有，cdp 类）：OpenSession/Touch/Close；revokeSessions 供 evict 在 persist 前吊销（shell 走 shell.go 自备机制，revoke 时一并 Close）
 │   ├── observability.go Bed 生命周期记录：activate/persist/evict 的结构化 stage 日志与最近摘要
 │   ├── luggage.go     luggage（evict 留下的现场缓存）：磁盘水位 GC（stale 优先→LRU）、Inventory（调度器视图）
