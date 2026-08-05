@@ -112,7 +112,7 @@ is a deliberate downgrade.
   other beds' data (EACCES) but siblings stay visible and `/tmp` / system paths
   are shared; **no capability required** (Linux ≥5.13);
 - `suite` (fully private): bwrap mount ns — siblings invisible + private `/tmp`
-  + canonical `/workspace` mount + env scrub (needs userns or CAP_SYS_ADMIN).
+  + canonical `/workspace` mount (needs userns or CAP_SYS_ADMIN).
 
 The environment ceiling is probed at boot; healthz/capabilities report
 `isolation.{level,mechanism,requested,effective,ceiling}`. See
@@ -154,10 +154,18 @@ reports `amenities: {chromium: idle|running}`.
 
 Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` /
 `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
-`--bed-init` / `--store` /
+`--max-active-beds` / `--bed-init` / `--bed-env-passthrough` / `--store` /
 `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` /
 `--luggage-high-bytes` / `--luggage-low-bytes` /
-`--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop`.
+`--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port`.
+
+Environment namespaces follow ownership: `HOSTEL_*` configures the daemon and
+is never inherited wholesale by bed processes; bed identity/capabilities use
+`BED_*` (`BED_ID` is always present); ecosystem variables keep their standard
+names. `--bed-env-passthrough` selects carrier software variables such as
+`PATH`, locale, certificate, Python, npm and uv settings. Request `envs` are an
+invocation-scoped overlay. Callers cannot claim the reserved `HOSTEL_*` or
+`BED_*` namespaces.
 
 Process tree: `--bed-init auto` (default) runs each bed's processes under a
 per-bed init (`hostel __bedinit`) so bed teardown kills the bed's WHOLE tree —
@@ -189,11 +197,15 @@ first, then least recently used — until under `--luggage-low-bytes` (default
 there destroys data — same honesty rule as everywhere: `/healthz` tells you
 which world you're in.
 
-Capacity: `--max-beds N` caps concurrent beds (0 = unlimited; the default bed
-is neither refused nor counted). A full instance answers new-bed requests with
-`429 BED_LIMIT_EXCEEDED` — the backpressure signal for a scheduler to place the
-sandbox elsewhere; current and max counts are reported by `/healthz` and the
-capabilities endpoint.
+Capacity: `--max-beds N` caps resident tenant beds; `--max-active-beds M` caps
+tenant beds with at least one in-flight operation. `M=0` inherits `N`; both are
+unlimited only when `N=0` too. The default bed is exempt from both. An explicit
+`M` above a finite `N` is clamped to `N`: resident capacity is always the hard
+ceiling for active capacity.
+An already-active bed may admit more operations without consuming another
+active-bed slot. A full instance returns `429 BED_LIMIT_EXCEEDED` for a new
+resident bed or `429 ACTIVE_BED_LIMIT_EXCEEDED` when an idle bed cannot become
+active. Capacity is reported by `/healthz`, `GET /v1/beds`, and capabilities.
 
 ## Container image
 

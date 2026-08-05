@@ -112,7 +112,7 @@ launch 模式：镜像里带 chromium/chrome 二进制（`--chromium-path` 或 P
 
 已实现（`internal/amenity/`）：`Amenity` 接口（含 `State()` 生命周期：unavailable/idle/running）+ `Registry`（amenity manager）；**chromium** 首个实例——launch-or-attach boot 探测、惰性启动、每 bed 一个 BrowserContext（cookie/存储隔离）、下载与截图落 bed `data/`、last-tenant idle-stop 自停、崩溃/停后按需重启。北向 4 端点 `POST /v1/beds/:id/browser/{goto,screenshot,text,close}`（chromedp）；capabilities 报 `amenities: {chromium: idle|running}`。真浏览器 e2e 通过（两 bed context 隔离、截图路径落对 workspace、逃逸拒绝、idle-stop、重启）。
 
-另已实现（§6）：per-bed CDP 代理（`chromium_cdp_proxy.go`，token 鉴权 + context 过滤）；bed 级 token 与 tenant 解耦（mint-only，拨号时才 ensure/启浏览器）；bed spawn env 注入 `PLAYWRIGHT_MCP_CDP_ENDPOINT`（`bed.Manager.bedEnv`）。**待真机验证**：playwright 全动词真流量过 grey-list 代理（snapshot/eval 等会碰 Target.setAutoAttach 深水区）。
+另已实现（§6）：per-bed CDP 代理（`chromium_cdp_proxy.go`，token 鉴权 + context 过滤）；bed 级 token 与 tenant 解耦（mint-only，拨号时才 ensure/启浏览器）；bed spawn env 注入 `PLAYWRIGHT_MCP_CDP_ENDPOINT`（`internal/bed/env.go`）。**待真机验证**：playwright 全动词真流量过 grey-list 代理（snapshot/eval 等会碰 Target.setAutoAttach 深水区）。
 
 一个实现注意（写进代码注释）：per-bed tab 必须先在**长命 tabCtx** 上 attach 一次，否则首个动作把 target 绑到派生的超时 context，cancel 即 detach，后续动作全 hang。context 管理动作走 **browser executor**（`cdp.WithExecutor(ctx, ...Browser)`），否则 `Not allowed`。
 

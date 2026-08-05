@@ -1,15 +1,15 @@
 # bed 资源记账与隔离方案（per-bed cgroup）
 
-> **状态：Phase 1 资源记账已落地；Phase 2 限额待实现。**
+> **状态：Phase 1 资源记账已落地；Phase 2 per-bed 限额与 Hostel 资源准入待实现。**
 
-资源治理分两阶段：先建立可信的 **per-bed 记账**，再基于同一 cgroup 边界增加限额，避免一个
-bed 跑飞后拖垮同一 hostel 的其它 bed。数据隔离见 `data-isolation.md`，持久化见
-`persistence.md`。
+资源治理先建立可信的 **per-bed 记账**，再基于同一 cgroup 边界增加两类控制：per-bed 限额
+防止一个 bed 跑飞，Hostel 资源准入根据整个 pod 的剩余容量判断还能否承接新的 active bed。
+数据隔离见 `data-isolation.md`，持久化见 `persistence.md`。
 
 ## 一、理念
 
-1. **多 bed 密度最终需要资源公平**：当前记账能定位"吵闹邻居"，但尚不会阻止一个 `while(1)` 或内存泄漏吃光 pod 配额；限额是下一阶段。cgroup 是两阶段共用的边界，避免先做一套观测、再为隔离推倒重来。
-2. **复用内核原语，不发明配额器**：cgroup v2 已提供层级化的 cpu/memory/pids 控制，hostel 只做两件事——**给每个 bed 建一个子组、把 bed 的进程放进去**。不在用户态做任何"测量-驳回"式的自制限流。
+1. **多 bed 密度最终需要资源公平与容量准入**：当前记账能定位"吵闹邻居"，但尚不会阻止一个 `while(1)` 或内存泄漏吃光 pod 配额，也不能告诉调度器这个 Hostel 是否已经"客满"。per-bed 限额保护邻居，Hostel 资源准入保护整个 pod；两者都建立在同一 cgroup 事实之上。
+2. **复用内核原语，不在用户态仿造资源隔离**：cgroup v2 负责 cpu/memory/pids 的记账与硬限制，hostel 负责**给每个 bed 建子组、把进程从第一条指令起放进去**。用户态只在准入边界读取 pod/cgroup 余量并接受或拒绝新负载，不靠采样循环暂停、杀死或节流已经接纳的进程。
 3. **与 Isolator 正交**：隔离（namespace 视图）与资源治理（记账 / 限额）是两个维度——bwrap 不管 cgroup。当前 `Tracker` 与 `Isolator` 并列，未来 `Limiter` 延续同一边界；direct 模式（无 bwrap）同样可记账和加限额。
 
 ### 当前落地：只记账，不设限
@@ -63,22 +63,45 @@ type Limiter interface {
 
 backend：`noop`（默认 / 非 Linux / 无写权限）· `cgroupv2`。与 `Store`、`Isolator` 同一模式：core 只依赖接口。
 
-### 2. 限额来源：默认值 + 每 bed 覆盖
+### 2. Hostel 容量准入：数量安全阀 → 资源余量
+
+数量上限是简单、可预测的第一道安全阀，但不是最终容量模型：
+
+- `max-beds` 限制 resident bed 总数（active / idle / evicting）；`max-active-beds`
+  只限制当前有 operation 在途的 bed 数。default bed 不参与这两个数量限制；active 配置为 0
+  时继承 resident 上限，配置高于有限的 resident 上限时也收敛到它——`max-beds` 始终是硬上限。
+- 瞬时 operation 很快释放 active 名额，因此一个 Hostel 可以先后承接大量 bed；耗时 operation
+  会长期占住 active 容量，上游看到背压后再扩 Hostel 资源或增加实例。
+- 数量与真实成本并不等价：一个 bed 可能比十个 bed 更耗 CPU/内存，后台进程也可能在 HTTP
+  operation 结束后继续运行。因此数量限制只作粗粒度兜底，不能宣称资源隔离或精确容量控制。
+
+理想准入依据是 **Hostel pod 的真实资源余量**。每个 bed 的 cgroup 数据用于归因、估算与解释，
+最终决定看 carrier 父 cgroup 的总量，因为 daemon、amenity 和 default bed 的实际消耗同样占用
+pod 配额，不能仅把 tenant bed 用量相加。内存可依据 `memory.current / memory.max` 与预留水位；
+CPU 不是一个瞬时存量，应综合近期利用率、throttling 或 pressure，而不是拿累计 `cpu.stat` 直接
+比较阈值。
+
+资源达到配置水位时，Hostel 标记 `admission.accepting_new_beds=false`（附 reason/headroom），并在
+一个 idle/non-resident bed 准备进入 active 时返回可重试的 429；已经 active 的 bed 与已经接纳的
+operation 不受影响。容量准入与 Hostel 的 `retained / draining / releasable / pinned` 生命周期状态
+正交，不能用“客满”覆盖“是否可安全释放”。cgroup 不可用时诚实降级到数量上限，不伪造资源余量。
+
+### 3. 限额来源：默认值 + 每 bed 覆盖
 
 配置 `--bed-cpu-max` / `--bed-memory-max` / `--bed-pids-max` 给全局默认；`POST /v1/beds` body 可带 `limits` 覆盖（调用方按租户等级差异化）。**默认建议偏保守**（如 1 核 / 2GiB / 256 pids）：宁可让重任务显式申请，不让默认值放任吵闹邻居。
 
-### 3. 前提：pod 内 cgroup v2 委派
+### 4. 前提：pod 内 cgroup v2 委派
 
 容器里能否建子组取决于运行时把容器 cgroup 以何种权限挂给进程：
 - K8s + cgroup v2 节点：容器内 `/sys/fs/cgroup` 通常挂 ro，需要 pod 配置（`securityContext` 或运行时支持）拿到自己 scope 的写权限；
 - 拿不到 → `Available()==false` → noop 降级 + capabilities 如实上报（同 bwrap 缺失时的哲学：不假装隔离）。
 - 部署侧要求写进 helm/values 注释，属部署契约而非代码逻辑。
 
-### 4. managed-service 的位置
+### 5. managed-service 的位置
 
 Chromium/Jupyter 等共享服务**不进任何 bed 的 cgroup**（它们是 per-hostel 单例），放独立的 `<scope>/services/<name>/` 子组单独限额。per-tenant（bed）粒度的用量归因是已知难点——浏览器进程模型不按租户划分——先接受服务级限额，租户级归因推后。
 
-### 5. 测试策略
+### 6. 测试策略
 
 - **mac/CI 可跑**：metrics 契约、bed 选择、累计 CPU 解析和 noop 降级路径。
 - **Linux 真验证**（devbox）：Phase 1 断言短进程计入目标 bed 且删除后 cgroup 回收；Phase 2

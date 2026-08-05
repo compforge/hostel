@@ -48,7 +48,10 @@ session：  客户端打开（POST /session、CDP ws 升级）→ 持有（流�
            → 客户端关闭，或 evict revoke
 ```
 
-准入即承诺：`BeginOperation` 把 `retained_until` 预留到 `timeout + idleTTL`，已接纳的工作不会被 idle reaper 杀死；timeout 有默认值和硬上限，任何 operation 的阻塞时间有上界——evict 的"拒绝-重试"必然最终成功，死锁在模型上被消除。
+准入即承诺：`BeginOperation` 在 tenant bed 的 `inflight 0→1` 时原子申请 `max-active-beds` 名额，
+再把 `retained_until` 预留到 `timeout + idleTTL`；名额不足时不改变 bed 活跃事实，返回可重试的
+429。已接纳的工作不会被 idle reaper 杀死；timeout 有默认值和硬上限，任何 operation 的阻塞时间
+有上界——evict 的"拒绝-重试"必然最终成功，死锁在模型上被消除。default bed 不参与数量准入。
 
 ### 2. Bed
 
@@ -76,6 +79,10 @@ session：  客户端打开（POST /session、CDP ws 升级）→ 持有（流�
 ```
 
 hostel 不自杀，也没有 drain 接口。它表达"可以释放我"的唯一方式是 `GET /v1/beds` 里的 `instance.status`（retained / draining / releasable / pinned）——判据收敛在 hostel 内，上游只读结论，不再自己拼 bed_counts / store / luggage。
+
+容量准入与这里的生命周期状态正交：`instance.status` 回答“能否安全释放这个 Hostel”，未来的
+`admission.accepting_new_beds` 回答“资源余量是否还能承接新的 active bed”。短期数量安全阀与长期
+pod/cgroup 资源水位方案见 `resource-isolation.md`〈Hostel 容量准入〉。
 
 ## 接口边界
 

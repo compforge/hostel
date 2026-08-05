@@ -34,16 +34,19 @@ import (
 
 // Manager owns the set of beds and their lifecycle. Safe for concurrent use.
 type Manager struct {
-	root       string
-	defaultBed string
-	iso        isolation.Isolator
-	shellPath  string
-	amenities  *amenity.Registry // nil-safe; ReleaseAll on bed teardown
-	commands   *CommandRegistry  // one-shot commands, daemon-global ids
-	spawner    Spawner           // forks bed processes; owns the teardown sweep
-	resources  resource.Tracker  // per-bed cgroup accounting; noop when unavailable
-	maxBeds    int               // cap on concurrent beds; 0 = unlimited
-	store      store.Store       // workspace persistence (Noop when disabled)
+	root          string
+	defaultBed    string
+	iso           isolation.Isolator
+	shellPath     string
+	amenities     *amenity.Registry // nil-safe; ReleaseAll on bed teardown
+	commands      *CommandRegistry  // one-shot commands, daemon-global ids
+	spawner       Spawner           // forks bed processes; owns the teardown sweep
+	resources     resource.Tracker  // per-bed cgroup accounting; noop when unavailable
+	maxBeds       int               // cap on resident tenant beds; 0 = unlimited
+	maxActiveBeds int               // cap on active tenant beds; 0 = unlimited
+	activeBeds    atomic.Int64      // resident tenant beds whose inflight count is non-zero
+	store         store.Store       // workspace persistence (Noop when disabled)
+	processEnv    processEnv        // explicit carrier software env; never daemon-wide inheritance
 	// bedIdleTTL is set once at startup. Accepted operations extend their bed
 	// through timeout+idleTTL so the idle reaper cannot kill in-flight work.
 	bedIdleTTL time.Duration
@@ -69,6 +72,10 @@ type Manager struct {
 // scheduler is expected to place the sandbox on another instance.
 var ErrBedLimit = errors.New("bed: max bed count reached")
 
+// ErrActiveBedLimit is returned when an idle tenant bed cannot admit its first
+// operation without exceeding the configured active-bed cap.
+var ErrActiveBedLimit = errors.New("bed: max active bed count reached")
+
 // ErrBedUnavailable means the caller holds a stale Bed pointer whose resident
 // entry has already been removed.
 var ErrBedUnavailable = errors.New("bed: no longer resident")
@@ -76,6 +83,10 @@ var ErrBedUnavailable = errors.New("bed: no longer resident")
 // NewManager creates the bed manager and ensures the workspace root exists.
 // amenities and st may be nil; maxBeds 0 = unlimited.
 func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Registry, maxBeds int, st store.Store) (*Manager, error) {
+	processEnv, err := newProcessEnv(os.Environ(), []string{"PATH"})
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("bed: create workspace root %s: %w", root, err)
 	}
@@ -94,8 +105,12 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		spawner:    newInProcSpawner(resources),
 		resources:  resources,
 		maxBeds:    maxBeds,
-		store:      st,
-		beds:       make(map[string]*Bed),
+		// Zero max-active-beds inherits this value; initialize the effective
+		// default here so direct Manager users get the same semantics as main.
+		maxActiveBeds: maxBeds,
+		store:         st,
+		processEnv:    processEnv,
+		beds:          make(map[string]*Bed),
 	}, nil
 }
 
@@ -130,6 +145,26 @@ func (m *Manager) Commands() *CommandRegistry { return m.commands }
 
 // MaxBeds reports the configured cap (0 = unlimited) for capacity reporting.
 func (m *Manager) MaxBeds() int { return m.maxBeds }
+
+// SetMaxActiveBeds configures operation admission. It is startup configuration
+// and must be called before serving requests.
+func (m *Manager) SetMaxActiveBeds(max int) error {
+	if max < 0 {
+		return fmt.Errorf("bed: max active beds must be non-negative: %d", max)
+	}
+	if max == 0 || (m.maxBeds > 0 && max > m.maxBeds) {
+		max = m.maxBeds
+	}
+	m.maxActiveBeds = max
+	return nil
+}
+
+// MaxActiveBeds reports the effective active tenant-bed cap (0 = unlimited).
+func (m *Manager) MaxActiveBeds() int { return m.maxActiveBeds }
+
+// ActiveBedCount reports resident tenant beds with at least one in-flight operation.
+// The default bed is deliberately outside both capacity limits.
+func (m *Manager) ActiveBedCount() int64 { return m.activeBeds.Load() }
 
 // ResidentBedCount reports the current in-memory bed count without taking the
 // manager lock. It is an instance-health fact, not an admission decision.
@@ -438,8 +473,13 @@ func (m *Manager) Purge(id string) error {
 	m.mu.Lock()
 	b, ok := m.beds[id]
 	if ok {
+		b.mu.Lock()
 		delete(m.beds, id)
 		m.residentBeds.Add(-1)
+		if b.inflight > 0 {
+			m.activeBeds.Add(-1)
+		}
+		b.mu.Unlock()
 	}
 	m.mu.Unlock()
 	if ok {

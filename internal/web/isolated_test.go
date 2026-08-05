@@ -68,21 +68,21 @@ func TestIsolatedSessionLifecycleAndStatefulRun(t *testing.T) {
 		t.Fatalf("isolated state = %+v", state)
 	}
 
-	events := runIsolated(t, s, id, `{"code":"export HOSTEL_ISOLATED_TEST_STATE=kept"}`)
+	events := runIsolated(t, s, id, `{"code":"export SESSION_TEST_STATE=kept"}`)
 	if events[len(events)-1].Type != EventComplete {
 		t.Fatalf("first run events = %+v", events)
 	}
-	events = runIsolated(t, s, id, `{"code":"echo \"$HOSTEL_ISOLATED_TEST_STATE\""}`)
+	events = runIsolated(t, s, id, `{"code":"echo \"$SESSION_TEST_STATE\""}`)
 	if !isolatedOutputContains(events, "kept") || events[len(events)-1].Type != EventComplete {
 		t.Fatalf("stateful run events = %+v", events)
 	}
 
 	events = runIsolated(t, s, id,
-		`{"code":"echo \"$HOSTEL_ISOLATED_REQUEST_ENV\"","envs":{"HOSTEL_ISOLATED_REQUEST_ENV":"scoped"}}`)
+		`{"code":"echo \"$REQUEST_TEST_ENV\"","envs":{"REQUEST_TEST_ENV":"scoped"}}`)
 	if !isolatedOutputContains(events, "scoped") {
 		t.Fatalf("request env run events = %+v", events)
 	}
-	events = runIsolated(t, s, id, `{"code":"echo \"${HOSTEL_ISOLATED_REQUEST_ENV-unset}\""}`)
+	events = runIsolated(t, s, id, `{"code":"echo \"${REQUEST_TEST_ENV-unset}\""}`)
 	if !isolatedOutputContains(events, "unset") {
 		t.Fatalf("request env leaked into persistent shell: %+v", events)
 	}

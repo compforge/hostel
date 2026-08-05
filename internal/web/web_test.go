@@ -376,6 +376,16 @@ func TestCapabilities(t *testing.T) {
 	}
 }
 
+func TestCommandRejectsReservedEnvNamespace(t *testing.T) {
+	s := newTestServer(t)
+	rec := do(t, s, http.MethodPost, "/command",
+		strings.NewReader(`{"command":"true","envs":{"BED_ID":"spoof"}}`),
+		map[string]string{"Content-Type": "application/json"})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "reserved namespace") {
+		t.Fatalf("reserved env = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func jsonStr(s string) string { b, _ := json.Marshal(s); return string(b) }
 
 var _ = http.StatusOK
@@ -414,6 +424,51 @@ func TestMaxBedsBackpressure(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &h)
 	if h["max_beds"] != float64(1) {
 		t.Fatalf("healthz max_beds = %v, want 1", h["max_beds"])
+	}
+}
+
+func TestMaxActiveBedsBackpressure(t *testing.T) {
+	root := t.TempDir()
+	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, nil)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if err := mgr.SetMaxActiveBeds(1); err != nil {
+		t.Fatalf("SetMaxActiveBeds: %v", err)
+	}
+	s := NewServer(mgr)
+	one, _ := mgr.Ensure("one")
+	finish, err := mgr.BeginOperation(one, bed.OpExec, time.Minute)
+	if err != nil {
+		t.Fatalf("activate one: %v", err)
+	}
+
+	// A different idle/new tenant bed cannot become active while the slot is held.
+	rec := do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, map[string]string{BedHeader: "two"})
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "ACTIVE_BED_LIMIT_EXCEEDED") {
+		t.Fatalf("activate two = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, s, http.MethodPost, "/v1/beds/two/checkpoint", nil, nil)
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "ACTIVE_BED_LIMIT_EXCEEDED") {
+		t.Fatalf("checkpoint two = %d %s", rec.Code, rec.Body.String())
+	}
+	// The default bed bypasses both limits and does not affect the active count.
+	rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, nil)
+	if rec.Code != http.StatusOK || mgr.ActiveBedCount() != 1 {
+		t.Fatalf("default during active cap = %d active=%d body=%s", rec.Code, mgr.ActiveBedCount(), rec.Body.String())
+	}
+
+	rec = do(t, s, http.MethodGet, "/healthz", nil, nil)
+	var health map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &health)
+	if health["active_beds"] != float64(1) || health["max_active_beds"] != float64(1) {
+		t.Fatalf("health active capacity = %v", health)
+	}
+
+	finish()
+	rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, map[string]string{BedHeader: "two"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("activate two after release = %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -488,6 +543,8 @@ func TestBedListEndpoint(t *testing.T) {
 			Status           string         `json:"status"`
 			Store            string         `json:"store"`
 			MaxBeds          int            `json:"max_beds"`
+			ActiveBeds       int            `json:"active_beds"`
+			MaxActiveBeds    int            `json:"max_active_beds"`
 			BedCounts        map[string]int `json:"bed_counts"`
 			RetainUntil      time.Time      `json:"retained_until"`
 			LuggageHighBytes int64          `json:"luggage_high_bytes"`
@@ -502,13 +559,10 @@ func TestBedListEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if strings.Contains(rec.Body.String(), `"active_beds"`) {
-		t.Fatalf("bed list should report state counts, not a second active concept: %s", rec.Body.String())
-	}
 	if body.Instance.Status != "retained" {
 		t.Fatalf("instance status = %s, want retained (a bed is within its retention promise)", body.Instance.Status)
 	}
-	if body.Instance.Store != "noop" || body.Instance.BedCounts["active"] != 1 ||
+	if body.Instance.Store != "noop" || body.Instance.ActiveBeds != 1 || body.Instance.BedCounts["active"] != 1 ||
 		body.Instance.BedCounts["idle"] != 1 || body.Instance.BedCounts["evicting"] != 0 ||
 		body.Instance.BedCounts["dormant"] != 1 || body.Instance.RetainUntil.IsZero() ||
 		body.Instance.LuggageHighBytes != 1000 {

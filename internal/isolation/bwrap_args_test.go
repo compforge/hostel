@@ -16,7 +16,6 @@ package isolation
 
 import (
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -31,7 +30,7 @@ func indexOfSeq(argv []string, seq ...string) int {
 }
 
 func TestBuildBwrapArgsMasksSiblingsBeforeBind(t *testing.T) {
-	argv := buildBwrapArgs("/ws-root", "/ws-root/alice", []string{"/root", "/home"}, nil)
+	argv := buildBwrapArgs("/ws-root", "/ws-root/alice", []string{"/root", "/home"})
 
 	maskRoot := indexOfSeq(argv, "--tmpfs", "/ws-root")
 	bindOwn := indexOfSeq(argv, "--bind", "/ws-root/alice", BwrapMountPoint)
@@ -67,7 +66,7 @@ func TestBuildBwrapArgsMasksSiblingsBeforeBind(t *testing.T) {
 // procfs remount fails under k8s's masked /proc). Regressing either silently
 // drops suite back to a lower tier on every real cluster.
 func TestBuildBwrapArgsK8sReachable(t *testing.T) {
-	argv := buildBwrapArgs("/ws", "/ws/b", nil, nil)
+	argv := buildBwrapArgs("/ws", "/ws/b", nil)
 	if !slices.Contains(argv, "--unshare-user") {
 		t.Errorf("missing --unshare-user (suite needs userns in a non-privileged pod); argv=%v", argv)
 	}
@@ -83,7 +82,7 @@ func TestBuildBwrapArgsK8sReachable(t *testing.T) {
 }
 
 func TestBuildBwrapArgsSharesCarrierSoftware(t *testing.T) {
-	argv := buildBwrapArgs("/ws", "/ws/b", nil, nil)
+	argv := buildBwrapArgs("/ws", "/ws/b", nil)
 	roRoot := indexOfSeq(argv, "--ro-bind", "/", "/")
 	sharedSoftware := indexOfSeq(argv, "--bind", carrierSoftwareRoot, carrierSoftwareRoot)
 	if roRoot < 0 || sharedSoftware < 0 || roRoot >= sharedSoftware {
@@ -94,38 +93,11 @@ func TestBuildBwrapArgsSharesCarrierSoftware(t *testing.T) {
 // The workspace root may itself be /workspace (default config). The sequence
 // must still be mask-then-bind so the bed's own dir replaces the mount point.
 func TestBuildBwrapArgsRootEqualsMountPoint(t *testing.T) {
-	argv := buildBwrapArgs("/workspace", "/workspace/b1", nil, nil)
+	argv := buildBwrapArgs("/workspace", "/workspace/b1", nil)
 	mask := indexOfSeq(argv, "--tmpfs", "/workspace")
 	bind := indexOfSeq(argv, "--bind", "/workspace/b1", "/workspace")
 	if mask < 0 || bind < 0 || mask >= bind {
 		t.Fatalf("mask=%d bind=%d argv=%v", mask, bind, argv)
-	}
-}
-
-func TestUnsetSecretEnv(t *testing.T) {
-	environ := []string{
-		"OPENAI_API_KEY=sk-1",
-		"GITHUB_TOKEN=gh",
-		"MY_SECRET=x",
-		"DB_PASSWORD=y",
-		"AWS_REGION=us-east-1",
-		"KUBECONFIG=zzz", // KUBE_* pattern requires the underscore — not stripped
-		"KUBE_TOKEN=t",
-		"PATH=/usr/bin",
-		"HOME=/root",
-	}
-	argv := buildBwrapArgs("/r", "/r/b", nil, environ)
-	joined := strings.Join(argv, " ")
-
-	for _, name := range []string{"OPENAI_API_KEY", "GITHUB_TOKEN", "MY_SECRET", "DB_PASSWORD", "AWS_REGION", "KUBE_TOKEN"} {
-		if !strings.Contains(joined, "--unsetenv "+name) {
-			t.Errorf("secret env %s not stripped", name)
-		}
-	}
-	for _, name := range []string{"PATH", "HOME", "KUBECONFIG"} {
-		if strings.Contains(joined, "--unsetenv "+name) {
-			t.Errorf("benign env %s wrongly stripped", name)
-		}
 	}
 }
 

@@ -30,9 +30,13 @@ import (
 	"github.com/qiankunli/hostel/internal/isolation"
 )
 
-// respondBedError maps bed-resolution failures: a full instance is 429
-// backpressure (scheduler should place elsewhere), anything else is a bad id.
+// respondBedError maps bed resolution/admission failures: a full instance is
+// 429 backpressure (scheduler should place elsewhere), anything else is a bad id.
 func respondBedError(c *gin.Context, err error) {
+	if errors.Is(err, bed.ErrActiveBedLimit) {
+		respondError(c, http.StatusTooManyRequests, ErrActiveBedLimit, err.Error())
+		return
+	}
 	if errors.Is(err, bed.ErrBedLimit) {
 		respondError(c, http.StatusTooManyRequests, ErrBedLimitExceeded, err.Error())
 		return
@@ -231,6 +235,8 @@ func (s *Server) healthz(c *gin.Context) {
 		"workspace_mount": iso.MountPoint() != "",
 		"beds":            s.mgr.ResidentBedCount(),
 		"max_beds":        s.mgr.MaxBeds(),
+		"active_beds":     s.mgr.ActiveBedCount(),
+		"max_active_beds": s.mgr.MaxActiveBeds(),
 		"persistence":     s.mgr.StoreName(),
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,

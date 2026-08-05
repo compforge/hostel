@@ -110,6 +110,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("hostel: init bed manager: %v", err)
 	}
+	if err := mgr.SetMaxActiveBeds(cfg.MaxActiveBeds); err != nil {
+		log.Fatalf("hostel: configure active bed limit: %v", err)
+	}
+	if err := mgr.SetBedEnvPassthrough(os.Environ(), cfg.BedEnvPassthrough); err != nil {
+		log.Fatalf("hostel: configure bed environment: %v", err)
+	}
+	log.Printf("hostel: bed env passthrough keys=%v", cfg.BedEnvPassthrough)
 	resources := resource.New()
 	mgr.SetResourceTracker(resources)
 	resourceReport := resources.Report()

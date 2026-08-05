@@ -275,6 +275,10 @@ func (s *Server) isolatedRun(c *gin.Context) {
 		badRequest(c, "missing 'code'")
 		return
 	}
+	if err := bed.ValidateRequestEnv(req.Envs); err != nil {
+		badRequest(c, err.Error())
+		return
+	}
 	if req.TimeoutSeconds < 0 {
 		badRequest(c, "timeout_seconds must be non-negative")
 		return

@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -28,7 +27,6 @@ import (
 
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/go-stdx/shellx"
-	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/isolation"
 )
 
@@ -243,7 +241,7 @@ func (r *CommandRegistry) killBed(bedID string) {
 }
 
 // buildCommand constructs an isolated `bash -c <command>` for the bed. envs are
-// appended to the daemon environment; cwd (host path) overrides the workspace.
+// an invocation-scoped overlay; cwd (host path) overrides the workspace.
 func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string]string) (*exec.Cmd, error) {
 	b.touch(m.bedIdleTTL)
 	// Apply cwd with a `cd` INSIDE the command (same mechanism the session shell
@@ -263,47 +261,12 @@ func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string
 	// The OUTER process cwd must exist on the host; the bed's own workspace
 	// always does (the in-sandbox cwd is handled by the cd above / bwrap --chdir).
 	cmd.Dir = b.Workspace
-	env := m.bedEnv(b.ID)
-	for k, v := range envs {
-		env = append(env, k+"="+v)
+	env, err := m.buildBedEnv(b, envs)
+	if err != nil {
+		return nil, err
 	}
 	cmd.Env = env
 	return cmd, nil
-}
-
-// SetCDPAdvertise enables per-bed browser endpoint injection: every process
-// spawned into a bed gets PLAYWRIGHT_MCP_CDP_ENDPOINT pointing at its own
-// proxied CDP slice (docs/amenity.md §6). addr is the host:port beds can reach
-// hostel on — loopback, since beds share the pod net ns.
-func (m *Manager) SetCDPAdvertise(addr string) { m.cdpAdvertise = addr }
-
-// bedEnv is the environment every process spawned into a bed receives.
-// HOSTEL_BED_ID lets in-bed tooling address its OWN bed on the bed-scoped APIs
-// — always present, since a bed can't otherwise learn its id from inside.
-// PLAYWRIGHT_MCP_CDP_ENDPOINT hands playwright-family tooling (playwright-cli,
-// playwright MCP, the extensions/playwright dispatcher) the bed's proxied
-// browser slice with zero in-bed config. Minting its secret is cheap by design
-// (no browser boot — see amenity Browser.CDPToken), so every bed gets one
-// eagerly while the browser stays demand-started (first proxy dial).
-func (m *Manager) bedEnv(bedID string) []string {
-	env := append(os.Environ(), "HOSTEL_BED_ID="+bedID)
-	if m.cdpAdvertise == "" {
-		return env
-	}
-	a := m.amenities.Find("chromium")
-	br, ok := a.(amenity.Browser)
-	if a == nil || !ok {
-		return env
-	}
-	token, err := br.CDPToken(bedID)
-	if err != nil {
-		// Proxy unavailable (e.g. launch mode without a fixed debug port):
-		// honest absence — tools fall back to their own browsers.
-		return env
-	}
-	u := url.URL{Scheme: "ws", Host: m.cdpAdvertise, Path: "/v1/cdp",
-		RawQuery: url.Values{"bed": {bedID}, "t": {token}}.Encode()}
-	return append(env, "PLAYWRIGHT_MCP_CDP_ENDPOINT="+u.String())
 }
 
 // startOneShot builds and launches an isolated one-shot command via the
