@@ -16,13 +16,20 @@ package bed
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
+	"net/url"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	"github.com/qiankunli/go-stdx/shellx"
+	"github.com/qiankunli/hostel/internal/amenity"
+	"github.com/qiankunli/hostel/internal/isolation"
 )
 
 // Command is one one-shot execution (spec /command), foreground or background.
@@ -233,4 +240,279 @@ func (r *CommandRegistry) killBed(bedID string) {
 	for _, c := range victims {
 		c.Interrupt()
 	}
+}
+
+// buildCommand constructs an isolated `bash -c <command>` for the bed. envs are
+// appended to the daemon environment; cwd (host path) overrides the workspace.
+func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string]string) (*exec.Cmd, error) {
+	b.touch(m.bedIdleTTL)
+	// Apply cwd with a `cd` INSIDE the command (same mechanism the session shell
+	// uses), NOT via cmd.Dir. Under suite cwdInBed is a sandbox-internal path
+	// (/workspace/…) that doesn't exist on the carrier host, so setting it as
+	// the outer (bwrap) process's Dir makes ForkExec's chdir fail with ENOENT
+	// ("bedinit: spawn: fork: no such file or directory"). The cd runs in the
+	// command's own view — inside bwrap under suite, directly under direct —
+	// where cwdInBed is valid (web.resolveCwd materialized the dir via EnsureDir).
+	if cwdInBed != "" {
+		command = "cd -- " + shellx.Quote(cwdInBed) + " && { " + command + " ; }"
+	}
+	cmd := exec.Command(m.shellPath, shellCommandArgs(m.shellPath, command)...)
+	if err := m.iso.Wrap(cmd, isolation.Workspace{Home: b.Home, Path: b.Workspace}); err != nil {
+		return nil, err
+	}
+	// The OUTER process cwd must exist on the host; the bed's own workspace
+	// always does (the in-sandbox cwd is handled by the cd above / bwrap --chdir).
+	cmd.Dir = b.Workspace
+	env := m.bedEnv(b.ID)
+	for k, v := range envs {
+		env = append(env, k+"="+v)
+	}
+	cmd.Env = env
+	return cmd, nil
+}
+
+// SetCDPAdvertise enables per-bed browser endpoint injection: every process
+// spawned into a bed gets PLAYWRIGHT_MCP_CDP_ENDPOINT pointing at its own
+// proxied CDP slice (docs/amenity.md §6). addr is the host:port beds can reach
+// hostel on — loopback, since beds share the pod net ns.
+func (m *Manager) SetCDPAdvertise(addr string) { m.cdpAdvertise = addr }
+
+// bedEnv is the environment every process spawned into a bed receives.
+// HOSTEL_BED_ID lets in-bed tooling address its OWN bed on the bed-scoped APIs
+// — always present, since a bed can't otherwise learn its id from inside.
+// PLAYWRIGHT_MCP_CDP_ENDPOINT hands playwright-family tooling (playwright-cli,
+// playwright MCP, the extensions/playwright dispatcher) the bed's proxied
+// browser slice with zero in-bed config. Minting its secret is cheap by design
+// (no browser boot — see amenity Browser.CDPToken), so every bed gets one
+// eagerly while the browser stays demand-started (first proxy dial).
+func (m *Manager) bedEnv(bedID string) []string {
+	env := append(os.Environ(), "HOSTEL_BED_ID="+bedID)
+	if m.cdpAdvertise == "" {
+		return env
+	}
+	a := m.amenities.Find("chromium")
+	br, ok := a.(amenity.Browser)
+	if a == nil || !ok {
+		return env
+	}
+	token, err := br.CDPToken(bedID)
+	if err != nil {
+		// Proxy unavailable (e.g. launch mode without a fixed debug port):
+		// honest absence — tools fall back to their own browsers.
+		return env
+	}
+	u := url.URL{Scheme: "ws", Host: m.cdpAdvertise, Path: "/v1/cdp",
+		RawQuery: url.Values{"bed": {bedID}, "t": {token}}.Encode()}
+	return append(env, "PLAYWRIGHT_MCP_CDP_ENDPOINT="+u.String())
+}
+
+// startOneShot builds and launches an isolated one-shot command via the
+// spawner, returning the proc and the read end of its combined stdout+stderr.
+// The pipe is explicit (not StdoutPipe) so the raw child-side fd can cross a
+// process boundary when the spawner is the bed's init.
+func (m *Manager) startOneShot(b *Bed, command, cwdInBed string, envs map[string]string) (Proc, *os.File, error) {
+	cmd, err := m.buildCommand(b, command, cwdInBed, envs)
+	if err != nil {
+		return nil, nil, err
+	}
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Stdout = pw
+	cmd.Stderr = pw // interleave, like the /command spec
+	proc, err := m.spawner.Start(b.ID, cmd)
+	// Child holds its own copy now (or never will, on error): drop ours, or
+	// the reader never sees EOF.
+	pw.Close()
+	if err != nil {
+		pr.Close()
+		return nil, nil, err
+	}
+	return proc, pr, nil
+}
+
+// StartCommand launches a one-shot command in the bed and registers it.
+func (m *Manager) StartCommand(b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(string)) (*Command, error) {
+	finishOperation, err := m.BeginOperation(b, OpExec, timeout)
+	if err != nil {
+		return nil, err
+	}
+	proc, out, err := m.startOneShot(b, command, cwdInBed, envs)
+	if err != nil {
+		finishOperation()
+		return nil, err
+	}
+	c := m.commands.track(b.ID, proc, out, timeout, onLine)
+	go func() { // tally the run once it is reaped (background = async)
+		c.Wait()
+		finishOperation()
+		st := c.Status()
+		if st.FinishedAt != nil {
+			b.RecordCommand(st.FinishedAt.Sub(st.StartedAt))
+		}
+	}()
+	return c, nil
+}
+
+// RunForeground executes a one-shot command as a fresh, isolated `bash -c`
+// process (execd parity: /command is stateless), streams combined stdout+stderr
+// via onLine, and blocks until the process exits or ctx is cancelled. Returns
+// the process exit code (-1 on a non-exit failure).
+//
+// Unlike StartCommand it is NOT registered in the daemon-global command registry
+// (which never GCs — a per-exec entry there would leak) and reuses nothing: the
+// command runs in its OWN process, so a caller script's `set -e` / `exit` /
+// `trap` dies with it. The foreground /command path used to run in the bed's
+// shared stateful shell, where exactly those constructs tore the whole session
+// down ("shell: session exited during run"); the persistent shell now serves
+// only the explicit /session endpoint.
+func (m *Manager) RunForeground(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(string)) (int, error) {
+	finishOperation, err := m.BeginOperation(b, OpExec, timeout)
+	if err != nil {
+		return -1, err
+	}
+	defer finishOperation()
+	proc, out, err := m.startOneShot(b, command, cwdInBed, envs)
+	if err != nil {
+		return -1, err
+	}
+	start := time.Now()
+	if timeout > 0 {
+		t := time.AfterFunc(timeout, proc.Kill)
+		defer t.Stop()
+	}
+	// Client disconnect / shutdown cancels the run: kill the tree so a runaway
+	// command can't outlive its caller.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		select {
+		case <-ctx.Done():
+			proc.Kill()
+		case <-stop:
+		}
+	}()
+	reader := bufio.NewReader(out)
+	for {
+		line, rerr := reader.ReadString('\n')
+		if line != "" && onLine != nil {
+			onLine(line)
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	out.Close()
+	code, werr := proc.Wait()
+	b.RecordCommand(time.Since(start))
+	if werr != nil {
+		return -1, werr
+	}
+	return code, nil
+}
+
+// OutputStream identifies one side of a typed foreground command stream.
+type OutputStream string
+
+const (
+	StreamStdout OutputStream = "stdout"
+	StreamStderr OutputStream = "stderr"
+)
+
+// OutputLine is one line from a foreground command's stdout or stderr. Unlike
+// RunForeground, this API preserves the two streams end-to-end for HTTP
+// clients that expose exec semantics rather than a terminal transcript.
+type OutputLine struct {
+	Stream OutputStream
+	Text   string
+}
+
+// RunForegroundTyped executes an isolated command while preserving stdout and
+// stderr. Both pipes are drained concurrently so a chatty child cannot block
+// on either stream. The callback may be invoked concurrently for the two
+// streams and must return promptly.
+func (m *Manager) RunForegroundTyped(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(OutputLine)) (int, error) {
+	finishOperation, err := m.BeginOperation(b, OpExec, timeout)
+	if err != nil {
+		return -1, err
+	}
+	defer finishOperation()
+	cmd, err := m.buildCommand(b, command, cwdInBed, envs)
+	if err != nil {
+		return -1, err
+	}
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		return -1, err
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		stdoutR.Close()
+		stdoutW.Close()
+		return -1, err
+	}
+	cmd.Stdout, cmd.Stderr = stdoutW, stderrW
+	proc, err := m.spawner.Start(b.ID, cmd)
+	stdoutW.Close()
+	stderrW.Close()
+	if err != nil {
+		stdoutR.Close()
+		stderrR.Close()
+		return -1, err
+	}
+	start := time.Now()
+	if timeout > 0 {
+		t := time.AfterFunc(timeout, proc.Kill)
+		defer t.Stop()
+	}
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		select {
+		case <-ctx.Done():
+			proc.Kill()
+		case <-stop:
+		}
+	}()
+
+	var wg sync.WaitGroup
+	read := func(stream OutputStream, file *os.File) {
+		defer wg.Done()
+		defer file.Close()
+		// ReadString keeps the child's bytes intact, including whether the final
+		// fragment had a newline. Scanner would strip delimiters and force us to
+		// invent one, making exec results differ from a direct process capture.
+		reader := bufio.NewReader(file)
+		for {
+			text, readErr := reader.ReadString('\n')
+			if text != "" && onLine != nil {
+				onLine(OutputLine{Stream: stream, Text: text})
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}
+	// Drain both pipes concurrently: reading either one serially can deadlock
+	// once a child fills the other pipe's kernel buffer.
+	wg.Add(2)
+	go read(StreamStdout, stdoutR)
+	go read(StreamStderr, stderrR)
+	type waitResult struct {
+		code int
+		err  error
+	}
+	waitResultCh := make(chan waitResult, 1)
+	go func() {
+		code, waitErr := proc.Wait()
+		waitResultCh <- waitResult{code: code, err: waitErr}
+	}()
+	wg.Wait()
+	result := <-waitResultCh
+	b.RecordCommand(time.Since(start))
+	if result.err != nil {
+		return -1, result.err
+	}
+	return result.code, nil
 }

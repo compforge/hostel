@@ -58,13 +58,15 @@ internal/
 ├── config/            flags + HOSTEL_* env
 ├── isolation/         数据隔离房型档：New 按 env ceiling 路由；direct(dorm/全平台) + landlock(room/linux) + bwrap(suite/linux)
 ├── bed/               ★核心。bed=隔离单元=对外一个 sandbox
-│   ├── bed.go         Manager：Ensure(空→default，按 generation 判 luggage 新鲜)/OpenSession/Evict/Purge/CollectExpired；ForegroundShell；StartCommand
+│   ├── bed.go         Bed/Status 三维事实 + Manager：Ensure(空→default，按 generation 判 luggage 新鲜)/Get/List
+│   ├── evict.go       回收路径：Evict(revoke→persist→原子复核→teardown)/Purge/CollectExpired
+│   ├── persist.go     持久化路径：persistBed(快照+水位推进)/Checkpoint/PersistDirty 兜底
 │   ├── operation.go   operation（无状态请求，kind=exec/file/browser/checkpoint/control）：BeginOperation + timeout 截断
 │   ├── session.go     session（可撤销有状态持有，cdp 类）：OpenSession/Touch/Close；revokeSessions 供 evict 在 persist 前吊销（shell 走 shell.go 自备机制，revoke 时一并 Close）
 │   ├── observability.go Bed 生命周期记录：activate/persist/evict 的结构化 stage 日志与最近摘要
 │   ├── luggage.go     luggage（evict 留下的现场缓存）：磁盘水位 GC（stale 优先→LRU）、Inventory（调度器视图）
-│   ├── shell.go       常驻 bash：单 reader goroutine→lines chan，Run 用 marker 分帧、单消费（状态跨 run 保持）
-│   └── command.go     一次性命令 registry：前台/后台、status、logs（cursor 增量、环形缓冲）
+│   ├── shell.go       常驻 bash：CreateShell/ForegroundShell；单 reader goroutine→lines chan，Run 用 marker 分帧、单消费（状态跨 run 保持）
+│   └── command.go     一次性命令：buildCommand/StartCommand/RunForeground + registry（前台/后台、status、logs cursor 增量、环形缓冲）
 ├── fsops/             bed_home rooted 文件操作；Resolve 把任意客户端路径单射 rebase 进 bed_home + 拒逃逸；新建路径按属主 chown（单一属主不变式）
 ├── store/             workspace 持久化：Store 接口 + noop/s3(desync 内容寻址增量,只传变更块)，默认 auto 按 bucket 有无解析；见 docs/persistence.md
 ├── resource/          per-bed cgroup v2 资源记账；只归因不设限，未委派时诚实降级

@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/go-stdx/shellx"
 
 	"github.com/qiankunli/hostel/internal/isolation"
@@ -213,4 +214,77 @@ func (s *Shell) Run(ctx context.Context, command string, onLine func(string)) (*
 			}
 		}
 	}
+}
+
+// CreateShell starts a new stateful shell session in the bed and returns its id.
+// cwdInBed, when non-empty, is the starting directory (already resolved+confined
+// by the caller via fsops).
+func (m *Manager) CreateShell(b *Bed, cwdInBed string) (string, error) {
+	b.touch(m.bedIdleTTL)
+	sh, err := startShell(m.spawner, b.ID, m.shellPath, m.bedEnv(b.ID), m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, cwdInBed)
+	if err != nil {
+		return "", err
+	}
+	id := "session-" + randx.Hex(8)
+	b.mu.Lock()
+	b.shells[id] = sh
+	b.mu.Unlock()
+	return id, nil
+}
+
+// foregroundShellID is the well-known session backing the explicit /session
+// foreground shell (cwd/env persist across its runs). NOTE: the one-shot
+// /command path no longer uses it — foreground /command now runs a fresh
+// isolated process (see Manager.RunForeground). Retained for /session and its
+// tests; a candidate for removal once /session is reworked.
+const foregroundShellID = "session-foreground"
+
+// ForegroundShell returns the bed's implicit foreground shell, starting it
+// once and reusing it (restarting if it died).
+func (m *Manager) ForegroundShell(b *Bed) (*Shell, error) {
+	b.touch(m.bedIdleTTL)
+	b.mu.Lock()
+	if sh, ok := b.shells[foregroundShellID]; ok && !sh.Dead() {
+		b.mu.Unlock()
+		return sh, nil
+	}
+	b.mu.Unlock()
+
+	sh, err := startShell(m.spawner, b.ID, m.shellPath, m.bedEnv(b.ID), m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, "")
+	if err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if ex, ok := b.shells[foregroundShellID]; ok && !ex.Dead() { // lost a race
+		sh.Close()
+		return ex, nil
+	}
+	b.shells[foregroundShellID] = sh
+	return sh, nil
+}
+
+// GetShell returns a live shell session by id.
+func (b *Bed) GetShell(id string) (*Shell, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	sh, ok := b.shells[id]
+	if !ok || sh.Dead() {
+		return nil, false
+	}
+	return sh, true
+}
+
+// DeleteShell kills and removes a shell session. Returns false when unknown.
+func (b *Bed) DeleteShell(id string) bool {
+	b.mu.Lock()
+	sh, ok := b.shells[id]
+	if ok {
+		delete(b.shells, id)
+	}
+	b.mu.Unlock()
+	if ok {
+		sh.Close()
+	}
+	return ok
 }
