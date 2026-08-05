@@ -132,7 +132,7 @@ func (s *Server) isolatedCreate(c *gin.Context) {
 		respondBedError(c, err)
 		return
 	}
-	finish, err := s.mgr.BeginOperation(b, 0)
+	finish, err := s.mgr.BeginOperation(b, bed.OpControl, 0)
 	if err != nil {
 		_ = s.mgr.Purge(b.ID)
 		respondBedError(c, err)
@@ -281,7 +281,7 @@ func (s *Server) isolatedRun(c *gin.Context) {
 	}
 
 	timeout := time.Duration(req.TimeoutSeconds) * time.Second
-	finish, err := s.mgr.BeginOperation(b, timeout)
+	finish, err := s.mgr.BeginOperation(b, bed.OpExec, timeout)
 	if err != nil {
 		respondBedError(c, err)
 		return

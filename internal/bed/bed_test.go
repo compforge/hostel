@@ -394,7 +394,7 @@ func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	}
 
 	startedAt := time.Now()
-	finishOperation, err := m.BeginOperation(b, execTimeout)
+	finishOperation, err := m.BeginOperation(b, OpExec, execTimeout)
 	if err != nil {
 		t.Fatalf("BeginOperation: %v", err)
 	}
@@ -408,7 +408,7 @@ func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	if got := b.State(); got != StateActive {
 		t.Fatalf("operation state = %q, want active", got)
 	}
-	finishShortOperation, err := m.BeginOperation(b, time.Millisecond)
+	finishShortOperation, err := m.BeginOperation(b, OpExec, time.Millisecond)
 	if err != nil {
 		t.Fatalf("BeginOperation short: %v", err)
 	}
@@ -755,7 +755,7 @@ func TestEvictCanceledByActivity(t *testing.T) {
 	if b.State() != StateEvicting {
 		t.Fatalf("state during persist = %q, want evicting", b.State())
 	}
-	finishOperation, err := m.BeginOperation(b, time.Second)
+	finishOperation, err := m.BeginOperation(b, OpExec, time.Second)
 	if err != nil {
 		t.Fatalf("BeginOperation during eviction: %v", err)
 	}

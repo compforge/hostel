@@ -75,9 +75,10 @@ type Browser interface {
 	// bedID's tenant view: Target.* visibility is filtered to the bed's own
 	// browser contexts and Browser.close is refused. Ensures the bed's tenant
 	// on dial — the lazy boot point for eagerly-handed-out endpoints (workspace
-	// is needed for that create). Blocks until either side closes. conn is
-	// always closed on return.
-	ServeCDP(conn net.Conn, bedID, workspace, token string) error
+	// is needed for that create). Blocks until either side closes or ctx is
+	// canceled (the caller's revocation path). onActivity, when non-nil, is
+	// invoked per client message. conn is always closed on return.
+	ServeCDP(ctx context.Context, conn net.Conn, bedID, workspace, token string, onActivity func()) error
 	ReleaseTenant(bedID string) error
 }
 
@@ -404,7 +405,7 @@ func (c *chromium) upstreamWSURL(ctx context.Context) (string, error) {
 
 // ServeCDP implements Browser: authenticate the token, then bridge the client
 // websocket to the shared browser filtered to this bed's contexts.
-func (c *chromium) ServeCDP(conn net.Conn, bedID, workspace, token string) error {
+func (c *chromium) ServeCDP(ctx context.Context, conn net.Conn, bedID, workspace, token string, onActivity func()) error {
 	defer conn.Close()
 	c.mu.Lock()
 	secret, ok := c.cdpSecrets[bedID]
@@ -425,13 +426,13 @@ func (c *chromium) ServeCDP(conn net.Conn, bedID, workspace, token string) error
 	}
 	contextID := t.contextID
 	c.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	upstream, err := c.upstreamWSURL(ctx)
+	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	upstream, err := c.upstreamWSURL(dialCtx)
 	cancel()
 	if err != nil {
 		return err
 	}
-	return proxyCDP(conn, upstream, bedID, string(contextID))
+	return proxyCDP(ctx, conn, upstream, bedID, string(contextID), onActivity)
 }
 
 // RevokeBedSecrets implements BedScopedSecrets: the bed is going away, its

@@ -79,15 +79,17 @@ type Bed struct {
 	mu             sync.Mutex
 	persistMu      sync.Mutex // serializes generation bumps and snapshot uploads
 	lastActiveAt   time.Time
-	retainUntil    time.Time         // latest safe eviction time promised to accepted operations
-	inflight       int               // bed-scoped operations still in flight
-	activitySeq    uint64            // changes whenever activity starts or finishes
-	generation     int64             // latest local data generation
-	persistedAt    time.Time         // last successful snapshot (zero = never)
-	evicting       bool              // an evict's persist is in flight
-	shells         map[string]*Shell // stateful bash sessions (spec /session)
-	usage          Usage             // cumulative; seeded from meta, flushed at persist
-	lastActivation *LifecycleRecord  // bounded diagnostics, never historical
+	retainUntil    time.Time // latest safe eviction time promised to accepted operations
+	inflight       int       // bed-scoped operations still in flight
+	inflightByKind map[OperationKind]int
+	activitySeq    uint64              // changes whenever activity starts or finishes
+	generation     int64               // latest local data generation
+	persistedAt    time.Time           // last successful snapshot (zero = never)
+	evicting       bool                // an evict's persist is in flight
+	shells         map[string]*Shell   // stateful bash sessions (spec /session)
+	sessions       map[string]*Session // revocable stateful holds (session.go)
+	usage          Usage               // cumulative; seeded from meta, flushed at persist
+	lastActivation *LifecycleRecord    // bounded diagnostics, never historical
 	lastPersist    *LifecycleRecord
 }
 
@@ -109,7 +111,11 @@ type Status struct {
 	LastActiveAt time.Time
 	RetainUntil  time.Time
 	Inflight     int
-	Usage        Usage
+	// Operations breaks Inflight down by kind; Sessions counts open stateful
+	// holds by kind (docs/lifecycle.md: sessions never raise State).
+	Operations map[OperationKind]int
+	Sessions   map[SessionKind]int
+	Usage      Usage
 }
 
 func (b *Bed) stateLocked() State {
@@ -126,12 +132,25 @@ func (b *Bed) stateLocked() State {
 func (b *Bed) Status() Status {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	ops := make(map[OperationKind]int, len(b.inflightByKind))
+	for k, n := range b.inflightByKind {
+		ops[k] = n
+	}
+	sessions := make(map[SessionKind]int, 2)
+	if n := len(b.shells); n > 0 {
+		sessions[SessionKindShell] = n
+	}
+	if n := len(b.sessions); n > 0 {
+		sessions[SessionKindCDP] = n
+	}
 	return Status{
 		State:        b.stateLocked(),
 		Generation:   b.generation,
 		LastActiveAt: b.lastActiveAt,
 		RetainUntil:  b.retainUntil,
 		Inflight:     b.inflight,
+		Operations:   ops,
+		Sessions:     sessions,
 		Usage:        b.usage,
 	}
 }
@@ -145,15 +164,19 @@ func (b *Bed) Short() string { return ShortID(b.ID) }
 func (b *Bed) touch(idleTTL time.Duration) {
 	now := time.Now()
 	b.mu.Lock()
+	b.touchLocked(now, idleTTL)
+	b.mu.Unlock()
+}
+
+// touchLocked refreshes the activity watermarks; the caller holds b.mu.
+func (b *Bed) touchLocked(now time.Time, idleTTL time.Duration) {
 	b.lastActiveAt = now
 	b.activitySeq++
 	if idleTTL > 0 {
-		retainUntil := now.Add(idleTTL)
-		if retainUntil.After(b.retainUntil) {
+		if retainUntil := now.Add(idleTTL); retainUntil.After(b.retainUntil) {
 			b.retainUntil = retainUntil
 		}
 	}
-	b.mu.Unlock()
 }
 
 // LastActiveAt reports the most recent request or command activity.
@@ -310,16 +333,38 @@ func (m *Manager) DefaultBedID() string { return m.defaultBed }
 // deadlines. It is startup configuration and must be called before serving.
 func (m *Manager) SetBedIdleTTL(ttl time.Duration) { m.bedIdleTTL = ttl }
 
+// OperationKind classifies stateless bed operations (docs/lifecycle.md).
+type OperationKind string
+
+const (
+	OpExec       OperationKind = "exec"
+	OpFile       OperationKind = "file"
+	OpBrowser    OperationKind = "browser"
+	OpCheckpoint OperationKind = "checkpoint"
+	OpControl    OperationKind = "control"
+)
+
+// Operation timeout policy: every operation is bounded so eviction's
+// refuse-and-retry always converges (docs/lifecycle.md). A non-positive
+// timeout gets the default; beyond the max is clamped, not rejected.
+const (
+	DefaultOperationTimeout = 5 * time.Minute
+	MaxOperationTimeout     = 2 * time.Hour
+)
+
 // BeginOperation marks a bed active and reserves it through timeout plus the
 // configured idle TTL. Admission and final eviction both take m.mu then b.mu,
 // so an operation cannot start on a Bed after its resident entry is removed.
 // Call the returned function exactly once.
-func (m *Manager) BeginOperation(b *Bed, timeout time.Duration) (func(), error) {
-	now := time.Now()
-	retainUntil := now.Add(m.bedIdleTTL)
-	if timeout > 0 {
-		retainUntil = retainUntil.Add(timeout)
+func (m *Manager) BeginOperation(b *Bed, kind OperationKind, timeout time.Duration) (func(), error) {
+	if timeout <= 0 {
+		timeout = DefaultOperationTimeout
 	}
+	if timeout > MaxOperationTimeout {
+		timeout = MaxOperationTimeout
+	}
+	now := time.Now()
+	retainUntil := now.Add(m.bedIdleTTL).Add(timeout)
 
 	m.mu.Lock()
 	b.mu.Lock()
@@ -331,6 +376,7 @@ func (m *Manager) BeginOperation(b *Bed, timeout time.Duration) (func(), error) 
 	b.lastActiveAt = now
 	b.activitySeq++
 	b.inflight++
+	b.inflightByKind[kind]++
 	if m.bedIdleTTL > 0 && retainUntil.After(b.retainUntil) {
 		b.retainUntil = retainUntil
 	}
@@ -344,6 +390,11 @@ func (m *Manager) BeginOperation(b *Bed, timeout time.Duration) (func(), error) 
 			b.mu.Lock()
 			if b.inflight > 0 {
 				b.inflight--
+			}
+			if n := b.inflightByKind[kind]; n > 1 {
+				b.inflightByKind[kind] = n - 1
+			} else {
+				delete(b.inflightByKind, kind)
 			}
 			b.lastActiveAt = now
 			b.activitySeq++
@@ -489,8 +540,10 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 			ID: id, Dir: bedDir, Home: dataDir, Workspace: wsDir,
 			CreatedAt: meta.CreatedAt, lastActiveAt: now, retainUntil: retainUntil,
 			generation: meta.Generation, persistedAt: persistedAt, usage: usage,
-			shells: make(map[string]*Shell),
-			paths:  fsops.NewPaths(dataDir, m.iso.MountPoint()),
+			shells:         make(map[string]*Shell),
+			sessions:       make(map[string]*Session),
+			inflightByKind: make(map[OperationKind]int),
+			paths:          fsops.NewPaths(dataDir, m.iso.MountPoint()),
 		}
 		m.beds[id] = b
 		m.residentBeds.Add(1)
@@ -580,6 +633,15 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (evicted bool, retEr
 	watermark := b.lastActiveAt
 	b.mu.Unlock()
 
+	// Revoke BEFORE persist (docs/lifecycle.md): stateful sessions cannot be
+	// waited out, so evict actively ends them — and their writes must not race
+	// the snapshot. The wait is bounded, so a stubborn handler stalls the
+	// evict at most sessionRevokeWait.
+	_ = trace.stage("revoke_sessions", func() error {
+		m.revokeSessions(b)
+		return nil
+	})
+
 	if err := m.persistBed(context.Background(), b, "evict"); err != nil {
 		b.mu.Lock()
 		b.evicting = false
@@ -656,7 +718,9 @@ func (m *Manager) Purge(id string) error {
 }
 
 // teardown kills a bed's runtime state: shells, one-shot commands, service
-// tenants. The workspace is untouched — callers decide its fate.
+// tenants. The workspace is untouched — callers decide its fate. On the
+// evict path the shells are already closed (revoke stage, before persist);
+// the close here covers Purge, which has no revoke.
 func (m *Manager) teardown(b *Bed) {
 	b.mu.Lock()
 	for sid, sh := range b.shells {
@@ -750,7 +814,7 @@ func (m *Manager) Checkpoint(ctx context.Context, id string) error {
 	if !ok {
 		return fmt.Errorf("bed: unknown bed %q", id)
 	}
-	finish, err := m.BeginOperation(b, 0)
+	finish, err := m.BeginOperation(b, OpCheckpoint, 0)
 	if err != nil {
 		return err
 	}
@@ -973,7 +1037,7 @@ func (m *Manager) startOneShot(b *Bed, command, cwdInBed string, envs map[string
 
 // StartCommand launches a one-shot command in the bed and registers it.
 func (m *Manager) StartCommand(b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(string)) (*Command, error) {
-	finishOperation, err := m.BeginOperation(b, timeout)
+	finishOperation, err := m.BeginOperation(b, OpExec, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -1007,7 +1071,7 @@ func (m *Manager) StartCommand(b *Bed, command, cwdInBed string, envs map[string
 // down ("shell: session exited during run"); the persistent shell now serves
 // only the explicit /session endpoint.
 func (m *Manager) RunForeground(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(string)) (int, error) {
-	finishOperation, err := m.BeginOperation(b, timeout)
+	finishOperation, err := m.BeginOperation(b, OpExec, timeout)
 	if err != nil {
 		return -1, err
 	}
@@ -1072,7 +1136,7 @@ type OutputLine struct {
 // on either stream. The callback may be invoked concurrently for the two
 // streams and must return promptly.
 func (m *Manager) RunForegroundTyped(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(OutputLine)) (int, error) {
-	finishOperation, err := m.BeginOperation(b, timeout)
+	finishOperation, err := m.BeginOperation(b, OpExec, timeout)
 	if err != nil {
 		return -1, err
 	}

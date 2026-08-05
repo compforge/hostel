@@ -280,7 +280,7 @@ func (s *Server) sessionRun(c *gin.Context) {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.Timeout)*time.Millisecond)
 		defer cancel()
 	}
-	finishOperation, err := s.mgr.BeginOperation(b, time.Duration(req.Timeout)*time.Millisecond)
+	finishOperation, err := s.mgr.BeginOperation(b, bed.OpExec, time.Duration(req.Timeout)*time.Millisecond)
 	if err != nil {
 		respondBedError(c, err)
 		return
@@ -307,17 +307,7 @@ func (s *Server) sessionRun(c *gin.Context) {
 }
 
 // DELETE /session/:sessionId
-func (s *Server) sessionDelete(c *gin.Context) {
-	b := s.bedOf(c)
-	if b == nil {
-		return
-	}
-	finishOperation, err := s.mgr.BeginOperation(b, 0)
-	if err != nil {
-		respondBedError(c, err)
-		return
-	}
-	defer finishOperation()
+func (s *Server) sessionDelete(c *gin.Context, b *bed.Bed) {
 	if !b.DeleteShell(c.Param("sessionId")) {
 		respondError(c, http.StatusNotFound, ErrSessionNotFound, "session not found")
 		return

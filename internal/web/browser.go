@@ -43,7 +43,7 @@ func (s *Server) browserOf(c *gin.Context) (*bed.Bed, amenity.Browser, func()) {
 		respondBedError(c, err)
 		return nil, nil, nil
 	}
-	finish, err := s.mgr.BeginOperation(b, 0)
+	finish, err := s.mgr.BeginOperation(b, bed.OpBrowser, 0)
 	if err != nil {
 		respondBedError(c, err)
 		return nil, nil, nil
@@ -106,19 +106,23 @@ func (s *Server) browserCDP(c *gin.Context) {
 		respondBedError(c, err)
 		return
 	}
-	finishOperation, err := s.mgr.BeginOperation(b, 0)
-	if err != nil {
-		respondBedError(c, err)
-		return
-	}
-	defer finishOperation()
 	conn, _, _, err := ws.UpgradeHTTP(c.Request, c.Writer)
 	if err != nil {
 		// Response already partially written by the upgrader on failure.
 		log.Printf("hostel: cdp ws upgrade for bed=%s failed: %v", bedID, err)
 		return
 	}
-	if err := br.ServeCDP(conn, b.ID, b.Workspace, token); err != nil {
+	// A CDP connection is a session, not an operation (docs/lifecycle.md):
+	// stateful, ended by the client or revoked by evict — it must not hold
+	// the bed active. closeFn kills the conn, unblocking the proxy loops.
+	sess, err := s.mgr.OpenSession(b, bed.SessionKindCDP, func() { conn.Close() })
+	if err != nil {
+		conn.Close()
+		log.Printf("hostel: cdp session for bed=%s refused: %v", bedID, err)
+		return
+	}
+	defer sess.Close()
+	if err := br.ServeCDP(sess.Context(), conn, b.ID, b.Workspace, token, sess.Touch); err != nil {
 		log.Printf("hostel: cdp proxy for bed=%s ended: %v", bedID, err)
 	}
 }

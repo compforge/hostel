@@ -68,12 +68,12 @@ bed core
 
 ## 接口
 
-`GET /v1/beds` 保持轻量，只返回 resident bed 的基本视图。`GET /v1/inventory` 继续作为
-调度 hint，包含 resident / luggage 的当前三维事实和 state 数量，不承载 timeline。
+`GET /v1/beds` 是调度 hint：实例容量、state 数量、每个本机 bed（resident + dormant
+luggage）的当前三维事实，不承载 timeline。
 
 `GET /v1/beds/:id` 是单 bed 诊断入口，在基本视图之外返回：
 
-- 当前 `generation` 和 `inflight`；
+- 当前 `generation` 和 `activity`（operations / sessions 按 kind 计数）；
 - `lifecycle.last_activation`；
 - `lifecycle.last_persist`。
 
