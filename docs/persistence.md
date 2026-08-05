@@ -1,6 +1,6 @@
 # bed 数据持久化方案（S3 快照 / 恢复）
 
-bed 的 workspace 是本地目录，pod 重启 / 换 pod 即丢。本文回答：**如何让 bed 的数据活得比承载它的进程/pod 久**。数据隔离见 `data-isolation.md`，资源隔离见 `resource-isolation.md`。
+bed 的 workspace 是本地目录，pod 重启 / 换 pod 即丢。本文回答：**如何让 bed 的数据活得比承载它的进程/pod 久**。数据治理见 `data.md`，资源治理见 `resource.md`。
 
 ## 一、理念
 

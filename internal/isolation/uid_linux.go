@@ -44,7 +44,7 @@ const AsUserArg = "__asuser"
 // default user gets 231072..) or LDAP/service accounts. Under our threat model
 // (a bed straying into another bed, not adversarial uid-squatting) that's
 // acceptable; a bed colliding with a real host identity is a deployment
-// concern, documented in docs/data-isolation.md. The uid is derived from the
+// concern, documented in docs/data.md. The uid is derived from the
 // data dir path (no registry), so Prepare (chown) and Wrap (setuid) agree with
 // no shared state and it stays stable across restarts. Two beds hashing to the
 // same uid is possible but rare; a colliding pair degrades to mutual access
@@ -218,7 +218,7 @@ func prepareUIDDir(dir string, uid int) error {
 // off — precisely the old/custom-kernel hosts uid isolation targets). So we
 // skip any multiply-linked regular file: it keeps its original owner (root), so
 // the bed still can't write it. Deployments should also keep
-// fs.protected_hardlinks=1 (docs/data-isolation.md). Directories legitimately
+// fs.protected_hardlinks=1 (docs/data.md). Directories legitimately
 // have nlink>1 (subdirs, "."), so the guard is regular-files-only.
 func chownTree(root string, uid int) error {
 	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {

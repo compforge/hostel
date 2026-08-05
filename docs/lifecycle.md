@@ -82,7 +82,7 @@ hostel 不自杀，也没有 drain 接口。它表达"可以释放我"的唯一�
 
 容量准入与这里的生命周期状态正交：`instance.status` 回答“能否安全释放这个 Hostel”，未来的
 `admission.accepting_new_beds` 回答“资源余量是否还能承接新的 active bed”。短期数量安全阀与长期
-pod/cgroup 资源水位方案见 `resource-isolation.md`〈Hostel 容量准入〉。
+pod/cgroup 资源水位方案见 `resource.md`〈当前准入策略〉。
 
 ## 接口边界
 

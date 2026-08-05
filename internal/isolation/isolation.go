@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package isolation confines a bed's processes. Data isolation is graded into
-// "hostel room types" (docs/data-isolation.md): the LEVEL is the north-facing
+// "hostel room types" (docs/data.md): the LEVEL is the north-facing
 // guarantee, the MECHANISM (direct/landlock/bwrap) is how it's realized on the
 // current host. A request expresses a wish; the effective level is capped by
 // what the environment can actually deliver:

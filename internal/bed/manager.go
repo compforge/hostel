@@ -42,6 +42,7 @@ type Manager struct {
 	commands      *CommandRegistry  // one-shot commands, daemon-global ids
 	spawner       Spawner           // forks bed processes; owns the teardown sweep
 	resources     resource.Tracker  // per-bed cgroup accounting; noop when unavailable
+	admission     resource.Admitter // cached carrier-pressure verdict; never performs request-path I/O
 	maxBeds       int               // cap on resident tenant beds; 0 = unlimited
 	maxActiveBeds int               // cap on active tenant beds; 0 = unlimited
 	activeBeds    atomic.Int64      // resident tenant beds whose inflight count is non-zero
@@ -76,6 +77,10 @@ var ErrBedLimit = errors.New("bed: max bed count reached")
 // operation without exceeding the configured active-bed cap.
 var ErrActiveBedLimit = errors.New("bed: max active bed count reached")
 
+// ErrResourcePressure is returned when aggregate carrier CPU or memory usage
+// is already too high to activate another tenant bed.
+var ErrResourcePressure = errors.New("bed: carrier resource admission threshold reached")
+
 // ErrBedUnavailable means the caller holds a stale Bed pointer whose resident
 // entry has already been removed.
 var ErrBedUnavailable = errors.New("bed: no longer resident")
@@ -104,6 +109,7 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		commands:   newCommandRegistry(),
 		spawner:    newInProcSpawner(resources),
 		resources:  resources,
+		admission:  resource.NoopAdmission("resource admission not configured"),
 		maxBeds:    maxBeds,
 		// Zero max-active-beds inherits this value; initialize the effective
 		// default here so direct Manager users get the same semantics as main.
@@ -131,6 +137,20 @@ func (m *Manager) ResourceReport() resource.Report { return m.resources.Report()
 // ResourceUsage returns one cumulative usage snapshot for a bed.
 func (m *Manager) ResourceUsage(id string) (resource.Usage, error) {
 	return m.resources.Usage(id)
+}
+
+// SetResourceAdmission installs the cached carrier-pressure gate before
+// serving requests. The sampler itself is owned by internal/resource.
+func (m *Manager) SetResourceAdmission(admission resource.Admitter) {
+	if admission == nil {
+		admission = resource.NoopAdmission("resource admission not configured")
+	}
+	m.admission = admission
+}
+
+// ResourceAdmissionReport returns the latest carrier-pressure sample.
+func (m *Manager) ResourceAdmissionReport() resource.AdmissionReport {
+	return m.admission.Report()
 }
 
 // Isolator exposes the configured isolator (for /healthz + capabilities).

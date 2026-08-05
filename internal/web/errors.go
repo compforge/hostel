@@ -35,6 +35,7 @@ const (
 	ErrBedInvalid         ErrorCode = "BED_INVALID"
 	ErrBedLimitExceeded   ErrorCode = "BED_LIMIT_EXCEEDED"
 	ErrActiveBedLimit     ErrorCode = "ACTIVE_BED_LIMIT_EXCEEDED"
+	ErrResourcePressure   ErrorCode = "RESOURCE_PRESSURE"
 	ErrBedBusy            ErrorCode = "BED_BUSY"
 	ErrServiceUnavailable ErrorCode = "SERVICE_UNAVAILABLE"
 )

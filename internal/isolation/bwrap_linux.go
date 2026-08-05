@@ -25,7 +25,7 @@ import (
 )
 
 // bwrap confines each command under bubblewrap. Mount view per
-// docs/data-isolation.md: RO host root with shared software rw at /usr/local,
+// docs/data.md: RO host root with shared software rw at /usr/local,
 // sibling beds masked out of existence, own workspace rw at the canonical
 // /workspace, host user data and mounted secrets masked. Process environment
 // ownership is enforced before this boundary by bed's process-env builder.
