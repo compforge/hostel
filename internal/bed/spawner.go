@@ -25,7 +25,7 @@ import (
 )
 
 // Spawner is the seam between "what to run" and "who forks it"
-// (docs/design.md 〈进程树〉). The Manager builds the fully-specified command —
+// (docs/kernel.md 〈进程树〉). The Manager builds the fully-specified command —
 // argv, dir, env, isolation already applied, stdio as concrete *os.File pipe
 // ends (never StdinPipe/StdoutPipe conveniences: raw fds must be extractable to
 // hand to an out-of-process spawner) — and the Spawner owns process lifetime:

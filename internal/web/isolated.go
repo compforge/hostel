@@ -127,12 +127,12 @@ func (s *Server) isolatedCreate(c *gin.Context) {
 		return
 	}
 
-	b, err := s.mgr.Resolve(uuid.V7())
+	b, err := s.mgr.Ensure(uuid.V7())
 	if err != nil {
 		respondBedError(c, err)
 		return
 	}
-	finish, err := s.mgr.BeginOperation(b, 0)
+	finish, err := s.mgr.BeginOperation(b, bed.OpControl, 0)
 	if err != nil {
 		_ = s.mgr.Purge(b.ID)
 		respondBedError(c, err)
@@ -238,21 +238,21 @@ func (s *Server) isolatedList(c *gin.Context) {
 }
 
 func isolatedState(b *bed.Bed) isolatedSessionState {
-	snapshot := b.Snapshot()
+	st := b.Status()
 	status := "active"
-	if snapshot.State == bed.StateEvicting {
+	if st.State == bed.StateEvicting {
 		status = "dead"
 	}
 	var remaining *int
-	if !snapshot.ExpiresAt.IsZero() {
-		seconds := max(0, int(time.Until(snapshot.ExpiresAt).Seconds()))
+	if !st.RetainUntil.IsZero() {
+		seconds := max(0, int(time.Until(st.RetainUntil).Seconds()))
 		remaining = &seconds
 	}
 	shareNet := true
 	return isolatedSessionState{
 		Status:               status,
 		CreatedAt:            b.CreatedAt,
-		LastRunAt:            snapshot.LastActiveAt,
+		LastRunAt:            st.LastActiveAt,
 		IdleRemainingSeconds: remaining,
 		Profile:              "balanced",
 		Workspace:            &isolatedWorkspaceSpec{Path: "/workspace", Mode: "rw"},
@@ -281,7 +281,7 @@ func (s *Server) isolatedRun(c *gin.Context) {
 	}
 
 	timeout := time.Duration(req.TimeoutSeconds) * time.Second
-	finish, err := s.mgr.BeginOperation(b, timeout)
+	finish, err := s.mgr.BeginOperation(b, bed.OpExec, timeout)
 	if err != nil {
 		respondBedError(c, err)
 		return

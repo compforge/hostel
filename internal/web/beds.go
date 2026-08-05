@@ -32,21 +32,21 @@ type bedView struct {
 	Workspace    string    `json:"workspace"`
 	CreatedAt    time.Time `json:"created_at"`
 	LastActiveAt time.Time `json:"last_active_at"`
-	ExpiresAt    time.Time `json:"expires_at,omitzero"`
+	RetainUntil  time.Time `json:"retained_until,omitzero"`
 }
 
 func viewOf(b *bed.Bed) bedView {
-	return viewFromSnapshot(b, b.Snapshot())
+	return viewFromStatus(b, b.Status())
 }
 
-func viewFromSnapshot(b *bed.Bed, snapshot bed.Snapshot) bedView {
+func viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 	return bedView{
 		ID:           b.ID,
-		State:        snapshot.State,
+		State:        status.State,
 		Workspace:    b.Workspace,
 		CreatedAt:    b.CreatedAt,
-		LastActiveAt: snapshot.LastActiveAt,
-		ExpiresAt:    snapshot.ExpiresAt,
+		LastActiveAt: status.LastActiveAt,
+		RetainUntil:  status.RetainUntil,
 	}
 }
 
@@ -74,21 +74,111 @@ type lifecycleView struct {
 	LastPersist    *lifecycleRecordView `json:"last_persist,omitempty"`
 }
 
-type bedDetailView struct {
-	bedView
-	Generation       int64          `json:"generation"`
-	ActiveOperations int            `json:"active_operations"`
-	Lifecycle        *lifecycleView `json:"lifecycle,omitempty"`
+// activityView is what the bed is doing right now, by request category
+// (docs/lifecycle.md): operations are in-flight stateless requests, sessions
+// are open stateful holds. Sessions never raise the bed's state — an idle bed
+// may still hold cdp connections.
+type activityView struct {
+	Operations map[bed.OperationKind]int `json:"operations,omitempty"`
+	Sessions   map[bed.SessionKind]int   `json:"sessions,omitempty"`
 }
 
-// GET /v1/beds
-func (s *Server) bedList(c *gin.Context) {
-	beds := s.mgr.List()
-	out := make([]bedView, 0, len(beds))
+type bedDetailView struct {
+	bedView
+	Generation int64          `json:"generation"`
+	Activity   activityView   `json:"activity"`
+	Lifecycle  *lifecycleView `json:"lifecycle,omitempty"`
+}
+
+// instanceStatus is the hostel-layer status (docs/lifecycle.md): the only way
+// a hostel says "you may release me". The verdict is computed here so upstream
+// reads a conclusion instead of reassembling bed_counts / store / luggage.
+type instanceStatus string
+
+const (
+	instanceRetained   instanceStatus = "retained"   // a resident bed is within its retention promise
+	instanceDraining   instanceStatus = "draining"   // resident beds all expired, eviction in progress
+	instanceReleasable instanceStatus = "releasable" // nothing resident; snapshots (if any) are remote
+	instancePinned     instanceStatus = "pinned"     // noop store with local beds: this instance is the only copy
+)
+
+// statusOfInstance folds the inventory rows and the store backend into the
+// hostel-layer status. A zero RetainUntil (no idle TTL configured) counts as
+// retained — releasable must never be concluded from unknown retention.
+func statusOfInstance(beds []bed.InventoryBed, store string, now time.Time) instanceStatus {
+	hasResident, hasDormant, allExpired := false, false, true
 	for _, b := range beds {
-		out = append(out, viewOf(b))
+		if b.State == bed.StateDormant {
+			hasDormant = true
+			continue
+		}
+		hasResident = true
+		if b.RetainUntil.IsZero() || b.RetainUntil.After(now) {
+			allExpired = false
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"beds": out})
+	switch {
+	case hasResident && !allExpired:
+		return instanceRetained
+	case hasResident:
+		return instanceDraining
+	case store == "noop" && hasDormant:
+		return instancePinned
+	default:
+		return instanceReleasable
+	}
+}
+
+// GET /v1/beds — the scheduler's one-poll picture: instance capacity plus
+// every bed this instance holds (resident active/idle/evicting, dormant as
+// luggage on disk) with its last persisted generation. Everything here is a
+// stale-tolerant hint — freshness is re-enforced at activation, so routing on
+// outdated data is slow, never wrong. Callers must treat store "noop" as
+// "beds are pinned here": no snapshot exists elsewhere to migrate from.
+func (s *Server) bedList(c *gin.Context) {
+	beds := s.mgr.Inventory()
+	hasBeds := false
+	counts := map[string]int{
+		string(bed.StateActive):   0,
+		string(bed.StateIdle):     0,
+		string(bed.StateEvicting): 0,
+		string(bed.StateDormant):  0,
+	}
+	var luggageBytes int64
+	var retainUntil time.Time
+	retentionKnown := true
+	for _, b := range beds {
+		counts[string(b.State)]++
+		if b.State == bed.StateDormant {
+			luggageBytes += b.Bytes
+		} else {
+			hasBeds = true
+			if b.RetainUntil.IsZero() {
+				retentionKnown = false
+			} else if b.RetainUntil.After(retainUntil) {
+				retainUntil = b.RetainUntil
+			}
+		}
+	}
+	high, low := s.mgr.LuggageLimits()
+	var instanceRetainUntil any
+	if hasBeds && retentionKnown {
+		instanceRetainUntil = retainUntil
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"instance": gin.H{
+			"status":             statusOfInstance(beds, s.mgr.StoreName(), time.Now()),
+			"store":              s.mgr.StoreName(),
+			"isolation":          s.mgr.Isolator().Level().String(),
+			"max_beds":           s.mgr.MaxBeds(),
+			"bed_counts":         counts,
+			"retained_until":     instanceRetainUntil,
+			"luggage_bytes":      luggageBytes,
+			"luggage_high_bytes": high,
+			"luggage_low_bytes":  low,
+		},
+		"beds": beds,
+	})
 }
 
 type createBedRequest struct {
@@ -103,7 +193,7 @@ func (s *Server) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	b, err := s.mgr.Resolve(id)
+	b, err := s.mgr.Ensure(id)
 	if err != nil {
 		respondBedError(c, err)
 		return
@@ -118,12 +208,15 @@ func (s *Server) bedGet(c *gin.Context) {
 		respondError(c, http.StatusNotFound, ErrBedInvalid, "bed not found")
 		return
 	}
-	snapshot := b.Snapshot()
+	status := b.Status()
 	lifecycle := b.Lifecycle()
 	c.JSON(http.StatusOK, bedDetailView{
-		bedView:          viewFromSnapshot(b, snapshot),
-		Generation:       snapshot.Generation,
-		ActiveOperations: snapshot.ActiveOperations,
+		bedView:    viewFromStatus(b, status),
+		Generation: status.Generation,
+		Activity: activityView{
+			Operations: status.Operations,
+			Sessions:   status.Sessions,
+		},
 		Lifecycle: &lifecycleView{
 			LastActivation: lifecycleRecordToView(lifecycle.LastActivation),
 			LastPersist:    lifecycleRecordToView(lifecycle.LastPersist),
@@ -217,7 +310,6 @@ func (s *Server) capabilities(c *gin.Context) {
 		"command":     true,
 		"session":     true,
 		"beds":        true,
-		"inventory":   true,
 		"amenities":   amenities, // name → unavailable|idle|running
 		// Explicitly-not-yet capabilities, so SDKs don't probe blindly.
 		"pty":            false,

@@ -49,7 +49,7 @@ func TestManagerFallsBackToShWhenBashMissing(t *testing.T) {
 	if filepath.Base(m.shellPath) != "sh" {
 		t.Fatalf("shellPath=%q, want sh fallback", m.shellPath)
 	}
-	b, err := m.Resolve("default")
+	b, err := m.Ensure("default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,14 +63,14 @@ func TestManagerFallsBackToShWhenBashMissing(t *testing.T) {
 func TestResolveDefaultBedAndValidation(t *testing.T) {
 	m := newTestManager(t)
 
-	b, err := m.Resolve("") // empty → default
+	b, err := m.Ensure("") // empty → default
 	if err != nil || b.ID != "default" {
 		t.Fatalf("Resolve(\"\") = %v, %v", b, err)
 	}
-	if _, err := m.Resolve("bad id!"); err == nil {
+	if _, err := m.Ensure("bad id!"); err == nil {
 		t.Fatal("Resolve invalid id: want error")
 	}
-	b2, _ := m.Resolve("conv-123")
+	b2, _ := m.Ensure("conv-123")
 	if b2.ID != "conv-123" || b2.Workspace == b.Workspace {
 		t.Fatalf("distinct bed expected, got %+v", b2)
 	}
@@ -81,7 +81,7 @@ func TestResolveDefaultBedAndValidation(t *testing.T) {
 
 func TestResidentBedCountDoesNotWaitForManagerLock(t *testing.T) {
 	m := newTestManager(t)
-	if _, err := m.Resolve("conv-atomic"); err != nil {
+	if _, err := m.Ensure("conv-atomic"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,10 +101,10 @@ func TestResidentBedCountDoesNotWaitForManagerLock(t *testing.T) {
 
 func TestResidentBedCountTracksRemoval(t *testing.T) {
 	m := newTestManager(t)
-	if _, err := m.Resolve("evict-me"); err != nil {
+	if _, err := m.Ensure("evict-me"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Resolve("purge-me"); err != nil {
+	if _, err := m.Ensure("purge-me"); err != nil {
 		t.Fatal(err)
 	}
 	if got := m.ResidentBedCount(); got != 2 {
@@ -134,7 +134,7 @@ func TestLifecycleObservations(t *testing.T) {
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(previousWriter) })
 
-	b, err := m.Resolve("observed")
+	b, err := m.Ensure("observed")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -186,7 +186,7 @@ func lifecycleStageNames(record *LifecycleRecord) string {
 
 func TestForegroundShellPersistsState(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Resolve("default")
+	b, _ := m.Ensure("default")
 
 	sh, err := m.ForegroundShell(b)
 	if err != nil {
@@ -216,8 +216,8 @@ func TestForegroundShellPersistsState(t *testing.T) {
 // observe it (each bed is rooted at its own data directory).
 func TestBedFileIsolation(t *testing.T) {
 	m := newTestManager(t)
-	a, _ := m.Resolve("session-a")
-	b, _ := m.Resolve("session-b")
+	a, _ := m.Ensure("session-a")
+	b, _ := m.Ensure("session-b")
 	ctx := context.Background()
 	if code, err := m.RunForeground(ctx, a, "printf alpha > shared.txt", "", nil, 0, nil); err != nil || code != 0 {
 		t.Fatalf("write in session-a: code=%d err=%v", code, err)
@@ -234,7 +234,7 @@ func TestBedFileIsolation(t *testing.T) {
 
 func TestShellExitCode(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Resolve("default")
+	b, _ := m.Ensure("default")
 	sh, _ := m.ForegroundShell(b)
 	// Use a subshell so a non-zero exit doesn't kill the persistent session.
 	res, err := sh.Run(context.Background(), `sh -c "exit 7"`, nil)
@@ -257,7 +257,7 @@ func TestShellExitCode(t *testing.T) {
 // tore the whole session down ("shell: session exited during run").
 func TestRunForegroundIsolatesFailure(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Resolve("default")
+	b, _ := m.Ensure("default")
 	ctx := context.Background()
 
 	code, err := m.RunForeground(ctx, b, "set -euo pipefail\nfalse\necho unreached", "", nil, 0, nil)
@@ -286,7 +286,7 @@ func TestRunForegroundIsolatesFailure(t *testing.T) {
 // still kills every process once lifecycle ownership has been claimed.
 func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Resolve("conv-kill")
+	b, _ := m.Ensure("conv-kill")
 
 	started := make(chan struct{})
 	done := make(chan int, 1)
@@ -305,7 +305,7 @@ func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("foreground command did not start")
 	}
-	if got := b.ActiveOperations(); got != 1 {
+	if got := b.Inflight(); got != 1 {
 		t.Fatalf("active operations = %d, want 1", got)
 	}
 
@@ -318,7 +318,7 @@ func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 		if code == 0 {
 			t.Fatalf("killed command reported exit 0")
 		}
-		if got := b.ActiveOperations(); got != 0 {
+		if got := b.Inflight(); got != 0 {
 			t.Fatalf("active operations after teardown = %d, want 0", got)
 		}
 	case <-time.After(3 * time.Second):
@@ -328,7 +328,7 @@ func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 
 func TestBackgroundCommandAndLogs(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Resolve("default")
+	b, _ := m.Ensure("default")
 
 	cmd, err := m.StartCommand(b, "printf 'a\\nb\\nc\\n'", "", nil, 0, nil)
 	if err != nil {
@@ -355,7 +355,7 @@ func TestBackgroundCommandAndLogs(t *testing.T) {
 
 func TestDeleteBedReleasesAndRemoves(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Resolve("conv-x")
+	b, _ := m.Ensure("conv-x")
 	_, _ = m.ForegroundShell(b)
 	if ok, err := m.Evict("conv-x"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
@@ -368,8 +368,8 @@ func TestDeleteBedReleasesAndRemoves(t *testing.T) {
 func TestCollectExpiredSkipsDefault(t *testing.T) {
 	m := newTestManager(t)
 	m.SetBedIdleTTL(time.Millisecond)
-	_, _ = m.Resolve("default")
-	_, _ = m.Resolve("conv-idle")
+	_, _ = m.Ensure("default")
+	_, _ = m.Ensure("conv-idle")
 	time.Sleep(10 * time.Millisecond)
 	reaped := m.CollectExpired(time.Now())
 	if len(reaped) != 1 || reaped[0] != "conv-idle" {
@@ -385,7 +385,7 @@ func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	idleTTL := 50 * time.Millisecond
 	execTimeout := 500 * time.Millisecond
 	m.SetBedIdleTTL(idleTTL)
-	b, err := m.Resolve("conv-running")
+	b, err := m.Ensure("conv-running")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -394,41 +394,41 @@ func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	}
 
 	startedAt := time.Now()
-	finishOperation, err := m.BeginOperation(b, execTimeout)
+	finishOperation, err := m.BeginOperation(b, OpExec, execTimeout)
 	if err != nil {
 		t.Fatalf("BeginOperation: %v", err)
 	}
-	expiresAt := b.ExpiresAt()
-	if want := startedAt.Add(execTimeout + idleTTL); expiresAt.Before(want) {
-		t.Fatalf("expires_at = %s, want >= %s", expiresAt, want)
+	retainUntil := b.RetainUntil()
+	if want := startedAt.Add(execTimeout + idleTTL); retainUntil.Before(want) {
+		t.Fatalf("retained_until = %s, want >= %s", retainUntil, want)
 	}
-	if got := b.ActiveOperations(); got != 1 {
+	if got := b.Inflight(); got != 1 {
 		t.Fatalf("active operations = %d, want 1", got)
 	}
 	if got := b.State(); got != StateActive {
 		t.Fatalf("operation state = %q, want active", got)
 	}
-	finishShortOperation, err := m.BeginOperation(b, time.Millisecond)
+	finishShortOperation, err := m.BeginOperation(b, OpExec, time.Millisecond)
 	if err != nil {
 		t.Fatalf("BeginOperation short: %v", err)
 	}
-	if got := b.ExpiresAt(); got.Before(expiresAt) {
-		t.Fatalf("shorter operation shortened expires_at: got %s, previous %s", got, expiresAt)
+	if got := b.RetainUntil(); got.Before(retainUntil) {
+		t.Fatalf("shorter operation shortened retained_until: got %s, previous %s", got, retainUntil)
 	}
 	finishShortOperation()
 
 	// Even a delayed collector must not reap a command still in flight.
-	if reaped := m.CollectExpired(expiresAt.Add(time.Hour)); len(reaped) != 0 {
+	if reaped := m.CollectExpired(retainUntil.Add(time.Hour)); len(reaped) != 0 {
 		t.Fatalf("CollectExpired reaped running bed: %v", reaped)
 	}
 	finishOperation()
-	if got := b.ActiveOperations(); got != 0 {
+	if got := b.Inflight(); got != 0 {
 		t.Fatalf("active operations after finish = %d, want 0", got)
 	}
 	if got := b.State(); got != StateIdle {
 		t.Fatalf("finished operation state = %q, want idle", got)
 	}
-	if reaped := m.CollectExpired(expiresAt.Add(time.Hour)); len(reaped) != 1 || reaped[0] != b.ID {
+	if reaped := m.CollectExpired(retainUntil.Add(time.Hour)); len(reaped) != 1 || reaped[0] != b.ID {
 		t.Fatalf("CollectExpired after finish = %v, want [%s]", reaped, b.ID)
 	}
 }
@@ -439,29 +439,29 @@ func TestMaxBedsCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	if _, err := m.Resolve("a"); err != nil {
+	if _, err := m.Ensure("a"); err != nil {
 		t.Fatalf("bed a: %v", err)
 	}
-	if _, err := m.Resolve("b"); err != nil {
+	if _, err := m.Ensure("b"); err != nil {
 		t.Fatalf("bed b: %v", err)
 	}
 	// Cap hit: a third bed is refused with the sentinel.
-	if _, err := m.Resolve("c"); !errors.Is(err, ErrBedLimit) {
+	if _, err := m.Ensure("c"); !errors.Is(err, ErrBedLimit) {
 		t.Fatalf("bed c: want ErrBedLimit, got %v", err)
 	}
 	// Existing beds still resolve.
-	if _, err := m.Resolve("a"); err != nil {
+	if _, err := m.Ensure("a"); err != nil {
 		t.Fatalf("existing bed a after cap: %v", err)
 	}
 	// The default bed is exempt — the single-tenant path never breaks.
-	if _, err := m.Resolve(""); err != nil {
+	if _, err := m.Ensure(""); err != nil {
 		t.Fatalf("default bed exempt: %v", err)
 	}
 	// Evicting frees a slot.
 	if ok, err := m.Evict("a"); err != nil || !ok {
 		t.Fatalf("evict a: ok=%v err=%v", ok, err)
 	}
-	if _, err := m.Resolve("c"); err != nil {
+	if _, err := m.Ensure("c"); err != nil {
 		t.Fatalf("bed c after free slot: %v", err)
 	}
 }
@@ -534,7 +534,7 @@ func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 
 	// Write data into a bed, evict it → snapshot taken, local dir stays
 	// behind as luggage.
-	b, _ := m.Resolve("conv-1")
+	b, _ := m.Ensure("conv-1")
 	if err := os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("payload"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +554,7 @@ func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 
 	// Re-resolve the same bed id → warm start from luggage: the real file is
 	// still there and Restore was never called (no marker).
-	b2, err := m.Resolve("conv-1")
+	b2, err := m.Ensure("conv-1")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
@@ -576,7 +576,7 @@ func TestStaleLuggageDiscardedOnResume(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Resolve("conv-s")
+	b, _ := m.Ensure("conv-s")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("old"), 0o644)
 	if ok, err := m.Evict("conv-s"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
@@ -587,7 +587,7 @@ func TestStaleLuggageDiscardedOnResume(t *testing.T) {
 	fs.gens["conv-s"] = fs.gens["conv-s"] + 1
 	fs.mu.Unlock()
 
-	b2, err := m.Resolve("conv-s")
+	b2, err := m.Ensure("conv-s")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
@@ -606,7 +606,7 @@ func TestColdResumeRestoresFromSnapshot(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Resolve("conv-c")
+	b, _ := m.Ensure("conv-c")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("payload"), 0o644)
 	if ok, err := m.Evict("conv-c"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
@@ -616,7 +616,7 @@ func TestColdResumeRestoresFromSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	b2, err := m.Resolve("conv-c")
+	b2, err := m.Ensure("conv-c")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
@@ -631,7 +631,7 @@ func TestPersistFailureAbortsDelete(t *testing.T) {
 	fs.fail = true
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Resolve("conv-2")
+	b, _ := m.Ensure("conv-2")
 	if _, err := m.Evict("conv-2"); err == nil {
 		t.Fatal("Evict should fail when persist fails")
 	}
@@ -649,7 +649,7 @@ func TestPersistDirty(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Resolve("conv-3")
+	b, _ := m.Ensure("conv-3")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("v1"), 0o644)
 
 	// Freshly created bed: persistedAt == created time; touch to mark dirty.
@@ -671,7 +671,7 @@ func TestPersistDirty(t *testing.T) {
 // Before the runMu/mu split, this hung the entire daemon including /healthz.
 func TestDyingShellDoesNotDeadlock(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Resolve("default")
+	b, _ := m.Ensure("default")
 	sh, err := m.ForegroundShell(b)
 	if err != nil {
 		t.Fatalf("ForegroundShell: %v", err)
@@ -688,7 +688,7 @@ func TestDyingShellDoesNotDeadlock(t *testing.T) {
 	// Manager.Resolve (m.mu) → touch (b.mu) → ForegroundShell (b.mu + Dead()).
 	probe := make(chan struct{})
 	go func() {
-		_, _ = m.Resolve("default")
+		_, _ = m.Ensure("default")
 		_, _ = m.ForegroundShell(b) // may restart the shell; must not block forever
 		close(probe)
 	}()
@@ -737,7 +737,7 @@ func TestEvictCanceledByActivity(t *testing.T) {
 	ss := &slowStore{fakeStore: newFakeStore(), gate: make(chan struct{})}
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, ss)
 
-	b, _ := m.Resolve("conv-race")
+	b, _ := m.Ensure("conv-race")
 	res := make(chan struct {
 		ok  bool
 		err error
@@ -755,7 +755,7 @@ func TestEvictCanceledByActivity(t *testing.T) {
 	if b.State() != StateEvicting {
 		t.Fatalf("state during persist = %q, want evicting", b.State())
 	}
-	finishOperation, err := m.BeginOperation(b, time.Second)
+	finishOperation, err := m.BeginOperation(b, OpExec, time.Second)
 	if err != nil {
 		t.Fatalf("BeginOperation during eviction: %v", err)
 	}
@@ -783,7 +783,7 @@ func TestPurgeEndsIdentity(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Resolve("conv-p")
+	b, _ := m.Ensure("conv-p")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
 	if ok, _ := m.Evict("conv-p"); !ok {
 		t.Fatal("evict failed")
@@ -801,7 +801,7 @@ func TestPurgeEndsIdentity(t *testing.T) {
 	if _, err := os.Stat(b.Dir); !os.IsNotExist(err) {
 		t.Fatal("luggage should be removed after purge")
 	}
-	b2, _ := m.Resolve("conv-p")
+	b2, _ := m.Ensure("conv-p")
 	if _, err := os.Stat(filepath.Join(b2.Workspace, "restored.txt")); err == nil {
 		t.Fatal("purged bed must start empty, not restored")
 	}
@@ -822,7 +822,7 @@ func TestGenerationMonotonicAcrossPersists(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Resolve("conv-g")
+	b, _ := m.Ensure("conv-g")
 	if err := m.Checkpoint(context.Background(), "conv-g"); err != nil {
 		t.Fatalf("checkpoint 1: %v", err)
 	}
@@ -865,7 +865,7 @@ func TestCollectLuggageWatermarks(t *testing.T) {
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
 	mkLuggage := func(id string, size int) {
-		b, _ := m.Resolve(id)
+		b, _ := m.Ensure(id)
 		payload := make([]byte, size)
 		if err := os.WriteFile(filepath.Join(b.Workspace, "data.txt"), payload, 0o644); err != nil {
 			t.Fatal(err)
@@ -906,7 +906,7 @@ func TestCollectLuggageStaleFirst(t *testing.T) {
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
 	for _, id := range []string{"conv-a", "conv-b"} {
-		b, _ := m.Resolve(id)
+		b, _ := m.Ensure(id)
 		_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), make([]byte, 10_000), 0o644)
 		if ok, err := m.Evict(id); err != nil || !ok {
 			t.Fatalf("evict %s: ok=%v err=%v", id, ok, err)
@@ -933,8 +933,8 @@ func TestInventory(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	_, _ = m.Resolve("conv-live")
-	b, _ := m.Resolve("conv-cold")
+	_, _ = m.Ensure("conv-live")
+	b, _ := m.Ensure("conv-cold")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
 	if ok, err := m.Evict("conv-cold"); err != nil || !ok {
 		t.Fatalf("evict: ok=%v err=%v", ok, err)
@@ -948,22 +948,22 @@ func TestInventory(t *testing.T) {
 		t.Fatalf("conv-live = %+v, want idle gen 0", e)
 	}
 	cold := byID["conv-cold"]
-	if cold.State != "luggage" || cold.Generation != 1 || cold.Bytes == 0 || cold.LastActiveAt.IsZero() {
-		t.Fatalf("conv-cold = %+v, want luggage gen 1 with bytes and last_active_at", cold)
+	if cold.State != "dormant" || cold.Generation != 1 || cold.Bytes == 0 || cold.LastActiveAt.IsZero() {
+		t.Fatalf("conv-cold = %+v, want dormant gen 1 with bytes and last_active_at", cold)
 	}
 }
 
-// Profile counters accumulate in memory, flush into meta at persist, and keep
+// Usage counters accumulate in memory, flush into meta at persist, and keep
 // accumulating after evict → warm resume (the meta round-trip).
 func TestProfileAccumulatesAndSurvivesEvict(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Resolve("conv-prof")
+	b, _ := m.Ensure("conv-prof")
 	b.RecordCommand(1500 * time.Millisecond)
 	b.RecordCommand(500 * time.Millisecond)
-	if p := b.Profile(); p.CmdCount != 2 || p.CmdTotalMs != 2000 {
+	if p := b.Usage(); p.CmdCount != 2 || p.CmdTotalMs != 2000 {
 		t.Fatalf("profile = %+v, want 2 cmds / 2000ms", p)
 	}
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
@@ -974,22 +974,22 @@ func TestProfileAccumulatesAndSurvivesEvict(t *testing.T) {
 	// The luggage meta (what the snapshot packs) carries the counters, and the
 	// inventory's luggage row exposes them.
 	meta, ok := loadMeta(filepath.Join(root, "conv-prof"))
-	if !ok || meta.Profile.CmdCount != 2 || meta.Profile.CmdTotalMs != 2000 {
-		t.Fatalf("luggage meta profile = %+v (ok=%v)", meta.Profile, ok)
+	if !ok || meta.Usage.CmdCount != 2 || meta.Usage.CmdTotalMs != 2000 {
+		t.Fatalf("luggage meta profile = %+v (ok=%v)", meta.Usage, ok)
 	}
 	for _, e := range m.Inventory() {
-		if e.ID == "conv-prof" && e.Profile.CmdCount != 2 {
-			t.Fatalf("inventory profile = %+v", e.Profile)
+		if e.ID == "conv-prof" && e.Usage.CmdCount != 2 {
+			t.Fatalf("inventory usage = %+v", e.Usage)
 		}
 	}
 
 	// Warm resume seeds from meta and keeps counting on top.
-	b2, err := m.Resolve("conv-prof")
+	b2, err := m.Ensure("conv-prof")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
 	b2.RecordCommand(1000 * time.Millisecond)
-	if p := b2.Profile(); p.CmdCount != 3 || p.CmdTotalMs != 3000 {
+	if p := b2.Usage(); p.CmdCount != 3 || p.CmdTotalMs != 3000 {
 		t.Fatalf("profile after resume = %+v, want 3 cmds / 3000ms", p)
 	}
 }
@@ -1015,21 +1015,21 @@ func TestProfileRecordsMigrationCost(t *testing.T) {
 	ss := sleepyStore{fakeStore: newFakeStore()}
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, ss)
 
-	b, _ := m.Resolve("conv-cost")
+	b, _ := m.Ensure("conv-cost")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
 	if ok, err := m.Evict("conv-cost"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
 	meta, ok := loadMeta(filepath.Join(root, "conv-cost"))
-	if !ok || meta.Profile.LastPersistMs < 10 {
-		t.Fatalf("LastPersistMs = %d (ok=%v), want >= 10", meta.Profile.LastPersistMs, ok)
+	if !ok || meta.Usage.LastPersistMs < 10 {
+		t.Fatalf("LastPersistMs = %d (ok=%v), want >= 10", meta.Usage.LastPersistMs, ok)
 	}
 
 	// Cold resume (luggage gone) → the restore is timed on this host.
 	if err := os.RemoveAll(filepath.Join(root, "conv-cost")); err != nil {
 		t.Fatal(err)
 	}
-	b2, err := m.Resolve("conv-cost")
+	b2, err := m.Ensure("conv-cost")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
@@ -1037,7 +1037,7 @@ func TestProfileRecordsMigrationCost(t *testing.T) {
 		!strings.Contains(lifecycleStageNames(record), "restore") {
 		t.Fatalf("cold activation = %+v, want snapshot restore", record)
 	}
-	if p := b2.Profile(); p.LastRestoreMs < 10 {
+	if p := b2.Usage(); p.LastRestoreMs < 10 {
 		t.Fatalf("LastRestoreMs = %d, want >= 10", p.LastRestoreMs)
 	}
 }
@@ -1046,7 +1046,7 @@ func TestBedDirLayoutAndMetaAcrossRestart(t *testing.T) {
 	root := t.TempDir()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, nil)
 
-	b, _ := m.Resolve("default")
+	b, _ := m.Ensure("default")
 	// Layout: {root}/default/{meta.json,data/workspace}; Home is the bed_home
 	// root (data), Workspace the real subdir below it.
 	if b.Home != filepath.Join(root, "default", "data") {
@@ -1063,7 +1063,7 @@ func TestBedDirLayoutAndMetaAcrossRestart(t *testing.T) {
 	// "Restart": a new Manager over the same root sees the same identity.
 	time.Sleep(5 * time.Millisecond)
 	m2, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, nil)
-	b2, _ := m2.Resolve("default")
+	b2, _ := m2.Ensure("default")
 	if !b2.CreatedAt.Equal(created) {
 		t.Fatalf("CreatedAt not preserved across restart: %v vs %v", b2.CreatedAt, created)
 	}

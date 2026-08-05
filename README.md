@@ -65,7 +65,7 @@ curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv
 | Session | `POST /session`, `POST /session/:id/run` (SSE), `DELETE /session/:id` |
 | Isolated session | `/v1/isolated/session(s)`, `run` (SSE), session-scoped files/directories, `capabilities` |
 | Beds | `GET/POST /v1/beds`, `GET/DELETE /v1/beds/:id`, `POST /v1/beds/:id/checkpoint`, `GET /v1/beds/capabilities` |
-| Scheduler | `GET /v1/inventory` — state counts + every local bed's lifecycle, generation and expiry |
+| Scheduler | `GET /v1/beds` — instance capacity, state counts + every local bed's (resident + dormant) lifecycle, generation and retention |
 
 The OpenSandbox isolated-session surface is a compatibility view: one isolated
 session maps directly to one non-default bed, so it does not introduce a second
@@ -163,7 +163,7 @@ Process tree: `--bed-init auto` (default) runs each bed's processes under a
 per-bed init (`hostel __bedinit`) so bed teardown kills the bed's WHOLE tree —
 including `setsid`/double-fork daemons a plain pgid sweep can't reach. `auto`
 probes at boot and falls back to in-process forking where the init can't serve
-(non-linux dev); `off` forces in-process. See docs/design.md 〈进程树〉.
+(non-linux dev); `off` forces in-process. See docs/kernel.md 〈进程树〉.
 
 Persistence: setting `--s3-bucket` (any S3-compatible endpoint) turns it on —
 the default `--store auto` resolves to `s3`, an incremental content-addressed

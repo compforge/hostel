@@ -44,8 +44,12 @@ import (
 //
 // Other beds' target ids are thus never revealed, so the bed cannot even name
 // them to attach. Everything else is copied verbatim.
-func proxyCDP(conn net.Conn, upstreamWS, bedID, contextID string) error {
-	ctx, cancel := context.WithCancel(context.Background())
+//
+// ctx is the caller's revocation handle: canceling it (evict) closes both
+// conns, which unblocks the two copy loops. onActivity, when non-nil, is
+// invoked per client message — client traffic is what keeps the bed alive.
+func proxyCDP(ctx context.Context, conn net.Conn, upstreamWS, bedID, contextID string, onActivity func()) error {
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	up, _, _, err := ws.Dial(ctx, upstreamWS)
@@ -53,6 +57,14 @@ func proxyCDP(conn net.Conn, upstreamWS, bedID, contextID string) error {
 		return fmt.Errorf("amenity: chromium CDP dial upstream %q: %w", upstreamWS, err)
 	}
 	defer up.Close()
+
+	// Revocation: a canceled ctx alone cannot interrupt a blocked Read, so
+	// close both conns — that is what actually ends the copy loops.
+	go func() {
+		<-ctx.Done()
+		conn.Close()
+		up.Close()
+	}()
 
 	f := &cdpFilter{contextID: contextID, ownedCtx: map[string]bool{contextID: true}, pending: map[int]string{}}
 	done := make(chan struct{}, 2)
@@ -64,6 +76,9 @@ func proxyCDP(conn net.Conn, upstreamWS, bedID, contextID string) error {
 			msg, err := wsutil.ReadClientText(conn)
 			if err != nil {
 				return
+			}
+			if onActivity != nil {
+				onActivity()
 			}
 			out := f.onClientMsg(msg)
 			if out == nil {

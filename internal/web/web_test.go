@@ -307,9 +307,12 @@ func TestBedsCRUD(t *testing.T) {
 	}
 	rec = do(t, s, "GET", "/v1/beds/conv-1", nil, nil)
 	var detail struct {
-		Generation       int64 `json:"generation"`
-		ActiveOperations int   `json:"active_operations"`
-		Lifecycle        *struct {
+		Generation int64 `json:"generation"`
+		Activity   struct {
+			Operations map[string]int `json:"operations"`
+			Sessions   map[string]int `json:"sessions"`
+		} `json:"activity"`
+		Lifecycle *struct {
 			LastActivation *struct {
 				Action string `json:"action"`
 				Result string `json:"result"`
@@ -333,8 +336,8 @@ func TestBedsCRUD(t *testing.T) {
 		len(detail.Lifecycle.LastActivation.Stages) == 0 {
 		t.Fatalf("bed detail activation = %+v", detail.Lifecycle)
 	}
-	if detail.Generation != 0 || detail.ActiveOperations != 0 {
-		t.Fatalf("bed detail current state = generation %d active_operations %d", detail.Generation, detail.ActiveOperations)
+	if detail.Generation != 0 || len(detail.Activity.Operations) != 0 {
+		t.Fatalf("bed detail current state = generation %d activity %+v", detail.Generation, detail.Activity)
 	}
 
 	rec = do(t, s, "POST", "/v1/beds/conv-1/checkpoint", nil, nil)
@@ -345,7 +348,7 @@ func TestBedsCRUD(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("decode checkpointed bed detail: %v", err)
 	}
-	if detail.Generation != 1 || detail.ActiveOperations != 0 ||
+	if detail.Generation != 1 || len(detail.Activity.Operations) != 0 ||
 		detail.Lifecycle == nil || detail.Lifecycle.LastPersist == nil ||
 		detail.Lifecycle.LastPersist.Trigger != "checkpoint" {
 		t.Fatalf("checkpointed bed detail = %+v", detail)
@@ -444,9 +447,9 @@ func TestCheckpointEndpointAndPersistenceReporting(t *testing.T) {
 	}
 }
 
-// /v1/inventory is the scheduler's one-poll picture: instance capacity plus
+// /v1/beds is the scheduler's one-poll picture: instance capacity plus
 // every local bed — in-memory ones and luggage (evicted, dir kept).
-func TestInventoryEndpoint(t *testing.T) {
+func TestBedListEndpoint(t *testing.T) {
 	s := newTestServer(t)
 	s.mgr.SetBedIdleTTL(time.Minute)
 	s.mgr.SetLuggageLimits(1000, 800)
@@ -470,55 +473,80 @@ func TestInventoryEndpoint(t *testing.T) {
 	if !ok {
 		t.Fatal("inv-live bed missing")
 	}
-	finishOperation, err := s.mgr.BeginOperation(live, time.Minute)
+	finishOperation, err := s.mgr.BeginOperation(live, bed.OpControl, time.Minute)
 	if err != nil {
 		t.Fatalf("BeginOperation: %v", err)
 	}
 	defer finishOperation()
 
-	rec = do(t, s, "GET", "/v1/inventory", nil, nil)
+	rec = do(t, s, "GET", "/v1/beds", nil, nil)
 	if rec.Code != 200 {
-		t.Fatalf("inventory = %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("bed list = %d %s", rec.Code, rec.Body.String())
 	}
 	var body struct {
 		Instance struct {
+			Status           string         `json:"status"`
 			Store            string         `json:"store"`
 			MaxBeds          int            `json:"max_beds"`
 			BedCounts        map[string]int `json:"bed_counts"`
-			ExpiresAt        time.Time      `json:"expires_at"`
+			RetainUntil      time.Time      `json:"retained_until"`
 			LuggageHighBytes int64          `json:"luggage_high_bytes"`
 		} `json:"instance"`
 		Beds []struct {
 			ID           string    `json:"id"`
 			State        string    `json:"state"`
 			LastActiveAt time.Time `json:"last_active_at"`
-			ExpiresAt    time.Time `json:"expires_at"`
+			RetainUntil  time.Time `json:"retained_until"`
 		} `json:"beds"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if strings.Contains(rec.Body.String(), `"active_beds"`) {
-		t.Fatalf("inventory should report state counts, not a second active concept: %s", rec.Body.String())
+		t.Fatalf("bed list should report state counts, not a second active concept: %s", rec.Body.String())
+	}
+	if body.Instance.Status != "retained" {
+		t.Fatalf("instance status = %s, want retained (a bed is within its retention promise)", body.Instance.Status)
 	}
 	if body.Instance.Store != "noop" || body.Instance.BedCounts["active"] != 1 ||
 		body.Instance.BedCounts["idle"] != 1 || body.Instance.BedCounts["evicting"] != 0 ||
-		body.Instance.BedCounts["luggage"] != 1 || body.Instance.ExpiresAt.IsZero() ||
+		body.Instance.BedCounts["dormant"] != 1 || body.Instance.RetainUntil.IsZero() ||
 		body.Instance.LuggageHighBytes != 1000 {
 		t.Fatalf("instance = %+v", body.Instance)
 	}
-	if want := live.ExpiresAt(); !body.Instance.ExpiresAt.Equal(want) {
-		t.Fatalf("instance expires_at = %s, want max bed expiry %s", body.Instance.ExpiresAt, want)
+	if want := live.RetainUntil(); !body.Instance.RetainUntil.Equal(want) {
+		t.Fatalf("instance retained_until = %s, want max bed retention %s", body.Instance.RetainUntil, want)
 	}
 	states := map[string]string{}
 	for _, b := range body.Beds {
 		states[b.ID] = b.State
-		if b.ID == "inv-live" && (b.LastActiveAt.IsZero() || b.ExpiresAt.IsZero()) {
+		if b.ID == "inv-live" && (b.LastActiveAt.IsZero() || b.RetainUntil.IsZero()) {
 			t.Fatalf("inv-live lifecycle fields = %+v", b)
 		}
 	}
-	if states["inv-live"] != "active" || states["inv-idle"] != "idle" || states["inv-cold"] != "luggage" {
-		t.Fatalf("bed states = %v, want active / idle / luggage", states)
+	if states["inv-live"] != "active" || states["inv-idle"] != "idle" || states["inv-cold"] != "dormant" {
+		t.Fatalf("bed states = %v, want active / idle / dormant", states)
+	}
+
+	// Evict every resident bed under the noop store: the local luggage is the
+	// only copy, so the instance reports pinned.
+	finishOperation()
+	for _, id := range []string{"inv-live", "inv-idle"} {
+		if rec = do(t, s, "DELETE", "/v1/beds/"+id, nil, nil); rec.Code != 200 {
+			t.Fatalf("evict %s = %d", id, rec.Code)
+		}
+	}
+	rec = do(t, s, "GET", "/v1/beds", nil, nil)
+	var pinned struct {
+		Instance struct {
+			Status string `json:"status"`
+		} `json:"instance"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &pinned); err != nil {
+		t.Fatalf("unmarshal pinned: %v", err)
+	}
+	if pinned.Instance.Status != "pinned" {
+		t.Fatalf("instance status after evicting all = %s, want pinned (noop store, local copy only)", pinned.Instance.Status)
 	}
 }
 

@@ -52,7 +52,7 @@ type Config struct {
 	// the backpressure/placement signal for an upstream scheduler.
 	MaxBeds int
 	// BedInit selects the process spawner: "auto" (default) probes the per-bed
-	// init (docs/design.md 〈进程树〉) at boot and falls back to in-process
+	// init (docs/kernel.md 〈进程树〉) at boot and falls back to in-process
 	// forking where it can't serve; "off" forces in-process.
 	BedInit string
 

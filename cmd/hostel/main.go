@@ -14,7 +14,7 @@
 
 // Command hostel is a generic sandbox data-plane manager: it runs one or many
 // isolated "beds" and serves an OpenSandbox-compatible HTTP API over them.
-// Standalone-capable, but primarily meant to run inside a pod. See docs/design.md.
+// Standalone-capable, but primarily meant to run inside a pod. See docs/kernel.md.
 package main
 
 import (
@@ -128,7 +128,7 @@ func main() {
 		mgr.SetCDPAdvertise(addr)
 	}
 
-	// Per-bed init spawner (docs/design.md 〈进程树〉 S1): auto probes once at
+	// Per-bed init spawner (docs/kernel.md 〈进程树〉 S1): auto probes once at
 	// boot; a failed probe (non-linux, odd deployment) is an honest downgrade
 	// to in-process forking, logged, never a startup failure.
 	if cfg.BedInit != "off" {

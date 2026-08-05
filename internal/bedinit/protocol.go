@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package bedinit implements the per-bed init process (docs/design.md
+// Package bedinit implements the per-bed init process (docs/kernel.md
 // 〈进程树〉, S1): a tiny spawner-reaper the daemon re-execs once per bed. Bed
 // commands are forked BY bedinit (parentage is decided by who forks), so the
 // bed owns a real process tree: teardown = SIGTERM bedinit → it kills every

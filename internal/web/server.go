@@ -106,11 +106,8 @@ func (s *Server) routes() {
 	{
 		sess.POST("", s.sessionCreate)
 		sess.POST("/:sessionId/run", s.sessionRun)
-		sess.DELETE("/:sessionId", s.sessionDelete)
+		sess.DELETE("/:sessionId", s.withOp(bed.OpControl, s.sessionDelete))
 	}
-
-	// Scheduler-facing: capacity + all local beds (incl. luggage) in one poll.
-	e.GET("/v1/inventory", s.inventory)
 
 	isolated := e.Group("/v1/isolated")
 	{
@@ -178,12 +175,34 @@ func (s *Server) bedOf(c *gin.Context) *bed.Bed {
 	if id == "" {
 		id = c.Query("bed")
 	}
-	b, err := s.mgr.Resolve(id)
+	b, err := s.mgr.Ensure(id)
 	if err != nil {
 		respondBedError(c, err)
 		return nil
 	}
 	return b
+}
+
+// withOp wraps a request-scoped handler in one operation of the given kind:
+// the bed is resolved, held for the handler's lifetime and released on return
+// (docs/lifecycle.md: an operation's span is one request). Explicit
+// BeginOperation is reserved for work whose span is NOT the request —
+// background /command outlives it, foreground runs take their timeout from
+// the request body, isolatedCreate creates the bed it then holds.
+func (s *Server) withOp(kind bed.OperationKind, next func(*gin.Context, *bed.Bed)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		b := s.bedOf(c)
+		if b == nil {
+			return
+		}
+		finish, err := s.mgr.BeginOperation(b, kind, 0)
+		if err != nil {
+			respondBedError(c, err)
+			return
+		}
+		defer finish()
+		next(c, b)
+	}
 }
 
 // opsOf returns filesystem ops rooted at the request's bed and holds one
@@ -193,7 +212,7 @@ func (s *Server) opsOf(c *gin.Context) (*bed.Bed, *fsops.Ops, func()) {
 	if b == nil {
 		return nil, nil, nil
 	}
-	finish, err := s.mgr.BeginOperation(b, 0)
+	finish, err := s.mgr.BeginOperation(b, bed.OpFile, 0)
 	if err != nil {
 		respondBedError(c, err)
 		return nil, nil, nil
@@ -221,7 +240,7 @@ func (s *Server) healthz(c *gin.Context) {
 		"isolation":   isolationView(iso),
 		"default_bed": s.mgr.DefaultBedID(),
 		// Watermarks only — live luggage bytes require a scan; poll
-		// /v1/inventory for those.
+		// /v1/beds for those.
 		"luggage_high_bytes": high,
 		"luggage_low_bytes":  low,
 	})

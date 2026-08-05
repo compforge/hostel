@@ -21,7 +21,7 @@ idle / delete / checkpoint ──→ 静默（无运行中命令）→ 打包 �
 evict 完成                ──→ 本地目录留作 luggage（现场缓存），交磁盘水位 GC 管
 ```
 
-接入点（锚点）：`bed.Manager.Resolve`（restore）、`Delete` / idle GC（persist）、新增 `POST /v1/beds/:id/checkpoint`（显式持久化，+ 可选 `/restore`）；capabilities 报 `persistence: noop|s3`。
+接入点（锚点）：`bed.Manager.Ensure`（restore）、`Delete` / idle GC（persist）、新增 `POST /v1/beds/:id/checkpoint`（显式持久化，+ 可选 `/restore`）；capabilities 报 `persistence: noop|s3`。
 
 ## 三、关键设计
 
@@ -64,17 +64,17 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 ### 状态
 
 ```
-   ABSENT / DORMANT ── Resolve ──→ IDLE ←──────────────┐
+   ABSENT / DORMANT ── Ensure ──→ IDLE ←──────────────┐
                                       │ BeginOperation │ EndOperation
                                       ▼                │
                                     ACTIVE ─────────────┘
 
-   IDLE ── expires_at 到期 / 显式驱逐 ──→ EVICTING
+   IDLE ── retained_until 到期 / 显式驱逐 ──→ EVICTING
      ▲                                     │       │
      └──── 新 operation 取消驱逐 ───────────┘       │ persist 成功
                                                    ▼
                                                 LUGGAGE
-                                                   │ Resolve
+                                                   │ Ensure
                                                    └────────→ IDLE
 ```
 
@@ -85,8 +85,8 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 - **EVICTING**：正在 persist 和释放 runtime。期间新 operation 优先获得服务权并取消驱逐；最终移除与 operation 准入使用同一锁序，二者只能有一个获胜。
 - **LUGGAGE**：不再占 runtime 名额，只保留本机数据副本。
 
-`generation`（数据版本）和 `expires_at`（最早安全回收期限）是与 `state` 正交的事实，不能塞进 state。**DORMANT** 也不是某个 hostel 持有的 state：它表示只有共享快照、当前没有本机 inventory 行。
-- **RESTORING 不是对外状态**：restore 在 `Resolve` 内同步完成，调用方只看到"第一个请求慢一点"。
+`generation`（数据版本）和 `retained_until`（最早安全回收期限）是与 `state` 正交的事实，不能塞进 state。**DORMANT** 也不是某个 hostel 持有的 state：它表示只有共享快照、当前没有本机 inventory 行。
+- **RESTORING 不是对外状态**：restore 在 `Ensure` 内同步完成，调用方只看到"第一个请求慢一点"。
 
 ### 动词与 API 语义
 
@@ -97,7 +97,7 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 | **checkpoint** | 作为 operation 打快照，完成后回到 IDLE | `POST /v1/beds/:id/checkpoint` |
 | **resume** | DORMANT/LUGGAGE → IDLE（对调用方透明） | 任意携带该 bedID 的请求 |
 
-`GET /v1/beds` 列出 resident Bed（ACTIVE/IDLE/EVICTING）；DORMANT 集合的权威在对象存储和上层调度系统。调度器要的本机全图（含 LUGGAGE）走 `GET /v1/inventory`。
+`GET /v1/beds` 给出调度器要的本机全图：实例容量 + 全部本机 Bed（ACTIVE/IDLE/EVICTING resident + DORMANT luggage）；DORMANT 集合的权威仍是对象存储和上层调度系统。
 
 ### luggage：现场缓存与 generation
 
@@ -105,7 +105,7 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 
 共享 store 模式下 luggage 是纯缓存，删错只会多付一次 Restore，所以磁盘上限走独立水位而不占 max-beds：超过 `--luggage-high-bytes` 时按"generation 过期优先（纯垃圾）→ LRU"的顺序删到 `--luggage-low-bytes` 以下。这个排序是 cost-aware 驱逐的演化缝，v1 只认新旧。
 
-`GET /v1/inventory` 把容量、`bed_counts`（active/idle/evicting/luggage）和每个本机 Bed 的 `state/generation/expires_at` 一次给上层调度器。上游据此优先命中 resident Bed，其次选择最高 generation 的 luggage；回收 carrier 前则确认不存在 resident Bed。inventory 是一次事实快照，不代替上游的单写者约束：同 bedID 双活仍由调度器归属 + store 侧 generation 冲突探测兜底。
+`GET /v1/beds` 把容量、`bed_counts`（active/idle/evicting/dormant）和每个本机 Bed 的 `state/generation/retained_until` 一次给上层调度器。上游据此优先命中 resident Bed，其次选择最高 generation 的 luggage；回收 carrier 前则确认不存在 resident Bed。inventory 是一次事实快照，不代替上游的单写者约束：同 bedID 双活仍由调度器归属 + store 侧 generation 冲突探测兜底。
 
 ### noop store 下的退化语义
 
@@ -135,10 +135,10 @@ meta 对 bed 内代码**不可见**（bwrap 只 bind `data/`，root 整体被 tm
 已实现（`internal/store/` + `bed.Manager` 生命周期钩子）：
 
 - `Store` 接口 + `noop` / `s3`（aws-sdk-go-v2，`--s3-endpoint` 支持 S3 兼容存储，凭据走 AWS SDK 标准链）；默认 `auto` 按 bucket 有无解析
-- restore-on-create（`Resolve` 新建时，restore 失败即拒绝服务——静默空启动等于数据丢失）、**persist 失败中止 Evict**（毁掉唯一副本比留着 bed 重试更糟）、`POST /v1/beds/:id/checkpoint`、`--persist-interval` 周期兜底（只传 dirty bed，watermark 落 meta.json 跨重启有效）
-- **生命周期已落地**（§四）：`BeginOperation` 统一 Exec/文件/浏览器/checkpoint 活跃度，`state: active|idle|evicting|luggage` 与 generation/expiry 正交；`Evict` 不杀 active operation，EVICTING 期间新 operation 取消驱逐；`Purge`（`DELETE ?purge=true`）终结身份
+- restore-on-create（`Ensure` 新建时，restore 失败即拒绝服务——静默空启动等于数据丢失）、**persist 失败中止 Evict**（毁掉唯一副本比留着 bed 重试更糟）、`POST /v1/beds/:id/checkpoint`、`--persist-interval` 周期兜底（只传 dirty bed，watermark 落 meta.json 跨重启有效）
+- **生命周期已落地**（§四）：`BeginOperation` 统一 Exec/文件/浏览器/checkpoint 活跃度，`state: active|idle|evicting|dormant` 与 generation/expiry 正交；`Evict` 不杀 active operation，EVICTING 期间新 operation 取消驱逐；`Purge`（`DELETE ?purge=true`）终结身份
 - capabilities / healthz 报 `persistence: noop|s3`
-- **luggage 已落地**：evict 留现场 + `LastActiveAt` 盖章、`Resolve` 按 generation 判新鲜（warm start / 丢弃重拉）、`--luggage-high/low-bytes` 水位 GC（stale 优先 → LRU，rename-under-lock 防与 Resolve 竞态）、`GET /v1/inventory` 报容量与全部本机 bed；generation 存 S3 object user metadata（`Stat`=HEAD 免下载）
+- **luggage 已落地**：evict 留现场 + `LastActiveAt` 盖章、`Ensure` 按 generation 判新鲜（warm start / 丢弃重拉）、`--luggage-high/low-bytes` 水位 GC（stale 优先 → LRU，rename-under-lock 防与 Ensure 竞态）、`GET /v1/beds` 报容量与全部本机 bed；generation 存 S3 object user metadata（`Stat`=HEAD 免下载）
 - **双活冲突探测**（§三.5）：`Persist` 写前 HEAD 比对 generation，远端更新则 `store.ErrConflict` 拒绝覆盖（first-writer-wins；evict 路径因 persist 失败自然中止，bed 留在本机继续服务）
 - **cas 后端已落地**（§三.3，`internal/store/cas.go`，desync 库）：catar+CDC 流式切块上传（上代 index 做免传清单）、index 提交点带 generation/bytes metadata、块序列相同时零 chunk 上传但推进 index generation、提交后按"LIST − index 引用"做 per-bed GC、restore 经 `UnTarIndex` 并发拉块（块 ID 对解压数据复核，桶内损坏在 restore 报错而不是落进 workspace；desync `LocalFS` 为 `os.Root` 背书，自带 symlink 逃逸防护）；全流程在内存 objAPI fake 上有单测（roundtrip/增量/GC/no-op/冲突/purge）
 
