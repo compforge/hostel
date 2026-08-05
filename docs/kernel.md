@@ -4,7 +4,7 @@
 
 ## 一、定位与边界
 
-**hostel = 面向 AI agent 的 sandbox runtime**：管理一台机器 / 一个容器内的多个隔离执行单元，对外提供 **OpenSandbox 兼容 API**。可单机跑（laptop / VM / CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
+**hostel = 面向 AI agent 的 sandbox runtime**，可以理解为单个 carrier 内的“小型 kubelet”：管理一台机器 / 一个容器内的多个隔离执行单元，对外提供 **OpenSandbox 兼容 API**。可单机跑（laptop / VM / CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
 
 | hostel 做 | 不做（留给上层调度系统） |
 |---|---|
