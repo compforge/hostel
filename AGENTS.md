@@ -58,9 +58,8 @@ internal/
 ├── config/            flags + HOSTEL_* env
 ├── isolation/         数据隔离房型档：New 按 env ceiling 路由；direct(dorm/全平台) + landlock(room/linux) + bwrap(suite/linux)
 ├── bed/               ★核心。bed=隔离单元=对外一个 sandbox
-│   ├── bed.go         Bed/Status 三维事实 + Manager：Ensure(空→default，按 generation 判 luggage 新鲜)/Get/List
-│   ├── evict.go       回收路径：Evict(revoke→persist→原子复核→teardown)/Purge/CollectExpired
-│   ├── persist.go     持久化路径：persistBed(快照+水位推进)/Checkpoint/PersistDirty 兜底
+│   ├── bed.go         Bed：隔离单元本体 + Status 三维事实(state/generation/retained_until) + touch/accessor
+│   ├── manager.go     Manager：bed 集合与全生命周期；Ensure(空→default，按 generation 判 luggage 新鲜)/Get/List、回收(Evict→revoke→persist→原子复核→teardown/Purge/CollectExpired)、持久化(persistBed/Checkpoint/PersistDirty)
 │   ├── operation.go   operation（无状态请求，kind=exec/file/browser/checkpoint/control）：BeginOperation + timeout 截断
 │   ├── session.go     session（可撤销有状态持有，cdp 类）：OpenSession/Touch/Close；revokeSessions 供 evict 在 persist 前吊销（shell 走 shell.go 自备机制，revoke 时一并 Close）
 │   ├── observability.go Bed 生命周期记录：activate/persist/evict 的结构化 stage 日志与最近摘要
