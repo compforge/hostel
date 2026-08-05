@@ -36,28 +36,28 @@ func (s *Server) inventory(c *gin.Context) {
 		string(bed.StateActive):   0,
 		string(bed.StateIdle):     0,
 		string(bed.StateEvicting): 0,
-		string(bed.StateLuggage):  0,
+		string(bed.StateDormant):  0,
 	}
 	var luggageBytes int64
-	var expiresAt time.Time
+	var retainUntil time.Time
 	expiryKnown := true
 	for _, b := range beds {
 		counts[string(b.State)]++
-		if b.State == bed.StateLuggage {
+		if b.State == bed.StateDormant {
 			luggageBytes += b.Bytes
 		} else {
 			hasBeds = true
-			if b.ExpiresAt.IsZero() {
+			if b.RetainUntil.IsZero() {
 				expiryKnown = false
-			} else if b.ExpiresAt.After(expiresAt) {
-				expiresAt = b.ExpiresAt
+			} else if b.RetainUntil.After(retainUntil) {
+				retainUntil = b.RetainUntil
 			}
 		}
 	}
 	high, low := s.mgr.LuggageLimits()
-	var instanceExpiresAt any
+	var instanceRetainUntil any
 	if hasBeds && expiryKnown {
-		instanceExpiresAt = expiresAt
+		instanceRetainUntil = retainUntil
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"instance": gin.H{
@@ -65,7 +65,7 @@ func (s *Server) inventory(c *gin.Context) {
 			"isolation":          s.mgr.Isolator().Level().String(),
 			"max_beds":           s.mgr.MaxBeds(),
 			"bed_counts":         counts,
-			"expires_at":         instanceExpiresAt,
+			"retained_until":     instanceRetainUntil,
 			"luggage_bytes":      luggageBytes,
 			"luggage_high_bytes": high,
 			"luggage_low_bytes":  low,

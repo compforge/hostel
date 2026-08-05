@@ -79,41 +79,41 @@ type Bed struct {
 	mu             sync.Mutex
 	persistMu      sync.Mutex // serializes generation bumps and snapshot uploads
 	lastActiveAt   time.Time
-	expiresAt      time.Time         // latest safe eviction time promised to accepted operations
-	activeOps      int               // bed-scoped operations still in flight
+	retainUntil    time.Time         // latest safe eviction time promised to accepted operations
+	inflight       int               // bed-scoped operations still in flight
 	activitySeq    uint64            // changes whenever activity starts or finishes
 	generation     int64             // latest local data generation
 	persistedAt    time.Time         // last successful snapshot (zero = never)
 	evicting       bool              // an evict's persist is in flight
 	shells         map[string]*Shell // stateful bash sessions (spec /session)
-	profile        Profile           // cumulative; seeded from meta, flushed at persist
+	usage          Usage             // cumulative; seeded from meta, flushed at persist
 	lastActivation *LifecycleRecord  // bounded diagnostics, never historical
 	lastPersist    *LifecycleRecord
 }
 
 // State is the mutually-exclusive operational state reported to the scheduler.
-// Data freshness (Generation) and retention (ExpiresAt) are separate dimensions.
+// Data freshness (Generation) and retention (RetainUntil) are separate dimensions.
 type State string
 
 const (
 	StateActive   State = "active"
 	StateIdle     State = "idle"
 	StateEvicting State = "evicting"
-	StateLuggage  State = "luggage"
+	StateDormant  State = "dormant"
 )
 
-// Snapshot is one atomic view of a resident bed's scheduler-facing facts.
-type Snapshot struct {
-	State            State
-	Generation       int64
-	LastActiveAt     time.Time
-	ExpiresAt        time.Time
-	ActiveOperations int
-	Profile          Profile
+// Status is one atomic view of a resident bed's scheduler-facing facts.
+type Status struct {
+	State        State
+	Generation   int64
+	LastActiveAt time.Time
+	RetainUntil  time.Time
+	Inflight     int
+	Usage        Usage
 }
 
 func (b *Bed) stateLocked() State {
-	if b.activeOps > 0 {
+	if b.inflight > 0 {
 		return StateActive
 	}
 	if b.evicting {
@@ -122,22 +122,22 @@ func (b *Bed) stateLocked() State {
 	return StateIdle
 }
 
-// Snapshot reports lifecycle, version and deadline from one lock acquisition.
-func (b *Bed) Snapshot() Snapshot {
+// Status reports lifecycle, version and deadline from one lock acquisition.
+func (b *Bed) Status() Status {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return Snapshot{
-		State:            b.stateLocked(),
-		Generation:       b.generation,
-		LastActiveAt:     b.lastActiveAt,
-		ExpiresAt:        b.expiresAt,
-		ActiveOperations: b.activeOps,
-		Profile:          b.profile,
+	return Status{
+		State:        b.stateLocked(),
+		Generation:   b.generation,
+		LastActiveAt: b.lastActiveAt,
+		RetainUntil:  b.retainUntil,
+		Inflight:     b.inflight,
+		Usage:        b.usage,
 	}
 }
 
 // State reports the current operational state.
-func (b *Bed) State() State { return b.Snapshot().State }
+func (b *Bed) State() State { return b.Status().State }
 
 // Short is ShortID(b.ID) — the log-friendly form of this bed's id.
 func (b *Bed) Short() string { return ShortID(b.ID) }
@@ -148,9 +148,9 @@ func (b *Bed) touch(idleTTL time.Duration) {
 	b.lastActiveAt = now
 	b.activitySeq++
 	if idleTTL > 0 {
-		expiresAt := now.Add(idleTTL)
-		if expiresAt.After(b.expiresAt) {
-			b.expiresAt = expiresAt
+		retainUntil := now.Add(idleTTL)
+		if retainUntil.After(b.retainUntil) {
+			b.retainUntil = retainUntil
 		}
 	}
 	b.mu.Unlock()
@@ -163,18 +163,18 @@ func (b *Bed) LastActiveAt() time.Time {
 	return b.lastActiveAt
 }
 
-// ExpiresAt is the latest safe eviction time promised to accepted work.
-func (b *Bed) ExpiresAt() time.Time {
+// RetainUntil is the latest safe eviction time promised to accepted work.
+func (b *Bed) RetainUntil() time.Time {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.expiresAt
+	return b.retainUntil
 }
 
-// ActiveOperations reports bed-scoped operations still in flight.
-func (b *Bed) ActiveOperations() int {
+// Inflight reports bed-scoped operations still in flight.
+func (b *Bed) Inflight() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.activeOps
+	return b.inflight
 }
 
 // Paths converts between this bed's path spaces (client / host / in-bed).
@@ -182,19 +182,19 @@ func (b *Bed) ActiveOperations() int {
 func (b *Bed) Paths() fsops.Paths { return b.paths }
 
 // RecordCommand adds one finished run (foreground, session or background) to
-// the bed's usage profile. Failed runs count too — they are load all the same.
+// the bed's usage counters. Failed runs count too — they are load all the same.
 func (b *Bed) RecordCommand(d time.Duration) {
 	b.mu.Lock()
-	b.profile.CmdCount++
-	b.profile.CmdTotalMs += d.Milliseconds()
+	b.usage.CmdCount++
+	b.usage.CmdTotalMs += d.Milliseconds()
 	b.mu.Unlock()
 }
 
-// Profile returns a copy of the bed's current usage profile.
-func (b *Bed) Profile() Profile {
+// Usage returns a copy of the bed's current usage counters.
+func (b *Bed) Usage() Usage {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.profile
+	return b.usage
 }
 
 // Manager owns the set of beds and their lifecycle. Safe for concurrent use.
@@ -316,9 +316,9 @@ func (m *Manager) SetBedIdleTTL(ttl time.Duration) { m.bedIdleTTL = ttl }
 // Call the returned function exactly once.
 func (m *Manager) BeginOperation(b *Bed, timeout time.Duration) (func(), error) {
 	now := time.Now()
-	expiresAt := now.Add(m.bedIdleTTL)
+	retainUntil := now.Add(m.bedIdleTTL)
 	if timeout > 0 {
-		expiresAt = expiresAt.Add(timeout)
+		retainUntil = retainUntil.Add(timeout)
 	}
 
 	m.mu.Lock()
@@ -330,9 +330,9 @@ func (m *Manager) BeginOperation(b *Bed, timeout time.Duration) (func(), error) 
 	}
 	b.lastActiveAt = now
 	b.activitySeq++
-	b.activeOps++
-	if m.bedIdleTTL > 0 && expiresAt.After(b.expiresAt) {
-		b.expiresAt = expiresAt
+	b.inflight++
+	if m.bedIdleTTL > 0 && retainUntil.After(b.retainUntil) {
+		b.retainUntil = retainUntil
 	}
 	b.mu.Unlock()
 	m.mu.Unlock()
@@ -342,15 +342,15 @@ func (m *Manager) BeginOperation(b *Bed, timeout time.Duration) (func(), error) 
 		once.Do(func() {
 			now := time.Now()
 			b.mu.Lock()
-			if b.activeOps > 0 {
-				b.activeOps--
+			if b.inflight > 0 {
+				b.inflight--
 			}
 			b.lastActiveAt = now
 			b.activitySeq++
 			if m.bedIdleTTL > 0 {
-				expiresAt := now.Add(m.bedIdleTTL)
-				if expiresAt.After(b.expiresAt) {
-					b.expiresAt = expiresAt
+				retainUntil := now.Add(m.bedIdleTTL)
+				if retainUntil.After(b.retainUntil) {
+					b.retainUntil = retainUntil
 				}
 			}
 			b.mu.Unlock()
@@ -358,9 +358,9 @@ func (m *Manager) BeginOperation(b *Bed, timeout time.Duration) (func(), error) 
 	}, nil
 }
 
-// Resolve returns the bed for id, creating it on first use. An empty id maps to
+// Ensure returns the bed for id, creating it on first use. An empty id maps to
 // the default bed — so callers that don't know about beds still get one.
-func (m *Manager) Resolve(id string) (resolved *Bed, retErr error) {
+func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 	if id == "" {
 		id = m.defaultBed
 	}
@@ -402,7 +402,7 @@ func (m *Manager) Resolve(id string) (resolved *Bed, retErr error) {
 	// at least as new as the snapshot — evict→resume on the same instance
 	// then costs no download. A stale local copy (the bed ran elsewhere
 	// meanwhile) is discarded, never merged. A restore failure fails the
-	// resolve — silently starting empty when a snapshot exists would look
+	// ensure — silently starting empty when a snapshot exists would look
 	// like data loss.
 	restored := false
 	var restoreMs int64
@@ -477,18 +477,18 @@ func (m *Manager) Resolve(id string) (resolved *Bed, retErr error) {
 		if restored || persistedAt.IsZero() {
 			persistedAt = now
 		}
-		profile := meta.Profile
+		usage := meta.Usage
 		if restored {
-			profile.LastRestoreMs = restoreMs
+			usage.LastRestoreMs = restoreMs
 		}
-		expiresAt := time.Time{}
+		retainUntil := time.Time{}
 		if m.bedIdleTTL > 0 {
-			expiresAt = now.Add(m.bedIdleTTL)
+			retainUntil = now.Add(m.bedIdleTTL)
 		}
 		b = &Bed{
 			ID: id, Dir: bedDir, Home: dataDir, Workspace: wsDir,
-			CreatedAt: meta.CreatedAt, lastActiveAt: now, expiresAt: expiresAt,
-			generation: meta.Generation, persistedAt: persistedAt, profile: profile,
+			CreatedAt: meta.CreatedAt, lastActiveAt: now, retainUntil: retainUntil,
+			generation: meta.Generation, persistedAt: persistedAt, usage: usage,
 			shells: make(map[string]*Shell),
 			paths:  fsops.NewPaths(dataDir, m.iso.MountPoint()),
 		}
@@ -571,7 +571,7 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (evicted bool, retEr
 		b.mu.Unlock()
 		return false, nil // another evict is already in flight
 	}
-	if b.activeOps > 0 || (expiryCutoff != nil && (b.expiresAt.IsZero() || b.expiresAt.After(*expiryCutoff))) {
+	if b.inflight > 0 || (expiryCutoff != nil && (b.retainUntil.IsZero() || b.retainUntil.After(*expiryCutoff))) {
 		b.mu.Unlock()
 		return false, nil
 	}
@@ -591,12 +591,12 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (evicted bool, retEr
 	// The snapshot we just took is still valid (it's simply not the final
 	// word), so nothing is wasted.
 	// Commit removal under the same lock order as BeginOperation. Either the
-	// operation is admitted first and changes activitySeq/activeOps, or this
+	// operation is admitted first and changes activitySeq/inflight, or this
 	// delete wins and later admission observes a stale Bed pointer.
 	m.mu.Lock()
 	b.mu.Lock()
 	current, present := m.beds[id]
-	if !present || current != b || b.activitySeq != activitySeq || b.activeOps > 0 {
+	if !present || current != b || b.activitySeq != activitySeq || b.inflight > 0 {
 		b.evicting = false
 		b.mu.Unlock()
 		m.mu.Unlock()
@@ -706,7 +706,7 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 		// Flush counters before packing so they travel with the snapshot.
 		// LastPersistMs necessarily lags one persist behind because this
 		// upload's duration is not known until after packing.
-		meta.Profile = b.Profile()
+		meta.Usage = b.Usage()
 		if err := saveMeta(b.Dir, meta); err != nil {
 			return err
 		}
@@ -734,8 +734,8 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 	_ = trace.stage("commit_watermark", func() error {
 		b.mu.Lock()
 		b.persistedAt = persistedAt
-		b.profile.LastPersistMs = persistedAt.Sub(persistStarted).Milliseconds()
-		meta.Profile = b.profile
+		b.usage.LastPersistMs = persistedAt.Sub(persistStarted).Milliseconds()
+		meta.Usage = b.usage
 		b.mu.Unlock()
 		meta.LastPersistedAt = persistedAt
 		_ = saveMeta(b.Dir, meta) // best-effort; in-memory watermark is set
@@ -789,8 +789,8 @@ func (m *Manager) CollectExpired(now time.Time) []string {
 		if id == m.defaultBed {
 			continue
 		}
-		expiresAt := b.ExpiresAt()
-		if !expiresAt.IsZero() && !expiresAt.After(now) {
+		retainUntil := b.RetainUntil()
+		if !retainUntil.IsZero() && !retainUntil.After(now) {
 			stale = append(stale, id)
 		}
 	}
@@ -983,7 +983,7 @@ func (m *Manager) StartCommand(b *Bed, command, cwdInBed string, envs map[string
 		return nil, err
 	}
 	c := m.commands.track(b.ID, proc, out, timeout, onLine)
-	go func() { // profile the run once it is reaped (background = async)
+	go func() { // tally the run once it is reaped (background = async)
 		c.Wait()
 		finishOperation()
 		st := c.Status()

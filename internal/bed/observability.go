@@ -54,7 +54,7 @@ type LifecycleRecord struct {
 }
 
 // LifecycleObservations is the bounded diagnostic state attached to a
-// resident bed. It is deliberately separate from Snapshot: Snapshot is the
+// resident bed. It is deliberately separate from Status: Status is the
 // scheduler-facing current state established by BeginOperation.
 type LifecycleObservations struct {
 	LastActivation *LifecycleRecord

@@ -16,12 +16,12 @@ hostel 需要从三个层面回答同一组问题：
 
 ### 当前状态与过程记录分离
 
-`Snapshot` 是当前状态的唯一事实源：
+`Status` 是当前状态的唯一事实源：
 
-- `state=active|idle|evicting|luggage` 表示互斥操作态；
+- `state=active|idle|evicting|dormant` 表示互斥操作态；
 - `generation` 表示本地数据版本；
-- `expires_at` 表示最早安全回收期限；
-- `active_operations` 表示仍在执行的 bed 请求数。
+- `retained_until` 表示最早安全回收期限；
+- `inflight` 表示仍在执行的 bed 请求数。
 
 `BeginOperation` 是请求准入与并发正确性边界，不是观测 timeline。可观测性另用
 `LifecycleRecord` 描述已经完成的生命周期动作，避免“operation”同时表示业务请求和
@@ -40,7 +40,7 @@ evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史�
 
 ```text
 bed core
-  ├─ Snapshot：当前状态、版本、期限、活动请求数
+  ├─ Status：当前状态、版本、期限、活动请求数
   └─ LifecycleRecord：action / result / source / trigger / stages
        ├─ structured logs
        ├─ GET /v1/beds/:id lifecycle detail
@@ -73,7 +73,7 @@ bed core
 
 `GET /v1/beds/:id` 是单 bed 诊断入口，在基本视图之外返回：
 
-- 当前 `generation` 和 `active_operations`；
+- 当前 `generation` 和 `inflight`；
 - `lifecycle.last_activation`；
 - `lifecycle.last_persist`。
 
@@ -108,7 +108,7 @@ metric 失败不得影响 bed 生命周期；上报不能扩大核心锁持有�
 
 - 所有 Bed 级请求仍通过 `BeginOperation` 准入；
 - persist 仍由 `persistMu` 串行，generation 在打包前写入 meta；
-- evict 仍在 persist 后原子复核 `activitySeq` / `active_operations`；
+- evict 仍在 persist 后原子复核 `activitySeq` / `inflight`；
 - persist 失败必须中止 evict，不能销毁唯一副本；
 - timeline 有固定阶段和固定保留数量，读取返回副本。
 

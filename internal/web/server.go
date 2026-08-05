@@ -178,7 +178,7 @@ func (s *Server) bedOf(c *gin.Context) *bed.Bed {
 	if id == "" {
 		id = c.Query("bed")
 	}
-	b, err := s.mgr.Resolve(id)
+	b, err := s.mgr.Ensure(id)
 	if err != nil {
 		respondBedError(c, err)
 		return nil

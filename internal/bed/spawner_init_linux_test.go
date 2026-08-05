@@ -49,7 +49,7 @@ func newBedInitManager(t *testing.T) *Manager {
 // but orderly cleanup keeps `go test` from waiting on the inherited fd.
 func resolveBedInit(t *testing.T, m *Manager, id string) *Bed {
 	t.Helper()
-	b, err := m.Resolve(id)
+	b, err := m.Ensure(id)
 	if err != nil {
 		t.Fatalf("Resolve(%s): %v", id, err)
 	}

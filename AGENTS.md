@@ -15,7 +15,7 @@
 - **bed**：隔离执行单元，对外即一个 sandbox（workspace + 常驻 shell，状态跨命令保持）。
 - **bed id**：bed 的标识，**由调用方给定、对 hostel 不透明**——hostel 不解释其业务语义（不认识 conversation / tenant 等上层概念，也不据此派生任何子目录）；缺省兜底 id 为 `default`，只服务原生 API 的无 bed 路由，不属于 isolated-session 兼容视图。
 - **workspace-root**：所有 bed 目录的**父目录**，**可配、不写死**（`--workspace-root` / `HOSTEL_WORKSPACE_ROOT`，默认 `/workspace`）；**daemon 启动时创建一次**。
-- **bed 目录**：`{workspace-root}/{bed id}`，含 `meta.json`（可移植身份）+ `data/`；**该 bed 首次被 Resolve（即首次收到指向它的请求）时惰性创建**。
+- **bed 目录**：`{workspace-root}/{bed id}`，含 `meta.json`（可移植身份）+ `data/`；**该 bed 首次被 Ensure（即首次收到指向它的请求）时惰性创建**。
 - **bed_home（data 目录）**：`{bed 目录}/data`——**客户端视角的 `/`**，bed 表现得像独占整个 pod fs：任意客户端绝对路径单射 rebase 到它下面、回显对称；持久化 / 快照的对象，bed 只见它。
 - **bed workspace**：`bed_home/workspace` 真实子目录（非别名）——OpenSandbox 契约的 `/workspace`（`fsops.VirtualPrefix`）、相对路径的基准、默认 cwd、suite 下的真实挂载点。
 - **房型（dorm / room / suite）**：bed 的隔离档，与 bed 正交（见〈关键约定〉isolation）。
@@ -58,7 +58,7 @@ internal/
 ├── config/            flags + HOSTEL_* env
 ├── isolation/         数据隔离房型档：New 按 env ceiling 路由；direct(dorm/全平台) + landlock(room/linux) + bwrap(suite/linux)
 ├── bed/               ★核心。bed=隔离单元=对外一个 sandbox
-│   ├── bed.go         Manager：Resolve(空→default，按 generation 判 luggage 新鲜)/BeginOperation/Evict/Purge/CollectExpired；ForegroundShell；StartCommand
+│   ├── bed.go         Manager：Ensure(空→default，按 generation 判 luggage 新鲜)/BeginOperation/Evict/Purge/CollectExpired；ForegroundShell；StartCommand
 │   ├── observability.go Bed 生命周期记录：activate/persist/evict 的结构化 stage 日志与最近摘要
 │   ├── luggage.go     luggage（evict 留下的现场缓存）：磁盘水位 GC（stale 优先→LRU）、Inventory（调度器视图）
 │   ├── shell.go       常驻 bash：单 reader goroutine→lines chan，Run 用 marker 分帧、单消费（状态跨 run 保持）
@@ -74,7 +74,7 @@ internal/
 
 ## 关键约定
 
-- **bed = 客人单元 = 对外一个 sandbox**（workspace + 常驻 shell，状态跨命令保持）；**房型(dorm/room/suite)是这张床的隔离档、与 bed 正交**——bed 是跨档不变的基本单位，房型只描述"床周围的墙"有多严，不替代 bed 命名（见 `docs/data-isolation.md`）。**默认 bed 兜底**：不带 bed 的原生请求落 `default`，单租户调用方可无视 bed 概念；default bed 不暴露为 isolated session，永不被清数据、不可 purge、不占 `--max-beds` 名额。**生命周期事实分维度**：`state=active|idle|evicting|luggage` 只表达互斥操作态，`generation` 表达数据版本，`expires_at` 表达最早安全回收期限；所有 Bed 级请求统一进入 `BeginOperation`，active operation 不可被普通 Evict 杀死。**luggage**：共享快照存在时只是本机缓存；同机 resume 按 generation 判新鲜，落后则整目录丢弃重拉；noop store 下 luggage 是唯一副本并会阻止 carrier 回收。`GET /v1/inventory` 向调度器如实上报每个 Bed 的三维事实和各 state 数量。详见 `docs/persistence.md` §四。**bed 数量上限**：`--max-beds`（0=不限）只拦新建，满时 429 `BED_LIMIT_EXCEEDED` 作为调度背压。
+- **bed = 客人单元 = 对外一个 sandbox**（workspace + 常驻 shell，状态跨命令保持）；**房型(dorm/room/suite)是这张床的隔离档、与 bed 正交**——bed 是跨档不变的基本单位，房型只描述"床周围的墙"有多严，不替代 bed 命名（见 `docs/data-isolation.md`）。**默认 bed 兜底**：不带 bed 的原生请求落 `default`，单租户调用方可无视 bed 概念；default bed 不暴露为 isolated session，永不被清数据、不可 purge、不占 `--max-beds` 名额。**生命周期事实分维度**：`state=active|idle|evicting|dormant` 只表达互斥操作态，`generation` 表达数据版本，`retained_until` 表达最早安全回收期限；所有 Bed 级请求统一进入 `BeginOperation`，active operation 不可被普通 Evict 杀死。**luggage**：共享快照存在时只是本机缓存；同机 resume 按 generation 判新鲜，落后则整目录丢弃重拉；noop store 下 luggage 是唯一副本并会阻止 carrier 回收。`GET /v1/inventory` 向调度器如实上报每个 Bed 的三维事实和各 state 数量。详见 `docs/persistence.md` §四。**bed 数量上限**：`--max-beds`（0=不限）只拦新建，满时 429 `BED_LIMIT_EXCEEDED` 作为调度背压。
 - **API 对齐 execd**：响应 JSON 结构、错误码、SSE 帧（`<json>\n\n`，事件 shape = execd `ServerStreamEvent`）都对齐 OpenSandbox，SDK 不改。加/改端点先对 `OpenSandbox/specs/execd-api.yaml`。
 - **isolation 按「青年旅社房型」分档**（对外保证，非机制名）：`dorm`（通铺，无屏障=direct）/ `room`（单间锁门、厕所公用，数据 EACCES 但兄弟可见、系统路径共享=landlock，自 re-exec `hostel __confine`）/ `suite`（套房全私有，兄弟不可见+私有 mount 视图+`/workspace` 规范挂载+env 剥除=bwrap）/ `auto`（顶格取 env 上限）。`effective=min(requested,ceiling)`，请求超上限诚实降级。机制（direct/bwrap/landlock/uid）是内部细节，全走 `Isolator` 接口。**三档均已实装**（room=landlock 自 re-exec `hostel __confine`，见 `docs/data-isolation.md`）。威胁模型：bed 越狱/串门去动别的 bed。
 - **amenity 通则**：重资产、自带多租的共享设施由 hostel 在 bed 外管一份，用应用原生机制切租（Chromium→BrowserContext、Jupyter→kernel），产物落对应 bed 的 workspace。amenity 有自己的生命周期（idle→running 按需启停）。新增实例 = 实现 `Amenity` + 注册，bed evict/purge 已接 `ReleaseAll` 钩子。北向只暴露 bed 级动作，**不透传 CDP/协议 socket**（会跨租户）。见 `docs/amenity.md`。

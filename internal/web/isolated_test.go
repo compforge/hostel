@@ -175,7 +175,7 @@ func TestIsolatedUnsupportedOptionsAndCapabilities(t *testing.T) {
 		t.Fatalf("isolated capabilities = %v", capabilities)
 	}
 
-	if _, err := s.mgr.Resolve("any"); err != nil {
+	if _, err := s.mgr.Ensure("any"); err != nil {
 		t.Fatalf("resolve session for unsupported routes: %v", err)
 	}
 	rec = do(t, s, http.MethodGet, "/v1/isolated/session/any/diff", nil, nil)
@@ -190,10 +190,10 @@ func TestIsolatedUnsupportedOptionsAndCapabilities(t *testing.T) {
 
 func TestDefaultBedIsNotAnIsolatedSession(t *testing.T) {
 	s := newTestServer(t)
-	if _, err := s.mgr.Resolve(""); err != nil {
+	if _, err := s.mgr.Ensure(""); err != nil {
 		t.Fatalf("resolve default bed: %v", err)
 	}
-	visible, err := s.mgr.Resolve("native-bed")
+	visible, err := s.mgr.Ensure("native-bed")
 	if err != nil {
 		t.Fatalf("resolve non-default bed: %v", err)
 	}

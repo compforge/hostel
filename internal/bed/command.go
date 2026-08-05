@@ -52,7 +52,7 @@ const commandBufferLimit = 100_000
 // dropped counts lines evicted from the front; line i lives at lines[i-dropped].
 type cursorState struct{ dropped int64 }
 
-// Snapshot of command state for the status endpoint.
+// CommandStatus is the command-state view for the status endpoint.
 type CommandStatus struct {
 	ID         string
 	Running    bool

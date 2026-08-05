@@ -32,21 +32,21 @@ type bedView struct {
 	Workspace    string    `json:"workspace"`
 	CreatedAt    time.Time `json:"created_at"`
 	LastActiveAt time.Time `json:"last_active_at"`
-	ExpiresAt    time.Time `json:"expires_at,omitzero"`
+	RetainUntil  time.Time `json:"retained_until,omitzero"`
 }
 
 func viewOf(b *bed.Bed) bedView {
-	return viewFromSnapshot(b, b.Snapshot())
+	return viewFromStatus(b, b.Status())
 }
 
-func viewFromSnapshot(b *bed.Bed, snapshot bed.Snapshot) bedView {
+func viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 	return bedView{
 		ID:           b.ID,
-		State:        snapshot.State,
+		State:        status.State,
 		Workspace:    b.Workspace,
 		CreatedAt:    b.CreatedAt,
-		LastActiveAt: snapshot.LastActiveAt,
-		ExpiresAt:    snapshot.ExpiresAt,
+		LastActiveAt: status.LastActiveAt,
+		RetainUntil:  status.RetainUntil,
 	}
 }
 
@@ -76,9 +76,9 @@ type lifecycleView struct {
 
 type bedDetailView struct {
 	bedView
-	Generation       int64          `json:"generation"`
-	ActiveOperations int            `json:"active_operations"`
-	Lifecycle        *lifecycleView `json:"lifecycle,omitempty"`
+	Generation int64          `json:"generation"`
+	Inflight   int            `json:"inflight"`
+	Lifecycle  *lifecycleView `json:"lifecycle,omitempty"`
 }
 
 // GET /v1/beds
@@ -103,7 +103,7 @@ func (s *Server) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	b, err := s.mgr.Resolve(id)
+	b, err := s.mgr.Ensure(id)
 	if err != nil {
 		respondBedError(c, err)
 		return
@@ -118,12 +118,12 @@ func (s *Server) bedGet(c *gin.Context) {
 		respondError(c, http.StatusNotFound, ErrBedInvalid, "bed not found")
 		return
 	}
-	snapshot := b.Snapshot()
+	status := b.Status()
 	lifecycle := b.Lifecycle()
 	c.JSON(http.StatusOK, bedDetailView{
-		bedView:          viewFromSnapshot(b, snapshot),
-		Generation:       snapshot.Generation,
-		ActiveOperations: snapshot.ActiveOperations,
+		bedView:    viewFromStatus(b, status),
+		Generation: status.Generation,
+		Inflight:   status.Inflight,
 		Lifecycle: &lifecycleView{
 			LastActivation: lifecycleRecordToView(lifecycle.LastActivation),
 			LastPersist:    lifecycleRecordToView(lifecycle.LastPersist),

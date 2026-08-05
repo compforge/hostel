@@ -33,7 +33,7 @@ import (
 // the "nothing persists" world.
 
 // gcTmpPrefix marks a luggage dir claimed by GC: renamed under the manager
-// lock (atomic — a concurrent Resolve either sees the bed dir or doesn't,
+// lock (atomic — a concurrent Ensure either sees the bed dir or doesn't,
 // never a half-deleted one), then removed outside it. Leftovers from a crash
 // are swept on the next tick. It can never collide with a bed id (validBedID
 // rejects a leading dot).
@@ -49,8 +49,8 @@ type LuggageEntry struct {
 	// LastActiveAt orders LRU eviction: the evict-time stamp, falling back to
 	// LastPersistedAt and then dir mtime for copies predating the stamp.
 	LastActiveAt time.Time
-	// Profile is the usage picture the bed left behind (from its meta).
-	Profile Profile
+	// Usage is the activity picture the bed left behind (from its meta).
+	Usage Usage
 }
 
 // ListLuggage scans the workspace root for bed dirs that are not resident —
@@ -79,7 +79,7 @@ func (m *Manager) ListLuggage() []LuggageEntry {
 		if meta, ok := loadMeta(dir); ok {
 			l.Generation = meta.Generation
 			l.LastActiveAt = meta.LastActiveAt
-			l.Profile = meta.Profile
+			l.Usage = meta.Usage
 			if l.LastActiveAt.IsZero() {
 				l.LastActiveAt = meta.LastPersistedAt
 			}
@@ -150,8 +150,8 @@ func (m *Manager) CollectLuggage(ctx context.Context) []string {
 }
 
 // removeLuggage deletes one cold copy. The rename happens under the manager
-// lock so it is atomic against Resolve: a bed resurrected since the scan is
-// skipped, and a Resolve arriving after the rename sees no dir and takes the
+// lock so it is atomic against Ensure: a bed resurrected since the scan is
+// skipped, and an Ensure arriving after the rename sees no dir and takes the
 // cold-restore path — never a half-deleted copy.
 func (m *Manager) removeLuggage(id string) bool {
 	dir := filepath.Join(m.root, id)
@@ -189,38 +189,38 @@ func (m *Manager) sweepGCLeftovers() {
 // which is exactly what "the authoritative copy is here" means.
 type InventoryBed struct {
 	ID           string    `json:"id"`
-	State        State     `json:"state"` // active | idle | evicting | luggage
+	State        State     `json:"state"` // active | idle | evicting | dormant
 	Generation   int64     `json:"generation"`
 	Bytes        int64     `json:"bytes,omitempty"` // luggage only (resident dirs aren't sized)
 	LastActiveAt time.Time `json:"last_active_at"`
-	ExpiresAt    time.Time `json:"expires_at,omitzero"` // resident beds only
-	// Profile lets the scheduler weigh placement and migration: command
+	RetainUntil  time.Time `json:"retained_until,omitzero"` // resident beds only
+	// Usage lets the scheduler weigh placement and migration: command
 	// rate/duration derive from deltas between polls; Last{Persist,Restore}Ms
-	// approximate this bed's migration cost (node-specific — see Profile).
-	Profile Profile `json:"profile,omitzero"`
+	// approximate this bed's migration cost (node-specific — see Usage).
+	Usage Usage `json:"usage,omitzero"`
 }
 
 // Inventory reports all local beds for the upstream scheduler: placement
 // wants "who has a fresh copy" (generation) and "who is loaded" (active
 // count). The result is a stale-tolerant hint — freshness is re-checked at
-// activation (Resolve), so a scheduler routing on outdated data is slow,
+// activation (Ensure), so a scheduler routing on outdated data is slow,
 // never wrong.
 func (m *Manager) Inventory() []InventoryBed {
 	beds := m.List()
 	out := make([]InventoryBed, 0, len(beds))
 	for _, b := range beds {
-		snapshot := b.Snapshot()
+		status := b.Status()
 		out = append(out, InventoryBed{
 			ID:           b.ID,
-			State:        snapshot.State,
-			Generation:   snapshot.Generation,
-			LastActiveAt: snapshot.LastActiveAt,
-			ExpiresAt:    snapshot.ExpiresAt,
-			Profile:      snapshot.Profile,
+			State:        status.State,
+			Generation:   status.Generation,
+			LastActiveAt: status.LastActiveAt,
+			RetainUntil:  status.RetainUntil,
+			Usage:        status.Usage,
 		})
 	}
 	for _, l := range m.ListLuggage() {
-		out = append(out, InventoryBed{ID: l.BedID, State: StateLuggage, Generation: l.Generation, Bytes: l.Bytes, LastActiveAt: l.LastActiveAt, Profile: l.Profile})
+		out = append(out, InventoryBed{ID: l.BedID, State: StateDormant, Generation: l.Generation, Bytes: l.Bytes, LastActiveAt: l.LastActiveAt, Usage: l.Usage})
 	}
 	return out
 }

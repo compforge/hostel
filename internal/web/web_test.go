@@ -307,9 +307,9 @@ func TestBedsCRUD(t *testing.T) {
 	}
 	rec = do(t, s, "GET", "/v1/beds/conv-1", nil, nil)
 	var detail struct {
-		Generation       int64 `json:"generation"`
-		ActiveOperations int   `json:"active_operations"`
-		Lifecycle        *struct {
+		Generation int64 `json:"generation"`
+		Inflight   int   `json:"inflight"`
+		Lifecycle  *struct {
 			LastActivation *struct {
 				Action string `json:"action"`
 				Result string `json:"result"`
@@ -333,8 +333,8 @@ func TestBedsCRUD(t *testing.T) {
 		len(detail.Lifecycle.LastActivation.Stages) == 0 {
 		t.Fatalf("bed detail activation = %+v", detail.Lifecycle)
 	}
-	if detail.Generation != 0 || detail.ActiveOperations != 0 {
-		t.Fatalf("bed detail current state = generation %d active_operations %d", detail.Generation, detail.ActiveOperations)
+	if detail.Generation != 0 || detail.Inflight != 0 {
+		t.Fatalf("bed detail current state = generation %d inflight %d", detail.Generation, detail.Inflight)
 	}
 
 	rec = do(t, s, "POST", "/v1/beds/conv-1/checkpoint", nil, nil)
@@ -345,7 +345,7 @@ func TestBedsCRUD(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("decode checkpointed bed detail: %v", err)
 	}
-	if detail.Generation != 1 || detail.ActiveOperations != 0 ||
+	if detail.Generation != 1 || detail.Inflight != 0 ||
 		detail.Lifecycle == nil || detail.Lifecycle.LastPersist == nil ||
 		detail.Lifecycle.LastPersist.Trigger != "checkpoint" {
 		t.Fatalf("checkpointed bed detail = %+v", detail)
@@ -485,14 +485,14 @@ func TestInventoryEndpoint(t *testing.T) {
 			Store            string         `json:"store"`
 			MaxBeds          int            `json:"max_beds"`
 			BedCounts        map[string]int `json:"bed_counts"`
-			ExpiresAt        time.Time      `json:"expires_at"`
+			RetainUntil      time.Time      `json:"retained_until"`
 			LuggageHighBytes int64          `json:"luggage_high_bytes"`
 		} `json:"instance"`
 		Beds []struct {
 			ID           string    `json:"id"`
 			State        string    `json:"state"`
 			LastActiveAt time.Time `json:"last_active_at"`
-			ExpiresAt    time.Time `json:"expires_at"`
+			RetainUntil  time.Time `json:"retained_until"`
 		} `json:"beds"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -503,22 +503,22 @@ func TestInventoryEndpoint(t *testing.T) {
 	}
 	if body.Instance.Store != "noop" || body.Instance.BedCounts["active"] != 1 ||
 		body.Instance.BedCounts["idle"] != 1 || body.Instance.BedCounts["evicting"] != 0 ||
-		body.Instance.BedCounts["luggage"] != 1 || body.Instance.ExpiresAt.IsZero() ||
+		body.Instance.BedCounts["dormant"] != 1 || body.Instance.RetainUntil.IsZero() ||
 		body.Instance.LuggageHighBytes != 1000 {
 		t.Fatalf("instance = %+v", body.Instance)
 	}
-	if want := live.ExpiresAt(); !body.Instance.ExpiresAt.Equal(want) {
-		t.Fatalf("instance expires_at = %s, want max bed expiry %s", body.Instance.ExpiresAt, want)
+	if want := live.RetainUntil(); !body.Instance.RetainUntil.Equal(want) {
+		t.Fatalf("instance retained_until = %s, want max bed retention %s", body.Instance.RetainUntil, want)
 	}
 	states := map[string]string{}
 	for _, b := range body.Beds {
 		states[b.ID] = b.State
-		if b.ID == "inv-live" && (b.LastActiveAt.IsZero() || b.ExpiresAt.IsZero()) {
+		if b.ID == "inv-live" && (b.LastActiveAt.IsZero() || b.RetainUntil.IsZero()) {
 			t.Fatalf("inv-live lifecycle fields = %+v", b)
 		}
 	}
-	if states["inv-live"] != "active" || states["inv-idle"] != "idle" || states["inv-cold"] != "luggage" {
-		t.Fatalf("bed states = %v, want active / idle / luggage", states)
+	if states["inv-live"] != "active" || states["inv-idle"] != "idle" || states["inv-cold"] != "dormant" {
+		t.Fatalf("bed states = %v, want active / idle / dormant", states)
 	}
 }
 
