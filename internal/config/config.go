@@ -31,6 +31,8 @@ const DefaultAddr = ":8872"
 
 const defaultBedEnvPassthrough = "PATH,LANG,LC_ALL,LC_CTYPE,TZ,TERM,COLORTERM,SSL_CERT_FILE,SSL_CERT_DIR,PYTHONUSERBASE,NPM_CONFIG_PREFIX,UV_TOOL_DIR,UV_TOOL_BIN_DIR"
 
+const defaultAdmissionThresholdPercent = 90
+
 type Config struct {
 	ShowVersion bool
 	HealthCheck bool
@@ -58,6 +60,11 @@ type Config struct {
 	// Zero inherits MaxBeds (and is unlimited when MaxBeds is also zero). A
 	// finite MaxBeds is always the effective ceiling. The default bed is exempt.
 	MaxActiveBeds int
+	// AdmissionCPUThreshold / AdmissionMemoryThreshold reject an idle tenant
+	// bed's first operation when aggregate carrier usage reaches the configured
+	// percentage. Zero disables that resource dimension.
+	AdmissionCPUThreshold    int
+	AdmissionMemoryThreshold int
 	// BedInit selects the process spawner: "auto" (default) probes the per-bed
 	// init (docs/kernel.md 〈进程树〉) at boot and falls back to in-process
 	// forking where it can't serve; "off" forces in-process.
@@ -116,6 +123,8 @@ func Load(args []string) *Config {
 	idle := fs.Duration("bed-idle-timeout", osx.EnvDuration("HOSTEL_BED_IDLE_TIMEOUT", 30*time.Minute), "reap a bed after this idle duration (0=never)")
 	fs.IntVar(&c.MaxBeds, "max-beds", osx.EnvInt("HOSTEL_MAX_BEDS", 0), "max concurrent beds, 0=unlimited (default bed exempt)")
 	fs.IntVar(&c.MaxActiveBeds, "max-active-beds", osx.EnvInt("HOSTEL_MAX_ACTIVE_BEDS", 0), "max active beds, 0=inherit max-beds (default bed exempt)")
+	fs.IntVar(&c.AdmissionCPUThreshold, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
+	fs.IntVar(&c.AdmissionMemoryThreshold, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
 	fs.StringVar(&c.BedInit, "bed-init", osx.EnvStr("HOSTEL_BED_INIT", "auto"), "per-bed init spawner: auto (probe at boot, fall back in-process) | off")
 	fs.StringVar(&c.StoreBackend, "store", osx.EnvStr("HOSTEL_STORE", "auto"), "workspace persistence backend: auto (s3 when --s3-bucket is set, else noop) | noop | s3")
 	fs.StringVar(&c.S3Bucket, "s3-bucket", osx.EnvStr("HOSTEL_S3_BUCKET", ""), "S3 bucket for bed snapshots")

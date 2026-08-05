@@ -126,6 +126,24 @@ func main() {
 		log.Printf("hostel: per-bed resource accounting unavailable (backend=%s reason=%s)",
 			resourceReport.Backend, resourceReport.Reason)
 	}
+	admissionCtx, stopAdmission := context.WithCancel(context.Background())
+	defer stopAdmission()
+	resourceAdmission, err := resource.NewAdmission(admissionCtx, resource.NewCarrier(), resource.AdmissionConfig{
+		CPUThresholdPercent:    cfg.AdmissionCPUThreshold,
+		MemoryThresholdPercent: cfg.AdmissionMemoryThreshold,
+	})
+	if err != nil {
+		log.Fatalf("hostel: configure resource admission: %v", err)
+	}
+	mgr.SetResourceAdmission(resourceAdmission)
+	admissionReport := resourceAdmission.Report()
+	if admissionReport.Enabled {
+		log.Printf("hostel: carrier resource admission enabled (cpu=%d%% memory=%d%% available=%v reason=%s)",
+			admissionReport.CPUThresholdPercent, admissionReport.MemoryThresholdPercent,
+			admissionReport.Available, admissionReport.Reason)
+	} else {
+		log.Printf("hostel: carrier resource admission disabled")
+	}
 	mgr.SetBedIdleTTL(cfg.BedIdleTTL)
 	mgr.SetLuggageLimits(cfg.LuggageHighBytes, cfg.LuggageLowBytes)
 	// Per-bed browser endpoint injection (PLAYWRIGHT_MCP_CDP_ENDPOINT): beds

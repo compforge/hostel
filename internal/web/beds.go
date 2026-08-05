@@ -178,6 +178,7 @@ func (s *Server) bedList(c *gin.Context) {
 			"luggage_bytes":      luggageBytes,
 			"luggage_high_bytes": high,
 			"luggage_low_bytes":  low,
+			"resource_admission": resourceAdmissionView(s.mgr.ResourceAdmissionReport()),
 		},
 		"beds": beds,
 	})
@@ -308,12 +309,13 @@ func (s *Server) capabilities(c *gin.Context) {
 			"available": resources.Available,
 			"reason":    resources.Reason,
 		},
-		"files":       true,
-		"directories": true,
-		"command":     true,
-		"session":     true,
-		"beds":        true,
-		"amenities":   amenities, // name → unavailable|idle|running
+		"resource_admission": resourceAdmissionView(s.mgr.ResourceAdmissionReport()),
+		"files":              true,
+		"directories":        true,
+		"command":            true,
+		"session":            true,
+		"beds":               true,
+		"amenities":          amenities, // name → unavailable|idle|running
 		// Explicitly-not-yet capabilities, so SDKs don't probe blindly.
 		"pty":            false,
 		"code":           false,

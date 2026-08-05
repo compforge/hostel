@@ -116,7 +116,7 @@ is a deliberate downgrade.
 
 The environment ceiling is probed at boot; healthz/capabilities report
 `isolation.{level,mechanism,requested,effective,ceiling}`. See
-`docs/data-isolation.md`.
+`docs/data.md`.
 
 Stronger isolation (real setuid, seccomp, per-bed CPU/memory limits via cgroups,
 copy-on-write overlay workspaces, PTY over WebSocket) is on the roadmap.
@@ -154,7 +154,8 @@ reports `amenities: {chromium: idle|running}`.
 
 Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` /
 `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
-`--max-active-beds` / `--bed-init` / `--bed-env-passthrough` / `--store` /
+`--max-active-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
+`--bed-init` / `--bed-env-passthrough` / `--store` /
 `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` /
 `--luggage-high-bytes` / `--luggage-low-bytes` /
 `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port`.
@@ -205,7 +206,16 @@ ceiling for active capacity.
 An already-active bed may admit more operations without consuming another
 active-bed slot. A full instance returns `429 BED_LIMIT_EXCEEDED` for a new
 resident bed or `429 ACTIVE_BED_LIMIT_EXCEEDED` when an idle bed cannot become
-active. Capacity is reported by `/healthz`, `GET /v1/beds`, and capabilities.
+active.
+
+Carrier resource admission complements those count limits. Hostel samples its
+container cgroup and refuses an idle tenant bed's first operation with `429
+RESOURCE_PRESSURE` when recent CPU or current memory usage reaches
+`--admission-cpu-threshold` / `--admission-memory-threshold` (percent, default
+90; 0 disables that dimension). Already-active beds and the default bed keep
+running. A missing cgroup, read error, or unlimited cgroup dimension fails open
+to the count limits. `/healthz`, `GET /v1/beds`, and capabilities report the
+finite cgroup limits, latest usage ratios, thresholds, and `accepting` verdict.
 
 ## Container image
 

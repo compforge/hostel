@@ -50,15 +50,10 @@ func newTracker() Tracker {
 // current cgroup an empty domain parent, allowing cpu/memory controllers to be
 // delegated to bed children without applying any limits.
 func setupCgroupTracker(mount, selfCgroupFile string) (*cgroupTracker, error) {
-	raw, err := os.ReadFile(selfCgroupFile)
-	if err != nil {
-		return nil, fmt.Errorf("read cgroup membership: %w", err)
-	}
-	relative, err := unifiedCgroupPath(string(raw))
+	current, err := currentCgroupPath(mount, selfCgroupFile)
 	if err != nil {
 		return nil, err
 	}
-	current := filepath.Join(mount, strings.TrimPrefix(relative, "/"))
 	root := current
 	system := filepath.Join(root, systemGroup)
 	if filepath.Base(current) == systemGroup {

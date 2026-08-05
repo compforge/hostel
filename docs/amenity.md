@@ -70,7 +70,7 @@ POST /v1/beds/:bedId/browser/close       {}                              # 释�
 
 - **数据隔离**：Chromium 进程跑在 bed 沙箱**外**（hostel 同级），不经 bwrap——它是 hostel 的受管基础设施而非 bed 内代码；bed 只能通过动作 API 使用自己的切片。
 - **持久化**：产物（截图/下载）在 data/ 里自然进快照;**context 运行态（cookie/localStorage）不持久**——evict 后 resume，浏览器状态从零开始（文档明示；将来可选 cookie 导出进 meta）。
-- **资源隔离**：Chromium 进独立 cgroup 子组（`resource-isolation.md` 已留 `services/` 位），bed 级用量归因明确不做。
+- **资源隔离**：Chromium 进独立 cgroup 子组（`resource.md` 已留 `services/` 位），bed 级用量归因明确不做。
 - **max-beds/背压**：tenant 数天然 ≤ bed 数，不单设上限。
 
 ### 6. per-bed CDP 代理（共享 Chromium + 每 bed 切片）

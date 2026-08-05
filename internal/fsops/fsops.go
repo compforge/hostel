@@ -88,7 +88,7 @@ type Ops struct {
 	// (uid-isolated beds), else -1. Mechanism-independent invariant: whatever
 	// lands in a bed's workspace belongs to the bed — fsops runs as the
 	// daemon, so without this, file-API writes would leave daemon-owned files
-	// the bed can read but not modify (docs/data-isolation.md, room/uid).
+	// the bed can read but not modify (docs/data.md, room/uid).
 	uid, gid int
 }
 

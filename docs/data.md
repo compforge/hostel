@@ -1,6 +1,6 @@
 # bed 数据隔离方案
 
-聚焦**数据隔离**：一个 bed 不能读、更不能写另一个 bed（或宿主）的数据。资源消耗隔离见 `resource-isolation.md`，持久化见 `persistence.md`，安全纵深（seccomp / 真 setuid）推后单独设计。
+聚焦**数据隔离**：一个 bed 不能读、更不能写另一个 bed（或宿主）的数据。资源治理见 `resource.md`，持久化见 `persistence.md`，安全纵深（seccomp / 真 setuid）推后单独设计。
 
 ## 一、理念
 
@@ -124,7 +124,7 @@ bedProcessEnv = carrierSoftwareEnv + bedContextEnv + requestEnv
 
 ## 非目标（明确推后）
 
-- per-bed cgroup（资源消耗隔离）——见 `resource-isolation.md`；
+- per-bed cgroup（资源消耗隔离）——见 `resource.md`；
 - seccomp / 真 setuid / userns（安全纵深）——单独设计；
 - overlay CoW 临时层——与持久化（`persistence.md`）合并考虑；
 - 跨 pod 实时共享 workspace——见 `persistence.md` 的诚实边界。

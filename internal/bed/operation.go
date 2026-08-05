@@ -15,6 +15,7 @@
 package bed
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -64,6 +65,13 @@ func (m *Manager) BeginOperation(b *Bed, kind OperationKind, timeout time.Durati
 		b.mu.Unlock()
 		m.mu.Unlock()
 		return nil, ErrActiveBedLimit
+	}
+	if becomingActive {
+		if decision := m.admission.Check(); !decision.Allowed {
+			b.mu.Unlock()
+			m.mu.Unlock()
+			return nil, fmt.Errorf("%w: %s", ErrResourcePressure, decision.Reason)
+		}
 	}
 	b.lastActiveAt = now
 	b.activitySeq++

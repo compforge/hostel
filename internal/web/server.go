@@ -28,11 +28,16 @@ import (
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/fsops"
 	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/resource"
 )
 
 // respondBedError maps bed resolution/admission failures: a full instance is
 // 429 backpressure (scheduler should place elsewhere), anything else is a bad id.
 func respondBedError(c *gin.Context, err error) {
+	if errors.Is(err, bed.ErrResourcePressure) {
+		respondError(c, http.StatusTooManyRequests, ErrResourcePressure, err.Error())
+		return
+	}
 	if errors.Is(err, bed.ErrActiveBedLimit) {
 		respondError(c, http.StatusTooManyRequests, ErrActiveBedLimit, err.Error())
 		return
@@ -243,8 +248,9 @@ func (s *Server) healthz(c *gin.Context) {
 			"available": resources.Available,
 			"reason":    resources.Reason,
 		},
-		"isolation":   isolationView(iso),
-		"default_bed": s.mgr.DefaultBedID(),
+		"resource_admission": resourceAdmissionView(s.mgr.ResourceAdmissionReport()),
+		"isolation":          isolationView(iso),
+		"default_bed":        s.mgr.DefaultBedID(),
 		// Watermarks only — live luggage bytes require a scan; poll
 		// /v1/beds for those.
 		"luggage_high_bytes": high,
@@ -252,9 +258,37 @@ func (s *Server) healthz(c *gin.Context) {
 	})
 }
 
+func resourceAdmissionView(report resource.AdmissionReport) gin.H {
+	view := gin.H{
+		"enabled":                  report.Enabled,
+		"available":                report.Available,
+		"accepting":                report.Accepting,
+		"reason":                   report.Reason,
+		"cpu_threshold_percent":    report.CPUThresholdPercent,
+		"memory_threshold_percent": report.MemoryThresholdPercent,
+	}
+	if report.CPUAvailable {
+		view["cpu_usage_percent"] = report.CPUUsagePercent
+	}
+	if report.CPULimitCores > 0 {
+		view["cpu_limit_cores"] = report.CPULimitCores
+	}
+	if report.MemoryAvailable {
+		view["memory_usage_percent"] = report.MemoryUsagePercent
+	}
+	if report.MemoryLimitBytes > 0 {
+		view["memory_current_bytes"] = report.MemoryCurrentBytes
+		view["memory_limit_bytes"] = report.MemoryLimitBytes
+	}
+	if !report.SampledAt.IsZero() {
+		view["sampled_at"] = report.SampledAt
+	}
+	return view
+}
+
 // isolationView reports the data-isolation resolution: the effective level, the
 // mechanism realizing it, the requested wish, and the environment ceiling
-// (docs/data-isolation.md). Falls back gracefully if the isolator predates the
+// (docs/data.md). Falls back gracefully if the isolator predates the
 // Report interface.
 func isolationView(iso isolation.Isolator) gin.H {
 	v := gin.H{"level": iso.Level().String(), "mechanism": iso.Name()}
@@ -264,7 +298,7 @@ func isolationView(iso isolation.Isolator) gin.H {
 		v["ceiling"] = r.Ceiling().String()
 		// The host facts behind the ceiling, so an operator can see WHY a host
 		// tops out where it does (no Landlock? no setuid caps?) without shelling
-		// into it (docs/data-isolation.md).
+		// into it (docs/data.md).
 		v["host"] = r.Facts()
 	}
 	return v
