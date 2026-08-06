@@ -198,23 +198,24 @@ first, then least recently used — until under `--luggage-low-bytes` (default
 there destroys data — same honesty rule as everywhere: `/healthz` tells you
 which world you're in.
 
-Capacity: `--max-beds N` caps resident tenant beds; `--max-active-beds M` caps
-tenant beds with at least one in-flight operation. `M=0` inherits `N`; both are
+Capacity: `--max-beds N` caps resident tenant beds; `--max-active-beds M` is the
+active-count threshold that stops accepting new resident ownership. `M=0` inherits `N`; both are
 unlimited only when `N=0` too. The default bed is exempt from both. An explicit
 `M` above a finite `N` is clamped to `N`: resident capacity is always the hard
 ceiling for active capacity.
-An already-active bed may admit more operations without consuming another
-active-bed slot. A full instance returns `429 BED_LIMIT_EXCEEDED` for a new
-resident bed or retryable `429 BED_PRESSURE` when an idle bed cannot become
-active. `BED_PRESSURE` includes the active/resident count and limit snapshot;
+An active bed, or an idle bed with data not yet synced to the store, keeps its
+carrier commitment even above the threshold. A full instance returns `429
+BED_LIMIT_EXCEEDED` for resident count exhaustion or retryable `429
+BED_PRESSURE` for new/dormant placement and synced-idle activation.
+`data_synced` is reported per bed. `BED_PRESSURE` includes the active/resident count and limit snapshot;
 the upstream scheduler decides whether to keep the bed sticky to this carrier
 or spill it to another one.
 
 Carrier resource admission complements those count limits. Hostel samples its
-container cgroup and refuses an idle tenant bed's first operation with `429
+container cgroup and refuses new ownership or a synced idle bed's first operation with `429
 RESOURCE_PRESSURE` when recent CPU or current memory usage reaches
 `--admission-cpu-threshold` / `--admission-memory-threshold` (percent, default
-90; 0 disables that dimension). Already-active beds and the default bed keep
+90; 0 disables that dimension). Active/unsynced beds and the default bed keep
 running. A missing cgroup, read error, or unlimited cgroup dimension fails open
 to the count limits. `/healthz`, `GET /v1/beds`, and capabilities report the
 finite cgroup limits, latest usage ratios, thresholds, and `accepting` verdict.

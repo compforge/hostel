@@ -48,10 +48,11 @@ session：  客户端打开（POST /session、CDP ws 升级）→ 持有（流�
            → 客户端关闭，或 evict revoke
 ```
 
-准入即承诺：`BeginOperation` 在 tenant bed 的 `inflight 0→1` 时原子申请 `max-active-beds` 名额，
-再把 `retained_until` 预留到 `timeout + idleTTL`；名额不足时不改变 bed 活跃事实，返回可重试的
-`429 BED_PRESSURE` 与当时的容量快照。hostel 不在此处淘汰或迁移 bed，跨 carrier 溢出由持有
-`bed → carrier` 绑定的上层调度负责。已接纳的工作不会被 idle reaper 杀死；timeout 有默认值和硬上限，任何 operation 的阻塞时间
+准入即承诺：新 resident / dormant restore，以及已同步的 idle bed 再次进入 active 时，
+hostel 才检查 carrier 数量与资源 pressure。已 active 或未同步的 bed 仍由当前 carrier
+承担，不因 pressure 拒绝。被准入的 operation 会把 `retained_until` 预留到
+`timeout + idleTTL`；未同步状态由 `last_active_at > persisted_at` 推导，noop store 按无待同步步骤处理。
+hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。已接纳的工作不会被 idle reaper 杀死；timeout 有默认值和硬上限，任何 operation 的阻塞时间
 有上界——evict 的"拒绝-重试"必然最终成功，死锁在模型上被消除。default bed 不参与数量准入。
 
 ### 2. Bed

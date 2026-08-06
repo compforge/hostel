@@ -91,6 +91,7 @@ const (
 type Status struct {
 	State        State
 	Generation   int64
+	DataSynced   bool
 	LastActiveAt time.Time
 	RetainUntil  time.Time
 	Inflight     int
@@ -129,6 +130,7 @@ func (b *Bed) Status() Status {
 	return Status{
 		State:        b.stateLocked(),
 		Generation:   b.generation,
+		DataSynced:   !b.lastActiveAt.After(b.persistedAt),
 		LastActiveAt: b.lastActiveAt,
 		RetainUntil:  b.retainUntil,
 		Inflight:     b.inflight,

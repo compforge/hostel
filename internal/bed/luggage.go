@@ -191,6 +191,7 @@ type InventoryBed struct {
 	ID           string    `json:"id"`
 	State        State     `json:"state"` // active | idle | evicting | dormant
 	Generation   int64     `json:"generation"`
+	DataSynced   bool      `json:"data_synced"`
 	Bytes        int64     `json:"bytes,omitempty"` // luggage only (resident dirs aren't sized)
 	LastActiveAt time.Time `json:"last_active_at"`
 	RetainUntil  time.Time `json:"retained_until,omitzero"` // resident beds only
@@ -214,13 +215,14 @@ func (m *Manager) Inventory() []InventoryBed {
 			ID:           b.ID,
 			State:        status.State,
 			Generation:   status.Generation,
+			DataSynced:   m.store.Name() == "noop" || status.DataSynced,
 			LastActiveAt: status.LastActiveAt,
 			RetainUntil:  status.RetainUntil,
 			Usage:        status.Usage,
 		})
 	}
 	for _, l := range m.ListLuggage() {
-		out = append(out, InventoryBed{ID: l.BedID, State: StateDormant, Generation: l.Generation, Bytes: l.Bytes, LastActiveAt: l.LastActiveAt, Usage: l.Usage})
+		out = append(out, InventoryBed{ID: l.BedID, State: StateDormant, Generation: l.Generation, DataSynced: true, Bytes: l.Bytes, LastActiveAt: l.LastActiveAt, Usage: l.Usage})
 	}
 	return out
 }
