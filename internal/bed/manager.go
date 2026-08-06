@@ -270,13 +270,14 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if b, ok := m.beds[id]; ok {
-		b.touch(m.bedIdleTTL)
+		// Resolution is not admitted work. Touching here would make a synced
+		// idle bed look dirty before BeginOperation can apply pressure.
 		return b, nil
 	}
-	// Admit NEW resident beds only; an existing resident has already been
-	// promised this carrier and BeginOperation must never turn pressure into a
-	// surprise relocation. Dormant restore also passes this boundary because
-	// its durable data no longer belongs to this carrier.
+	// Admit NEW resident beds here. Existing residents reach their final
+	// admission boundary in BeginOperation: synced idle beds may be refused,
+	// while active or unsynced beds retain this carrier. Dormant restore also
+	// passes this boundary because its durable data no longer belongs here.
 	//
 	// The default bed is the single-tenant fallback and
 	// must never be refused (a full instance still serves its primary tenant)
