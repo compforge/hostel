@@ -15,6 +15,7 @@
 package bed
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -85,4 +86,42 @@ func TestResourceAdmissionAllowsUnsyncedIdleBed(t *testing.T) {
 		t.Fatalf("unsynced idle bed must retain its carrier: %v", err)
 	}
 	finish()
+}
+
+func TestEnsureKeepsSyncedIdleBedEligibleForAdmission(t *testing.T) {
+	root := t.TempDir()
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, newFakeStore())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	admission := &mutableAdmission{decision: resource.AdmissionDecision{Allowed: true}}
+	m.SetResourceAdmission(admission)
+
+	b, err := m.Ensure("resident")
+	if err != nil {
+		t.Fatalf("ensure resident: %v", err)
+	}
+	finish, err := m.BeginOperation(b, OpExec, 0)
+	if err != nil {
+		t.Fatalf("initial operation: %v", err)
+	}
+	finish()
+	if err := m.persistBed(context.Background(), b, "test"); err != nil {
+		t.Fatalf("persist resident: %v", err)
+	}
+	if !b.Status().DataSynced {
+		t.Fatal("resident did not become data-synced after persist")
+	}
+
+	admission.decision = resource.AdmissionDecision{
+		Allowed: false,
+		Reason:  "carrier CPU usage 95.0%",
+	}
+	resolved, err := m.Ensure("resident")
+	if err != nil {
+		t.Fatalf("resolve resident: %v", err)
+	}
+	if _, err := m.BeginOperation(resolved, OpExec, 0); !errors.Is(err, ErrResourcePressure) {
+		t.Fatalf("synced idle resident: want ErrResourcePressure, got %v", err)
+	}
 }
