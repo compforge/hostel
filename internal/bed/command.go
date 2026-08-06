@@ -392,10 +392,10 @@ type OutputLine struct {
 }
 
 // RunForegroundTyped executes an isolated command while preserving stdout and
-// stderr. Both pipes are drained concurrently so a chatty child cannot block
-// on either stream. The callback may be invoked concurrently for the two
-// streams and must return promptly.
-func (m *Manager) RunForegroundTyped(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onLine func(OutputLine)) (int, error) {
+// stderr. onStart runs synchronously after the process starts, before output is
+// consumed. onLine may be invoked concurrently for the two streams and must
+// return promptly.
+func (m *Manager) RunForegroundTyped(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onStart func(), onLine func(OutputLine)) (int, error) {
 	finishOperation, err := m.BeginOperation(b, OpExec, timeout)
 	if err != nil {
 		return -1, err
@@ -438,6 +438,9 @@ func (m *Manager) RunForegroundTyped(ctx context.Context, b *Bed, command, cwdIn
 		case <-stop:
 		}
 	}()
+	if onStart != nil {
+		onStart()
+	}
 
 	var wg sync.WaitGroup
 	read := func(stream OutputStream, file *os.File) {

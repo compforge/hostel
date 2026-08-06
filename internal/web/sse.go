@@ -15,6 +15,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -33,7 +34,10 @@ const (
 	EventStdout   StreamEventType = "stdout"
 	EventStderr   StreamEventType = "stderr"
 	EventComplete StreamEventType = "execution_complete"
+	EventPing     StreamEventType = "ping"
 )
+
+const ssePingInterval = 3 * time.Second
 
 // StreamEvent is one SSE frame payload (JSON), shaped like execd's
 // ServerStreamEvent so SDK stream parsers work unchanged.
@@ -88,13 +92,46 @@ func (s *sseStream) send(ev StreamEvent) {
 	s.flush()
 }
 
+// start matches execd's stream lifecycle: commit an init frame, then keep a
+// silent execution observable until the request ends. The returned cleanup
+// waits for the writer goroutine so it cannot race with net/http closing the
+// response after the handler returns.
+func (s *sseStream) start(ctx context.Context, initText string, interval time.Duration) func() {
+	s.send(StreamEvent{Type: EventInit, Text: initText})
+	s.send(StreamEvent{Type: EventPing, Text: "pong"})
+
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.send(StreamEvent{Type: EventPing, Text: "pong"})
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
 func (s *sseStream) flush() {
 	flush(s.c.Writer)
 }
 
 // started reports whether any SSE header/frame has been committed — callers use
 // it to decide between a JSON error (nothing sent yet) and an error event.
-func (s *sseStream) hasStarted() bool { return s.started }
+func (s *sseStream) hasStarted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.started
+}
 
 func flush(w http.ResponseWriter) {
 	if f, ok := w.(http.Flusher); ok {

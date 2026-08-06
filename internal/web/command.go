@@ -116,8 +116,14 @@ func (s *Server) runCommand(c *gin.Context) {
 	// die with its own process, never tear down the bed's stateful shell (that
 	// was the "shell: session exited during run" failure on skill batch-sync).
 	sse := newSSE(c)
+	stopSSE := func() {}
+	defer func() { stopSSE() }()
 	start := time.Now()
-	exitCode, err := s.mgr.RunForegroundTyped(c.Request.Context(), b, req.Command, cwdInBed, req.Envs, timeout, func(line bed.OutputLine) {
+	exitCode, err := s.mgr.RunForegroundTyped(c.Request.Context(), b, req.Command, cwdInBed, req.Envs, timeout, func() {
+		// Start streaming only after the process exists, so synchronous launch
+		// failures can still use the normal JSON error response.
+		stopSSE = sse.start(c.Request.Context(), "", ssePingInterval)
+	}, func(line bed.OutputLine) {
 		eventType := EventStdout
 		if line.Stream == bed.StreamStderr {
 			eventType = EventStderr
@@ -292,6 +298,8 @@ func (s *Server) sessionRun(c *gin.Context) {
 	defer finishOperation()
 	log.Printf("hostel session run: bed=%s session=%s cwd=%q cmd=%q", b.Short(), c.Param("sessionId"), req.Cwd, logSummary(req.Command))
 	sse := newSSE(c)
+	stopSSE := sse.start(ctx, c.Param("sessionId"), ssePingInterval)
+	defer stopSSE()
 	start := time.Now()
 	res, err := sh.Run(ctx, wrapWithCwd(req.Command, cwdInBed, nil), func(line string) {
 		sse.send(StreamEvent{Type: EventStdout, Text: line})

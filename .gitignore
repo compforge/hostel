@@ -3,6 +3,7 @@
 *.out
 /.devloop/
 /.worktrees/
+/.idea/
 
 # Internal (byted) build variant — never push to the open-source repo.
 deploy/docker/Dockerfile.internal
