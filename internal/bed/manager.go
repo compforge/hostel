@@ -73,9 +73,30 @@ type Manager struct {
 // scheduler is expected to place the sandbox on another instance.
 var ErrBedLimit = errors.New("bed: max bed count reached")
 
-// ErrActiveBedLimit is returned when an idle tenant bed cannot admit its first
-// operation without exceeding the configured active-bed cap.
-var ErrActiveBedLimit = errors.New("bed: max active bed count reached")
+// ErrBedPressure is returned when an idle tenant bed cannot admit its first
+// operation without exceeding the configured active-bed cap. The upstream
+// scheduler should keep the bed on this carrier when possible, but may spill
+// it to another carrier when this pressure signal is returned.
+var ErrBedPressure = errors.New("bed: active capacity pressure")
+
+// BedPressureError freezes the carrier capacity observed at the admission
+// boundary. Counts are diagnostic context for the scheduler; the 429 signal
+// remains authoritative because inventory reads are deliberately stale-tolerant.
+type BedPressureError struct {
+	ActiveBeds    int64
+	MaxActiveBeds int
+	ResidentBeds  int
+	MaxBeds       int
+}
+
+func (e *BedPressureError) Error() string {
+	return fmt.Sprintf(
+		"%s: active_beds=%d max_active_beds=%d resident_beds=%d max_beds=%d",
+		ErrBedPressure, e.ActiveBeds, e.MaxActiveBeds, e.ResidentBeds, e.MaxBeds,
+	)
+}
+
+func (e *BedPressureError) Unwrap() error { return ErrBedPressure }
 
 // ErrResourcePressure is returned when aggregate carrier CPU or memory usage
 // is already too high to activate another tenant bed.
@@ -186,9 +207,26 @@ func (m *Manager) MaxActiveBeds() int { return m.maxActiveBeds }
 // The default bed is deliberately outside both capacity limits.
 func (m *Manager) ActiveBedCount() int64 { return m.activeBeds.Load() }
 
+// BedPressure reports whether another idle tenant bed can claim an active
+// slot by count. Resource pressure is reported separately.
+func (m *Manager) BedPressure() bool {
+	return m.maxActiveBeds > 0 && m.activeBeds.Load() >= int64(m.maxActiveBeds)
+}
+
 // ResidentBedCount reports the current in-memory bed count without taking the
 // manager lock. It is an instance-health fact, not an admission decision.
 func (m *Manager) ResidentBedCount() int64 { return m.residentBeds.Load() }
+
+// tenantResidentBedsLocked returns the count governed by maxBeds. The default
+// compatibility bed is resident but deliberately exempt from tenant capacity.
+// Callers must hold m.mu.
+func (m *Manager) tenantResidentBedsLocked() int {
+	n := len(m.beds)
+	if _, ok := m.beds[m.defaultBed]; ok {
+		n--
+	}
+	return n
+}
 
 // StoreName reports the persistence backend for capabilities reporting.
 func (m *Manager) StoreName() string { return m.store.Name() }
@@ -220,11 +258,7 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 	// nor counted — max-beds means "N tenant beds", not "N-1 once the default
 	// bed happens to exist".
 	if m.maxBeds > 0 && id != m.defaultBed {
-		n := len(m.beds)
-		if _, ok := m.beds[m.defaultBed]; ok {
-			n--
-		}
-		if n >= m.maxBeds {
+		if m.tenantResidentBedsLocked() >= m.maxBeds {
 			return nil, ErrBedLimit
 		}
 	}

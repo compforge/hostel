@@ -489,8 +489,17 @@ func TestMaxActiveBedsAdmission(t *testing.T) {
 	if got := m.ActiveBedCount(); got != 1 {
 		t.Fatalf("active beds = %d, want 1", got)
 	}
-	if _, err := m.BeginOperation(b, OpExec, 0); !errors.Is(err, ErrActiveBedLimit) {
-		t.Fatalf("activate b: want ErrActiveBedLimit, got %v", err)
+	_, err = m.BeginOperation(b, OpExec, 0)
+	var pressure *BedPressureError
+	if !errors.Is(err, ErrBedPressure) || !errors.As(err, &pressure) {
+		t.Fatalf("activate b: want BedPressureError, got %v", err)
+	}
+	if pressure.ActiveBeds != 1 || pressure.MaxActiveBeds != 1 ||
+		pressure.ResidentBeds != 2 || pressure.MaxBeds != 3 {
+		t.Fatalf("pressure = %+v", pressure)
+	}
+	if !m.BedPressure() {
+		t.Fatal("manager did not report bed pressure at active capacity")
 	}
 	if b.State() != StateIdle || b.Inflight() != 0 {
 		t.Fatalf("rejected b changed state: state=%s inflight=%d", b.State(), b.Inflight())
@@ -514,6 +523,9 @@ func TestMaxActiveBedsAdmission(t *testing.T) {
 	finishA2()
 	if got := m.ActiveBedCount(); got != 0 {
 		t.Fatalf("finishing a = active %d, want 0", got)
+	}
+	if m.BedPressure() {
+		t.Fatal("manager kept reporting bed pressure after capacity was released")
 	}
 	finishB, err := m.BeginOperation(b, OpExec, 0)
 	if err != nil {
@@ -588,7 +600,7 @@ func TestMaxActiveBedsConcurrentAdmission(t *testing.T) {
 		case result.err == nil:
 			admitted++
 			finishes = append(finishes, result.finish)
-		case errors.Is(result.err, ErrActiveBedLimit):
+		case errors.Is(result.err, ErrBedPressure):
 			rejected++
 		default:
 			t.Fatalf("unexpected admission error: %v", result.err)

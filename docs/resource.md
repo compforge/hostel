@@ -80,6 +80,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 ```text
 idle tenant bed 准备进入 active（inflight 0 → 1）
   → max-active-beds 数量检查
+      └─ 数量已满 → 429 BED_PRESSURE（携带容量快照）
   → 读取缓存的 carrier resource verdict
       ├─ CPU 或内存达到配置水位 → 429 RESOURCE_PRESSURE
       ├─ 未达到                    → 接纳
@@ -91,6 +92,8 @@ idle tenant bed 准备进入 active（inflight 0 → 1）
 - 瞬时 operation 很快释放 active 名额，一个 Hostel 可以先后承接大量 bed。
 - 耗时 operation 长期占用 active 名额，或把 carrier CPU/内存推到水位，都会对新 bed 形成背压。
 - 同一 active bed 的后续 operation 已经在承诺范围内，不重复做资源准入。
+- `BED_PRESSURE` 只表达数量容量已满；hostel 不自行淘汰或迁移 bed，由上层调度决定是否打破
+  当前 carrier 的数据热亲和并溢出到其他 carrier。
 - 已 active 的 bed 不会因采样越线被暂停或杀死；default bed 也不参与资源准入。
 - 采集失败、无有限 limit 或非 Linux 环境均诚实上报 unavailable，并 fail-open 到数量策略。
 

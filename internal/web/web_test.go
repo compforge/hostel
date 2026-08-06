@@ -501,14 +501,27 @@ func TestMaxActiveBedsBackpressure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("activate one: %v", err)
 	}
+	// Capacity pressure only gates idle→active. Work already placed on the hot
+	// bed keeps using it without consuming another active slot.
+	rec := do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, map[string]string{BedHeader: "one"})
+	if rec.Code != http.StatusOK || mgr.ActiveBedCount() != 1 {
+		t.Fatalf("request on active bed = %d active=%d body=%s", rec.Code, mgr.ActiveBedCount(), rec.Body.String())
+	}
 
 	// A different idle/new tenant bed cannot become active while the slot is held.
-	rec := do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, map[string]string{BedHeader: "two"})
-	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "ACTIVE_BED_LIMIT_EXCEEDED") {
+	rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, map[string]string{BedHeader: "two"})
+	var pressure ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &pressure); err != nil {
+		t.Fatalf("decode pressure response: %v", err)
+	}
+	if rec.Code != http.StatusTooManyRequests || pressure.Code != ErrBedPressure ||
+		!pressure.Retryable || pressure.Pressure == nil ||
+		pressure.Pressure.ActiveBeds != 1 || pressure.Pressure.MaxActiveBeds != 1 ||
+		pressure.Pressure.ResidentBeds != 2 || pressure.Pressure.MaxBeds != 3 {
 		t.Fatalf("activate two = %d %s", rec.Code, rec.Body.String())
 	}
 	rec = do(t, s, http.MethodPost, "/v1/beds/two/checkpoint", nil, nil)
-	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "ACTIVE_BED_LIMIT_EXCEEDED") {
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "BED_PRESSURE") {
 		t.Fatalf("checkpoint two = %d %s", rec.Code, rec.Body.String())
 	}
 	// The default bed bypasses both limits and does not affect the active count.
@@ -520,8 +533,17 @@ func TestMaxActiveBedsBackpressure(t *testing.T) {
 	rec = do(t, s, http.MethodGet, "/healthz", nil, nil)
 	var health map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &health)
-	if health["active_beds"] != float64(1) || health["max_active_beds"] != float64(1) {
+	if health["active_beds"] != float64(1) || health["max_active_beds"] != float64(1) || health["bed_pressure"] != true {
 		t.Fatalf("health active capacity = %v", health)
+	}
+	rec = do(t, s, http.MethodGet, "/v1/beds", nil, nil)
+	var inventory struct {
+		Instance struct {
+			BedPressure bool `json:"bed_pressure"`
+		} `json:"instance"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &inventory); err != nil || !inventory.Instance.BedPressure {
+		t.Fatalf("inventory bed pressure = %+v err=%v", inventory.Instance, err)
 	}
 
 	finish()

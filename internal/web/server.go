@@ -38,8 +38,19 @@ func respondBedError(c *gin.Context, err error) {
 		respondError(c, http.StatusTooManyRequests, ErrResourcePressure, err.Error())
 		return
 	}
-	if errors.Is(err, bed.ErrActiveBedLimit) {
-		respondError(c, http.StatusTooManyRequests, ErrActiveBedLimit, err.Error())
+	var pressure *bed.BedPressureError
+	if errors.As(err, &pressure) {
+		c.JSON(http.StatusTooManyRequests, ErrorResponse{
+			Code:      ErrBedPressure,
+			Message:   err.Error(),
+			Retryable: true,
+			Pressure: &BedPressureDetails{
+				ActiveBeds:    pressure.ActiveBeds,
+				MaxActiveBeds: pressure.MaxActiveBeds,
+				ResidentBeds:  pressure.ResidentBeds,
+				MaxBeds:       pressure.MaxBeds,
+			},
+		})
 		return
 	}
 	if errors.Is(err, bed.ErrBedLimit) {
@@ -242,6 +253,7 @@ func (s *Server) healthz(c *gin.Context) {
 		"max_beds":        s.mgr.MaxBeds(),
 		"active_beds":     s.mgr.ActiveBedCount(),
 		"max_active_beds": s.mgr.MaxActiveBeds(),
+		"bed_pressure":    s.mgr.BedPressure(),
 		"persistence":     s.mgr.StoreName(),
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,
