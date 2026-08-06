@@ -205,8 +205,10 @@ unlimited only when `N=0` too. The default bed is exempt from both. An explicit
 ceiling for active capacity.
 An already-active bed may admit more operations without consuming another
 active-bed slot. A full instance returns `429 BED_LIMIT_EXCEEDED` for a new
-resident bed or `429 ACTIVE_BED_LIMIT_EXCEEDED` when an idle bed cannot become
-active.
+resident bed or retryable `429 BED_PRESSURE` when an idle bed cannot become
+active. `BED_PRESSURE` includes the active/resident count and limit snapshot;
+the upstream scheduler decides whether to keep the bed sticky to this carrier
+or spill it to another one.
 
 Carrier resource admission complements those count limits. Hostel samples its
 container cgroup and refuses an idle tenant bed's first operation with `429

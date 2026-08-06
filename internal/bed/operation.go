@@ -62,9 +62,15 @@ func (m *Manager) BeginOperation(b *Bed, kind OperationKind, timeout time.Durati
 	}
 	becomingActive := b.inflight == 0 && b.ID != m.defaultBed
 	if becomingActive && m.maxActiveBeds > 0 && m.activeBeds.Load() >= int64(m.maxActiveBeds) {
+		pressure := &BedPressureError{
+			ActiveBeds:    m.activeBeds.Load(),
+			MaxActiveBeds: m.maxActiveBeds,
+			ResidentBeds:  m.tenantResidentBedsLocked(),
+			MaxBeds:       m.maxBeds,
+		}
 		b.mu.Unlock()
 		m.mu.Unlock()
-		return nil, ErrActiveBedLimit
+		return nil, pressure
 	}
 	if becomingActive {
 		if decision := m.admission.Check(); !decision.Allowed {

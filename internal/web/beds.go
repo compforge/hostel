@@ -173,6 +173,7 @@ func (s *Server) bedList(c *gin.Context) {
 			"max_beds":           s.mgr.MaxBeds(),
 			"active_beds":        s.mgr.ActiveBedCount(),
 			"max_active_beds":    s.mgr.MaxActiveBeds(),
+			"bed_pressure":       s.mgr.BedPressure(),
 			"bed_counts":         counts,
 			"retained_until":     instanceRetainUntil,
 			"luggage_bytes":      luggageBytes,
@@ -328,7 +329,7 @@ func (s *Server) capabilities(c *gin.Context) {
 func (s *Server) bedCheckpoint(c *gin.Context) {
 	id := c.Param("bedId")
 	if err := s.mgr.Checkpoint(c.Request.Context(), id); err != nil {
-		if errors.Is(err, bed.ErrActiveBedLimit) {
+		if errors.Is(err, bed.ErrBedPressure) {
 			respondBedError(c, err)
 			return
 		}
