@@ -15,6 +15,7 @@
 package web
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -26,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/isolation"
 )
@@ -184,8 +186,14 @@ func TestCommandForegroundSSE(t *testing.T) {
 		t.Fatalf("content-type = %q", ct)
 	}
 	evs := parseSSE(t, rec.Body.String())
-	var sawStdout, sawComplete bool
+	var sawInit, sawPing, sawStdout, sawComplete bool
 	for _, ev := range evs {
+		if ev.Type == EventInit {
+			sawInit = true
+		}
+		if ev.Type == EventPing && ev.Text == "pong" {
+			sawPing = true
+		}
 		if ev.Type == EventStdout && strings.Contains(ev.Text, "hostel-ok") {
 			sawStdout = true
 		}
@@ -196,8 +204,59 @@ func TestCommandForegroundSSE(t *testing.T) {
 			}
 		}
 	}
-	if !sawStdout || !sawComplete {
-		t.Fatalf("SSE missing events: stdout=%v complete=%v (%+v)", sawStdout, sawComplete, evs)
+	if !sawInit || !sawPing || !sawStdout || !sawComplete {
+		t.Fatalf("SSE missing events: init=%v ping=%v stdout=%v complete=%v (%+v)", sawInit, sawPing, sawStdout, sawComplete, evs)
+	}
+}
+
+func TestCommandSilentExecStartsStreamBeforeCompletion(t *testing.T) {
+	s := newTestServer(t)
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	client := ts.Client()
+	client.Timeout = time.Second
+	resp, err := client.Post(ts.URL+"/command", "application/json", strings.NewReader(`{"command":"sleep 2"}`))
+	if err != nil {
+		t.Fatalf("wait for command stream headers: %v", err)
+	}
+	defer resp.Body.Close()
+
+	frame, err := bufio.NewReader(resp.Body).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read first command event: %v", err)
+	}
+	var ev StreamEvent
+	if err := json.Unmarshal([]byte(strings.TrimSpace(frame)), &ev); err != nil {
+		t.Fatalf("decode first command event %q: %v", frame, err)
+	}
+	if ev.Type != EventInit {
+		t.Fatalf("first command event = %q, want init", ev.Type)
+	}
+}
+
+func TestSSEHeartbeatStopsWithHandler(t *testing.T) {
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/command", nil)
+
+	stop := newSSE(c).start(c.Request.Context(), "exec-1", time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
+	stop()
+	before := rec.Body.String()
+	time.Sleep(3 * time.Millisecond)
+
+	if rec.Body.String() != before {
+		t.Fatal("heartbeat wrote after cleanup returned")
+	}
+	var pings int
+	for _, ev := range parseSSE(t, before) {
+		if ev.Type == EventPing {
+			pings++
+		}
+	}
+	if pings < 2 {
+		t.Fatalf("heartbeat pings = %d, want at least 2", pings)
 	}
 }
 
