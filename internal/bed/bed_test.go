@@ -468,7 +468,7 @@ func TestMaxBedsCap(t *testing.T) {
 
 func TestMaxActiveBedsAdmission(t *testing.T) {
 	root := t.TempDir()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, nil)
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, newFakeStore())
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -476,7 +476,12 @@ func TestMaxActiveBedsAdmission(t *testing.T) {
 		t.Fatalf("SetMaxActiveBeds: %v", err)
 	}
 	a, _ := m.Ensure("a")
-	b, _ := m.Ensure("b")
+	oldGuest, _ := m.Ensure("old-guest")
+	finishInitialOldGuest, err := m.BeginOperation(oldGuest, OpExec, 0)
+	if err != nil {
+		t.Fatalf("initial old guest operation: %v", err)
+	}
+	finishInitialOldGuest() // lastActiveAt > persistedAt: this carrier owns dirty data.
 
 	finishA1, err := m.BeginOperation(a, OpExec, 0)
 	if err != nil {
@@ -489,49 +494,63 @@ func TestMaxActiveBedsAdmission(t *testing.T) {
 	if got := m.ActiveBedCount(); got != 1 {
 		t.Fatalf("active beds = %d, want 1", got)
 	}
-	_, err = m.BeginOperation(b, OpExec, 0)
+	// A resident bed is an existing guest. Its operation must be admitted even
+	// after the carrier reaches pressure; placement already made the promise.
+	finishOldGuest, err := m.BeginOperation(oldGuest, OpExec, 0)
+	if err != nil {
+		t.Fatalf("activate resident old guest: %v", err)
+	}
+	if got := m.ActiveBedCount(); got != 2 {
+		t.Fatalf("active beds after old guest enters = %d, want 2", got)
+	}
+
+	_, err = m.Ensure("new-guest")
 	var pressure *BedPressureError
 	if !errors.Is(err, ErrBedPressure) || !errors.As(err, &pressure) {
-		t.Fatalf("activate b: want BedPressureError, got %v", err)
+		t.Fatalf("admit new guest: want BedPressureError, got %v", err)
 	}
-	if pressure.ActiveBeds != 1 || pressure.MaxActiveBeds != 1 ||
+	if pressure.ActiveBeds != 2 || pressure.MaxActiveBeds != 1 ||
 		pressure.ResidentBeds != 2 || pressure.MaxBeds != 3 {
 		t.Fatalf("pressure = %+v", pressure)
 	}
 	if !m.BedPressure() {
 		t.Fatal("manager did not report bed pressure at active capacity")
 	}
-	if b.State() != StateIdle || b.Inflight() != 0 {
-		t.Fatalf("rejected b changed state: state=%s inflight=%d", b.State(), b.Inflight())
-	}
-
 	// The default bed is outside both capacity limits.
 	defaultBed, _ := m.Ensure("")
 	finishDefault, err := m.BeginOperation(defaultBed, OpExec, 0)
 	if err != nil {
 		t.Fatalf("activate default bed: %v", err)
 	}
-	if got := m.ActiveBedCount(); got != 1 {
+	if got := m.ActiveBedCount(); got != 2 {
 		t.Fatalf("default bed changed active count to %d", got)
 	}
 	finishDefault()
 
 	finishA1()
-	if got := m.ActiveBedCount(); got != 1 {
+	if got := m.ActiveBedCount(); got != 2 {
 		t.Fatalf("finishing one of two operations released a: active=%d", got)
 	}
 	finishA2()
+	if got := m.ActiveBedCount(); got != 1 {
+		t.Fatalf("finishing a = active %d, want old guest active", got)
+	}
+	finishOldGuest()
 	if got := m.ActiveBedCount(); got != 0 {
-		t.Fatalf("finishing a = active %d, want 0", got)
+		t.Fatalf("finishing old guest = active %d, want 0", got)
 	}
 	if m.BedPressure() {
 		t.Fatal("manager kept reporting bed pressure after capacity was released")
 	}
-	finishB, err := m.BeginOperation(b, OpExec, 0)
+	newGuest, err := m.Ensure("new-guest")
 	if err != nil {
-		t.Fatalf("activate b after release: %v", err)
+		t.Fatalf("admit new guest after release: %v", err)
 	}
-	finishB()
+	finishNewGuest, err := m.BeginOperation(newGuest, OpExec, 0)
+	if err != nil {
+		t.Fatalf("activate new guest after admission: %v", err)
+	}
+	finishNewGuest()
 }
 
 func TestMaxActiveBedsResolution(t *testing.T) {
@@ -565,7 +584,7 @@ func TestMaxActiveBedsResolution(t *testing.T) {
 	}
 }
 
-func TestMaxActiveBedsConcurrentAdmission(t *testing.T) {
+func TestMaxActiveBedsConcurrentSyncedAdmission(t *testing.T) {
 	root := t.TempDir()
 	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, nil)
 	if err != nil {
@@ -607,7 +626,7 @@ func TestMaxActiveBedsConcurrentAdmission(t *testing.T) {
 		}
 	}
 	if admitted != 1 || rejected != 1 || m.ActiveBedCount() != 1 {
-		t.Fatalf("concurrent admission: admitted=%d rejected=%d active=%d", admitted, rejected, m.ActiveBedCount())
+		t.Fatalf("concurrent synced admission: admitted=%d rejected=%d active=%d", admitted, rejected, m.ActiveBedCount())
 	}
 	for _, finish := range finishes {
 		finish()

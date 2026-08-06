@@ -497,18 +497,18 @@ func TestMaxActiveBedsBackpressure(t *testing.T) {
 	}
 	s := NewServer(mgr)
 	one, _ := mgr.Ensure("one")
+	_, _ = mgr.Ensure("two")
 	finish, err := mgr.BeginOperation(one, bed.OpExec, time.Minute)
 	if err != nil {
 		t.Fatalf("activate one: %v", err)
 	}
-	// Capacity pressure only gates idle→active. Work already placed on the hot
-	// bed keeps using it without consuming another active slot.
+	// Capacity pressure never rejects a resident old guest.
 	rec := do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, map[string]string{BedHeader: "one"})
 	if rec.Code != http.StatusOK || mgr.ActiveBedCount() != 1 {
 		t.Fatalf("request on active bed = %d active=%d body=%s", rec.Code, mgr.ActiveBedCount(), rec.Body.String())
 	}
-
-	// A different idle/new tenant bed cannot become active while the slot is held.
+	// A synced idle bed no longer owns this carrier and is rejected while it is
+	// pressured, allowing the upstream scheduler to choose another carrier.
 	rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, map[string]string{BedHeader: "two"})
 	var pressure ErrorResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &pressure); err != nil {

@@ -29,20 +29,22 @@ import (
 type bedView struct {
 	ID           string    `json:"id"`
 	State        bed.State `json:"state"` // active | idle | evicting
+	DataSynced   bool      `json:"data_synced"`
 	Workspace    string    `json:"workspace"`
 	CreatedAt    time.Time `json:"created_at"`
 	LastActiveAt time.Time `json:"last_active_at"`
 	RetainUntil  time.Time `json:"retained_until,omitzero"`
 }
 
-func viewOf(b *bed.Bed) bedView {
-	return viewFromStatus(b, b.Status())
+func (s *Server) viewOf(b *bed.Bed) bedView {
+	return s.viewFromStatus(b, b.Status())
 }
 
-func viewFromStatus(b *bed.Bed, status bed.Status) bedView {
+func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 	return bedView{
 		ID:           b.ID,
 		State:        status.State,
+		DataSynced:   s.mgr.StoreName() == "noop" || status.DataSynced,
 		Workspace:    b.Workspace,
 		CreatedAt:    b.CreatedAt,
 		LastActiveAt: status.LastActiveAt,
@@ -202,7 +204,7 @@ func (s *Server) bedCreate(c *gin.Context) {
 		respondBedError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, viewOf(b))
+	c.JSON(http.StatusOK, s.viewOf(b))
 }
 
 // GET /v1/beds/:bedId
@@ -215,7 +217,7 @@ func (s *Server) bedGet(c *gin.Context) {
 	status := b.Status()
 	lifecycle := b.Lifecycle()
 	c.JSON(http.StatusOK, bedDetailView{
-		bedView:    viewFromStatus(b, status),
+		bedView:    s.viewFromStatus(b, status),
 		Generation: status.Generation,
 		Activity: activityView{
 			Operations: status.Operations,

@@ -44,7 +44,7 @@ type Manager struct {
 	resources     resource.Tracker  // per-bed cgroup accounting; noop when unavailable
 	admission     resource.Admitter // cached carrier-pressure verdict; never performs request-path I/O
 	maxBeds       int               // cap on resident tenant beds; 0 = unlimited
-	maxActiveBeds int               // cap on active tenant beds; 0 = unlimited
+	maxActiveBeds int               // new-resident admission threshold by active count; 0 = unlimited
 	activeBeds    atomic.Int64      // resident tenant beds whose inflight count is non-zero
 	store         store.Store       // workspace persistence (Noop when disabled)
 	processEnv    processEnv        // explicit carrier software env; never daemon-wide inheritance
@@ -187,8 +187,8 @@ func (m *Manager) Commands() *CommandRegistry { return m.commands }
 // MaxBeds reports the configured cap (0 = unlimited) for capacity reporting.
 func (m *Manager) MaxBeds() int { return m.maxBeds }
 
-// SetMaxActiveBeds configures operation admission. It is startup configuration
-// and must be called before serving requests.
+// SetMaxActiveBeds configures new-resident admission. It is startup
+// configuration and must be called before serving requests.
 func (m *Manager) SetMaxActiveBeds(max int) error {
 	if max < 0 {
 		return fmt.Errorf("bed: max active beds must be non-negative: %d", max)
@@ -200,17 +200,37 @@ func (m *Manager) SetMaxActiveBeds(max int) error {
 	return nil
 }
 
-// MaxActiveBeds reports the effective active tenant-bed cap (0 = unlimited).
+// MaxActiveBeds reports the active-count threshold that stops new resident
+// admission (0 = unlimited). Existing residents may run above it.
 func (m *Manager) MaxActiveBeds() int { return m.maxActiveBeds }
 
 // ActiveBedCount reports resident tenant beds with at least one in-flight operation.
 // The default bed is deliberately outside both capacity limits.
 func (m *Manager) ActiveBedCount() int64 { return m.activeBeds.Load() }
 
-// BedPressure reports whether another idle tenant bed can claim an active
-// slot by count. Resource pressure is reported separately.
+// BedPressure reports whether this carrier should stop accepting another
+// resident tenant bed by active count. Resource pressure is reported separately.
 func (m *Manager) BedPressure() bool {
 	return m.maxActiveBeds > 0 && m.activeBeds.Load() >= int64(m.maxActiveBeds)
+}
+
+// carrierAdmissionErrorLocked applies pressure only where this carrier is
+// taking ownership: a new resident, a dormant restore, or a synced idle cache
+// becoming active again. Callers hold m.mu so the count snapshot is coherent
+// with resident admission.
+func (m *Manager) carrierAdmissionErrorLocked() error {
+	if m.maxActiveBeds > 0 && m.activeBeds.Load() >= int64(m.maxActiveBeds) {
+		return &BedPressureError{
+			ActiveBeds:    m.activeBeds.Load(),
+			MaxActiveBeds: m.maxActiveBeds,
+			ResidentBeds:  m.tenantResidentBedsLocked(),
+			MaxBeds:       m.maxBeds,
+		}
+	}
+	if decision := m.admission.Check(); !decision.Allowed {
+		return fmt.Errorf("%w: %s", ErrResourcePressure, decision.Reason)
+	}
+	return nil
 }
 
 // ResidentBedCount reports the current in-memory bed count without taking the
@@ -253,13 +273,23 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 		b.touch(m.bedIdleTTL)
 		return b, nil
 	}
-	// Cap NEW beds only; the default bed is the single-tenant fallback and
+	// Admit NEW resident beds only; an existing resident has already been
+	// promised this carrier and BeginOperation must never turn pressure into a
+	// surprise relocation. Dormant restore also passes this boundary because
+	// its durable data no longer belongs to this carrier.
+	//
+	// The default bed is the single-tenant fallback and
 	// must never be refused (a full instance still serves its primary tenant)
 	// nor counted — max-beds means "N tenant beds", not "N-1 once the default
 	// bed happens to exist".
 	if m.maxBeds > 0 && id != m.defaultBed {
 		if m.tenantResidentBedsLocked() >= m.maxBeds {
 			return nil, ErrBedLimit
+		}
+	}
+	if id != m.defaultBed {
+		if err := m.carrierAdmissionErrorLocked(); err != nil {
+			return nil, err
 		}
 	}
 	trace := beginLifecycle(id, lifecycleActivate)

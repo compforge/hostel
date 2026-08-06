@@ -78,7 +78,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 ### 3. 当前准入策略
 
 ```text
-idle tenant bed 准备进入 active（inflight 0 → 1）
+新 resident / dormant restore，或已同步 idle bed 准备进入 active
   → max-active-beds 数量检查
       └─ 数量已满 → 429 BED_PRESSURE（携带容量快照）
   → 读取缓存的 carrier resource verdict
@@ -87,11 +87,11 @@ idle tenant bed 准备进入 active（inflight 0 → 1）
       └─ 不可测                    → fail-open，由数量上限兜底
 ```
 
-数量限制简单可预测，是硬安全阀；资源水位更接近真实成本，是当前的主要“客满”信号。两者组合后：
+数量限制简单可预测，资源水位更接近真实成本；两者都是“停止接新归属”的信号，不是已归属 bed 的硬执行上限。两者组合后：
 
 - 瞬时 operation 很快释放 active 名额，一个 Hostel 可以先后承接大量 bed。
 - 耗时 operation 长期占用 active 名额，或把 carrier CPU/内存推到水位，都会对新 bed 形成背压。
-- 同一 active bed 的后续 operation 已经在承诺范围内，不重复做资源准入。
+- 已 active 或未同步 bed 的后续 operation 在承诺范围内，不做资源准入；已同步 idle bed 可重新调度。
 - `BED_PRESSURE` 只表达数量容量已满；hostel 不自行淘汰或迁移 bed，由上层调度决定是否打破
   当前 carrier 的数据热亲和并溢出到其他 carrier。
 - 已 active 的 bed 不会因采样越线被暂停或杀死；default bed 也不参与资源准入。

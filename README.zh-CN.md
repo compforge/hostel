@@ -99,9 +99,9 @@ Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isola
 
 持久化：`--store s3` 时每个 bed 快照到 `s3://<bucket>/<prefix>/<bedID>.tar.gz`（任意 S3 兼容端点）——同 id 再建时恢复,驱逐（DELETE / idle 回收）或显式 checkpoint 时持久化,另有 `--persist-interval` 周期兜底。bed 的持久身份是快照,本地目录只是工作副本。`DELETE /v1/beds/:id` 是驱逐（身份保留）,`?purge=true` 连快照一起删、终结身份;驱逐撞上并发流量返回 `409 BED_BUSY`,不丢在途写入。
 
-容量：`--max-beds N` 限制 resident tenant bed 数，`--max-active-beds M` 限制至少有一个在途 operation 的 tenant bed 数；`M=0` 时继承 `N`，仅两者都为 0 时不限，default bed 均不参与。有限的 `N` 始终是 active 容量的硬上限，`M>N` 时 effective `M` 收敛为 `N`；同一 active bed 增加 operation 不重复占名额。resident 满返回 `429 BED_LIMIT_EXCEEDED`；idle bed 无法转为 active 时返回可重试的 `429 BED_PRESSURE`，并携带 active/resident 数量与上限快照，由上层调度决定保持当前 carrier 的数据热亲和，还是溢出到其他 carrier。
+容量：`--max-beds N` 限制 resident tenant bed 数，`--max-active-beds M` 是停止接收新 resident 归属的 active 数阈值；`M=0` 时继承 `N`，仅两者都为 0 时不限，default bed 不参与。已 active 或数据未同步的 idle bed 仍由当前 carrier 承接；新 resident / dormant restore 以及已同步 idle bed 在 pressure 时返回可重试的 `429 BED_PRESSURE`。`GET /v1/beds` 与 bed detail 通过 `data_synced` 上报该事实，上层调度决定保持热亲和还是选其他 carrier。
 
-carrier 资源准入在数量限制之外读取容器父 cgroup：近期 CPU 或当前内存使用率达到 `--admission-cpu-threshold` / `--admission-memory-threshold`（百分比，默认 90；0 关闭对应维度）时，idle tenant bed 的首个 operation 返回 `429 RESOURCE_PRESSURE`。已 active 的 bed 与 default bed 不受影响；cgroup 不可读、采样失败或该维度没有有限 limit 时 fail-open，继续由数量限制兜底。`/healthz`、`GET /v1/beds` 与 capabilities 上报有限 cgroup 配额、最新占比、阈值和 `accepting` 结论。
+carrier 资源准入在数量限制之外读取容器父 cgroup：近期 CPU 或当前内存使用率达到水位时，新归属或已同步 idle bed 返回 `429 RESOURCE_PRESSURE`。已 active、未同步 bed 与 default bed 不受影响；不可测时 fail-open 到数量策略。
 
 ## 容器镜像
 

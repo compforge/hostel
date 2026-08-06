@@ -15,7 +15,6 @@
 package bed
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
@@ -61,22 +60,12 @@ func (m *Manager) BeginOperation(b *Bed, kind OperationKind, timeout time.Durati
 		return nil, ErrBedUnavailable
 	}
 	becomingActive := b.inflight == 0 && b.ID != m.defaultBed
-	if becomingActive && m.maxActiveBeds > 0 && m.activeBeds.Load() >= int64(m.maxActiveBeds) {
-		pressure := &BedPressureError{
-			ActiveBeds:    m.activeBeds.Load(),
-			MaxActiveBeds: m.maxActiveBeds,
-			ResidentBeds:  m.tenantResidentBedsLocked(),
-			MaxBeds:       m.maxBeds,
-		}
-		b.mu.Unlock()
-		m.mu.Unlock()
-		return nil, pressure
-	}
-	if becomingActive {
-		if decision := m.admission.Check(); !decision.Allowed {
+	dataSynced := m.store.Name() == "noop" || !b.lastActiveAt.After(b.persistedAt)
+	if becomingActive && dataSynced {
+		if err := m.carrierAdmissionErrorLocked(); err != nil {
 			b.mu.Unlock()
 			m.mu.Unlock()
-			return nil, fmt.Errorf("%w: %s", ErrResourcePressure, decision.Reason)
+			return nil, err
 		}
 	}
 	b.lastActiveAt = now

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/resource"
 )
 
@@ -30,7 +31,7 @@ func (a *mutableAdmission) Report() resource.AdmissionReport {
 	return resource.AdmissionReport{Enabled: true, Available: true, Accepting: a.decision.Allowed}
 }
 
-func TestResourceAdmissionOnlyChecksIdleToActiveTenantBeds(t *testing.T) {
+func TestResourceAdmissionChecksSyncedIdleAndNewBeds(t *testing.T) {
 	m := newTestManager(t)
 	a, _ := m.Ensure("a")
 	b, _ := m.Ensure("b")
@@ -48,10 +49,10 @@ func TestResourceAdmissionOnlyChecksIdleToActiveTenantBeds(t *testing.T) {
 		t.Fatalf("existing active bed was rejected: %v", err)
 	}
 	if _, err := m.BeginOperation(b, OpExec, 0); !errors.Is(err, ErrResourcePressure) {
-		t.Fatalf("activate b: want ErrResourcePressure, got %v", err)
+		t.Fatalf("activate synced idle b: want ErrResourcePressure, got %v", err)
 	}
-	if b.State() != StateIdle || b.Inflight() != 0 {
-		t.Fatalf("rejected bed changed state: state=%s inflight=%d", b.State(), b.Inflight())
+	if _, err := m.Ensure("new"); !errors.Is(err, ErrResourcePressure) {
+		t.Fatalf("admit new resident: want ErrResourcePressure, got %v", err)
 	}
 	finishDefault, err := m.BeginOperation(defaultBed, OpExec, 0)
 	if err != nil {
@@ -61,4 +62,27 @@ func TestResourceAdmissionOnlyChecksIdleToActiveTenantBeds(t *testing.T) {
 	finishDefault()
 	finishA2()
 	finishA()
+}
+
+func TestResourceAdmissionAllowsUnsyncedIdleBed(t *testing.T) {
+	root := t.TempDir()
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, newFakeStore())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	b, _ := m.Ensure("dirty")
+	finishInitial, err := m.BeginOperation(b, OpExec, 0)
+	if err != nil {
+		t.Fatalf("initial operation: %v", err)
+	}
+	finishInitial()
+	m.SetResourceAdmission(&mutableAdmission{decision: resource.AdmissionDecision{
+		Allowed: false,
+		Reason:  "carrier CPU usage 95.0%",
+	}})
+	finish, err := m.BeginOperation(b, OpExec, 0)
+	if err != nil {
+		t.Fatalf("unsynced idle bed must retain its carrier: %v", err)
+	}
+	finish()
 }
