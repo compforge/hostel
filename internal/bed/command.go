@@ -243,7 +243,7 @@ func (r *CommandRegistry) killBed(bedID string) {
 // buildCommand constructs an isolated `bash -c <command>` for the bed. envs are
 // an invocation-scoped overlay; cwd (host path) overrides the workspace.
 func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string]string) (*exec.Cmd, error) {
-	b.touch(m.bedIdleTTL)
+	m.touchBed(b)
 	// Apply cwd with a `cd` INSIDE the command (same mechanism the session shell
 	// uses), NOT via cmd.Dir. Under suite cwdInBed is a sandbox-internal path
 	// (/workspace/…) that doesn't exist on the carrier host, so setting it as

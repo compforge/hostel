@@ -53,8 +53,8 @@ type ErrorResponse struct {
 // Existing SDKs continue to read code/message; schedulers can use the frozen
 // capacity snapshot without an extra inventory round trip.
 type BedPressureDetails struct {
-	ActiveBeds    int64 `json:"active_beds"`
-	MaxActiveBeds int   `json:"max_active_beds"`
+	PinnedBeds    int64 `json:"pinned_beds"`
+	MaxPinnedBeds int   `json:"max_pinned_beds"`
 	ResidentBeds  int   `json:"resident_beds"`
 	MaxBeds       int   `json:"max_beds"`
 }

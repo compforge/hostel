@@ -110,8 +110,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("hostel: init bed manager: %v", err)
 	}
-	if err := mgr.SetMaxActiveBeds(cfg.MaxActiveBeds); err != nil {
-		log.Fatalf("hostel: configure active bed limit: %v", err)
+	if err := mgr.SetMaxPinnedBeds(cfg.MaxPinnedBeds); err != nil {
+		log.Fatalf("hostel: configure pinned bed limit: %v", err)
 	}
 	if err := mgr.SetBedEnvPassthrough(os.Environ(), cfg.BedEnvPassthrough); err != nil {
 		log.Fatalf("hostel: configure bed environment: %v", err)
@@ -207,23 +207,9 @@ func main() {
 		}()
 	}
 
-	// Periodic snapshot safety net.
-	if cfg.PersistInterval > 0 {
-		go func() {
-			t := time.NewTicker(cfg.PersistInterval)
-			defer t.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					if done := mgr.PersistDirty(ctx); len(done) > 0 {
-						log.Printf("hostel: persisted beds: %v", done)
-					}
-				}
-			}
-		}()
-	}
+	// Store synchronization owns lifecycle requests, periodic cadence and
+	// retry/backoff. A zero interval disables only the periodic safety net.
+	go mgr.RunStoreSync(ctx, cfg.PersistInterval)
 
 	srv := &http.Server{Addr: cfg.Addr, Handler: web.NewServer(mgr).Handler()}
 	go func() {

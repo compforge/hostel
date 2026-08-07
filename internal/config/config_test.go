@@ -44,16 +44,16 @@ func TestBedEnvPassthroughConfig(t *testing.T) {
 
 func TestBedCapacityConfig(t *testing.T) {
 	t.Setenv("HOSTEL_MAX_BEDS", "12")
-	t.Setenv("HOSTEL_MAX_ACTIVE_BEDS", "4")
+	t.Setenv("HOSTEL_MAX_PINNED_BEDS", "4")
 	t.Setenv("HOSTEL_ADMISSION_CPU_THRESHOLD", "85")
 	t.Setenv("HOSTEL_ADMISSION_MEMORY_THRESHOLD", "80")
 	c := Load(nil)
-	if c.MaxBeds != 12 || c.MaxActiveBeds != 4 || c.AdmissionCPUThreshold != 85 || c.AdmissionMemoryThreshold != 80 {
+	if c.MaxBeds != 12 || c.MaxPinnedBeds != 4 || c.AdmissionCPUThreshold != 85 || c.AdmissionMemoryThreshold != 80 {
 		t.Fatalf("env capacity = %+v, want beds 12/4 and thresholds 85/80", c)
 	}
 
-	c = Load([]string{"-max-beds", "20", "-max-active-beds", "7", "-admission-cpu-threshold", "75", "-admission-memory-threshold", "70"})
-	if c.MaxBeds != 20 || c.MaxActiveBeds != 7 || c.AdmissionCPUThreshold != 75 || c.AdmissionMemoryThreshold != 70 {
+	c = Load([]string{"-max-beds", "20", "-max-pinned-beds", "7", "-admission-cpu-threshold", "75", "-admission-memory-threshold", "70"})
+	if c.MaxBeds != 20 || c.MaxPinnedBeds != 7 || c.AdmissionCPUThreshold != 75 || c.AdmissionMemoryThreshold != 70 {
 		t.Fatalf("flag capacity = %+v, want beds 20/7 and thresholds 75/70", c)
 	}
 }

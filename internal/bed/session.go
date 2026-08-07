@@ -54,6 +54,7 @@ type Session struct {
 	done    chan struct{} // closed by Close = handler fully exited
 	closeFn func()        // resource kill switch (e.g. conn.Close); must be idempotent
 	touchFn func()
+	syncFn  func()
 
 	revokeOnce sync.Once
 	closeOnce  sync.Once
@@ -73,7 +74,8 @@ func (m *Manager) OpenSession(b *Bed, kind SessionKind, closeFn func()) (*Sessio
 		cancel:  cancel,
 		done:    make(chan struct{}),
 		closeFn: closeFn,
-		touchFn: func() { b.touch(m.bedIdleTTL) },
+		touchFn: func() { m.touchBed(b) },
+		syncFn:  m.RequestStoreSync,
 	}
 	m.mu.Lock()
 	b.mu.Lock()
@@ -83,10 +85,21 @@ func (m *Manager) OpenSession(b *Bed, kind SessionKind, closeFn func()) (*Sessio
 		cancel()
 		return nil, ErrBedUnavailable
 	}
+	wasPinned := b.pinnedLocked()
+	if !wasPinned && b.ID != m.defaultBed {
+		if err := m.carrierAdmissionErrorLocked(); err != nil {
+			b.mu.Unlock()
+			m.mu.Unlock()
+			cancel()
+			return nil, err
+		}
+	}
 	b.touchLocked(time.Now(), m.bedIdleTTL)
 	b.sessions[s.ID] = s
+	m.adjustPinnedLocked(b, wasPinned)
 	b.mu.Unlock()
 	m.mu.Unlock()
+	m.RequestStoreSync()
 	return s, nil
 }
 
@@ -118,6 +131,7 @@ func (s *Session) Close() {
 		delete(s.bed.sessions, s.ID)
 		s.bed.mu.Unlock()
 		close(s.done)
+		s.syncFn()
 	})
 }
 

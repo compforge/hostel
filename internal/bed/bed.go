@@ -58,6 +58,9 @@ type Bed struct {
 	// in-bed). THE place for any path stitching — callers must not rebuild
 	// MountPoint()+Rel+Join by hand (that's how the exec-cwd ENOENT happened).
 	paths fsops.Paths
+	// durable is immutable: noop treats local changes as already accepted,
+	// while a real store keeps dirty data pinned until its snapshot commits.
+	durable bool
 
 	mu             sync.Mutex
 	persistMu      sync.Mutex // serializes generation bumps and snapshot uploads
@@ -92,6 +95,7 @@ type Status struct {
 	State        State
 	Generation   int64
 	DataSynced   bool
+	Pinned       bool
 	LastActiveAt time.Time
 	RetainUntil  time.Time
 	Inflight     int
@@ -112,6 +116,16 @@ func (b *Bed) stateLocked() State {
 	return StateIdle
 }
 
+func (b *Bed) dataSyncedLocked() bool {
+	return !b.durable || !b.lastActiveAt.After(b.persistedAt)
+}
+
+// pinnedLocked is a compound capacity fact, not another lifecycle state.
+// Callers hold b.mu.
+func (b *Bed) pinnedLocked() bool {
+	return b.inflight > 0 || !b.dataSyncedLocked()
+}
+
 // Status reports lifecycle, version and deadline from one lock acquisition.
 func (b *Bed) Status() Status {
 	b.mu.Lock()
@@ -130,7 +144,8 @@ func (b *Bed) Status() Status {
 	return Status{
 		State:        b.stateLocked(),
 		Generation:   b.generation,
-		DataSynced:   !b.lastActiveAt.After(b.persistedAt),
+		DataSynced:   b.dataSyncedLocked(),
+		Pinned:       b.pinnedLocked(),
 		LastActiveAt: b.lastActiveAt,
 		RetainUntil:  b.retainUntil,
 		Inflight:     b.inflight,
@@ -145,13 +160,6 @@ func (b *Bed) State() State { return b.Status().State }
 
 // Short is ShortID(b.ID) — the log-friendly form of this bed's id.
 func (b *Bed) Short() string { return ShortID(b.ID) }
-
-func (b *Bed) touch(idleTTL time.Duration) {
-	now := time.Now()
-	b.mu.Lock()
-	b.touchLocked(now, idleTTL)
-	b.mu.Unlock()
-}
 
 // touchLocked refreshes the activity watermarks; the caller holds b.mu.
 func (b *Bed) touchLocked(now time.Time, idleTTL time.Duration) {

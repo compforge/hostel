@@ -154,7 +154,7 @@ reports `amenities: {chromium: idle|running}`.
 
 Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` /
 `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
-`--max-active-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
+`--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
 `--bed-init` / `--bed-env-passthrough` / `--store` /
 `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` /
 `--luggage-high-bytes` / `--luggage-low-bytes` /
@@ -179,8 +179,10 @@ the default `--store auto` resolves to `s3`, an incremental content-addressed
 layout: the workspace is CDC-chunked (via desync) and only chunks new since
 the bed's previous snapshot are uploaded, so an unchanged workspace
 re-persists with zero uploads. Snapshots restore when the bed is created
-again and persist on evict (DELETE / idle reap) or explicit checkpoint, plus
-an optional `--persist-interval` safety net. A bed's durable identity is the
+again and persist on evict (DELETE / idle reap) or explicit checkpoint. Normal
+operations and pressure submit coalesced sync requests; the store loop owns
+serialization, retry/backoff, and the optional `--persist-interval` safety net.
+A bed's durable identity is the
 snapshot; the local dir is just its working copy.
 `DELETE /v1/beds/:id` evicts (identity kept); add `?purge=true` to also delete
 the snapshot and end the identity. An evict raced by live traffic returns
@@ -198,24 +200,26 @@ first, then least recently used — until under `--luggage-low-bytes` (default
 there destroys data — same honesty rule as everywhere: `/healthz` tells you
 which world you're in.
 
-Capacity: `--max-beds N` caps resident tenant beds; `--max-active-beds M` is the
-active-count threshold that stops accepting new resident ownership. `M=0` inherits `N`; both are
+Capacity: `--max-beds N` caps resident tenant beds; `--max-pinned-beds M` is the
+pinned-count threshold that stops accepting new resident ownership. A bed is
+pinned while an operation is in flight or its latest data has not reached the
+durable store. With the noop store, only in-flight operations pin. `M=0` inherits `N`; both are
 unlimited only when `N=0` too. The default bed is exempt from both. An explicit
 `M` above a finite `N` is clamped to `N`: resident capacity is always the hard
-ceiling for active capacity.
-An active bed, or an idle bed with data not yet synced to the store, keeps its
+ceiling for pinned capacity.
+A pinned bed keeps its
 carrier commitment even above the threshold. A full instance returns `429
 BED_LIMIT_EXCEEDED` for resident count exhaustion or retryable `429
-BED_PRESSURE` for new/dormant placement and synced-idle activation.
-`data_synced` is reported per bed. `BED_PRESSURE` includes the active/resident count and limit snapshot;
+BED_PRESSURE` for new/dormant placement and unpinned-idle activation.
+`pinned` and `data_synced` are reported per bed. `BED_PRESSURE` includes the pinned/resident count and limit snapshot;
 the upstream scheduler decides whether to keep the bed sticky to this carrier
 or spill it to another one.
 
 Carrier resource admission complements those count limits. Hostel samples its
-container cgroup and refuses new ownership or a synced idle bed's first operation with `429
+container cgroup and refuses new ownership or an unpinned idle bed's first operation with `429
 RESOURCE_PRESSURE` when recent CPU or current memory usage reaches
 `--admission-cpu-threshold` / `--admission-memory-threshold` (percent, default
-90; 0 disables that dimension). Active/unsynced beds and the default bed keep
+90; 0 disables that dimension). Pinned beds and the default bed keep
 running. A missing cgroup, read error, or unlimited cgroup dimension fails open
 to the count limits. `/healthz`, `GET /v1/beds`, and capabilities report the
 finite cgroup limits, latest usage ratios, thresholds, and `accepting` verdict.

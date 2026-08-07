@@ -466,42 +466,37 @@ func TestMaxBedsCap(t *testing.T) {
 	}
 }
 
-func TestMaxActiveBedsAdmission(t *testing.T) {
+func TestMaxPinnedBedsAdmission(t *testing.T) {
 	root := t.TempDir()
 	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, newFakeStore())
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	if err := m.SetMaxActiveBeds(1); err != nil {
-		t.Fatalf("SetMaxActiveBeds: %v", err)
+	if err := m.SetMaxPinnedBeds(1); err != nil {
+		t.Fatalf("SetMaxPinnedBeds: %v", err)
 	}
-	a, _ := m.Ensure("a")
 	oldGuest, _ := m.Ensure("old-guest")
 	finishInitialOldGuest, err := m.BeginOperation(oldGuest, OpExec, 0)
 	if err != nil {
 		t.Fatalf("initial old guest operation: %v", err)
 	}
-	finishInitialOldGuest() // lastActiveAt > persistedAt: this carrier owns dirty data.
+	finishInitialOldGuest() // idle but dirty: this carrier still owns the bed.
+	if got := m.PinnedBedCount(); got != 1 {
+		t.Fatalf("pinned beds after operation = %d, want 1", got)
+	}
 
-	finishA1, err := m.BeginOperation(a, OpExec, 0)
-	if err != nil {
-		t.Fatalf("activate a: %v", err)
-	}
-	finishA2, err := m.BeginOperation(a, OpFile, 0)
-	if err != nil {
-		t.Fatalf("second operation on active a: %v", err)
-	}
-	if got := m.ActiveBedCount(); got != 1 {
-		t.Fatalf("active beds = %d, want 1", got)
-	}
-	// A resident bed is an existing guest. Its operation must be admitted even
-	// after the carrier reaches pressure; placement already made the promise.
+	// A dirty resident bed is an existing guest. Its operation must be admitted
+	// even at pressure because its latest data is still on this carrier.
 	finishOldGuest, err := m.BeginOperation(oldGuest, OpExec, 0)
 	if err != nil {
 		t.Fatalf("activate resident old guest: %v", err)
 	}
-	if got := m.ActiveBedCount(); got != 2 {
-		t.Fatalf("active beds after old guest enters = %d, want 2", got)
+	finishOldGuest2, err := m.BeginOperation(oldGuest, OpFile, 0)
+	if err != nil {
+		t.Fatalf("second old guest operation: %v", err)
+	}
+	if got := m.PinnedBedCount(); got != 1 {
+		t.Fatalf("two operations changed pinned count to %d", got)
 	}
 
 	_, err = m.Ensure("new-guest")
@@ -509,12 +504,12 @@ func TestMaxActiveBedsAdmission(t *testing.T) {
 	if !errors.Is(err, ErrBedPressure) || !errors.As(err, &pressure) {
 		t.Fatalf("admit new guest: want BedPressureError, got %v", err)
 	}
-	if pressure.ActiveBeds != 2 || pressure.MaxActiveBeds != 1 ||
-		pressure.ResidentBeds != 2 || pressure.MaxBeds != 3 {
+	if pressure.PinnedBeds != 1 || pressure.MaxPinnedBeds != 1 ||
+		pressure.ResidentBeds != 1 || pressure.MaxBeds != 3 {
 		t.Fatalf("pressure = %+v", pressure)
 	}
 	if !m.BedPressure() {
-		t.Fatal("manager did not report bed pressure at active capacity")
+		t.Fatal("manager did not report bed pressure at pinned capacity")
 	}
 	// The default bed is outside both capacity limits.
 	defaultBed, _ := m.Ensure("")
@@ -522,25 +517,24 @@ func TestMaxActiveBedsAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("activate default bed: %v", err)
 	}
-	if got := m.ActiveBedCount(); got != 2 {
-		t.Fatalf("default bed changed active count to %d", got)
+	if got := m.PinnedBedCount(); got != 1 {
+		t.Fatalf("default bed changed pinned count to %d", got)
 	}
 	finishDefault()
 
-	finishA1()
-	if got := m.ActiveBedCount(); got != 2 {
-		t.Fatalf("finishing one of two operations released a: active=%d", got)
-	}
-	finishA2()
-	if got := m.ActiveBedCount(); got != 1 {
-		t.Fatalf("finishing a = active %d, want old guest active", got)
-	}
 	finishOldGuest()
-	if got := m.ActiveBedCount(); got != 0 {
-		t.Fatalf("finishing old guest = active %d, want 0", got)
+	if got := m.PinnedBedCount(); got != 1 {
+		t.Fatalf("finishing one operation changed pinned count to %d", got)
 	}
-	if m.BedPressure() {
-		t.Fatal("manager kept reporting bed pressure after capacity was released")
+	finishOldGuest2()
+	if got := m.PinnedBedCount(); got != 1 {
+		t.Fatalf("dirty idle old guest should remain pinned, got %d", got)
+	}
+	if done := m.PersistDirty(context.Background()); len(done) == 0 {
+		t.Fatal("dirty old guest was not persisted")
+	}
+	if got := m.PinnedBedCount(); got != 0 || m.BedPressure() {
+		t.Fatalf("persist did not release capacity: pinned=%d pressure=%v", got, m.BedPressure())
 	}
 	newGuest, err := m.Ensure("new-guest")
 	if err != nil {
@@ -553,7 +547,7 @@ func TestMaxActiveBedsAdmission(t *testing.T) {
 	finishNewGuest()
 }
 
-func TestMaxActiveBedsResolution(t *testing.T) {
+func TestMaxPinnedBedsResolution(t *testing.T) {
 	root := t.TempDir()
 	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, nil)
 	if err != nil {
@@ -563,12 +557,12 @@ func TestMaxActiveBedsResolution(t *testing.T) {
 		configured int
 		want       int
 	}{{0, 3}, {2, 2}, {3, 3}, {4, 3}} {
-		if err := m.SetMaxActiveBeds(tc.configured); err != nil || m.MaxActiveBeds() != tc.want {
-			t.Fatalf("SetMaxActiveBeds(%d) = limit %d err %v, want %d", tc.configured, m.MaxActiveBeds(), err, tc.want)
+		if err := m.SetMaxPinnedBeds(tc.configured); err != nil || m.MaxPinnedBeds() != tc.want {
+			t.Fatalf("SetMaxPinnedBeds(%d) = limit %d err %v, want %d", tc.configured, m.MaxPinnedBeds(), err, tc.want)
 		}
 	}
-	if err := m.SetMaxActiveBeds(-1); err == nil {
-		t.Fatal("SetMaxActiveBeds(-1): want error")
+	if err := m.SetMaxPinnedBeds(-1); err == nil {
+		t.Fatal("SetMaxPinnedBeds(-1): want error")
 	}
 
 	unlimitedRoot := t.TempDir()
@@ -576,22 +570,22 @@ func TestMaxActiveBedsResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager unlimited: %v", err)
 	}
-	if err := unlimited.SetMaxActiveBeds(0); err != nil || unlimited.MaxActiveBeds() != 0 {
-		t.Fatalf("unlimited defaults = limit %d err %v, want 0", unlimited.MaxActiveBeds(), err)
+	if err := unlimited.SetMaxPinnedBeds(0); err != nil || unlimited.MaxPinnedBeds() != 0 {
+		t.Fatalf("unlimited defaults = limit %d err %v, want 0", unlimited.MaxPinnedBeds(), err)
 	}
-	if err := unlimited.SetMaxActiveBeds(10); err != nil {
-		t.Fatalf("finite active cap with unlimited resident cap: %v", err)
+	if err := unlimited.SetMaxPinnedBeds(10); err != nil {
+		t.Fatalf("finite pinned cap with unlimited resident cap: %v", err)
 	}
 }
 
-func TestMaxActiveBedsConcurrentSyncedAdmission(t *testing.T) {
+func TestMaxPinnedBedsConcurrentAdmission(t *testing.T) {
 	root := t.TempDir()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, nil)
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, newFakeStore())
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	if err := m.SetMaxActiveBeds(1); err != nil {
-		t.Fatalf("SetMaxActiveBeds: %v", err)
+	if err := m.SetMaxPinnedBeds(1); err != nil {
+		t.Fatalf("SetMaxPinnedBeds: %v", err)
 	}
 	a, _ := m.Ensure("a")
 	b, _ := m.Ensure("b")
@@ -625,25 +619,82 @@ func TestMaxActiveBedsConcurrentSyncedAdmission(t *testing.T) {
 			t.Fatalf("unexpected admission error: %v", result.err)
 		}
 	}
-	if admitted != 1 || rejected != 1 || m.ActiveBedCount() != 1 {
-		t.Fatalf("concurrent synced admission: admitted=%d rejected=%d active=%d", admitted, rejected, m.ActiveBedCount())
+	if admitted != 1 || rejected != 1 || m.PinnedBedCount() != 1 {
+		t.Fatalf("concurrent admission: admitted=%d rejected=%d pinned=%d", admitted, rejected, m.PinnedBedCount())
 	}
 	for _, finish := range finishes {
 		finish()
 	}
-	if got := m.ActiveBedCount(); got != 0 {
-		t.Fatalf("active beds after finish = %d, want 0", got)
+	if got := m.PinnedBedCount(); got != 1 {
+		t.Fatalf("dirty bed after finish = %d, want 1", got)
+	}
+	m.PersistDirty(context.Background())
+	if got := m.PinnedBedCount(); got != 0 {
+		t.Fatalf("pinned beds after persist = %d, want 0", got)
 	}
 }
 
-func TestPurgeActiveBedReleasesCapacity(t *testing.T) {
+func TestNoopDataDoesNotRemainPinned(t *testing.T) {
+	root := t.TempDir()
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, nil)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if err := m.SetMaxPinnedBeds(1); err != nil {
+		t.Fatalf("SetMaxPinnedBeds: %v", err)
+	}
+	b, _ := m.Ensure("noop-bed")
+	finish, err := m.BeginOperation(b, OpExec, 0)
+	if err != nil {
+		t.Fatalf("BeginOperation: %v", err)
+	}
+	if got := m.PinnedBedCount(); got != 1 {
+		t.Fatalf("pinned during operation = %d, want 1", got)
+	}
+	finish()
+	if got := m.PinnedBedCount(); got != 0 {
+		t.Fatalf("noop data kept bed pinned after operation: %d", got)
+	}
+}
+
+func TestStoreSyncTriggerReleasesPinnedBed(t *testing.T) {
+	root := t.TempDir()
+	fs := newFakeStore()
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, fs)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.RunStoreSync(ctx, 0)
+
+	b, _ := m.Ensure("sync-trigger")
+	finish, err := m.BeginOperation(b, OpExec, 0)
+	if err != nil {
+		t.Fatalf("BeginOperation: %v", err)
+	}
+	finish()
+
+	deadline := time.Now().Add(time.Second)
+	for m.PinnedBedCount() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := m.PinnedBedCount(); got != 0 {
+		t.Fatalf("store trigger did not release pinned bed: %d", got)
+	}
+	if fs.generation("sync-trigger") == 0 {
+		t.Fatal("store trigger did not persist bed")
+	}
+}
+
+func TestPurgePinnedBedReleasesCapacity(t *testing.T) {
 	root := t.TempDir()
 	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 2, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	if err := m.SetMaxActiveBeds(1); err != nil {
-		t.Fatalf("SetMaxActiveBeds: %v", err)
+	if err := m.SetMaxPinnedBeds(1); err != nil {
+		t.Fatalf("SetMaxPinnedBeds: %v", err)
 	}
 	a, _ := m.Ensure("a")
 	finish, err := m.BeginOperation(a, OpExec, 0)
@@ -653,12 +704,12 @@ func TestPurgeActiveBedReleasesCapacity(t *testing.T) {
 	if err := m.Purge("a"); err != nil {
 		t.Fatalf("Purge a: %v", err)
 	}
-	if got := m.ActiveBedCount(); got != 0 {
-		t.Fatalf("active beds after purge = %d, want 0", got)
+	if got := m.PinnedBedCount(); got != 0 {
+		t.Fatalf("pinned beds after purge = %d, want 0", got)
 	}
 	finish() // must not double-decrement after the resident entry is gone.
-	if got := m.ActiveBedCount(); got != 0 {
-		t.Fatalf("active beds after late finish = %d, want 0", got)
+	if got := m.PinnedBedCount(); got != 0 {
+		t.Fatalf("pinned beds after late finish = %d, want 0", got)
 	}
 }
 
@@ -668,6 +719,25 @@ type fakeStore struct {
 	snaps map[string][]byte // bedID → marker file content
 	gens  map[string]int64  // bedID → generation of the stored snapshot
 	fail  bool              // force Persist to fail
+}
+
+type blockingStore struct {
+	*fakeStore
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingStore) Persist(ctx context.Context, id, dir string, generation int64) error {
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.release:
+		return s.fakeStore.Persist(ctx, id, dir, generation)
+	}
 }
 
 func newFakeStore() *fakeStore {
@@ -754,6 +824,9 @@ func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
+	if got := m.PinnedBedCount(); got != 1 {
+		t.Fatalf("conservatively dirty warm resume is not pinned: %d", got)
+	}
 	if record := b2.Lifecycle().LastActivation; record == nil || record.Source != "luggage" {
 		t.Fatalf("warm activation = %+v, want luggage", record)
 	}
@@ -762,6 +835,10 @@ func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(b2.Workspace, "restored.txt")); err == nil {
 		t.Fatal("fresh luggage must not be re-restored from the store")
+	}
+	m.PersistDirty(context.Background())
+	if got := m.PinnedBedCount(); got != 0 {
+		t.Fatalf("persisted warm resume stayed pinned: %d", got)
 	}
 }
 
@@ -850,7 +927,7 @@ func TestPersistDirty(t *testing.T) {
 
 	// Freshly created bed: persistedAt == created time; touch to mark dirty.
 	time.Sleep(5 * time.Millisecond)
-	b.touch(0)
+	m.touchBed(b)
 	done := m.PersistDirty(context.Background())
 	if len(done) != 1 || done[0] != "conv-3" {
 		t.Fatalf("PersistDirty = %v, want [conv-3]", done)
@@ -858,6 +935,52 @@ func TestPersistDirty(t *testing.T) {
 	// Untouched since → not persisted again.
 	if done := m.PersistDirty(context.Background()); len(done) != 0 {
 		t.Fatalf("second PersistDirty = %v, want []", done)
+	}
+}
+
+func TestPersistKeepsActivityAfterSnapshotPinned(t *testing.T) {
+	root := t.TempDir()
+	fs := &blockingStore{
+		fakeStore: newFakeStore(),
+		started:   make(chan struct{}, 1),
+		release:   make(chan struct{}),
+	}
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, fs)
+	b, _ := m.Ensure("watermark")
+
+	finish, err := m.BeginOperation(b, OpExec, 0)
+	if err != nil {
+		t.Fatalf("initial operation: %v", err)
+	}
+	finish()
+	persisted := make(chan struct{})
+	go func() {
+		m.PersistDirty(context.Background())
+		close(persisted)
+	}()
+	<-fs.started
+
+	// Activity after snapshot preparation must remain newer than the committed
+	// watermark even when the in-flight upload later succeeds.
+	finish, err = m.BeginOperation(b, OpExec, 0)
+	if err != nil {
+		t.Fatalf("operation during persist: %v", err)
+	}
+	finish()
+	close(fs.release)
+	<-persisted
+
+	if b.Status().DataSynced {
+		t.Fatal("activity after snapshot was incorrectly marked synced")
+	}
+	if got := m.PinnedBedCount(); got != 1 {
+		t.Fatalf("activity after snapshot released pinned capacity: %d", got)
+	}
+	if done := m.PersistDirty(context.Background()); len(done) != 1 {
+		t.Fatalf("follow-up persist = %v, want watermark bed", done)
+	}
+	if got := m.PinnedBedCount(); got != 0 {
+		t.Fatalf("follow-up persist did not release capacity: %d", got)
 	}
 }
 

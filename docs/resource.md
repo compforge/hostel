@@ -78,8 +78,8 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 ### 3. 当前准入策略
 
 ```text
-新 resident / dormant restore，或已同步 idle bed 准备进入 active
-  → max-active-beds 数量检查
+新 resident / dormant restore，或未 pinned 的 idle bed 准备进入 active
+  → max-pinned-beds 数量检查
       └─ 数量已满 → 429 BED_PRESSURE（携带容量快照）
   → 读取缓存的 carrier resource verdict
       ├─ CPU 或内存达到配置水位 → 429 RESOURCE_PRESSURE
@@ -87,14 +87,16 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
       └─ 不可测                    → fail-open，由数量上限兜底
 ```
 
+`pinned` 是复合容量事实，不是新的 bed state：`inflight > 0`，或 durable store 下
+`data_synced=false`，任一成立即 pinned；noop 表示调用方不要求数据完整性，因此 operation 结束即可解除 pinned。
 数量限制简单可预测，资源水位更接近真实成本；两者都是“停止接新归属”的信号，不是已归属 bed 的硬执行上限。两者组合后：
 
-- 瞬时 operation 很快释放 active 名额，一个 Hostel 可以先后承接大量 bed。
-- 耗时 operation 长期占用 active 名额，或把 carrier CPU/内存推到水位，都会对新 bed 形成背压。
-- 已 active 或未同步 bed 的后续 operation 在承诺范围内，不做资源准入；已同步 idle bed 可重新调度。
+- durable store 下，operation 结束只触发同步诉求；数据到达 store 后才释放 pinned 名额。同步节奏由 Store 控制，不由请求路径直接上传。
+- noop 下没有待完成的远端同步步骤，瞬时 operation 结束即释放 pinned 名额。
+- pinned bed 的后续 operation 在承诺范围内，不做资源准入；未 pinned 的 idle bed 可重新调度。
 - `BED_PRESSURE` 只表达数量容量已满；hostel 不自行淘汰或迁移 bed，由上层调度决定是否打破
   当前 carrier 的数据热亲和并溢出到其他 carrier。
-- 已 active 的 bed 不会因采样越线被暂停或杀死；default bed 也不参与资源准入。
+- 已接纳的 bed 不会因采样越线被暂停或杀死；default bed 也不参与资源准入。
 - 采集失败、无有限 limit 或非 Linux 环境均诚实上报 unavailable，并 fail-open 到数量策略。
 
 `--admission-cpu-threshold` 与 `--admission-memory-threshold` 只表达策略水位；具体默认值和当前字段
@@ -145,7 +147,7 @@ per-bed 配额，容易把高密度、强突发的 agent workload 错配成传�
 - mac/CI：cgroup 文本解析、CPU 窗口计算、memory verdict、不可用 fail-open、Bed admission 与 HTTP
   背压契约。
 - Linux 容器：验证 carrier 父 cgroup 聚合 daemon + bed 子组、真实 limit/usage 上报，以及 CPU/内存
-  压力达到水位后拒绝新 active bed。
+  压力达到水位后拒绝新的 carrier 归属。
 - per-bed 硬隔离落地时，再补 CPU throttle、OOM、pids exhaustion 与邻居延迟验证。
 
 非目标仍包括磁盘容量配额、网络带宽限制，以及共享 amenity 的虚假 tenant 级资源归因。

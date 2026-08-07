@@ -61,7 +61,7 @@ type AdmissionReport struct {
 
 // Admitter answers whether carrier pressure allows another idle tenant bed to
 // become active. It deliberately does not count beds; Manager composes this
-// signal with max-active-beds under its lifecycle lock.
+// signal with max-pinned-beds under its lifecycle lock.
 type Admitter interface {
 	Check() AdmissionDecision
 	Report() AdmissionReport
