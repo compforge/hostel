@@ -75,30 +75,29 @@ type Manager struct {
 // scheduler is expected to place the sandbox on another instance.
 var ErrBedLimit = errors.New("bed: max bed count reached")
 
-// ErrBedPressure is returned when an idle tenant bed cannot admit its first
-// operation without exceeding the configured pinned-bed cap. The upstream
-// scheduler should keep the bed on this carrier when possible, but may spill
-// it to another carrier when this pressure signal is returned.
-var ErrBedPressure = errors.New("bed: pinned capacity pressure")
+// ErrInsufficientBed is returned when admitting another unpinned tenant bed
+// would exceed the configured pinned-bed cap. BED_PRESSURE is only the early
+// scheduling signal; this error is the hard admission boundary.
+var ErrInsufficientBed = errors.New("bed: insufficient pinned capacity")
 
-// BedPressureError freezes the carrier capacity observed at the admission
+// InsufficientBedError freezes the carrier capacity observed at the admission
 // boundary. Counts are diagnostic context for the scheduler; the 429 signal
 // remains authoritative because inventory reads are deliberately stale-tolerant.
-type BedPressureError struct {
+type InsufficientBedError struct {
 	PinnedBeds    int64
 	MaxPinnedBeds int
 	ResidentBeds  int
 	MaxBeds       int
 }
 
-func (e *BedPressureError) Error() string {
+func (e *InsufficientBedError) Error() string {
 	return fmt.Sprintf(
 		"%s: pinned_beds=%d max_pinned_beds=%d resident_beds=%d max_beds=%d",
-		ErrBedPressure, e.PinnedBeds, e.MaxPinnedBeds, e.ResidentBeds, e.MaxBeds,
+		ErrInsufficientBed, e.PinnedBeds, e.MaxPinnedBeds, e.ResidentBeds, e.MaxBeds,
 	)
 }
 
-func (e *BedPressureError) Unwrap() error { return ErrBedPressure }
+func (e *InsufficientBedError) Unwrap() error { return ErrInsufficientBed }
 
 // ErrResourcePressure is returned when aggregate carrier CPU or memory usage
 // is already too high to activate another tenant bed.
@@ -211,10 +210,21 @@ func (m *Manager) MaxPinnedBeds() int { return m.maxPinnedBeds }
 // latest data has not reached the durable store. The default bed is exempt.
 func (m *Manager) PinnedBedCount() int64 { return m.pinnedBeds.Load() }
 
-// BedPressure reports whether this carrier should stop accepting another
-// resident tenant bed by pinned count. Resource pressure is reported separately.
+// BedPressure is an early scheduling signal. It becomes true at 80% of the
+// pinned-bed cap so the upstream can warm another carrier before hard admission
+// is exhausted. The remaining capacity is reserved for source-carrier fallback.
 func (m *Manager) BedPressure() bool {
-	return m.maxPinnedBeds > 0 && m.pinnedBeds.Load() >= int64(m.maxPinnedBeds)
+	threshold := bedPressureThreshold(m.maxPinnedBeds)
+	return threshold > 0 && m.pinnedBeds.Load() >= threshold
+}
+
+const bedPressurePercent = 80
+
+func bedPressureThreshold(maxPinnedBeds int) int64 {
+	if maxPinnedBeds <= 0 {
+		return 0
+	}
+	return (int64(maxPinnedBeds)*bedPressurePercent + 99) / 100
 }
 
 // carrierAdmissionErrorLocked applies pressure only where this carrier is
@@ -224,7 +234,7 @@ func (m *Manager) BedPressure() bool {
 func (m *Manager) carrierAdmissionErrorLocked() error {
 	if m.maxPinnedBeds > 0 && m.pinnedBeds.Load() >= int64(m.maxPinnedBeds) {
 		m.RequestStoreSync()
-		return &BedPressureError{
+		return &InsufficientBedError{
 			PinnedBeds:    m.pinnedBeds.Load(),
 			MaxPinnedBeds: m.maxPinnedBeds,
 			ResidentBeds:  m.tenantResidentBedsLocked(),

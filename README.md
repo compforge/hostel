@@ -201,19 +201,19 @@ there destroys data — same honesty rule as everywhere: `/healthz` tells you
 which world you're in.
 
 Capacity: `--max-beds N` caps resident tenant beds; `--max-pinned-beds M` is the
-pinned-count threshold that stops accepting new resident ownership. A bed is
+hard pinned-count limit. A bed is
 pinned while an operation is in flight or its latest data has not reached the
 durable store. With the noop store, only in-flight operations pin. `M=0` inherits `N`; both are
 unlimited only when `N=0` too. The default bed is exempt from both. An explicit
 `M` above a finite `N` is clamped to `N`: resident capacity is always the hard
 ceiling for pinned capacity.
-A pinned bed keeps its
-carrier commitment even above the threshold. A full instance returns `429
-BED_LIMIT_EXCEEDED` for resident count exhaustion or retryable `429
-BED_PRESSURE` for new/dormant placement and unpinned-idle activation.
-`pinned` and `data_synced` are reported per bed. `BED_PRESSURE` includes the pinned/resident count and limit snapshot;
-the upstream scheduler decides whether to keep the bed sticky to this carrier
-or spill it to another one.
+A pinned bed keeps its carrier commitment. At 80% of `M`, `GET /v1/beds`
+reports soft `bed_pressure` so the upstream can warm capacity and avoid new
+placements while retaining the final 20% for source-carrier fallback. At the
+hard limit, new/dormant placement and unpinned-idle activation return retryable
+`429 INSUFFICIENT_BED`; resident count exhaustion remains `429
+BED_LIMIT_EXCEEDED`. `pinned` and `data_synced` are reported per bed, and the
+capacity error includes the pinned/resident count and limit snapshot.
 
 Carrier resource admission complements those count limits. Hostel samples its
 container cgroup and refuses new ownership or an unpinned idle bed's first operation with `429

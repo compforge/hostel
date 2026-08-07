@@ -38,17 +38,17 @@ func respondBedError(c *gin.Context, err error) {
 		respondError(c, http.StatusTooManyRequests, ErrResourcePressure, err.Error())
 		return
 	}
-	var pressure *bed.BedPressureError
-	if errors.As(err, &pressure) {
+	var insufficient *bed.InsufficientBedError
+	if errors.As(err, &insufficient) {
 		c.JSON(http.StatusTooManyRequests, ErrorResponse{
-			Code:      ErrBedPressure,
+			Code:      ErrInsufficientBed,
 			Message:   err.Error(),
 			Retryable: true,
 			Pressure: &BedPressureDetails{
-				PinnedBeds:    pressure.PinnedBeds,
-				MaxPinnedBeds: pressure.MaxPinnedBeds,
-				ResidentBeds:  pressure.ResidentBeds,
-				MaxBeds:       pressure.MaxBeds,
+				PinnedBeds:    insufficient.PinnedBeds,
+				MaxPinnedBeds: insufficient.MaxPinnedBeds,
+				ResidentBeds:  insufficient.ResidentBeds,
+				MaxBeds:       insufficient.MaxBeds,
 			},
 		})
 		return

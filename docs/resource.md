@@ -79,8 +79,9 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 
 ```text
 新 resident / dormant restore，或未 pinned 的 idle bed 准备进入 active
-  → max-pinned-beds 数量检查
-      └─ 数量已满 → 429 BED_PRESSURE（携带容量快照）
+  → pinned 接近 max-pinned-beds → inventory 上报 BED_PRESSURE
+  → max-pinned-beds 硬上限检查
+      └─ 数量已满 → 429 INSUFFICIENT_BED（携带容量快照）
   → 读取缓存的 carrier resource verdict
       ├─ CPU 或内存达到配置水位 → 429 RESOURCE_PRESSURE
       ├─ 未达到                    → 接纳
@@ -94,8 +95,8 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 - durable store 下，operation 结束只触发同步诉求；数据到达 store 后才释放 pinned 名额。同步节奏由 Store 控制，不由请求路径直接上传。
 - noop 下没有待完成的远端同步步骤，瞬时 operation 结束即释放 pinned 名额。
 - pinned bed 的后续 operation 在承诺范围内，不做资源准入；未 pinned 的 idle bed 可重新调度。
-- `BED_PRESSURE` 只表达数量容量已满；hostel 不自行淘汰或迁移 bed，由上层调度决定是否打破
-  当前 carrier 的数据热亲和并溢出到其他 carrier。
+- `BED_PRESSURE` 是提前扩容和调度避让的软信号；剩余 pinned 容量保留给已有 source carrier
+  的兜底承接。达到硬上限后，`INSUFFICIENT_BED` 才表示本次 activation 无法准入。
 - 已接纳的 bed 不会因采样越线被暂停或杀死；default bed 也不参与资源准入。
 - 采集失败、无有限 limit 或非 Linux 环境均诚实上报 unavailable，并 fail-open 到数量策略。
 
