@@ -4,14 +4,15 @@ BIN       := bin/hostel
 ADDR      := :8872
 WS_ROOT   := ./.workspace
 IMAGE     := hostel:dev
-VERSION   := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION   := $(shell cat VERSION)
+LDFLAGS   := -X main.version=$(VERSION)
 PLATFORMS := linux/amd64,linux/arm64
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 build: ## Build the hostel binary for the current platform
-	go build -o $(BIN) ./cmd/hostel
+	go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/hostel
 
 # -race is non-negotiable here: shells, bed lifecycle and cas uploads are all
 # concurrent; -count=1 keeps the detector from being skipped by the test cache.
@@ -40,8 +41,8 @@ run-bwrap: build ## Run at suite level = bwrap (Linux with bubblewrap installed)
 	$(BIN) --isolation suite --workspace-root $(WS_ROOT) --addr $(ADDR)
 
 linux: ## Cross-compile static Linux binaries (amd64 + arm64) into bin/
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/hostel-linux-amd64 ./cmd/hostel
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/hostel-linux-arm64 ./cmd/hostel
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/hostel-linux-amd64 ./cmd/hostel
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/hostel-linux-arm64 ./cmd/hostel
 
 smoke: build ## Boot on a scratch port and curl the core endpoints end to end
 	@set -e; \
