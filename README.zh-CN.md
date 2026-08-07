@@ -99,7 +99,7 @@ Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isola
 
 持久化：`--store s3` 时每个 bed 快照到 S3 兼容对象存储——同 id 再建时恢复，驱逐（DELETE / idle 回收）或显式 checkpoint 时持久化。普通 operation 与 pressure 只提交可合并的同步诉求，Store 同步循环统一负责串行、失败退避和 `--persist-interval` 周期兜底。bed 的持久身份是快照，本地目录只是工作副本。`DELETE /v1/beds/:id` 是驱逐（身份保留），`?purge=true` 连快照一起删、终结身份；驱逐撞上并发流量返回 `409 BED_BUSY`，不丢在途写入。
 
-容量：`--max-beds N` 限制 resident tenant bed 数，`--max-pinned-beds M` 是停止接收新归属的 pinned 数阈值；有 operation，或 durable store 下最新数据尚未同步，任一成立即 pinned，noop 则只在 operation 期间 pinned。`M=0` 时继承 `N`，仅两者都为 0 时不限，default bed 不参与。pinned bed 仍由当前 carrier 承接；新 resident / dormant restore 以及未 pinned 的 idle bed 在 pressure 时返回可重试的 `429 BED_PRESSURE`。`GET /v1/beds` 与 bed detail 通过 `pinned` / `data_synced` 上报事实，上层调度决定保持热亲和还是选其他 carrier。
+容量：`--max-beds N` 限制 resident tenant bed 数，`--max-pinned-beds M` 是 pinned 硬上限；有 operation，或 durable store 下最新数据尚未同步，任一成立即 pinned，noop 则只在 operation 期间 pinned。`M=0` 时继承 `N`，仅两者都为 0 时不限，default bed 不参与。pinned 达到 `M` 的 80% 时，`GET /v1/beds` 上报软 `bed_pressure`，供上层提前扩容和避让；达到 `M` 后，新 resident / dormant restore 以及未 pinned 的 idle bed 返回可重试的 `429 INSUFFICIENT_BED`。pinned bed 仍由当前 carrier 承接，`pinned` / `data_synced` 继续上报完整事实。
 
 carrier 资源准入在数量限制之外读取容器父 cgroup：近期 CPU 或当前内存使用率达到水位时，新归属或未 pinned 的 idle bed 返回 `429 RESOURCE_PRESSURE`。pinned bed 与 default bed 不受影响；不可测时 fail-open 到数量策略。
 

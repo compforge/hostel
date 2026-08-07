@@ -514,14 +514,14 @@ func TestMaxPinnedBedsBackpressure(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &pressure); err != nil {
 		t.Fatalf("decode pressure response: %v", err)
 	}
-	if rec.Code != http.StatusTooManyRequests || pressure.Code != ErrBedPressure ||
+	if rec.Code != http.StatusTooManyRequests || pressure.Code != ErrInsufficientBed ||
 		!pressure.Retryable || pressure.Pressure == nil ||
 		pressure.Pressure.PinnedBeds != 1 || pressure.Pressure.MaxPinnedBeds != 1 ||
 		pressure.Pressure.ResidentBeds != 2 || pressure.Pressure.MaxBeds != 3 {
 		t.Fatalf("activate two = %d %s", rec.Code, rec.Body.String())
 	}
 	rec = do(t, s, http.MethodPost, "/v1/beds/two/checkpoint", nil, nil)
-	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "BED_PRESSURE") {
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "INSUFFICIENT_BED") {
 		t.Fatalf("checkpoint two = %d %s", rec.Code, rec.Body.String())
 	}
 	// The default bed bypasses both limits and does not affect the pinned count.

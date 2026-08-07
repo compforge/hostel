@@ -341,7 +341,7 @@ func (s *Server) capabilities(c *gin.Context) {
 func (s *Server) bedCheckpoint(c *gin.Context) {
 	id := c.Param("bedId")
 	if err := s.mgr.Checkpoint(c.Request.Context(), id); err != nil {
-		if errors.Is(err, bed.ErrBedPressure) {
+		if errors.Is(err, bed.ErrInsufficientBed) {
 			respondBedError(c, err)
 			return
 		}

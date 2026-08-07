@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -500,13 +501,13 @@ func TestMaxPinnedBedsAdmission(t *testing.T) {
 	}
 
 	_, err = m.Ensure("new-guest")
-	var pressure *BedPressureError
-	if !errors.Is(err, ErrBedPressure) || !errors.As(err, &pressure) {
-		t.Fatalf("admit new guest: want BedPressureError, got %v", err)
+	var insufficient *InsufficientBedError
+	if !errors.Is(err, ErrInsufficientBed) || !errors.As(err, &insufficient) {
+		t.Fatalf("admit new guest: want InsufficientBedError, got %v", err)
 	}
-	if pressure.PinnedBeds != 1 || pressure.MaxPinnedBeds != 1 ||
-		pressure.ResidentBeds != 1 || pressure.MaxBeds != 3 {
-		t.Fatalf("pressure = %+v", pressure)
+	if insufficient.PinnedBeds != 1 || insufficient.MaxPinnedBeds != 1 ||
+		insufficient.ResidentBeds != 1 || insufficient.MaxBeds != 3 {
+		t.Fatalf("insufficient capacity = %+v", insufficient)
 	}
 	if !m.BedPressure() {
 		t.Fatal("manager did not report bed pressure at pinned capacity")
@@ -613,7 +614,7 @@ func TestMaxPinnedBedsConcurrentAdmission(t *testing.T) {
 		case result.err == nil:
 			admitted++
 			finishes = append(finishes, result.finish)
-		case errors.Is(result.err, ErrBedPressure):
+		case errors.Is(result.err, ErrInsufficientBed):
 			rejected++
 		default:
 			t.Fatalf("unexpected admission error: %v", result.err)
@@ -631,6 +632,51 @@ func TestMaxPinnedBedsConcurrentAdmission(t *testing.T) {
 	m.PersistDirty(context.Background())
 	if got := m.PinnedBedCount(); got != 0 {
 		t.Fatalf("pinned beds after persist = %d, want 0", got)
+	}
+}
+
+func TestBedPressureStartsBeforeHardCapacity(t *testing.T) {
+	root := t.TempDir()
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 12, nil)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if err := m.SetMaxPinnedBeds(10); err != nil {
+		t.Fatalf("SetMaxPinnedBeds: %v", err)
+	}
+
+	beds := make([]*Bed, 11)
+	for i := range beds {
+		beds[i], err = m.Ensure(fmt.Sprintf("bed-%d", i))
+		if err != nil {
+			t.Fatalf("Ensure bed %d: %v", i, err)
+		}
+	}
+	var finishes []func()
+	defer func() {
+		for _, finish := range finishes {
+			finish()
+		}
+	}()
+	for i := 0; i < 8; i++ {
+		finish, beginErr := m.BeginOperation(beds[i], OpExec, 0)
+		if beginErr != nil {
+			t.Fatalf("BeginOperation bed %d: %v", i, beginErr)
+		}
+		finishes = append(finishes, finish)
+	}
+	if !m.BedPressure() {
+		t.Fatal("8/10 pinned beds should report early pressure")
+	}
+	for i := 8; i < 10; i++ {
+		finish, beginErr := m.BeginOperation(beds[i], OpExec, 0)
+		if beginErr != nil {
+			t.Fatalf("reserved capacity rejected bed %d: %v", i, beginErr)
+		}
+		finishes = append(finishes, finish)
+	}
+	if _, err := m.BeginOperation(beds[10], OpExec, 0); !errors.Is(err, ErrInsufficientBed) {
+		t.Fatalf("operation beyond hard capacity: want ErrInsufficientBed, got %v", err)
 	}
 }
 
