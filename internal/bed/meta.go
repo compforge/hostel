@@ -45,7 +45,7 @@ type Usage struct {
 	LastRestoreMs int64 `json:"last_restore_ms,omitempty"`
 }
 
-// bedMeta is hostel's durable per-bed bookkeeping (docs/persistence.md §4).
+// bedMeta is hostel's durable per-bed bookkeeping (docs/store.md §4).
 type bedMeta struct {
 	Version int    `json:"version"`
 	BedID   string `json:"bed_id"`
@@ -56,12 +56,16 @@ type bedMeta struct {
 	// dirty tracking never mistakes a failed upload for a fresh snapshot.
 	LastPersistedAt time.Time `json:"last_persisted_at,omitzero"`
 	// Generation counts persist attempts, monotonically; it is the freshness
-	// token for local copies (docs/persistence.md): luggage is current iff its
+	// token for local copies (docs/store.md): luggage is current iff its
 	// generation >= the snapshot's. Bumped BEFORE packing so the snapshot
 	// carries its own generation; a failed upload leaves the local copy ahead,
 	// which reads as "locally dirty" — accurate, and the next persist re-bumps.
 	// It orders snapshots where wall clocks cannot (beds migrate across hosts).
 	Generation int64 `json:"generation,omitempty"`
+	// Snapshot* records the last durable Stat result. It is a hint carried in
+	// luggage; activation always rechecks Store.Stat before trusting freshness.
+	SnapshotGeneration int64 `json:"snapshot_generation,omitempty"`
+	SnapshotBytes      int64 `json:"snapshot_bytes,omitempty"`
 	// LastActiveAt is stamped at evict time so luggage GC can order cold local
 	// copies by recency without any in-memory state.
 	LastActiveAt time.Time `json:"last_active_at,omitzero"`

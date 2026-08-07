@@ -1083,7 +1083,7 @@ func (s *slowStore) Persist(ctx context.Context, id, dir string, generation int6
 
 // Activity during an evict's persist window must CANCEL the eviction —
 // otherwise writes landing after the snapshot are silently destroyed with the
-// workspace (docs/persistence.md §4).
+// workspace (docs/store.md §4).
 func TestEvictCanceledByActivity(t *testing.T) {
 	root := t.TempDir()
 	ss := &slowStore{fakeStore: newFakeStore(), gate: make(chan struct{})}
@@ -1300,8 +1300,32 @@ func TestInventory(t *testing.T) {
 		t.Fatalf("conv-live = %+v, want idle gen 0", e)
 	}
 	cold := byID["conv-cold"]
-	if cold.State != "dormant" || cold.Generation != 1 || cold.Bytes == 0 || cold.LastActiveAt.IsZero() {
+	if cold.State != "dormant" || cold.Generation != 1 || cold.LocalBytes == 0 || cold.LastActiveAt.IsZero() {
 		t.Fatalf("conv-cold = %+v, want dormant gen 1 with bytes and last_active_at", cold)
+	}
+	if cold.SnapshotGeneration != 1 || cold.SnapshotBytes != 1 || cold.RestoreBytes != 0 {
+		t.Fatalf("conv-cold recovery facts = %+v, want fresh one-byte snapshot", cold)
+	}
+}
+
+func TestEstimatedRestoreBytesUsesFullSnapshotForStaleCopy(t *testing.T) {
+	tests := []struct {
+		name                                          string
+		generation, snapshotGeneration, snapshotBytes int64
+		dataSynced                                    bool
+		want                                          int64
+	}{
+		{name: "fresh local", generation: 4, snapshotGeneration: 4, snapshotBytes: 1024, dataSynced: true, want: 0},
+		{name: "stale local", generation: 3, snapshotGeneration: 4, snapshotBytes: 1024, dataSynced: true, want: 1024},
+		{name: "dirty resident", generation: 4, snapshotGeneration: 4, snapshotBytes: 1024, dataSynced: false, want: 1024},
+		{name: "unknown size", generation: 0, snapshotGeneration: 0, snapshotBytes: 0, dataSynced: false, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := estimatedRestoreBytes(tt.generation, tt.snapshotGeneration, tt.snapshotBytes, tt.dataSynced); got != tt.want {
+				t.Fatalf("estimatedRestoreBytes() = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }
 

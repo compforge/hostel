@@ -1,11 +1,11 @@
 # bed 数据隔离方案
 
-聚焦**数据隔离**：一个 bed 不能读、更不能写另一个 bed（或宿主）的数据。资源治理见 `resource.md`，持久化见 `persistence.md`，安全纵深（seccomp / 真 setuid）推后单独设计。
+聚焦**数据隔离**：一个 bed 不能读、更不能写另一个 bed（或宿主）的数据。资源治理见 `resource.md`，持久化见 `store.md`，安全纵深（seccomp / 真 setuid）推后单独设计。
 
 ## 一、理念
 
 1. **信任模型**：hostel 面向可信 / 半可信代码，多 bed 挤一个进程/容器。在这个模型里，**可读即泄漏**——bed A 读到 bed B 的 workspace，和写坏它一样是隔离失败。数据隔离是多租户成立的底线，比 syscall 加固更优先。
-2. **bed 的全部数据 = 一个目录**：`bed_home = <workspace-root>/<bedID>/data` 是 bed 的统一数据家目录——客户端视角的 `/`，bed 表现得像独占了整个 pod 文件系统。OpenSandbox workspace 是它下面的真实子目录 `bed_home/workspace`，不是 `bed_home` 的别名。隔离方案只需回答一个问题：**如何让 bed 的文件视图按当前房型兑现访问边界**。持久化（S3 快照/恢复）建立在同一个目录之上，见 `persistence.md`。
+2. **bed 的全部数据 = 一个目录**：`bed_home = <workspace-root>/<bedID>/data` 是 bed 的统一数据家目录——客户端视角的 `/`，bed 表现得像独占了整个 pod 文件系统。OpenSandbox workspace 是它下面的真实子目录 `bed_home/workspace`，不是 `bed_home` 的别名。隔离方案只需回答一个问题：**如何让 bed 的文件视图按当前房型兑现访问边界**。持久化（S3 快照/恢复）建立在同一个目录之上，见 `store.md`。
 3. **路径映射是三档共同的基础契约，不是高档房型的附加能力**：请求先由 `X-Hostel-Bed` 确定 bed，再把 file API、cwd 等显式路径映射到该 bed 的 `bed_home`；hostel 不靠路径判断请求属于哪个 bed。`dorm / room / suite` 只决定映射后的数据能否被兄弟 bed 看见、访问，不得改变同一个客户端路径落到哪个 bed-local 位置。
 4. **两套进程路径语义应当收敛**：客户端的任意绝对路径都按同一条规则 rebase 到 `bed_home` 下（`/workspace/x` 也不例外——它落到真实子目录 `bed_home/workspace/x`），映射是**单射**，回显因此天然对称。底层可以按房型使用宿主真实路径、Landlock/UID 或 mount namespace，但对调用方暴露的路径结果必须一致；不能因为 room/direct 没有 `/workspace` bind，就拒绝本可安全映射到 `bed_home` 的路径。
 5. **软件环境默认归 carrier 共享，隔离由真实问题驱动**：hostel 的首要目标是用一份运行时承载多个 bed，不为尚未出现的版本冲突预建 per-bed 软件目录、环境引用、manifest 或 GC。系统软件、可执行文件以及全局安装的 Python/Node 包在模型上都属于 carrier；当 carrier 提供全局安装能力时，安装结果对其中所有 bed 可见。确有版本冲突时，再由对应 bed 在自己的 `bed_home` 内使用 venv、conda、本地 `node_modules` 等生态原生方案局部隔离；需要独占完整系统环境时交给 pod 等强档 runtime。这个取舍只放宽共享软件环境，不改变 workspace、用户文件和程序产物仍须按 bed 隔离的底线。
@@ -126,8 +126,8 @@ bedProcessEnv = carrierSoftwareEnv + bedContextEnv + requestEnv
 
 - per-bed cgroup（资源消耗隔离）——见 `resource.md`；
 - seccomp / 真 setuid / userns（安全纵深）——单独设计；
-- overlay CoW 临时层——与持久化（`persistence.md`）合并考虑；
-- 跨 pod 实时共享 workspace——见 `persistence.md` 的诚实边界。
+- overlay CoW 临时层——与持久化（`store.md`）合并考虑；
+- 跨 pod 实时共享 workspace——见 `store.md` 的诚实边界。
 
 ## 实现状态
 

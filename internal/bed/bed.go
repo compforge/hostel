@@ -43,7 +43,7 @@ func ShortID(id string) string {
 // Bed is one isolation unit.
 type Bed struct {
 	ID string
-	// Dir is the bed's dir: meta.json + data/ (docs/persistence.md §4).
+	// Dir is the bed's dir: meta.json + data/ (docs/store.md §4).
 	// Snapshots pack this dir; bed code never sees it.
 	Dir string
 	// Home is Dir/data — the bed_home: the client's "/" and all the
@@ -68,15 +68,21 @@ type Bed struct {
 	retainUntil    time.Time // latest safe eviction time promised to accepted operations
 	inflight       int       // bed-scoped operations still in flight
 	inflightByKind map[OperationKind]int
-	activitySeq    uint64              // changes whenever activity starts or finishes
-	generation     int64               // latest local data generation
-	persistedAt    time.Time           // last successful snapshot (zero = never)
-	evicting       bool                // an evict's persist is in flight
-	shells         map[string]*Shell   // stateful bash sessions (spec /session)
-	sessions       map[string]*Session // revocable stateful holds (session.go)
-	usage          Usage               // cumulative; seeded from meta, flushed at persist
-	lastActivation *LifecycleRecord    // bounded diagnostics, never historical
-	lastPersist    *LifecycleRecord
+	activitySeq    uint64    // changes whenever activity starts or finishes
+	generation     int64     // latest local data generation
+	persistedAt    time.Time // last successful snapshot (zero = never)
+	// Snapshot* describes the durable copy last observed at an activation or
+	// persist boundary. LocalBytes is sampled asynchronously by the Store
+	// controller; all three are stale-tolerant scheduling hints.
+	snapshotGeneration int64
+	snapshotBytes      int64
+	localBytes         int64
+	evicting           bool                // an evict's persist is in flight
+	shells             map[string]*Shell   // stateful bash sessions (spec /session)
+	sessions           map[string]*Session // revocable stateful holds (session.go)
+	usage              Usage               // cumulative; seeded from meta, flushed at persist
+	lastActivation     *LifecycleRecord    // bounded diagnostics, never historical
+	lastPersist        *LifecycleRecord
 }
 
 // State is the mutually-exclusive operational state reported to the scheduler.
@@ -92,18 +98,35 @@ const (
 
 // Status is one atomic view of a resident bed's scheduler-facing facts.
 type Status struct {
-	State        State
-	Generation   int64
-	DataSynced   bool
-	Pinned       bool
-	LastActiveAt time.Time
-	RetainUntil  time.Time
-	Inflight     int
+	State              State
+	Generation         int64
+	SnapshotGeneration int64
+	SnapshotBytes      int64
+	LocalBytes         int64
+	DataSynced         bool
+	Pinned             bool
+	LastActiveAt       time.Time
+	RetainUntil        time.Time
+	Inflight           int
 	// Operations breaks Inflight down by kind; Sessions counts open stateful
 	// holds by kind (docs/lifecycle.md: sessions never raise State).
 	Operations map[OperationKind]int
 	Sessions   map[SessionKind]int
 	Usage      Usage
+}
+
+// RestoreBytes estimates how much durable data this carrier must download
+// before the bed becomes ready. Restore is currently full-snapshot: generation
+// is only an equality/freshness token, never a proxy for byte distance.
+func (s Status) RestoreBytes() int64 {
+	return estimatedRestoreBytes(s.Generation, s.SnapshotGeneration, s.SnapshotBytes, s.DataSynced)
+}
+
+func estimatedRestoreBytes(generation, snapshotGeneration, snapshotBytes int64, dataSynced bool) int64 {
+	if snapshotBytes <= 0 || dataSynced && generation >= snapshotGeneration {
+		return 0
+	}
+	return snapshotBytes
 }
 
 func (b *Bed) stateLocked() State {
@@ -142,16 +165,19 @@ func (b *Bed) Status() Status {
 		sessions[SessionKindCDP] = n
 	}
 	return Status{
-		State:        b.stateLocked(),
-		Generation:   b.generation,
-		DataSynced:   b.dataSyncedLocked(),
-		Pinned:       b.pinnedLocked(),
-		LastActiveAt: b.lastActiveAt,
-		RetainUntil:  b.retainUntil,
-		Inflight:     b.inflight,
-		Operations:   ops,
-		Sessions:     sessions,
-		Usage:        b.usage,
+		State:              b.stateLocked(),
+		Generation:         b.generation,
+		SnapshotGeneration: b.snapshotGeneration,
+		SnapshotBytes:      b.snapshotBytes,
+		LocalBytes:         b.localBytes,
+		DataSynced:         b.dataSyncedLocked(),
+		Pinned:             b.pinnedLocked(),
+		LastActiveAt:       b.lastActiveAt,
+		RetainUntil:        b.retainUntil,
+		Inflight:           b.inflight,
+		Operations:         ops,
+		Sessions:           sessions,
+		Usage:              b.usage,
 	}
 }
 

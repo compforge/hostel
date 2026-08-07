@@ -1,12 +1,16 @@
-# bed 数据持久化方案（S3 快照 / 恢复）
+# Store：bed 持久化与恢复
 
-bed 的 workspace 是本地目录，pod 重启 / 换 pod 即丢。本文回答：**如何让 bed 的数据活得比承载它的进程/pod 久**。数据治理见 `data.md`，资源治理见 `resource.md`。
+Store 是 Hostel 直管的组件，统一负责各个 bed workspace 的持久化与 Restore。bed 的
+workspace 是本地目录，pod 重启 / 换 pod 即丢；Store 把本地目录作为工作副本，把 durable
+snapshot 作为跨进程 / pod 的持久身份。上层调度系统只消费 Hostel 上报的同步与恢复成本事实，
+不直接驱动 Store。数据治理见 `data.md`，资源治理见 `resource.md`。
 
 ## 一、理念
 
-1. **持久身份 + 可弃计算**：bed 的持久身份是对象存储里的一份快照（`s3://bucket/<prefix>/<bedID>/`），本地 workspace 只是它的**工作副本**。计算（pod、hostel 进程、bed 内进程）随时可弃，数据不随之陪葬。
-2. **为什么不是共享文件系统**：直觉方案是把 workspace 直接放 NFS/共享盘。两个障碍——**内核 overlayfs 的 upper 不能放网络 FS**（不支持 whiteout/xattr，未来上 overlay CoW 就堵死）；且共享 FS 的每次读写都付网络往返，而 bed 活着时的读写是热路径。**本地目录 + 边界同步**把网络成本从"每次 IO"移到"生命周期边界"。
-3. **文件粒度快照，比 microVM 便宜一个量级**：这即 OSEP-0013 Phase 2（diff/commit/persist，OpenSandbox 自己未实现）的更简单实现——同步的是普通目录，不是 overlay upper，也不是内存镜像。
+1. **Hostel 直管**：activation、operation、pressure 等入口只向 Store 提交同步诉求；Store 自己掌握合并、串行、周期和重试节奏，并在 bed lifecycle 边界完成 Persist / Restore。
+2. **持久身份 + 可弃计算**：bed 的持久身份是对象存储里的一份快照（`s3://bucket/<prefix>/<bedID>/`），本地 workspace 只是它的**工作副本**。计算（pod、hostel 进程、bed 内进程）随时可弃，数据不随之陪葬。
+3. **为什么不是共享文件系统**：直觉方案是把 workspace 直接放 NFS/共享盘。两个障碍——**内核 overlayfs 的 upper 不能放网络 FS**（不支持 whiteout/xattr，未来上 overlay CoW 就堵死）；且共享 FS 的每次读写都付网络往返，而 bed 活着时的读写是热路径。**本地目录 + 边界同步**把网络成本从"每次 IO"移到"生命周期边界"。
+4. **文件粒度快照，比 microVM 便宜一个量级**：这即 OSEP-0013 Phase 2（diff/commit/persist，OpenSandbox 自己未实现）的更简单实现——同步的是普通目录，不是 overlay upper，也不是内存镜像。
 
 ## 二、流程
 
@@ -113,6 +117,22 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 共享 store 模式下 luggage 是纯缓存，删错只会多付一次 Restore，所以磁盘上限走独立水位而不占 max-beds：超过 `--luggage-high-bytes` 时按"generation 过期优先（纯垃圾）→ LRU"的顺序删到 `--luggage-low-bytes` 以下。这个排序是 cost-aware 驱逐的演化缝，v1 只认新旧。
 
 `GET /v1/beds` 把容量、`bed_counts`（active/idle/evicting/dormant）和每个本机 Bed 的 `state/generation/retained_until` 一次给上层调度器。上游据此优先命中 resident Bed，其次选择最高 generation 的 luggage；回收 carrier 前则确认不存在 resident Bed。inventory 是一次事实快照，不代替上游的单写者约束：同 bedID 双活仍由调度器归属 + store 侧 generation 冲突探测兜底。
+
+### 恢复成本与后续增量 Restore
+
+调度器判断数据亲和时需要的是“在这个 carrier 上把 bed 准备好还要搬多少数据”，不是 generation
+相差多少。Hostel 因此在 inventory 中同时上报本地 generation、最近观测到的 durable generation、
+快照大小、本地目录大小和预计 Restore 字节数；resident 目录大小与 durable snapshot 事实由
+activation / Store 同步循环在自己的节奏里刷新，`GET /v1/beds` 不为它们扫描 resident 目录或访问
+S3。dormant luggage 仍沿用 inventory 的本地目录扫描，后续可随 luggage 索引一起缓存。
+
+当前 Restore 仍是完整快照恢复：本地副本与 durable generation 一致时预计恢复量为 0；缺少本地副本
+或本地副本过期时，预计恢复量就是完整 `snapshot_bytes`。generation 只判断相等与新旧，不能作为版本
+距离或增量字节数使用。
+
+后续可在快照中增加目录 / 文件级 hash manifest，再由 Restore 对比本地与远端 manifest，按文件执行
+create / update / delete / keep。只有完成这套文件粒度对账后，才把 `restore_bytes` 收敛为真正的增量
+传输估算；在此之前不根据 generation 差值猜测增量，避免遗漏删除、重命名和内容回退。
 
 ### noop store 下的退化语义
 
