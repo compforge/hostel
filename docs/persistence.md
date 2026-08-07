@@ -55,9 +55,10 @@ s3 backend 的布局：复用 **desync 库**（casync 的 Go 实现，BSD-3；ca
 
 ### 4. 一致性：静默后快照
 
-活着的 bed 边写边传会拿到撕裂的快照。后台同步只选择**静默（无 operation、无 session）**的 dirty bed；
-快照准备时记录 activity watermark，上传期间发生的新活动仍保持 dirty/pinned，必须由下一轮同步覆盖，
-不能被本轮成功上传误标为已同步。
+活着的 bed 边写边传会拿到撕裂的快照。后台同步只在发起时选择**无 operation** 的 dirty bed；session
+可以长期存在而不产生写入，不能仅因连接仍在就永久阻塞持久化。快照准备时记录 activity watermark，
+session 流量或新 operation 若在上传期间发生，仍会让 bed 保持 dirty/pinned，由下一轮同步覆盖，不能被
+本轮成功上传误标为已同步。
 
 ### 5. 单写者：generation 冲突探测 + 上层调度系统权威
 

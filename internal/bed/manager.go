@@ -755,7 +755,11 @@ func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, b
 	failed := false
 	for _, b := range m.List() {
 		b.mu.Lock()
-		dirty := b.lastActiveAt.After(b.persistedAt) && b.inflight == 0 && len(b.sessions) == 0 && !b.evicting
+		// A session can stay open indefinitely without writing. Its existence
+		// must not block durability; real session traffic touches lastActiveAt,
+		// so activity after persistBed captures its watermark keeps the bed
+		// dirty for a follow-up pass.
+		dirty := b.lastActiveAt.After(b.persistedAt) && b.inflight == 0 && !b.evicting
 		b.mu.Unlock()
 		if !dirty {
 			continue

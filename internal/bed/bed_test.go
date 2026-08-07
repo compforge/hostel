@@ -938,6 +938,39 @@ func TestPersistDirty(t *testing.T) {
 	}
 }
 
+func TestPersistDirtyDoesNotWaitForSessionClose(t *testing.T) {
+	root := t.TempDir()
+	fs := newFakeStore()
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
+	b, _ := m.Ensure("session-sync")
+	sess, err := m.OpenSession(b, SessionKindCDP, nil)
+	if err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	defer sess.Close()
+
+	if done := m.PersistDirty(context.Background()); len(done) != 1 || done[0] != b.ID {
+		t.Fatalf("PersistDirty with open session = %v, want [%s]", done, b.ID)
+	}
+	status := b.Status()
+	if status.Sessions[SessionKindCDP] != 1 {
+		t.Fatalf("persist closed the session: %v", status.Sessions)
+	}
+	if !status.DataSynced || status.Pinned {
+		t.Fatalf("persisted idle session bed = synced %v pinned %v, want true/false", status.DataSynced, status.Pinned)
+	}
+
+	// Later session traffic dirties and pins the bed again; another store pass
+	// can persist it without waiting for the long-lived connection to close.
+	sess.Touch()
+	if !b.Status().Pinned {
+		t.Fatal("session traffic did not pin dirty data")
+	}
+	if done := m.PersistDirty(context.Background()); len(done) != 1 || done[0] != b.ID {
+		t.Fatalf("PersistDirty after session traffic = %v, want [%s]", done, b.ID)
+	}
+}
+
 func TestPersistKeepsActivityAfterSnapshotPinned(t *testing.T) {
 	root := t.TempDir()
 	fs := &blockingStore{
