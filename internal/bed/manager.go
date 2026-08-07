@@ -44,9 +44,10 @@ type Manager struct {
 	resources     resource.Tracker  // per-bed cgroup accounting; noop when unavailable
 	admission     resource.Admitter // cached carrier-pressure verdict; never performs request-path I/O
 	maxBeds       int               // cap on resident tenant beds; 0 = unlimited
-	maxActiveBeds int               // new-resident admission threshold by active count; 0 = unlimited
-	activeBeds    atomic.Int64      // resident tenant beds whose inflight count is non-zero
+	maxPinnedBeds int               // new-resident admission threshold by pinned count; 0 = unlimited
+	pinnedBeds    atomic.Int64      // tenant beds running work or holding data not yet durable
 	store         store.Store       // workspace persistence (Noop when disabled)
+	storeSync     chan struct{}     // coalesced requests; the store loop owns execution cadence
 	processEnv    processEnv        // explicit carrier software env; never daemon-wide inheritance
 	// bedIdleTTL is set once at startup. Accepted operations extend their bed
 	// through timeout+idleTTL so the idle reaper cannot kill in-flight work.
@@ -74,25 +75,25 @@ type Manager struct {
 var ErrBedLimit = errors.New("bed: max bed count reached")
 
 // ErrBedPressure is returned when an idle tenant bed cannot admit its first
-// operation without exceeding the configured active-bed cap. The upstream
+// operation without exceeding the configured pinned-bed cap. The upstream
 // scheduler should keep the bed on this carrier when possible, but may spill
 // it to another carrier when this pressure signal is returned.
-var ErrBedPressure = errors.New("bed: active capacity pressure")
+var ErrBedPressure = errors.New("bed: pinned capacity pressure")
 
 // BedPressureError freezes the carrier capacity observed at the admission
 // boundary. Counts are diagnostic context for the scheduler; the 429 signal
 // remains authoritative because inventory reads are deliberately stale-tolerant.
 type BedPressureError struct {
-	ActiveBeds    int64
-	MaxActiveBeds int
+	PinnedBeds    int64
+	MaxPinnedBeds int
 	ResidentBeds  int
 	MaxBeds       int
 }
 
 func (e *BedPressureError) Error() string {
 	return fmt.Sprintf(
-		"%s: active_beds=%d max_active_beds=%d resident_beds=%d max_beds=%d",
-		ErrBedPressure, e.ActiveBeds, e.MaxActiveBeds, e.ResidentBeds, e.MaxBeds,
+		"%s: pinned_beds=%d max_pinned_beds=%d resident_beds=%d max_beds=%d",
+		ErrBedPressure, e.PinnedBeds, e.MaxPinnedBeds, e.ResidentBeds, e.MaxBeds,
 	)
 }
 
@@ -132,10 +133,11 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		resources:  resources,
 		admission:  resource.NoopAdmission("resource admission not configured"),
 		maxBeds:    maxBeds,
-		// Zero max-active-beds inherits this value; initialize the effective
+		// Zero max-pinned-beds inherits this value; initialize the effective
 		// default here so direct Manager users get the same semantics as main.
-		maxActiveBeds: maxBeds,
+		maxPinnedBeds: maxBeds,
 		store:         st,
+		storeSync:     make(chan struct{}, 1),
 		processEnv:    processEnv,
 		beds:          make(map[string]*Bed),
 	}, nil
@@ -187,50 +189,67 @@ func (m *Manager) Commands() *CommandRegistry { return m.commands }
 // MaxBeds reports the configured cap (0 = unlimited) for capacity reporting.
 func (m *Manager) MaxBeds() int { return m.maxBeds }
 
-// SetMaxActiveBeds configures new-resident admission. It is startup
+// SetMaxPinnedBeds configures new-resident admission. It is startup
 // configuration and must be called before serving requests.
-func (m *Manager) SetMaxActiveBeds(max int) error {
+func (m *Manager) SetMaxPinnedBeds(max int) error {
 	if max < 0 {
-		return fmt.Errorf("bed: max active beds must be non-negative: %d", max)
+		return fmt.Errorf("bed: max pinned beds must be non-negative: %d", max)
 	}
 	if max == 0 || (m.maxBeds > 0 && max > m.maxBeds) {
 		max = m.maxBeds
 	}
-	m.maxActiveBeds = max
+	m.maxPinnedBeds = max
 	return nil
 }
 
-// MaxActiveBeds reports the active-count threshold that stops new resident
+// MaxPinnedBeds reports the pinned-count threshold that stops new resident
 // admission (0 = unlimited). Existing residents may run above it.
-func (m *Manager) MaxActiveBeds() int { return m.maxActiveBeds }
+func (m *Manager) MaxPinnedBeds() int { return m.maxPinnedBeds }
 
-// ActiveBedCount reports resident tenant beds with at least one in-flight operation.
-// The default bed is deliberately outside both capacity limits.
-func (m *Manager) ActiveBedCount() int64 { return m.activeBeds.Load() }
+// PinnedBedCount reports tenant beds that are running an operation or whose
+// latest data has not reached the durable store. The default bed is exempt.
+func (m *Manager) PinnedBedCount() int64 { return m.pinnedBeds.Load() }
 
 // BedPressure reports whether this carrier should stop accepting another
-// resident tenant bed by active count. Resource pressure is reported separately.
+// resident tenant bed by pinned count. Resource pressure is reported separately.
 func (m *Manager) BedPressure() bool {
-	return m.maxActiveBeds > 0 && m.activeBeds.Load() >= int64(m.maxActiveBeds)
+	return m.maxPinnedBeds > 0 && m.pinnedBeds.Load() >= int64(m.maxPinnedBeds)
 }
 
 // carrierAdmissionErrorLocked applies pressure only where this carrier is
-// taking ownership: a new resident, a dormant restore, or a synced idle cache
-// becoming active again. Callers hold m.mu so the count snapshot is coherent
+// taking ownership: a new resident, a dormant restore, or an unpinned idle
+// cache becoming active again. Callers hold m.mu so the count snapshot is coherent
 // with resident admission.
 func (m *Manager) carrierAdmissionErrorLocked() error {
-	if m.maxActiveBeds > 0 && m.activeBeds.Load() >= int64(m.maxActiveBeds) {
+	if m.maxPinnedBeds > 0 && m.pinnedBeds.Load() >= int64(m.maxPinnedBeds) {
+		m.RequestStoreSync()
 		return &BedPressureError{
-			ActiveBeds:    m.activeBeds.Load(),
-			MaxActiveBeds: m.maxActiveBeds,
+			PinnedBeds:    m.pinnedBeds.Load(),
+			MaxPinnedBeds: m.maxPinnedBeds,
 			ResidentBeds:  m.tenantResidentBedsLocked(),
 			MaxBeds:       m.maxBeds,
 		}
 	}
 	if decision := m.admission.Check(); !decision.Allowed {
+		m.RequestStoreSync()
 		return fmt.Errorf("%w: %s", ErrResourcePressure, decision.Reason)
 	}
 	return nil
+}
+
+// adjustPinnedLocked updates the tenant capacity counter after a bed mutation.
+// Callers hold m.mu and b.mu and pass the pre-mutation compound value.
+func (m *Manager) adjustPinnedLocked(b *Bed, wasPinned bool) {
+	if b.ID == m.defaultBed {
+		return
+	}
+	isPinned := b.pinnedLocked()
+	switch {
+	case !wasPinned && isPinned:
+		m.pinnedBeds.Add(1)
+	case wasPinned && !isPinned:
+		m.pinnedBeds.Add(-1)
+	}
 }
 
 // ResidentBedCount reports the current in-memory bed count without taking the
@@ -275,8 +294,8 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 		return b, nil
 	}
 	// Admit NEW resident beds here. Existing residents reach their final
-	// admission boundary in BeginOperation: synced idle beds may be refused,
-	// while active or unsynced beds retain this carrier. Dormant restore also
+	// admission boundary in BeginOperation: unpinned idle beds may be refused,
+	// while pinned beds retain this carrier. Dormant restore also
 	// passes this boundary because its durable data no longer belongs here.
 	//
 	// The default bed is the single-tenant fallback and
@@ -396,6 +415,7 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 			ID: id, Dir: bedDir, Home: dataDir, Workspace: wsDir,
 			CreatedAt: meta.CreatedAt, lastActiveAt: now, retainUntil: retainUntil,
 			generation: meta.Generation, persistedAt: persistedAt, usage: usage,
+			durable:        m.store.Name() != "noop",
 			shells:         make(map[string]*Shell),
 			sessions:       make(map[string]*Session),
 			inflightByKind: make(map[OperationKind]int),
@@ -403,6 +423,10 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 		}
 		m.beds[id] = b
 		m.residentBeds.Add(1)
+		if id != m.defaultBed && b.pinnedLocked() {
+			m.pinnedBeds.Add(1)
+			m.RequestStoreSync()
+		}
 		resolved = b
 		return nil
 	}); err != nil {
@@ -561,8 +585,8 @@ func (m *Manager) Purge(id string) error {
 		b.mu.Lock()
 		delete(m.beds, id)
 		m.residentBeds.Add(-1)
-		if b.inflight > 0 {
-			m.activeBeds.Add(-1)
+		if b.pinnedLocked() {
+			m.pinnedBeds.Add(-1)
 		}
 		b.mu.Unlock()
 	}
@@ -647,6 +671,7 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 	defer b.persistMu.Unlock()
 
 	var meta bedMeta
+	var snapshotWatermark time.Time
 	if err := trace.stage("prepare_snapshot", func() error {
 		var ok bool
 		meta, ok = loadMeta(b.Dir)
@@ -663,6 +688,7 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 		}
 		b.mu.Lock()
 		b.generation = meta.Generation
+		snapshotWatermark = b.lastActiveAt
 		b.mu.Unlock()
 		return nil
 	}); err != nil {
@@ -683,12 +709,18 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 	}
 
 	_ = trace.stage("commit_watermark", func() error {
+		m.mu.Lock()
 		b.mu.Lock()
-		b.persistedAt = persistedAt
+		wasPinned := b.pinnedLocked()
+		b.persistedAt = snapshotWatermark
 		b.usage.LastPersistMs = persistedAt.Sub(persistStarted).Milliseconds()
 		meta.Usage = b.usage
+		if current, ok := m.beds[b.ID]; ok && current == b {
+			m.adjustPinnedLocked(b, wasPinned)
+		}
 		b.mu.Unlock()
-		meta.LastPersistedAt = persistedAt
+		m.mu.Unlock()
+		meta.LastPersistedAt = snapshotWatermark
 		_ = saveMeta(b.Dir, meta) // best-effort; in-memory watermark is set
 		return nil
 	})
@@ -709,22 +741,35 @@ func (m *Manager) Checkpoint(ctx context.Context, id string) error {
 	return m.persistBed(ctx, b, "checkpoint")
 }
 
-// PersistDirty is the periodic safety net: snapshot every bed touched since
-// its last snapshot. Best-effort — a failed bed is retried next tick. Returns
-// ids persisted. The default bed is included (its data matters most).
+// PersistDirty asks the persistence subsystem to snapshot every idle bed
+// touched since its last snapshot. The store loop normally owns invocation;
+// this synchronous entry point is retained for tests and explicit callers.
+// The default bed is included because its data matters most.
 func (m *Manager) PersistDirty(ctx context.Context) []string {
+	done, _ := m.persistDirty(ctx, "manual")
+	return done
+}
+
+func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, bool) {
 	var done []string
+	failed := false
 	for _, b := range m.List() {
 		b.mu.Lock()
-		dirty := b.lastActiveAt.After(b.persistedAt)
+		// A session can stay open indefinitely without writing. Its existence
+		// must not block durability; real session traffic touches lastActiveAt,
+		// so activity after persistBed captures its watermark keeps the bed
+		// dirty for a follow-up pass.
+		dirty := b.lastActiveAt.After(b.persistedAt) && b.inflight == 0 && !b.evicting
 		b.mu.Unlock()
 		if !dirty {
 			continue
 		}
-		if err := m.persistBed(ctx, b, "periodic"); err != nil {
+		if err := m.persistBed(ctx, b, trigger); err != nil {
+			log.Printf("hostel: store sync failed: bed=%s trigger=%s error=%v", b.Short(), trigger, err)
+			failed = true
 			continue
 		}
 		done = append(done, b.ID)
 	}
-	return done
+	return done, failed
 }

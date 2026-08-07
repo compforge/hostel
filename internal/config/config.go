@@ -56,10 +56,10 @@ type Config struct {
 	// NEW bed creation only, never to the default bed; the 429 it produces is
 	// the backpressure/placement signal for an upstream scheduler.
 	MaxBeds int
-	// MaxActiveBeds caps tenant beds with at least one in-flight operation.
-	// Zero inherits MaxBeds (and is unlimited when MaxBeds is also zero). A
-	// finite MaxBeds is always the effective ceiling. The default bed is exempt.
-	MaxActiveBeds int
+	// MaxPinnedBeds caps tenant beds that are running work or whose latest data
+	// has not reached the durable store. Zero inherits MaxBeds (and is unlimited
+	// when MaxBeds is also zero). The default bed is exempt.
+	MaxPinnedBeds int
 	// AdmissionCPUThreshold / AdmissionMemoryThreshold reject an idle tenant
 	// bed's first operation when aggregate carrier usage reaches the configured
 	// percentage. Zero disables that resource dimension.
@@ -122,7 +122,7 @@ func Load(args []string) *Config {
 	bedEnvPassthrough := fs.String("bed-env-passthrough", osx.EnvStr("HOSTEL_BED_ENV_PASSTHROUGH", defaultBedEnvPassthrough), "comma-separated carrier env names exposed to bed processes")
 	idle := fs.Duration("bed-idle-timeout", osx.EnvDuration("HOSTEL_BED_IDLE_TIMEOUT", 30*time.Minute), "reap a bed after this idle duration (0=never)")
 	fs.IntVar(&c.MaxBeds, "max-beds", osx.EnvInt("HOSTEL_MAX_BEDS", 0), "max concurrent beds, 0=unlimited (default bed exempt)")
-	fs.IntVar(&c.MaxActiveBeds, "max-active-beds", osx.EnvInt("HOSTEL_MAX_ACTIVE_BEDS", 0), "max active beds, 0=inherit max-beds (default bed exempt)")
+	fs.IntVar(&c.MaxPinnedBeds, "max-pinned-beds", osx.EnvInt("HOSTEL_MAX_PINNED_BEDS", 0), "max pinned beds, 0=inherit max-beds (default bed exempt)")
 	fs.IntVar(&c.AdmissionCPUThreshold, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.AdmissionMemoryThreshold, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
 	fs.StringVar(&c.BedInit, "bed-init", osx.EnvStr("HOSTEL_BED_INIT", "auto"), "per-bed init spawner: auto (probe at boot, fall back in-process) | off")

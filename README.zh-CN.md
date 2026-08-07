@@ -93,15 +93,15 @@ POST /v1/beds/:id/browser/close
 
 ## 配置
 
-Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isolation` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` / `--max-active-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` / `--bed-init` / `--bed-env-passthrough` / `--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` / `--luggage-high-bytes` / `--luggage-low-bytes` / `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port`。
+Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isolation` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` / `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` / `--bed-init` / `--bed-env-passthrough` / `--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` / `--luggage-high-bytes` / `--luggage-low-bytes` / `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port`。
 
 环境变量按 owner 分命名空间：`HOSTEL_*` 只配置 daemon，不会整份继承进 bed；bed 身份/能力使用 `BED_*`（始终注入 `BED_ID`）；生态变量继续使用 PATH、HOME 等标准名称。`--bed-env-passthrough` 显式选择 carrier 的 PATH、locale、证书和 Python/npm/uv 等软件环境，request `envs` 只覆盖本次执行；调用方不能占用保留的 `HOSTEL_*` / `BED_*` 命名空间。
 
-持久化：`--store s3` 时每个 bed 快照到 `s3://<bucket>/<prefix>/<bedID>.tar.gz`（任意 S3 兼容端点）——同 id 再建时恢复,驱逐（DELETE / idle 回收）或显式 checkpoint 时持久化,另有 `--persist-interval` 周期兜底。bed 的持久身份是快照,本地目录只是工作副本。`DELETE /v1/beds/:id` 是驱逐（身份保留）,`?purge=true` 连快照一起删、终结身份;驱逐撞上并发流量返回 `409 BED_BUSY`,不丢在途写入。
+持久化：`--store s3` 时每个 bed 快照到 S3 兼容对象存储——同 id 再建时恢复，驱逐（DELETE / idle 回收）或显式 checkpoint 时持久化。普通 operation 与 pressure 只提交可合并的同步诉求，Store 同步循环统一负责串行、失败退避和 `--persist-interval` 周期兜底。bed 的持久身份是快照，本地目录只是工作副本。`DELETE /v1/beds/:id` 是驱逐（身份保留），`?purge=true` 连快照一起删、终结身份；驱逐撞上并发流量返回 `409 BED_BUSY`，不丢在途写入。
 
-容量：`--max-beds N` 限制 resident tenant bed 数，`--max-active-beds M` 是停止接收新 resident 归属的 active 数阈值；`M=0` 时继承 `N`，仅两者都为 0 时不限，default bed 不参与。已 active 或数据未同步的 idle bed 仍由当前 carrier 承接；新 resident / dormant restore 以及已同步 idle bed 在 pressure 时返回可重试的 `429 BED_PRESSURE`。`GET /v1/beds` 与 bed detail 通过 `data_synced` 上报该事实，上层调度决定保持热亲和还是选其他 carrier。
+容量：`--max-beds N` 限制 resident tenant bed 数，`--max-pinned-beds M` 是停止接收新归属的 pinned 数阈值；有 operation，或 durable store 下最新数据尚未同步，任一成立即 pinned，noop 则只在 operation 期间 pinned。`M=0` 时继承 `N`，仅两者都为 0 时不限，default bed 不参与。pinned bed 仍由当前 carrier 承接；新 resident / dormant restore 以及未 pinned 的 idle bed 在 pressure 时返回可重试的 `429 BED_PRESSURE`。`GET /v1/beds` 与 bed detail 通过 `pinned` / `data_synced` 上报事实，上层调度决定保持热亲和还是选其他 carrier。
 
-carrier 资源准入在数量限制之外读取容器父 cgroup：近期 CPU 或当前内存使用率达到水位时，新归属或已同步 idle bed 返回 `429 RESOURCE_PRESSURE`。已 active、未同步 bed 与 default bed 不受影响；不可测时 fail-open 到数量策略。
+carrier 资源准入在数量限制之外读取容器父 cgroup：近期 CPU 或当前内存使用率达到水位时，新归属或未 pinned 的 idle bed 返回 `429 RESOURCE_PRESSURE`。pinned bed 与 default bed 不受影响；不可测时 fail-open 到数量策略。
 
 ## 容器镜像
 

@@ -45,8 +45,8 @@ func respondBedError(c *gin.Context, err error) {
 			Message:   err.Error(),
 			Retryable: true,
 			Pressure: &BedPressureDetails{
-				ActiveBeds:    pressure.ActiveBeds,
-				MaxActiveBeds: pressure.MaxActiveBeds,
+				PinnedBeds:    pressure.PinnedBeds,
+				MaxPinnedBeds: pressure.MaxPinnedBeds,
 				ResidentBeds:  pressure.ResidentBeds,
 				MaxBeds:       pressure.MaxBeds,
 			},
@@ -251,8 +251,8 @@ func (s *Server) healthz(c *gin.Context) {
 		"workspace_mount": iso.MountPoint() != "",
 		"beds":            s.mgr.ResidentBedCount(),
 		"max_beds":        s.mgr.MaxBeds(),
-		"active_beds":     s.mgr.ActiveBedCount(),
-		"max_active_beds": s.mgr.MaxActiveBeds(),
+		"pinned_beds":     s.mgr.PinnedBedCount(),
+		"max_pinned_beds": s.mgr.MaxPinnedBeds(),
 		"bed_pressure":    s.mgr.BedPressure(),
 		"persistence":     s.mgr.StoreName(),
 		"resource_accounting": gin.H{

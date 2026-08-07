@@ -16,8 +16,9 @@ create/resume bed(bedID) ──→ store.Stat(bedID)?
                                 │            ├─ 是 → warm start（免下载，直接用现场）
                                 │            └─ 否 → 丢弃过期现场，Restore 后放行
                                 └─ 无快照 → 空 workspace（或 noop 下的遗留现场）直接放行
-bed 活着                  ──→ 本地读写，零网络往返
-idle / delete / checkpoint ──→ 静默（无运行中命令）→ 打包 → Persist 到 S3
+bed 活着                  ──→ 本地读写，零网络往返；operation/pressure 只提交同步 trigger
+Store 同步循环            ──→ 合并 trigger + 自有周期/重试 → 静默 bed → Persist 到 S3
+delete / checkpoint       ──→ 回收边界或显式请求直接等待 Persist
 evict 完成                ──→ 本地目录留作 luggage（现场缓存），交磁盘水位 GC 管
 ```
 
@@ -35,11 +36,14 @@ type Store interface {
 }
 ```
 
-backend：`auto`（默认）· `noop`（laptop 零依赖）· `s3`（内容寻址增量，见 §3；`cas` 为别名）。S3 兼容 API 皆可（AWS / MinIO / 火山 TOS / Ceph），配置：`--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style`（默认 virtual-hosted；只在 endpoint 要求时开启；creds 走 AWS SDK 标准环境链）/ `--persist-on-idle` / `--persist-interval`。**`auto` 按意图解析**：配了 bucket = 想要持久化 → s3；没配 → noop。这同时封掉"配了 bucket 但忘了 `--store` → 静默不持久化"的误配。
+backend：`auto`（默认）· `noop`（laptop 零依赖）· `s3`（内容寻址增量，见 §3；`cas` 为别名）。S3 兼容 API 皆可（AWS / MinIO / 火山 TOS / Ceph），配置：`--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style`（默认 virtual-hosted；只在 endpoint 要求时开启；creds 走 AWS SDK 标准环境链）/ `--persist-interval`。**`auto` 按意图解析**：配了 bucket = 想要持久化 → s3；没配 → noop。这同时封掉"配了 bucket 但忘了 `--store` → 静默不持久化"的误配。
 
-### 2. persist 触发：边界同步，不每写必传
+### 2. persist 触发：入口表达诉求，Store 掌握节奏
 
-idle 超时 + delete + 显式 checkpoint + 可选周期兜底。每次写都传太吵且拿不到一致快照；周期 + on-idle 共同决定"崩溃丢多少"的窗口。
+activation、operation 开闭、session 流量和 carrier pressure 都只向同步循环提交“尽快同步”的 trigger；trigger
+可合并，不在请求路径直接上传。同步循环统一串行处理、按 `--persist-interval` 做周期兜底，并对失败
+退避重试。evict 与显式 checkpoint 是必须得到结果的生命周期边界，仍同步等待 Persist。这样入口可以
+不断表达诉求，而 Store 保留自己的并发、节奏和重试权。
 
 ### 3. 粒度：内容寻址增量（cas）
 
@@ -51,7 +55,10 @@ s3 backend 的布局：复用 **desync 库**（casync 的 Go 实现，BSD-3；ca
 
 ### 4. 一致性：静默后快照
 
-活着的 bed 边写边传会拿到撕裂的快照。只在**空闲（无运行中命令）**时 snapshot；显式 checkpoint 先静默（暂停接新命令）→ 打包 → 恢复接单。
+活着的 bed 边写边传会拿到撕裂的快照。后台同步只在发起时选择**无 operation** 的 dirty bed；session
+可以长期存在而不产生写入，不能仅因连接仍在就永久阻塞持久化。快照准备时记录 activity watermark，
+session 流量或新 operation 若在上传期间发生，仍会让 bed 保持 dirty/pinned，由下一轮同步覆盖，不能被
+本轮成功上传误标为已同步。
 
 ### 5. 单写者：generation 冲突探测 + 上层调度系统权威
 
@@ -128,18 +135,19 @@ meta 对 bed 内代码**不可见**（bwrap 只 bind `data/`，root 整体被 tm
 ## 诚实边界
 
 - **边界同步 ≠ 实时共享 FS**：两个 pod 不能同时 live 读写同一个 bed；要那个语义就得回共享 FS 路线（并放弃 overlay 演进）。对"一 conv 一 bed、之后可能换 pod 恢复"的模型，边界同步正好且简单。
-- **崩溃丢 last-sync 之后的改动**：窗口靠周期 + on-idle 压小，非零。要零丢失只能实时 FS，另一套复杂度。
+- **崩溃丢 last-sync 之后的改动**：窗口靠生命周期 trigger + 周期兜底压小，非零。要零丢失只能实时 FS，另一套复杂度。
 
 ## 实现状态
 
 已实现（`internal/store/` + `bed.Manager` 生命周期钩子）：
 
 - `Store` 接口 + `noop` / `s3`（aws-sdk-go-v2，`--s3-endpoint` 支持 S3 兼容存储，凭据走 AWS SDK 标准链）；默认 `auto` 按 bucket 有无解析
-- restore-on-create（`Ensure` 新建时，restore 失败即拒绝服务——静默空启动等于数据丢失）、**persist 失败中止 Evict**（毁掉唯一副本比留着 bed 重试更糟）、`POST /v1/beds/:id/checkpoint`、`--persist-interval` 周期兜底（只传 dirty bed，watermark 落 meta.json 跨重启有效）
+- restore-on-create（`Ensure` 新建时，restore 失败即拒绝服务——静默空启动等于数据丢失）、**persist 失败中止 Evict**（毁掉唯一副本比留着 bed 重试更糟）、`POST /v1/beds/:id/checkpoint`
+- Store 同步循环：合并 lifecycle/pressure trigger，自主串行、周期兜底与失败退避；只传静默 dirty bed，并以 snapshot activity watermark 提交同步水位
 - **生命周期已落地**（§四）：`BeginOperation` 统一 Exec/文件/浏览器/checkpoint 活跃度，`state: active|idle|evicting|dormant` 与 generation/expiry 正交；`Evict` 不杀 active operation，EVICTING 期间新 operation 取消驱逐；`Purge`（`DELETE ?purge=true`）终结身份
 - capabilities / healthz 报 `persistence: noop|s3`
 - **luggage 已落地**：evict 留现场 + `LastActiveAt` 盖章、`Ensure` 按 generation 判新鲜（warm start / 丢弃重拉）、`--luggage-high/low-bytes` 水位 GC（stale 优先 → LRU，rename-under-lock 防与 Ensure 竞态）、`GET /v1/beds` 报容量与全部本机 bed；generation 存 S3 object user metadata（`Stat`=HEAD 免下载）
 - **双活冲突探测**（§三.5）：`Persist` 写前 HEAD 比对 generation，远端更新则 `store.ErrConflict` 拒绝覆盖（first-writer-wins；evict 路径因 persist 失败自然中止，bed 留在本机继续服务）
 - **cas 后端已落地**（§三.3，`internal/store/cas.go`，desync 库）：catar+CDC 流式切块上传（上代 index 做免传清单）、index 提交点带 generation/bytes metadata、块序列相同时零 chunk 上传但推进 index generation、提交后按"LIST − index 引用"做 per-bed GC、restore 经 `UnTarIndex` 并发拉块（块 ID 对解压数据复核，桶内损坏在 restore 报错而不是落进 workspace；desync `LocalFS` 为 `os.Root` 背书，自带 symlink 逃逸防护）；全流程在内存 objAPI fake 上有单测（roundtrip/增量/GC/no-op/冲突/purge）
 
-与设计的两处偏差：checkpoint **暂不硬静默**（不暂停接单，调用方自选空闲点打快照）；未单设 `--persist-on-idle`（idle GC 走 Delete，persist-before-delete 天然覆盖）。真实 S3 通路未在本地 CI 验证（无 MinIO）；生命周期逻辑、cas 全编排（经内存 objAPI fake）有单测覆盖。
+与设计的一处偏差：checkpoint **暂不硬静默**（不暂停接单，调用方自选空闲点打快照）。真实 S3 通路未在本地 CI 验证（无 MinIO）；生命周期逻辑、cas 全编排（经内存 objAPI fake）有单测覆盖。

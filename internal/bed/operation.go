@@ -38,6 +38,22 @@ const (
 	MaxOperationTimeout     = 2 * time.Hour
 )
 
+// touchBed records activity that belongs to an already-admitted operation or
+// session. Keeping the compound pinned counter under the manager lock avoids
+// a dirty idle bed appearing movable between requests.
+func (m *Manager) touchBed(b *Bed) {
+	m.mu.Lock()
+	b.mu.Lock()
+	if current, ok := m.beds[b.ID]; ok && current == b {
+		wasPinned := b.pinnedLocked()
+		b.touchLocked(time.Now(), m.bedIdleTTL)
+		m.adjustPinnedLocked(b, wasPinned)
+	}
+	b.mu.Unlock()
+	m.mu.Unlock()
+	m.RequestStoreSync()
+}
+
 // BeginOperation marks a bed active and reserves it through timeout plus the
 // configured idle TTL. Admission and final eviction both take m.mu then b.mu,
 // so an operation cannot start on a Bed after its resident entry is removed.
@@ -59,9 +75,8 @@ func (m *Manager) BeginOperation(b *Bed, kind OperationKind, timeout time.Durati
 		m.mu.Unlock()
 		return nil, ErrBedUnavailable
 	}
-	becomingActive := b.inflight == 0 && b.ID != m.defaultBed
-	dataSynced := m.store.Name() == "noop" || !b.lastActiveAt.After(b.persistedAt)
-	if becomingActive && dataSynced {
+	wasPinned := b.pinnedLocked()
+	if !wasPinned && b.ID != m.defaultBed {
 		if err := m.carrierAdmissionErrorLocked(); err != nil {
 			b.mu.Unlock()
 			m.mu.Unlock()
@@ -72,14 +87,13 @@ func (m *Manager) BeginOperation(b *Bed, kind OperationKind, timeout time.Durati
 	b.activitySeq++
 	b.inflight++
 	b.inflightByKind[kind]++
-	if becomingActive {
-		m.activeBeds.Add(1)
-	}
+	m.adjustPinnedLocked(b, wasPinned)
 	if m.bedIdleTTL > 0 && retainUntil.After(b.retainUntil) {
 		b.retainUntil = retainUntil
 	}
 	b.mu.Unlock()
 	m.mu.Unlock()
+	m.RequestStoreSync()
 
 	var once sync.Once
 	return func() {
@@ -87,29 +101,34 @@ func (m *Manager) BeginOperation(b *Bed, kind OperationKind, timeout time.Durati
 			now := time.Now()
 			m.mu.Lock()
 			b.mu.Lock()
+			wasPinned := b.pinnedLocked()
 			if b.inflight > 0 {
 				b.inflight--
-				if b.inflight == 0 && b.ID != m.defaultBed {
-					if current, ok := m.beds[b.ID]; ok && current == b {
-						m.activeBeds.Add(-1)
-					}
-				}
 			}
 			if n := b.inflightByKind[kind]; n > 1 {
 				b.inflightByKind[kind] = n - 1
 			} else {
 				delete(b.inflightByKind, kind)
 			}
-			b.lastActiveAt = now
-			b.activitySeq++
+			// Checkpoint already captured the activity watermark set at start.
+			// Moving it again after the upload would immediately make the same
+			// snapshot look stale.
+			if kind != OpCheckpoint {
+				b.lastActiveAt = now
+				b.activitySeq++
+			}
 			if m.bedIdleTTL > 0 {
 				retainUntil := now.Add(m.bedIdleTTL)
 				if retainUntil.After(b.retainUntil) {
 					b.retainUntil = retainUntil
 				}
 			}
+			if current, ok := m.beds[b.ID]; ok && current == b {
+				m.adjustPinnedLocked(b, wasPinned)
+			}
 			b.mu.Unlock()
 			m.mu.Unlock()
+			m.RequestStoreSync()
 		})
 	}, nil
 }

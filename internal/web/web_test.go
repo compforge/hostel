@@ -486,14 +486,14 @@ func TestMaxBedsBackpressure(t *testing.T) {
 	}
 }
 
-func TestMaxActiveBedsBackpressure(t *testing.T) {
+func TestMaxPinnedBedsBackpressure(t *testing.T) {
 	root := t.TempDir()
 	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	if err := mgr.SetMaxActiveBeds(1); err != nil {
-		t.Fatalf("SetMaxActiveBeds: %v", err)
+	if err := mgr.SetMaxPinnedBeds(1); err != nil {
+		t.Fatalf("SetMaxPinnedBeds: %v", err)
 	}
 	s := NewServer(mgr)
 	one, _ := mgr.Ensure("one")
@@ -504,8 +504,8 @@ func TestMaxActiveBedsBackpressure(t *testing.T) {
 	}
 	// Capacity pressure never rejects a resident old guest.
 	rec := do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, map[string]string{BedHeader: "one"})
-	if rec.Code != http.StatusOK || mgr.ActiveBedCount() != 1 {
-		t.Fatalf("request on active bed = %d active=%d body=%s", rec.Code, mgr.ActiveBedCount(), rec.Body.String())
+	if rec.Code != http.StatusOK || mgr.PinnedBedCount() != 1 {
+		t.Fatalf("request on pinned bed = %d pinned=%d body=%s", rec.Code, mgr.PinnedBedCount(), rec.Body.String())
 	}
 	// A synced idle bed no longer owns this carrier and is rejected while it is
 	// pressured, allowing the upstream scheduler to choose another carrier.
@@ -516,7 +516,7 @@ func TestMaxActiveBedsBackpressure(t *testing.T) {
 	}
 	if rec.Code != http.StatusTooManyRequests || pressure.Code != ErrBedPressure ||
 		!pressure.Retryable || pressure.Pressure == nil ||
-		pressure.Pressure.ActiveBeds != 1 || pressure.Pressure.MaxActiveBeds != 1 ||
+		pressure.Pressure.PinnedBeds != 1 || pressure.Pressure.MaxPinnedBeds != 1 ||
 		pressure.Pressure.ResidentBeds != 2 || pressure.Pressure.MaxBeds != 3 {
 		t.Fatalf("activate two = %d %s", rec.Code, rec.Body.String())
 	}
@@ -524,17 +524,17 @@ func TestMaxActiveBedsBackpressure(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "BED_PRESSURE") {
 		t.Fatalf("checkpoint two = %d %s", rec.Code, rec.Body.String())
 	}
-	// The default bed bypasses both limits and does not affect the active count.
+	// The default bed bypasses both limits and does not affect the pinned count.
 	rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, nil)
-	if rec.Code != http.StatusOK || mgr.ActiveBedCount() != 1 {
-		t.Fatalf("default during active cap = %d active=%d body=%s", rec.Code, mgr.ActiveBedCount(), rec.Body.String())
+	if rec.Code != http.StatusOK || mgr.PinnedBedCount() != 1 {
+		t.Fatalf("default during pinned cap = %d pinned=%d body=%s", rec.Code, mgr.PinnedBedCount(), rec.Body.String())
 	}
 
 	rec = do(t, s, http.MethodGet, "/healthz", nil, nil)
 	var health map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &health)
-	if health["active_beds"] != float64(1) || health["max_active_beds"] != float64(1) || health["bed_pressure"] != true {
-		t.Fatalf("health active capacity = %v", health)
+	if health["pinned_beds"] != float64(1) || health["max_pinned_beds"] != float64(1) || health["bed_pressure"] != true {
+		t.Fatalf("health pinned capacity = %v", health)
 	}
 	rec = do(t, s, http.MethodGet, "/v1/beds", nil, nil)
 	var inventory struct {
@@ -624,8 +624,8 @@ func TestBedListEndpoint(t *testing.T) {
 			Status           string         `json:"status"`
 			Store            string         `json:"store"`
 			MaxBeds          int            `json:"max_beds"`
-			ActiveBeds       int            `json:"active_beds"`
-			MaxActiveBeds    int            `json:"max_active_beds"`
+			PinnedBeds       int            `json:"pinned_beds"`
+			MaxPinnedBeds    int            `json:"max_pinned_beds"`
 			BedCounts        map[string]int `json:"bed_counts"`
 			RetainUntil      time.Time      `json:"retained_until"`
 			LuggageHighBytes int64          `json:"luggage_high_bytes"`
@@ -633,6 +633,7 @@ func TestBedListEndpoint(t *testing.T) {
 		Beds []struct {
 			ID           string    `json:"id"`
 			State        string    `json:"state"`
+			Pinned       bool      `json:"pinned"`
 			LastActiveAt time.Time `json:"last_active_at"`
 			RetainUntil  time.Time `json:"retained_until"`
 		} `json:"beds"`
@@ -643,7 +644,7 @@ func TestBedListEndpoint(t *testing.T) {
 	if body.Instance.Status != "retained" {
 		t.Fatalf("instance status = %s, want retained (a bed is within its retention promise)", body.Instance.Status)
 	}
-	if body.Instance.Store != "noop" || body.Instance.ActiveBeds != 1 || body.Instance.BedCounts["active"] != 1 ||
+	if body.Instance.Store != "noop" || body.Instance.PinnedBeds != 1 || body.Instance.BedCounts["active"] != 1 ||
 		body.Instance.BedCounts["idle"] != 1 || body.Instance.BedCounts["evicting"] != 0 ||
 		body.Instance.BedCounts["dormant"] != 1 || body.Instance.RetainUntil.IsZero() ||
 		body.Instance.LuggageHighBytes != 1000 {
@@ -657,6 +658,9 @@ func TestBedListEndpoint(t *testing.T) {
 		states[b.ID] = b.State
 		if b.ID == "inv-live" && (b.LastActiveAt.IsZero() || b.RetainUntil.IsZero()) {
 			t.Fatalf("inv-live lifecycle fields = %+v", b)
+		}
+		if b.ID == "inv-live" && !b.Pinned {
+			t.Fatalf("active inventory bed should be pinned: %+v", b)
 		}
 	}
 	if states["inv-live"] != "active" || states["inv-idle"] != "idle" || states["inv-cold"] != "dormant" {

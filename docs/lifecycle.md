@@ -37,6 +37,10 @@ request ──持有关系──▶ bed.status              ──持有关系�
 
 关键语义：**session 不抬升 bed.status**——只有一条 CDP 连接 idle 挂着的 bed 就是 idle，可以过期回收。这正是"长连接不应阻塞回收"在模型层的表达。
 
+`pinned` 也不是第五种 state，而是容量准入使用的复合事实：有 operation，或 durable store 下
+`data_synced=false`，都表示 bed 暂时只能由当前 carrier 承接。noop 表示用户不要求远端数据完整性，
+因此只在 operation 进行期间 pinned。`GET /v1/beds` 直接上报这一推导结果。
+
 ## 流程
 
 ### 1. Request
@@ -48,8 +52,8 @@ session：  客户端打开（POST /session、CDP ws 升级）→ 持有（流�
            → 客户端关闭，或 evict revoke
 ```
 
-准入即承诺：新 resident / dormant restore，以及已同步的 idle bed 再次进入 active 时，
-hostel 才检查 carrier 数量与资源 pressure。已 active 或未同步的 bed 仍由当前 carrier
+准入即承诺：新 resident / dormant restore，以及未 pinned 的 idle bed 再次进入 active 时，
+hostel 才检查 carrier 数量与资源 pressure。pinned bed 仍由当前 carrier
 承担，不因 pressure 拒绝。被准入的 operation 会把 `retained_until` 预留到
 `timeout + idleTTL`；未同步状态由 `last_active_at > persisted_at` 推导，noop store 按无待同步步骤处理。
 hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。已接纳的工作不会被 idle reaper 杀死；timeout 有默认值和硬上限，任何 operation 的阻塞时间
@@ -69,13 +73,13 @@ hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。�
 两条驱动线：
 
 - **活跃度线**：request 的 touch 刷新 `last_active_at` 与 `retained_until`；`CollectExpired` 定时扫描过期 bed 触发 evict。evict 先 revoke 全部 session（cancel + 有界等待，shell 的 Close 也在这一阶段），再 persist，最后原子复核 `activitySeq`/`inflight`——persist 窗口内来了新活动则取消本次回收（服务优先于回收）。
-- **数据同步线**：`generation` 是数据版本，`persistedAt` 是同步水位，`last_active_at > persistedAt` 即 dirty。persist 触发点：`Checkpoint`（显式）、`evict`（回收前必持久化）、`PersistDirty`（周期兜底）。语义详见 `docs/persistence.md`。
+- **数据同步线**：`generation` 是数据版本，`persistedAt` 是同步水位，`last_active_at > persistedAt` 即 dirty。activation/operation/session/pressure 只向 Store 同步循环提交 trigger；循环负责合并、串行、周期与失败退避。`Checkpoint` 和 `evict` 是必须等待结果的边界。语义详见 `docs/persistence.md`。
 
 ### 3. Hostel
 
 ```text
 启动组装（isolation → amenity → store → bed manager → web）→ 服务
-   ├─ 后台循环：idle bed reaper / luggage GC / PersistDirty 兜底
+   ├─ 后台循环：idle bed reaper / luggage GC / Store 同步调度
    └─ 事实上报：/healthz（可服务性）、GET /v1/beds（status + bed 概要）
 → SIGTERM 优雅关停
 ```
@@ -83,7 +87,7 @@ hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。�
 hostel 不自杀，也没有 drain 接口。它表达"可以释放我"的唯一方式是 `GET /v1/beds` 里的 `instance.status`（retained / draining / releasable / pinned）——判据收敛在 hostel 内，上游只读结论，不再自己拼 bed_counts / store / luggage。
 
 容量准入与这里的生命周期状态正交：`instance.status` 回答“能否安全释放这个 Hostel”，未来的
-`admission.accepting_new_beds` 回答“资源余量是否还能承接新的 active bed”。短期数量安全阀与长期
+`admission.accepting_new_beds` 回答“资源余量是否还能承接新的未 pinned bed”。短期数量安全阀与长期
 pod/cgroup 资源水位方案见 `resource.md`〈当前准入策略〉。
 
 ## 接口边界

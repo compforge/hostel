@@ -220,7 +220,7 @@ func (s *Shell) Run(ctx context.Context, command string, onLine func(string)) (*
 // cwdInBed, when non-empty, is the starting directory (already resolved+confined
 // by the caller via fsops).
 func (m *Manager) CreateShell(b *Bed, cwdInBed string) (string, error) {
-	b.touch(m.bedIdleTTL)
+	m.touchBed(b)
 	env, err := m.buildBedEnv(b, nil)
 	if err != nil {
 		return "", err
@@ -246,7 +246,7 @@ const foregroundShellID = "session-foreground"
 // ForegroundShell returns the bed's implicit foreground shell, starting it
 // once and reusing it (restarting if it died).
 func (m *Manager) ForegroundShell(b *Bed) (*Shell, error) {
-	b.touch(m.bedIdleTTL)
+	m.touchBed(b)
 	b.mu.Lock()
 	if sh, ok := b.shells[foregroundShellID]; ok && !sh.Dead() {
 		b.mu.Unlock()

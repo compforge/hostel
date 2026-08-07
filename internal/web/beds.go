@@ -30,6 +30,7 @@ type bedView struct {
 	ID           string    `json:"id"`
 	State        bed.State `json:"state"` // active | idle | evicting
 	DataSynced   bool      `json:"data_synced"`
+	Pinned       bool      `json:"pinned"`
 	Workspace    string    `json:"workspace"`
 	CreatedAt    time.Time `json:"created_at"`
 	LastActiveAt time.Time `json:"last_active_at"`
@@ -44,7 +45,8 @@ func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 	return bedView{
 		ID:           b.ID,
 		State:        status.State,
-		DataSynced:   s.mgr.StoreName() == "noop" || status.DataSynced,
+		DataSynced:   status.DataSynced,
+		Pinned:       status.Pinned,
 		Workspace:    b.Workspace,
 		CreatedAt:    b.CreatedAt,
 		LastActiveAt: status.LastActiveAt,
@@ -173,8 +175,8 @@ func (s *Server) bedList(c *gin.Context) {
 			"store":              s.mgr.StoreName(),
 			"isolation":          s.mgr.Isolator().Level().String(),
 			"max_beds":           s.mgr.MaxBeds(),
-			"active_beds":        s.mgr.ActiveBedCount(),
-			"max_active_beds":    s.mgr.MaxActiveBeds(),
+			"pinned_beds":        s.mgr.PinnedBedCount(),
+			"max_pinned_beds":    s.mgr.MaxPinnedBeds(),
 			"bed_pressure":       s.mgr.BedPressure(),
 			"bed_counts":         counts,
 			"retained_until":     instanceRetainUntil,
@@ -305,7 +307,7 @@ func (s *Server) capabilities(c *gin.Context) {
 		// under direct, where /workspace is only the file-API virtual prefix.
 		"workspace_mount": iso.MountPoint() != "",
 		"max_beds":        s.mgr.MaxBeds(),
-		"max_active_beds": s.mgr.MaxActiveBeds(),
+		"max_pinned_beds": s.mgr.MaxPinnedBeds(),
 		"persistence":     s.mgr.StoreName(),
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,
