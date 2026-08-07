@@ -114,7 +114,7 @@ type ManagedService interface {
 ## 六、文件与数据
 
 - **workspace = `<root>/<bedID>` 目录**；pod 里 `<root>` 是共享 RWX FS 的 bind → bed 目录天然持久、跨 pod、ms 级绑定；
-- overlay / upper（CoW）**v1 不做**：持久数据走 rw-bind，overlay 留临时态，v1.1 再加（内核 overlayfs 的 upper 不能放网络 FS，见 `persistence.md`）。
+- overlay / upper（CoW）**v1 不做**：持久数据走 rw-bind，overlay 留临时态，v1.1 再加（内核 overlayfs 的 upper 不能放网络 FS，见 `store.md`）。
 
 ## 七、目录结构
 
@@ -154,10 +154,10 @@ hostel/
 bed 的三个正交维度各有专门文档，本文只留一句定位：
 
 - **数据治理**（一个 bed 不能读写另一个 bed / 宿主的数据；tmpfs 遮蔽兄弟 bed + `/workspace` 规范挂载）：`data.md`
-- **数据持久化**（本地 workspace 是工作副本，S3 快照是持久身份；生命周期边界同步）：`persistence.md`
+- **数据持久化**（本地 workspace 是工作副本，S3 快照是持久身份；生命周期边界同步）：`store.md`
 - **资源治理**（per-bed cgroup v2 记账与 carrier 准入已落地；per-bed 硬限额待实现）：`resource.md`
 - **amenity 共享设施**（Chromium/Jupyter 等重资产进程共享、按 bed 切租、bed 级动作不裸暴露 CDP）：`amenity.md`
 
 ## 十一、Roadmap（v1.1+）
 
-数据隔离补强（`data.md`，先行）· S3 Store 持久化（`persistence.md`）· bed-init 进程树 S1/S2（见〈进程树〉，S1 先行）· per-bed cgroup 硬限额（`resource.md`，挂 bed-init）· 数据隔离分档 dorm/room/suite + auto 路由 + ceiling probe（room=landlock，见 data.md）· bwrap 安全纵深（seccomp memfd / 真 setuid）· overlay CoW（临时层）· PTY WS · Jupyter amenity 实例 · 交互动作全集 · 上层调度系统对接 · 产品化外壳（API 版本化、独立发布）。
+数据隔离补强（`data.md`，先行）· S3 Store 持久化（`store.md`）· bed-init 进程树 S1/S2（见〈进程树〉，S1 先行）· per-bed cgroup 硬限额（`resource.md`，挂 bed-init）· 数据隔离分档 dorm/room/suite + auto 路由 + ceiling probe（room=landlock，见 data.md）· bwrap 安全纵深（seccomp memfd / 真 setuid）· overlay CoW（临时层）· PTY WS · Jupyter amenity 实例 · 交互动作全集 · 上层调度系统对接 · 产品化外壳（API 版本化、独立发布）。

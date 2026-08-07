@@ -89,9 +89,13 @@ type activityView struct {
 
 type bedDetailView struct {
 	bedView
-	Generation int64          `json:"generation"`
-	Activity   activityView   `json:"activity"`
-	Lifecycle  *lifecycleView `json:"lifecycle,omitempty"`
+	Generation         int64          `json:"generation"`
+	SnapshotGeneration int64          `json:"snapshot_generation,omitempty"`
+	SnapshotBytes      int64          `json:"snapshot_bytes,omitempty"`
+	LocalBytes         int64          `json:"local_bytes,omitempty"`
+	RestoreBytes       int64          `json:"restore_bytes,omitempty"`
+	Activity           activityView   `json:"activity"`
+	Lifecycle          *lifecycleView `json:"lifecycle,omitempty"`
 }
 
 // instanceStatus is the hostel-layer status (docs/lifecycle.md): the only way
@@ -154,7 +158,7 @@ func (s *Server) bedList(c *gin.Context) {
 	for _, b := range beds {
 		counts[string(b.State)]++
 		if b.State == bed.StateDormant {
-			luggageBytes += b.Bytes
+			luggageBytes += b.LocalBytes
 		} else {
 			hasBeds = true
 			if b.RetainUntil.IsZero() {
@@ -219,8 +223,12 @@ func (s *Server) bedGet(c *gin.Context) {
 	status := b.Status()
 	lifecycle := b.Lifecycle()
 	c.JSON(http.StatusOK, bedDetailView{
-		bedView:    s.viewFromStatus(b, status),
-		Generation: status.Generation,
+		bedView:            s.viewFromStatus(b, status),
+		Generation:         status.Generation,
+		SnapshotGeneration: status.SnapshotGeneration,
+		SnapshotBytes:      status.SnapshotBytes,
+		LocalBytes:         status.LocalBytes,
+		RestoreBytes:       status.RestoreBytes(),
 		Activity: activityView{
 			Operations: status.Operations,
 			Sessions:   status.Sessions,

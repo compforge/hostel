@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package store persists bed workspaces beyond the life of the process/pod
-// (docs/persistence.md): the durable identity of a bed is a snapshot in object
+// (docs/store.md): the durable identity of a bed is a snapshot in object
 // storage; the local workspace is just its working copy, synced at lifecycle
 // boundaries (create/resume ← restore, idle/delete/checkpoint → persist).
 // hostel does not solve multi-writer coordination — "one bedID live in one
@@ -32,7 +32,7 @@ import (
 // single-writer guarantee was violated). First writer wins: overwriting would
 // silently drop the other instance's data, which is strictly worse than
 // failing loudly. Callers must not blindly retry; the bed needs re-activation
-// from the newer snapshot (docs/persistence.md §3.5).
+// from the newer snapshot (docs/store.md §3.5).
 var ErrConflict = errors.New("snapshot conflict: concurrent writer detected")
 
 // SnapshotInfo describes a bed's durable snapshot without downloading it.

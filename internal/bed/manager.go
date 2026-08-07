@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/qiankunli/go-stdx/filepathx"
 	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/fsops"
 	"github.com/qiankunli/hostel/internal/isolation"
@@ -415,11 +416,14 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 			ID: id, Dir: bedDir, Home: dataDir, Workspace: wsDir,
 			CreatedAt: meta.CreatedAt, lastActiveAt: now, retainUntil: retainUntil,
 			generation: meta.Generation, persistedAt: persistedAt, usage: usage,
-			durable:        m.store.Name() != "noop",
-			shells:         make(map[string]*Shell),
-			sessions:       make(map[string]*Session),
-			inflightByKind: make(map[OperationKind]int),
-			paths:          fsops.NewPaths(dataDir, m.iso.MountPoint()),
+			snapshotGeneration: meta.SnapshotGeneration,
+			snapshotBytes:      meta.SnapshotBytes,
+			localBytes:         filepathx.DirBytes(bedDir),
+			durable:            m.store.Name() != "noop",
+			shells:             make(map[string]*Shell),
+			sessions:           make(map[string]*Session),
+			inflightByKind:     make(map[OperationKind]int),
+			paths:              fsops.NewPaths(dataDir, m.iso.MountPoint()),
 		}
 		m.beds[id] = b
 		m.residentBeds.Add(1)
@@ -428,6 +432,13 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 			m.RequestStoreSync()
 		}
 		resolved = b
+		if snapshot != nil {
+			b.snapshotGeneration = snapshot.Generation
+			b.snapshotBytes = snapshot.Bytes
+			meta.SnapshotGeneration = snapshot.Generation
+			meta.SnapshotBytes = snapshot.Bytes
+			_ = saveMeta(bedDir, meta)
+		}
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("bed: write meta %s: %w", id, err)
@@ -461,7 +472,7 @@ func (m *Manager) List() []*Bed {
 }
 
 // Evict releases a bed's compute while keeping its identity (IDLE →
-// EVICTING → LUGGAGE, docs/persistence.md §4): persist, then tear down and
+// EVICTING → LUGGAGE, docs/store.md §4): persist, then tear down and
 // free the max-beds slot. The local dir stays behind as luggage — a warm
 // cache of the DORMANT bed, so a same-instance resume skips the snapshot
 // download; luggage GC reclaims disk separately. Returns evicted=false
@@ -697,16 +708,26 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 
 	var persistedAt time.Time
 	var persistStarted time.Time
+	var snapshot *store.SnapshotInfo
 	if err := trace.stage("persist_store", func() error {
 		persistStarted = time.Now()
 		if err := m.store.Persist(ctx, b.ID, b.Dir, meta.Generation); err != nil {
 			return err
 		}
 		persistedAt = time.Now()
+		// Snapshot facts are scheduler hints, not part of persist correctness.
+		// Refresh them at this lifecycle boundary so inventory never performs
+		// remote Stat calls on its request path.
+		if info, statErr := m.store.Stat(ctx, b.ID); statErr == nil {
+			snapshot = info
+		} else {
+			log.Printf("hostel: refresh snapshot facts failed: bed=%s error=%v", b.Short(), statErr)
+		}
 		return nil
 	}); err != nil {
 		return err
 	}
+	localBytes := filepathx.DirBytes(b.Dir)
 
 	_ = trace.stage("commit_watermark", func() error {
 		m.mu.Lock()
@@ -714,6 +735,13 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 		wasPinned := b.pinnedLocked()
 		b.persistedAt = snapshotWatermark
 		b.usage.LastPersistMs = persistedAt.Sub(persistStarted).Milliseconds()
+		b.localBytes = localBytes
+		if snapshot != nil {
+			b.snapshotGeneration = snapshot.Generation
+			b.snapshotBytes = snapshot.Bytes
+			meta.SnapshotGeneration = snapshot.Generation
+			meta.SnapshotBytes = snapshot.Bytes
+		}
 		meta.Usage = b.usage
 		if current, ok := m.beds[b.ID]; ok && current == b {
 			m.adjustPinnedLocked(b, wasPinned)

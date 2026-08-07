@@ -69,7 +69,7 @@ internal/
 │   ├── shell.go       常驻 bash：CreateShell/ForegroundShell；单 reader goroutine→lines chan，Run 用 marker 分帧、单消费（状态跨 run 保持）
 │   └── command.go     一次性命令：buildCommand/StartCommand/RunForeground + registry（前台/后台、status、logs cursor 增量、环形缓冲）
 ├── fsops/             bed_home rooted 文件操作；Resolve 把任意客户端路径单射 rebase 进 bed_home + 拒逃逸；新建路径按属主 chown（单一属主不变式）
-├── store/             workspace 持久化：Store 接口 + noop/s3(desync 内容寻址增量,只传变更块)，默认 auto 按 bucket 有无解析；见 docs/persistence.md
+├── store/             Hostel 直管的 bed 持久化与 Restore：Store 接口 + noop/s3(desync 内容寻址增量,只传变更块)，默认 auto 按 bucket 有无解析；见 docs/store.md
 ├── resource/          per-bed cgroup v2 记账 + carrier CPU/内存准入；只读准入不要求子树委派
 ├── amenity/           Amenity 接口(生命周期 State)+ Registry；chromium 实例(共享浏览器/每 bed BrowserContext)；见 docs/amenity.md
 └── web/               gin 薄适配层：server(路由+bedOf 解析) / errors / sse / files / command / beds
@@ -79,7 +79,7 @@ internal/
 
 ## 关键约定
 
-- **bed = 客人单元 = 对外一个 sandbox**（workspace + 常驻 shell，状态跨命令保持）；**房型(dorm/room/suite)是这张床的隔离档、与 bed 正交**——bed 是跨档不变的基本单位，房型只描述"床周围的墙"有多严，不替代 bed 命名（见 `docs/data.md`）。**默认 bed 兜底**：不带 bed 的原生请求落 `default`，单租户调用方可无视 bed 概念；default bed 不暴露为 isolated session，永不被清数据、不可 purge、不占任何 bed 数量名额。**生命周期事实分维度**：`state=active|idle|evicting|dormant` 只表达互斥操作态，`generation` 表达数据版本，`retained_until` 表达最早安全回收期限；`pinned` 不是新状态，而是“有 operation 或 durable store 尚有未同步数据”的复合容量事实（noop 只看 operation）。Bed 级请求分两类（`docs/lifecycle.md`）：operation 无状态、超时被系统截断，经 `BeginOperation` 持有、不可被普通 Evict 杀死；session 有状态、客户端显式开闭、不抬高 status，evict 以 revoke 主动终结。**luggage**：共享快照存在时只是本机缓存；同机 resume 按 generation 判新鲜，落后则整目录丢弃重拉；noop store 下 luggage 是唯一副本并会阻止 carrier 回收。`GET /v1/beds` 向调度器如实上报实例容量、各 state 数量和每个本机 Bed（含 dormant luggage）的事实。详见 `docs/persistence.md` §四。**bed 容量准入**：`--max-beds` 限 resident tenant bed；`--max-pinned-beds` 与 CPU/内存 pressure 只停止接收新的 carrier 归属。新 resident、dormant restore、未 pinned 的 idle bed 重新激活时检查；pinned bed 继续由当前 carrier 承接。Hostel 通过 `pinned` / `data_synced` 上报事实，只返回 pressure，不自行选择 carrier；同步 trigger 只表达“尽快同步”，节奏、合并与重试由 Store 同步循环统一负责（详见 `docs/resource.md` / `docs/persistence.md`）。
+- **bed = 客人单元 = 对外一个 sandbox**（workspace + 常驻 shell，状态跨命令保持）；**房型(dorm/room/suite)是这张床的隔离档、与 bed 正交**——bed 是跨档不变的基本单位，房型只描述"床周围的墙"有多严，不替代 bed 命名（见 `docs/data.md`）。**默认 bed 兜底**：不带 bed 的原生请求落 `default`，单租户调用方可无视 bed 概念；default bed 不暴露为 isolated session，永不被清数据、不可 purge、不占任何 bed 数量名额。**生命周期事实分维度**：`state=active|idle|evicting|dormant` 只表达互斥操作态，`generation` 表达数据版本，`retained_until` 表达最早安全回收期限；`pinned` 不是新状态，而是“有 operation 或 durable store 尚有未同步数据”的复合容量事实（noop 只看 operation）。Bed 级请求分两类（`docs/lifecycle.md`）：operation 无状态、超时被系统截断，经 `BeginOperation` 持有、不可被普通 Evict 杀死；session 有状态、客户端显式开闭、不抬高 status，evict 以 revoke 主动终结。**luggage**：共享快照存在时只是本机缓存；同机 resume 按 generation 判新鲜，落后则整目录丢弃重拉；noop store 下 luggage 是唯一副本并会阻止 carrier 回收。`GET /v1/beds` 向调度器如实上报实例容量、各 state 数量和每个本机 Bed（含 dormant luggage）的事实。详见 `docs/store.md` §四。**bed 容量准入**：`--max-beds` 限 resident tenant bed；`--max-pinned-beds` 与 CPU/内存 pressure 只停止接收新的 carrier 归属。新 resident、dormant restore、未 pinned 的 idle bed 重新激活时检查；pinned bed 继续由当前 carrier 承接。Hostel 通过 `pinned` / `data_synced` 上报事实，只返回 pressure，不自行选择 carrier；同步 trigger 只表达“尽快同步”，节奏、合并与重试由 Store 同步循环统一负责（详见 `docs/resource.md` / `docs/store.md`）。
 - **API 对齐 execd**：响应 JSON 结构、错误码、SSE 帧（`<json>\n\n`，事件 shape = execd `ServerStreamEvent`）都对齐 OpenSandbox，SDK 不改。加/改端点先对 `OpenSandbox/specs/execd-api.yaml`。
 - **isolation 按「青年旅社房型」分档**（对外保证，非机制名）：`dorm`（通铺，无屏障=direct）/ `room`（单间锁门、厕所公用，数据 EACCES 但兄弟可见、系统路径共享=landlock，自 re-exec `hostel __confine`）/ `suite`（套房全私有，兄弟不可见+私有 mount 视图+`/workspace` 规范挂载=bwrap）/ `auto`（顶格取 env 上限）。`effective=min(requested,ceiling)`，请求超上限诚实降级。进程 env 与隔离机制正交：`HOSTEL_*` 只属 daemon、`BED_*` 只属 bed，三档统一由 `internal/bed/env.go` 显式组装。机制（direct/bwrap/landlock/uid）是内部细节，全走 `Isolator` 接口。详见 `docs/data.md`。
 - **amenity 通则**：重资产、自带多租的共享设施由 hostel 在 bed 外管一份，用应用原生机制切租（Chromium→BrowserContext、Jupyter→kernel），产物落对应 bed 的 workspace。amenity 有自己的生命周期（idle→running 按需启停）。新增实例 = 实现 `Amenity` + 注册，bed evict/purge 已接 `ReleaseAll` 钩子。北向只暴露 bed 级动作，**不透传 CDP/协议 socket**（会跨租户）。见 `docs/amenity.md`。
@@ -92,7 +92,7 @@ internal/
 - 设计文档（定位、bed 模型、managed-service 框架、决策表、v1 范围与 roadmap）：`docs/kernel.md`
 - 生命周期（request / bed / hostel 三粒度、operation 与 session 两类请求、status 推导链）：`docs/lifecycle.md`
 - 数据治理方案（tmpfs 遮蔽兄弟 bed、`/workspace` 规范挂载统一两套路径语义、降级与测试策略）：`docs/data.md`
-- 数据持久化方案（本地 workspace=工作副本、S3 快照=持久身份、边界同步、Store 抽象）：`docs/persistence.md`
+- Store（Hostel 直管各 bed 的持久化与 Restore；本地 workspace=工作副本、S3 快照=持久身份）：`docs/store.md`
 - 资源治理方案（carrier 采集/汇报/admission + per-bed accounting 已落地，per-bed limits 待实现）：`docs/resource.md`
 - 可观测性设计（统一生命周期事实，并投影到日志、接口和 metric）：`docs/observability.md`
 - 快速上手 / API 一览 / 配置：`README.md`

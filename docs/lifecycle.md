@@ -73,7 +73,7 @@ hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。�
 两条驱动线：
 
 - **活跃度线**：request 的 touch 刷新 `last_active_at` 与 `retained_until`；`CollectExpired` 定时扫描过期 bed 触发 evict。evict 先 revoke 全部 session（cancel + 有界等待，shell 的 Close 也在这一阶段），再 persist，最后原子复核 `activitySeq`/`inflight`——persist 窗口内来了新活动则取消本次回收（服务优先于回收）。
-- **数据同步线**：`generation` 是数据版本，`persistedAt` 是同步水位，`last_active_at > persistedAt` 即 dirty。activation/operation/session/pressure 只向 Store 同步循环提交 trigger；循环负责合并、串行、周期与失败退避。`Checkpoint` 和 `evict` 是必须等待结果的边界。语义详见 `docs/persistence.md`。
+- **数据同步线**：`generation` 是数据版本，`persistedAt` 是同步水位，`last_active_at > persistedAt` 即 dirty。activation/operation/session/pressure 只向 Store 同步循环提交 trigger；循环负责合并、串行、周期与失败退避。`Checkpoint` 和 `evict` 是必须等待结果的边界。语义详见 `docs/store.md`。
 
 ### 3. Hostel
 

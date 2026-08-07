@@ -28,7 +28,7 @@ import (
 	"github.com/folbricht/desync"
 )
 
-// casStore is the s3 backend (docs/persistence.md §3.3): the bed dir is
+// casStore is the s3 backend (docs/store.md §3.3): the bed dir is
 // serialized to a catar stream (desync, the casync model), CDC-chunked, and
 // only chunks absent from the bed's previous snapshot are uploaded. The index
 // object is the commit point and carries the generation, so one small PUT
@@ -108,7 +108,7 @@ func (s *casStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error
 }
 
 func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation int64) error {
-	// Fencing guard (docs/persistence.md §3.5): remote generation >= ours
+	// Fencing guard (docs/store.md §3.5): remote generation >= ours
 	// means another instance persisted this bed after our activation —
 	// refuse rather than silently overwrite.
 	prevMeta, _, prevExists, err := s.obj.head(ctx, s.indexKey(bedID))

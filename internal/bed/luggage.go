@@ -27,7 +27,7 @@ import (
 
 // Luggage is a DORMANT bed's local dir left behind by Evict: a warm cache of
 // the snapshot, so a same-instance resume skips the download. It is never the
-// authoritative copy (the snapshot is — docs/persistence.md); deleting
+// authoritative copy (the snapshot is — docs/store.md); deleting
 // luggage costs at most one extra Restore. The exception is the noop store,
 // where nothing else exists: there luggage GC is destruction, the price of
 // the "nothing persists" world.
@@ -46,6 +46,9 @@ type LuggageEntry struct {
 	Bytes int64
 	// Generation is the local copy's persist counter (0 when meta is missing).
 	Generation int64
+	// Snapshot* is the last durable Stat result cached in meta.json.
+	SnapshotGeneration int64
+	SnapshotBytes      int64
 	// LastActiveAt orders LRU eviction: the evict-time stamp, falling back to
 	// LastPersistedAt and then dir mtime for copies predating the stamp.
 	LastActiveAt time.Time
@@ -78,6 +81,8 @@ func (m *Manager) ListLuggage() []LuggageEntry {
 		l := LuggageEntry{BedID: id, Bytes: filepathx.DirBytes(dir)}
 		if meta, ok := loadMeta(dir); ok {
 			l.Generation = meta.Generation
+			l.SnapshotGeneration = meta.SnapshotGeneration
+			l.SnapshotBytes = meta.SnapshotBytes
 			l.LastActiveAt = meta.LastActiveAt
 			l.Usage = meta.Usage
 			if l.LastActiveAt.IsZero() {
@@ -188,14 +193,17 @@ func (m *Manager) sweepGCLeftovers() {
 // the last PERSISTED counter — an active bed's workspace may be ahead of it,
 // which is exactly what "the authoritative copy is here" means.
 type InventoryBed struct {
-	ID           string    `json:"id"`
-	State        State     `json:"state"` // active | idle | evicting | dormant
-	Generation   int64     `json:"generation"`
-	DataSynced   bool      `json:"data_synced"`
-	Pinned       bool      `json:"pinned"`
-	Bytes        int64     `json:"bytes,omitempty"` // luggage only (resident dirs aren't sized)
-	LastActiveAt time.Time `json:"last_active_at"`
-	RetainUntil  time.Time `json:"retained_until,omitzero"` // resident beds only
+	ID                 string    `json:"id"`
+	State              State     `json:"state"` // active | idle | evicting | dormant
+	Generation         int64     `json:"generation"`
+	SnapshotGeneration int64     `json:"snapshot_generation,omitempty"`
+	SnapshotBytes      int64     `json:"snapshot_bytes,omitempty"`
+	LocalBytes         int64     `json:"local_bytes,omitempty"`
+	RestoreBytes       int64     `json:"restore_bytes,omitempty"`
+	DataSynced         bool      `json:"data_synced"`
+	Pinned             bool      `json:"pinned"`
+	LastActiveAt       time.Time `json:"last_active_at"`
+	RetainUntil        time.Time `json:"retained_until,omitzero"` // resident beds only
 	// Usage lets the scheduler weigh placement and migration: command
 	// rate/duration derive from deltas between polls; Last{Persist,Restore}Ms
 	// approximate this bed's migration cost (node-specific — see Usage).
@@ -212,19 +220,35 @@ func (m *Manager) Inventory() []InventoryBed {
 	out := make([]InventoryBed, 0, len(beds))
 	for _, b := range beds {
 		status := b.Status()
-		out = append(out, InventoryBed{
-			ID:           b.ID,
-			State:        status.State,
-			Generation:   status.Generation,
-			DataSynced:   status.DataSynced,
-			Pinned:       status.Pinned,
-			LastActiveAt: status.LastActiveAt,
-			RetainUntil:  status.RetainUntil,
-			Usage:        status.Usage,
-		})
+		entry := InventoryBed{
+			ID:                 b.ID,
+			State:              status.State,
+			Generation:         status.Generation,
+			SnapshotGeneration: status.SnapshotGeneration,
+			SnapshotBytes:      status.SnapshotBytes,
+			LocalBytes:         status.LocalBytes,
+			RestoreBytes:       status.RestoreBytes(),
+			DataSynced:         status.DataSynced,
+			Pinned:             status.Pinned,
+			LastActiveAt:       status.LastActiveAt,
+			RetainUntil:        status.RetainUntil,
+			Usage:              status.Usage,
+		}
+		out = append(out, entry)
 	}
 	for _, l := range m.ListLuggage() {
-		out = append(out, InventoryBed{ID: l.BedID, State: StateDormant, Generation: l.Generation, DataSynced: true, Bytes: l.Bytes, LastActiveAt: l.LastActiveAt, Usage: l.Usage})
+		out = append(out, InventoryBed{
+			ID:                 l.BedID,
+			State:              StateDormant,
+			Generation:         l.Generation,
+			SnapshotGeneration: l.SnapshotGeneration,
+			SnapshotBytes:      l.SnapshotBytes,
+			LocalBytes:         l.Bytes,
+			RestoreBytes:       estimatedRestoreBytes(l.Generation, l.SnapshotGeneration, l.SnapshotBytes, true),
+			DataSynced:         true,
+			LastActiveAt:       l.LastActiveAt,
+			Usage:              l.Usage,
+		})
 	}
 	return out
 }

@@ -70,7 +70,7 @@ type Config struct {
 	// forking where it can't serve; "off" forces in-process.
 	BedInit string
 
-	// Workspace persistence (docs/persistence.md). Backend "auto" (default)
+	// Workspace persistence (docs/store.md). Backend "auto" (default)
 	// resolves to "s3" when a bucket is configured and "noop" otherwise.
 	// "s3" stores content-addressed chunks under <prefix>/cas/ and transfers
 	// incrementally, at lifecycle boundaries (evict/checkpoint/interval);
