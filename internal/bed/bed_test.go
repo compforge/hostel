@@ -769,10 +769,13 @@ func TestPurgePinnedBedReleasesCapacity(t *testing.T) {
 
 // fakeStore is an in-memory Store for lifecycle tests.
 type fakeStore struct {
-	mu    sync.Mutex
-	snaps map[string][]byte // bedID → marker file content
-	gens  map[string]int64  // bedID → generation of the stored snapshot
-	fail  bool              // force Persist to fail
+	mu                 sync.Mutex
+	snaps              map[string][]byte // bedID → marker file content
+	gens               map[string]int64  // bedID → generation of the stored snapshot
+	fail               bool              // force Persist to fail
+	lastDeleteErr      error
+	lastDeleteValue    any
+	lastDeleteDeadline bool
 }
 
 type blockingStore struct {
@@ -829,9 +832,12 @@ func (f *fakeStore) Persist(_ context.Context, id, dir string, generation int64)
 	return nil
 }
 
-func (f *fakeStore) Delete(_ context.Context, id string) error {
+func (f *fakeStore) Delete(ctx context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastDeleteErr = ctx.Err()
+	f.lastDeleteValue = ctx.Value(purgeContextKey{})
+	_, f.lastDeleteDeadline = ctx.Deadline()
 	delete(f.snaps, id)
 	delete(f.gens, id)
 	return nil
@@ -1217,6 +1223,37 @@ func TestPurgeEndsIdentity(t *testing.T) {
 	// Default bed is not purgeable.
 	if err := m.Purge(context.Background(), "default"); err == nil {
 		t.Fatal("purging the default bed must be refused")
+	}
+}
+
+type purgeContextKey struct{}
+
+func TestPurgeCompletesStoreDeleteAfterRequestCancellation(t *testing.T) {
+	root := t.TempDir()
+	fs := newFakeStore()
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
+	if _, err := m.Ensure(context.Background(), "cancelled-purge"); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), purgeContextKey{}, "trace-context"))
+	cancel()
+	if err := m.Purge(ctx, "cancelled-purge"); err != nil {
+		t.Fatalf("Purge: %v", err)
+	}
+
+	fs.mu.Lock()
+	deleteErr := fs.lastDeleteErr
+	deleteValue := fs.lastDeleteValue
+	deleteDeadline := fs.lastDeleteDeadline
+	fs.mu.Unlock()
+	if deleteErr != nil {
+		t.Fatalf("store delete context error = %v, want live detached context", deleteErr)
+	}
+	if deleteValue != "trace-context" {
+		t.Fatalf("store delete context value = %v, want trace-context", deleteValue)
+	}
+	if !deleteDeadline {
+		t.Fatal("store delete context has no cleanup deadline")
 	}
 }
 

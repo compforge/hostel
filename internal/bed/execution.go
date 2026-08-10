@@ -106,6 +106,7 @@ type Execution struct {
 	span        oteltrace.Span
 	stop        func()
 	stopDone    chan struct{}
+	finishing   bool
 	startedAt   time.Time
 	finishedAt  *time.Time
 	result      *ExecutionResult
@@ -155,7 +156,7 @@ func newExecution(ctx context.Context, bedID string, mode ExecutionMode, spawner
 // never observe SIGKILL and lose the initiating cause.
 func (e *Execution) RequestStop(cause TerminationCause) bool {
 	e.mu.Lock()
-	if e.result != nil || e.stopCause != "" {
+	if e.result != nil || e.finishing || e.stopCause != "" {
 		e.mu.Unlock()
 		return false
 	}
@@ -167,6 +168,19 @@ func (e *Execution) RequestStop(cause TerminationCause) bool {
 	}
 	close(e.stopDone)
 	return true
+}
+
+// claimFinish linearizes natural process completion against stop requests.
+// Whichever transition acquires e.mu first owns the terminal cause: a timer
+// cannot kill a persistent session after its command has already completed.
+func (e *Execution) claimFinish() (TerminationCause, <-chan struct{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.stopCause == "" {
+		e.finishing = true
+		return "", nil
+	}
+	return e.stopCause, e.stopDone
 }
 
 func (e *Execution) appendOutput(stream OutputStream, text string) ExecutionOutput {
@@ -192,16 +206,12 @@ func (e *Execution) appendOutput(stream OutputStream, text string) ExecutionOutp
 
 func (e *Execution) finish(outcome ProcessOutcome, onFinish func(ExecutionResult)) ExecutionResult {
 	finishedAt := time.Now()
-	e.mu.Lock()
-	cause := e.stopCause
-	stopDone := e.stopDone
-	if cause != "" {
-		e.mu.Unlock()
+	cause, stopDone := e.claimFinish()
+	if stopDone != nil {
 		// Terminal publication must not race the stop action that produced it.
 		// In particular, a session's shell may observe EOF before Kill has
 		// finished serializing the process-group signal.
 		<-stopDone
-		e.mu.Lock()
 	}
 	if cause == "" {
 		switch outcome.Kind {
@@ -213,6 +223,7 @@ func (e *Execution) finish(outcome ProcessOutcome, onFinish func(ExecutionResult
 			cause = CauseRuntimeLost
 		}
 	}
+	e.mu.Lock()
 	result := ExecutionResult{
 		ExecutionID: e.ID,
 		BedID:       e.BedID,
@@ -226,6 +237,7 @@ func (e *Execution) finish(outcome ProcessOutcome, onFinish func(ExecutionResult
 	}
 	e.finishedAt = &finishedAt
 	e.result = &result
+	e.finishing = false
 	e.mu.Unlock()
 	if onFinish != nil {
 		onFinish(result)

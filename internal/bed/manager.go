@@ -591,6 +591,8 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 // default bed is the single-tenant fallback and cannot be purged.
 var ErrPurgeDefault = errors.New("bed: refusing to purge the default bed")
 
+const purgeStoreTimeout = 30 * time.Second
+
 // Purge ends a bed's identity: tear down (no persist), remove the local dir
 // (active workspace or leftover luggage), and delete the snapshot. Explicitly
 // destructive — the caller asked for the data to be gone, so concurrent
@@ -624,7 +626,12 @@ func (m *Manager) Purge(ctx context.Context, id string) error {
 		return err
 	}
 	// DORMANT (or never-existed) beds still have a snapshot to remove.
-	return m.store.Delete(ctx, id)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
+	defer cancel()
+	return m.store.Delete(deleteCtx, id)
 }
 
 // teardown kills a bed's runtime state: shells, one-shot commands, service

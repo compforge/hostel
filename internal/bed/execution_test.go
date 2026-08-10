@@ -18,6 +18,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -37,6 +38,23 @@ func TestExecutionOutputRetentionIsBoundedWithoutTruncatingLiveOutput(t *testing
 	}
 	if next != 0 || !running || !truncated {
 		t.Fatalf("logs metadata: next=%d running=%v truncated=%v", next, running, truncated)
+	}
+}
+
+func TestExecutionCompletionRejectsLateStop(t *testing.T) {
+	var stopped atomic.Bool
+	execution := newExecution(context.Background(), "bed-finish", ExecutionSession, "test", func() {
+		stopped.Store(true)
+	})
+	cause, stopDone := execution.claimFinish()
+	if cause != "" || stopDone != nil {
+		t.Fatalf("claimFinish = %q, %v", cause, stopDone)
+	}
+	if execution.RequestStop(CauseTimeout) {
+		t.Fatal("late timeout was accepted after process completion")
+	}
+	if stopped.Load() {
+		t.Fatal("late timeout invoked the session stop function")
 	}
 }
 
