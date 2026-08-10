@@ -108,6 +108,11 @@ stderr、路径和错误原文以外的用户数据。
 daemon shutdown 属于预期控制动作，不把 trace 标红。启用 Trace 但未配置 endpoint 时保持 no-op；
 两种 endpoint 同时存在时优先 gRPC，与 sandctl 的部署语义一致。
 
+bed-init 的 transport 失败以 `executor.transport.failure` event 和 warning 日志记录 operation、
+attempt、executor/process identity 与错误原文；重连成功再记录 `executor.transport.recovered`。因此瞬态
+EOF 即使被内部重试吸收也可观测。对外 execution 结果仍只暴露稳定的 `executor_lost`，不泄漏 Unix
+socket 实现细节；`GetFileMetadata` 等业务操作名由调用方 span 负责。
+
 ## 接口
 
 `GET /v1/beds` 是调度 hint：实例容量、state 数量、每个本机 bed（resident + dormant

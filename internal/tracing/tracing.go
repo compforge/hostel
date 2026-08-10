@@ -126,6 +126,20 @@ func InfoContext(ctx context.Context, message string, args ...any) {
 	slog.InfoContext(ctx, message, args...)
 }
 
+// WarnContext is the warning-level counterpart of InfoContext. It keeps
+// transient failures correlated with the request or execution span even when
+// a retry later recovers and no terminal error is returned to the caller.
+func WarnContext(ctx context.Context, message string, args ...any) {
+	spanContext := trace.SpanContextFromContext(ctx)
+	if spanContext.IsValid() {
+		args = append(args,
+			"trace_id", spanContext.TraceID().String(),
+			"span_id", spanContext.SpanID().String(),
+		)
+	}
+	slog.WarnContext(ctx, message, args...)
+}
+
 // Printf preserves Hostel's existing text log format while adding trace
 // correlation to lifecycle lines that are already consumed operationally.
 func Printf(ctx context.Context, format string, args ...any) {

@@ -221,10 +221,14 @@ func (e *bedInitExecutor) Start(ctx context.Context, processID string, cmd *exec
 	}
 	defer closeStderr()
 	argv := append([]string{cmd.Path}, cmd.Args[1:]...)
+	const maxAttempts = 2
 	var pid int
-	for attempt := range 2 {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		pid, err = e.client.Start(processID, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr)
 		if err == nil {
+			if attempt > 1 {
+				e.recordTransportRecovered(ctx, "start", processID, attempt)
+			}
 			return &bedInitProcess{id: processID, pid: pid, executor: e}, nil
 		}
 		var remoteErr *bedinit.RemoteError
@@ -233,10 +237,13 @@ func (e *bedInitExecutor) Start(ctx context.Context, processID string, cmd *exec
 		}
 		select {
 		case <-e.done:
+			e.recordTransportFailure(ctx, "start", processID, attempt, maxAttempts, false, err)
 			return nil, fmt.Errorf("executor %s lost while starting %s", e.id, processID)
 		default:
 		}
-		if attempt == 0 {
+		willRetry := attempt < maxAttempts
+		e.recordTransportFailure(ctx, "start", processID, attempt, maxAttempts, willRetry, err)
+		if willRetry {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
@@ -350,10 +357,14 @@ func (p *bedInitProcess) Wait(ctx context.Context) (ProcessOutcome, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	const maxAttempts = 3
 	var lastErr error
-	for attempt := range 3 {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		status, err := p.executor.client.Wait(p.id)
 		if err == nil {
+			if attempt > 1 {
+				p.executor.recordTransportRecovered(ctx, "wait", p.id, attempt)
+			}
 			switch status.Kind {
 			case bedinit.ExitStatusExited:
 				return Exited(status.ExitCode), nil
@@ -366,10 +377,23 @@ func (p *bedInitProcess) Wait(ctx context.Context) (ProcessOutcome, error) {
 		lastErr = err
 		select {
 		case <-p.executor.done:
+			p.executor.recordTransportFailure(ctx, "wait", p.id, attempt, maxAttempts, false, err)
 			return Lost(p.executor.id, p.executor.Exit().Err), nil
 		case <-ctx.Done():
+			p.executor.recordTransportFailure(ctx, "wait", p.id, attempt, maxAttempts, false, err)
 			return ProcessOutcome{}, ctx.Err()
-		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
+		default:
+		}
+		willRetry := attempt < maxAttempts
+		p.executor.recordTransportFailure(ctx, "wait", p.id, attempt, maxAttempts, willRetry, err)
+		if willRetry {
+			select {
+			case <-p.executor.done:
+				return Lost(p.executor.id, p.executor.Exit().Err), nil
+			case <-ctx.Done():
+				return ProcessOutcome{}, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 10 * time.Millisecond):
+			}
 		}
 	}
 	p.executor.forceLoss(lastErr)

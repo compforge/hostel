@@ -675,6 +675,7 @@ func (m *Manager) Close(ctx context.Context) error {
 		if err := b.shutdownExecutor(ctx); err != nil {
 			closeErr = errors.Join(closeErr, fmt.Errorf("bed %s executor: %w", b.ID, err))
 		}
+		m.amenities.ReleaseAll(b.ID)
 	}
 	if err := m.executorFactory.Close(); err != nil {
 		closeErr = errors.Join(closeErr, err)

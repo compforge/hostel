@@ -423,7 +423,9 @@ func (r *ExecutionRegistry) track(
 		wg.Add(2)
 		go drain(StreamStdout, stdout)
 		go drain(StreamStderr, stderr)
-		outcome, waitErr := proc.Wait(context.Background())
+		// Retain trace identity for transport retry events without letting an HTTP
+		// cancellation make Wait abandon the process before its terminal fact.
+		outcome, waitErr := proc.Wait(context.WithoutCancel(execution.ctx))
 		if waitErr != nil {
 			outcome = executor.Lost(execution.ExecutorID, waitErr)
 		}
