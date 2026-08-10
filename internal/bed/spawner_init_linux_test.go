@@ -49,11 +49,11 @@ func newBedInitManager(t *testing.T) *Manager {
 // but orderly cleanup keeps `go test` from waiting on the inherited fd.
 func resolveBedInit(t *testing.T, m *Manager, id string) *Bed {
 	t.Helper()
-	b, err := m.Ensure(id)
+	b, err := m.Ensure(context.Background(), id)
 	if err != nil {
 		t.Fatalf("Resolve(%s): %v", id, err)
 	}
-	t.Cleanup(func() { _, _ = m.Evict(id) })
+	t.Cleanup(func() { _, _ = m.Evict(context.Background(), id) })
 	return b
 }
 
@@ -115,7 +115,7 @@ func TestBedInitTeardownKillsTree(t *testing.T) {
 		return escapee > 0
 	})
 
-	if ok, err := m.Evict("conv-init-kill"); err != nil || !ok {
+	if ok, err := m.Evict(context.Background(), "conv-init-kill"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
 	select {

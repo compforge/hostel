@@ -15,6 +15,7 @@
 package bed
 
 import (
+	"context"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ import (
 func TestSessionStatusAndClose(t *testing.T) {
 	m := newTestManager(t)
 	m.SetBedIdleTTL(time.Minute)
-	b, err := m.Ensure("sess-bed")
+	b, err := m.Ensure(context.Background(), "sess-bed")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -61,11 +62,11 @@ func TestSessionStatusAndClose(t *testing.T) {
 // gone refuses new sessions.
 func TestOpenSessionOnEvictedBedRefused(t *testing.T) {
 	m := newTestManager(t)
-	b, err := m.Ensure("sess-gone")
+	b, err := m.Ensure(context.Background(), "sess-gone")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	evicted, err := m.Evict(b.ID)
+	evicted, err := m.Evict(context.Background(), b.ID)
 	if err != nil || !evicted {
 		t.Fatalf("Evict = %v, %v", evicted, err)
 	}
@@ -78,7 +79,7 @@ func TestOpenSessionOnEvictedBedRefused(t *testing.T) {
 // session's context is canceled and its kill switch fired.
 func TestEvictRevokesSessions(t *testing.T) {
 	m := newTestManager(t)
-	b, err := m.Ensure("sess-evict")
+	b, err := m.Ensure(context.Background(), "sess-evict")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestEvictRevokesSessions(t *testing.T) {
 		t.Fatalf("OpenSession: %v", err)
 	}
 
-	evicted, err := m.Evict(b.ID)
+	evicted, err := m.Evict(context.Background(), b.ID)
 	if err != nil || !evicted {
 		t.Fatalf("Evict = %v, %v — an idle session must not block eviction", evicted, err)
 	}
@@ -107,7 +108,7 @@ func TestEvictRevokesSessions(t *testing.T) {
 func TestBeginOperationTimeoutClamp(t *testing.T) {
 	m := newTestManager(t)
 	m.SetBedIdleTTL(time.Minute)
-	b, err := m.Ensure("clamp-bed")
+	b, err := m.Ensure(context.Background(), "clamp-bed")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -133,10 +134,35 @@ func TestBeginOperationTimeoutClamp(t *testing.T) {
 	}
 }
 
+func TestSessionExecutionEnforcesTimeout(t *testing.T) {
+	m := newTestManager(t)
+	b, err := m.Ensure(context.Background(), "session-timeout")
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	sessionID, err := m.CreateShell(b, "")
+	if err != nil {
+		t.Fatalf("CreateShell: %v", err)
+	}
+	shell, ok := b.GetShell(sessionID)
+	if !ok {
+		t.Fatalf("shell %s not found", sessionID)
+	}
+
+	execution, err := m.StartSessionExecution(context.Background(), b, shell, "sleep 30", 30*time.Millisecond, nil, nil)
+	if err != nil {
+		t.Fatalf("StartSessionExecution: %v", err)
+	}
+	result := execution.Wait()
+	if result.Cause != CauseTimeout {
+		t.Fatalf("termination cause = %s, want %s", result.Cause, CauseTimeout)
+	}
+}
+
 // Status.Operations breaks inflight down by kind and drops zeroed kinds.
 func TestStatusOperationsByKind(t *testing.T) {
 	m := newTestManager(t)
-	b, err := m.Ensure("kind-bed")
+	b, err := m.Ensure(context.Background(), "kind-bed")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}

@@ -15,6 +15,7 @@
 package bed
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"slices"
@@ -40,7 +41,7 @@ func TestBedProcessEnvHasExplicitOwnership(t *testing.T) {
 	if err := m.SetBedEnvPassthrough(host, []string{"PATH", "LANG"}); err != nil {
 		t.Fatalf("SetBedEnvPassthrough: %v", err)
 	}
-	b, err := m.Ensure("alice")
+	b, err := m.Ensure(context.Background(), "alice")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}

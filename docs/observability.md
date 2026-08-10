@@ -13,6 +13,7 @@ hostel 需要从三个层面回答同一组问题：
 
 - **日志**还原单次生命周期动作，适合排查具体 bed；
 - **接口**提供当前事实和有界的最近摘要，适合控制面诊断；
+- **Trace**串联入口请求、bed 生命周期和 execution，适合定位单次跨服务调用；
 - **metric**聚合整体成功率和耗时分布，适合趋势与 SLO。
 
 ### 当前状态与过程记录分离
@@ -81,6 +82,30 @@ bed core
 每个 execution 至少写 started 与 finished 两条结构化日志。字段包含 execution id、bed、mode、
 spawner、process outcome、exit code 或 signal、termination cause 与 duration；不得记录 command、
 env 或原始输出。实际 spawner 同时进入 health / capabilities，调用方不从配置推断运行态。
+
+带有效 span context 的生命周期与 execution 日志增加 `trace_id` / `span_id`，用于从日志跳转到
+Trace；启动日志和没有上下文的后台日志保持原格式。
+
+## Trace
+
+Hostel 接收 W3C Trace Context 与 Baggage，并通过 OTLP gRPC 或 HTTP 导出。入站 HTTP span 使用
+Gin 路由模板命名；`/healthz`、`/ping`、`/metrics`、`/metrics/watch` 不创建 span，避免探针和
+高频采样淹没有效请求。
+
+领域 span 保持小而稳定：
+
+- `hostel.execution`：覆盖前台、后台和 session execution 的完整进程生命周期；
+- `hostel.bed.activate` / `hostel.bed.persist` / `hostel.bed.evict`：覆盖一次 bed 管理动作；
+- lifecycle stage 记录为 `stage.start` / `stage.end` event，不为每个函数制造 child span。
+
+后台 execution 继承发起请求的 trace identity，但不继承请求取消信号，因此 HTTP 响应返回后仍能
+完整记录命令终态。span 只包含 execution id、bed id、mode、spawner、process outcome、termination
+cause、exit code/signal、action/stage/result/source/trigger 与耗时；禁止写入 command、env、stdout、
+stderr、路径和错误原文以外的用户数据。
+
+非零退出、非预期 signal 和 runtime lost 标记为 error；client cancel、interrupt、bed teardown、
+daemon shutdown 属于预期控制动作，不把 trace 标红。启用 Trace 但未配置 endpoint 时保持 no-op；
+两种 endpoint 同时存在时优先 gRPC，与 sandctl 的部署语义一致。
 
 ## 接口
 

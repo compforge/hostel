@@ -15,10 +15,15 @@
 package bed
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"strings"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -92,6 +97,8 @@ func cloneLifecycleRecord(in *LifecycleRecord) *LifecycleRecord {
 }
 
 type lifecycleRecorder struct {
+	ctx         context.Context
+	span        oteltrace.Span
 	bedID       string
 	action      string
 	source      string
@@ -101,8 +108,17 @@ type lifecycleRecorder struct {
 	failedStage string
 }
 
-func beginLifecycle(bedID, action string) *lifecycleRecorder {
+func beginLifecycle(ctx context.Context, bedID, action string) *lifecycleRecorder {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, span := tracing.Tracer().Start(ctx, "hostel.bed."+action, oteltrace.WithAttributes(
+		attribute.String("hostel.bed.id", bedID),
+		attribute.String("hostel.lifecycle.action", action),
+	))
 	return &lifecycleRecorder{
+		ctx:       ctx,
+		span:      span,
 		bedID:     bedID,
 		action:    action,
 		startedAt: time.Now(),
@@ -113,7 +129,8 @@ func beginLifecycle(bedID, action string) *lifecycleRecorder {
 // when no completion summary is ever emitted.
 func (r *lifecycleRecorder) stage(name string, fn func() error) error {
 	start := time.Now()
-	log.Printf(
+	r.span.AddEvent("stage.start", oteltrace.WithAttributes(attribute.String("hostel.lifecycle.stage", name)))
+	tracing.Printf(r.ctx,
 		"hostel bed lifecycle stage: bed=%s action=%s stage=%s event=start source=%s trigger=%s",
 		r.bedID, r.action, name, r.source, r.trigger,
 	)
@@ -125,7 +142,12 @@ func (r *lifecycleRecorder) stage(name string, fn func() error) error {
 	}
 	stage := LifecycleStage{Name: name, Result: result, Duration: time.Since(start)}
 	r.stages = append(r.stages, stage)
-	log.Printf(
+	r.span.AddEvent("stage.end", oteltrace.WithAttributes(
+		attribute.String("hostel.lifecycle.stage", name),
+		attribute.String("hostel.lifecycle.stage.result", result),
+		attribute.Int64("hostel.lifecycle.stage.duration_ms", stage.Duration.Milliseconds()),
+	))
+	tracing.Printf(r.ctx,
 		"hostel bed lifecycle stage: bed=%s action=%s stage=%s event=finish result=%s duration_ms=%d source=%s trigger=%s error=%q",
 		r.bedID, r.action, name, result, stage.Duration.Milliseconds(), r.source, r.trigger, errorText(err),
 	)
@@ -146,11 +168,23 @@ func (r *lifecycleRecorder) finish(result string, err error) LifecycleRecord {
 		FailedStage: r.failedStage,
 		Error:       errorText(err),
 	}
-	log.Printf(
+	r.span.SetAttributes(
+		attribute.String("hostel.lifecycle.result", result),
+		attribute.String("hostel.lifecycle.source", r.source),
+		attribute.String("hostel.lifecycle.trigger", r.trigger),
+		attribute.String("hostel.lifecycle.failed_stage", r.failedStage),
+		attribute.Int64("hostel.lifecycle.duration_ms", record.Duration.Milliseconds()),
+	)
+	if err != nil {
+		r.span.RecordError(err)
+		r.span.SetStatus(codes.Error, err.Error())
+	}
+	tracing.Printf(r.ctx,
 		"hostel bed lifecycle summary: bed=%s action=%s result=%s source=%s trigger=%s duration_ms=%d failed_stage=%s stages=%q error=%q",
 		r.bedID, r.action, result, r.source, r.trigger, record.Duration.Milliseconds(),
 		r.failedStage, formatLifecycleStages(r.stages), record.Error,
 	)
+	r.span.End()
 	return record
 }
 

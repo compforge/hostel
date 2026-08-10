@@ -205,7 +205,7 @@ func (s *Server) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	b, err := s.mgr.Ensure(id)
+	b, err := s.mgr.Ensure(c.Request.Context(), id)
 	if err != nil {
 		respondBedError(c, err)
 		return
@@ -273,7 +273,7 @@ func lifecycleRecordToView(record *bed.LifecycleRecord) *lifecycleRecordView {
 func (s *Server) bedDelete(c *gin.Context) {
 	id := c.Param("bedId")
 	if c.Query("purge") == "true" {
-		if err := s.mgr.Purge(id); err != nil {
+		if err := s.mgr.Purge(c.Request.Context(), id); err != nil {
 			if errors.Is(err, bed.ErrPurgeDefault) {
 				badRequest(c, err.Error())
 				return
@@ -284,7 +284,7 @@ func (s *Server) bedDelete(c *gin.Context) {
 		c.Status(http.StatusOK)
 		return
 	}
-	evicted, err := s.mgr.Evict(id)
+	evicted, err := s.mgr.Evict(c.Request.Context(), id)
 	if err != nil {
 		runtimeError(c, err.Error())
 		return

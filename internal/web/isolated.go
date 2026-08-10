@@ -127,14 +127,14 @@ func (s *Server) isolatedCreate(c *gin.Context) {
 		return
 	}
 
-	b, err := s.mgr.Ensure(uuid.V7())
+	b, err := s.mgr.Ensure(c.Request.Context(), uuid.V7())
 	if err != nil {
 		respondBedError(c, err)
 		return
 	}
 	finish, err := s.mgr.BeginOperation(b, bed.OpControl, 0)
 	if err != nil {
-		_ = s.mgr.Purge(b.ID)
+		_ = s.mgr.Purge(c.Request.Context(), b.ID)
 		respondBedError(c, err)
 		return
 	}
@@ -143,7 +143,7 @@ func (s *Server) isolatedCreate(c *gin.Context) {
 	// Do the same so a 201 response means the bed is ready to run, not merely
 	// that its workspace directory exists.
 	if _, err := s.mgr.ForegroundShell(b); err != nil {
-		_ = s.mgr.Purge(b.ID)
+		_ = s.mgr.Purge(c.Request.Context(), b.ID)
 		runtimeError(c, err.Error())
 		return
 	}
@@ -347,7 +347,7 @@ func isolatedRunScript(code string, envs map[string]string) string {
 
 // DELETE /v1/isolated/session/:sessionId
 func (s *Server) isolatedDelete(c *gin.Context) {
-	if err := s.mgr.Purge(c.Param("sessionId")); err != nil {
+	if err := s.mgr.Purge(c.Request.Context(), c.Param("sessionId")); err != nil {
 		runtimeError(c, err.Error())
 		return
 	}

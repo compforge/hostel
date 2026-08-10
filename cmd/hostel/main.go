@@ -39,6 +39,7 @@ import (
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/resource"
 	"github.com/qiankunli/hostel/internal/store"
+	"github.com/qiankunli/hostel/internal/tracing"
 	"github.com/qiankunli/hostel/internal/web"
 )
 
@@ -72,6 +73,22 @@ func main() {
 	if cfg.HealthCheck {
 		os.Exit(healthCheck(cfg.Addr))
 	}
+	shutdownTracing, err := tracing.Init(context.Background(), tracing.Config{
+		Enabled:      cfg.EnableTracing,
+		GRPCEndpoint: cfg.OTLPTracesGRPCEndpoint,
+		HTTPEndpoint: cfg.OTLPTracesHTTPEndpoint,
+		Version:      version,
+	})
+	if err != nil {
+		log.Fatalf("hostel: init tracing: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(shutdownCtx); err != nil {
+			log.Printf("hostel: shutdown tracing: %v", err)
+		}
+	}()
 
 	log.Printf("hostel %s starting", version)
 
@@ -179,7 +196,7 @@ func main() {
 				case <-ctx.Done():
 					return
 				case <-t.C:
-					if reaped := mgr.CollectExpired(time.Now()); len(reaped) > 0 {
+					if reaped := mgr.CollectExpired(ctx, time.Now()); len(reaped) > 0 {
 						log.Printf("hostel: reaped idle beds: %v", reaped)
 					}
 				}
@@ -211,7 +228,7 @@ func main() {
 	// retry/backoff. A zero interval disables only the periodic safety net.
 	go mgr.RunStoreSync(ctx, cfg.PersistInterval)
 
-	srv := &http.Server{Addr: cfg.Addr, Handler: web.NewServer(mgr).Handler()}
+	srv := &http.Server{Addr: cfg.Addr, Handler: web.NewServer(mgr, web.WithTracing(cfg.EnableTracing)).Handler()}
 	go func() {
 		log.Printf("hostel: listening on %s (isolation=%s, workspace-root=%s, default-bed=%s)",
 			cfg.Addr, iso.Name(), cfg.WorkspaceRoot, cfg.DefaultBed)

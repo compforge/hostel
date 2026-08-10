@@ -64,3 +64,24 @@ func TestResourceAdmissionThresholdDefaults(t *testing.T) {
 		t.Fatalf("default resource thresholds = %d/%d, want 90/90", c.AdmissionCPUThreshold, c.AdmissionMemoryThreshold)
 	}
 }
+
+func TestTracingConfig(t *testing.T) {
+	t.Setenv("HOSTEL_ENABLE_TRACING", "true")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_GRPC_ENDPOINT", "http://collector:4317")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HTTP_ENDPOINT", "http://collector:4318/v1/traces")
+	c := Load(nil)
+	if !c.EnableTracing || c.OTLPTracesGRPCEndpoint != "http://collector:4317" ||
+		c.OTLPTracesHTTPEndpoint != "http://collector:4318/v1/traces" {
+		t.Fatalf("env tracing config = %+v", c)
+	}
+
+	c = Load([]string{
+		"-enable-tracing=false",
+		"-otel-traces-grpc-endpoint", "http://override:14317",
+		"-otel-traces-http-endpoint", "http://override:14318/v1/traces",
+	})
+	if c.EnableTracing || c.OTLPTracesGRPCEndpoint != "http://override:14317" ||
+		c.OTLPTracesHTTPEndpoint != "http://override:14318/v1/traces" {
+		t.Fatalf("flag tracing config = %+v", c)
+	}
+}

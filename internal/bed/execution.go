@@ -17,12 +17,16 @@ package bed
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
-	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	"github.com/qiankunli/hostel/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 type ExecutionMode string
@@ -98,7 +102,10 @@ type Execution struct {
 	Spawner string
 
 	mu          sync.Mutex
+	ctx         context.Context
+	span        oteltrace.Span
 	stop        func()
+	stopDone    chan struct{}
 	startedAt   time.Time
 	finishedAt  *time.Time
 	result      *ExecutionResult
@@ -118,13 +125,26 @@ const (
 	executionDrainGrace      = 100 * time.Millisecond
 )
 
-func newExecution(bedID string, mode ExecutionMode, spawner string, stop func()) *Execution {
+func newExecution(ctx context.Context, bedID string, mode ExecutionMode, spawner string, stop func()) *Execution {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	executionID := "exec-" + randx.Hex(8)
+	ctx, span := tracing.Tracer().Start(ctx, "hostel.execution", oteltrace.WithAttributes(
+		attribute.String("hostel.execution.id", executionID),
+		attribute.String("hostel.bed.id", bedID),
+		attribute.String("hostel.execution.mode", string(mode)),
+		attribute.String("hostel.execution.spawner", spawner),
+	))
 	return &Execution{
-		ID:        "exec-" + randx.Hex(8),
+		ID:        executionID,
 		BedID:     bedID,
 		Mode:      mode,
 		Spawner:   spawner,
+		ctx:       ctx,
+		span:      span,
 		stop:      stop,
+		stopDone:  make(chan struct{}),
 		startedAt: time.Now(),
 		done:      make(chan struct{}),
 	}
@@ -145,6 +165,7 @@ func (e *Execution) RequestStop(cause TerminationCause) bool {
 	if stop != nil {
 		stop()
 	}
+	close(e.stopDone)
 	return true
 }
 
@@ -173,6 +194,15 @@ func (e *Execution) finish(outcome ProcessOutcome, onFinish func(ExecutionResult
 	finishedAt := time.Now()
 	e.mu.Lock()
 	cause := e.stopCause
+	stopDone := e.stopDone
+	if cause != "" {
+		e.mu.Unlock()
+		// Terminal publication must not race the stop action that produced it.
+		// In particular, a session's shell may observe EOF before Kill has
+		// finished serializing the process-group signal.
+		<-stopDone
+		e.mu.Lock()
+	}
 	if cause == "" {
 		switch outcome.Kind {
 		case ProcessExited:
@@ -200,7 +230,11 @@ func (e *Execution) finish(outcome ProcessOutcome, onFinish func(ExecutionResult
 	if onFinish != nil {
 		onFinish(result)
 	}
-	close(e.done)
+	e.span.SetAttributes(
+		attribute.String("hostel.execution.process.outcome", string(result.Process.Kind)),
+		attribute.String("hostel.execution.termination_cause", string(result.Cause)),
+		attribute.Int64("hostel.execution.duration_ms", result.Duration.Milliseconds()),
+	)
 
 	attrs := []any{
 		"execution_id", result.ExecutionID,
@@ -213,13 +247,29 @@ func (e *Execution) finish(outcome ProcessOutcome, onFinish func(ExecutionResult
 	}
 	switch result.Process.Kind {
 	case ProcessExited:
+		e.span.SetAttributes(attribute.Int("hostel.execution.exit_code", result.Process.ExitCode))
 		attrs = append(attrs, "exit_code", result.Process.ExitCode)
+		if result.Process.ExitCode != 0 {
+			e.span.SetStatus(codes.Error, "command exited non-zero")
+		}
 	case ProcessSignaled:
+		e.span.SetAttributes(
+			attribute.Int("hostel.execution.signal", result.Process.Signal),
+			attribute.Bool("hostel.execution.core_dumped", result.Process.CoreDumped),
+		)
 		attrs = append(attrs, "signal", result.Process.Signal, "core_dumped", result.Process.CoreDumped)
+		if result.Cause != CauseClientCanceled && result.Cause != CauseInterrupted &&
+			result.Cause != CauseBedTeardown && result.Cause != CauseDaemonShutdown {
+			e.span.SetStatus(codes.Error, "command terminated by signal")
+		}
 	case ProcessLost:
+		e.span.RecordError(fmt.Errorf("process lost: %s", result.Process.Error))
+		e.span.SetStatus(codes.Error, "process runtime lost")
 		attrs = append(attrs, "error", result.Process.Error)
 	}
-	slog.Info("hostel execution finished", attrs...)
+	tracing.InfoContext(e.ctx, "hostel execution finished", attrs...)
+	e.span.End()
+	close(e.done)
 	return result
 }
 
@@ -296,12 +346,12 @@ func (r *ExecutionRegistry) track(
 	onOutput func(ExecutionOutput),
 	onFinish func(ExecutionResult),
 ) *Execution {
-	execution := newExecution(bedID, mode, spawner, proc.Kill)
+	execution := newExecution(ctx, bedID, mode, spawner, proc.Kill)
 	r.mu.Lock()
 	r.executions[execution.ID] = execution
 	r.order = append(r.order, execution.ID)
 	r.mu.Unlock()
-	slog.Info("hostel execution started",
+	tracing.InfoContext(execution.ctx, "hostel execution started",
 		"execution_id", execution.ID,
 		"bed", execution.BedID,
 		"mode", execution.Mode,
@@ -379,16 +429,17 @@ func (r *ExecutionRegistry) trackSession(
 	bedID string,
 	shell *Shell,
 	command string,
+	timeout time.Duration,
 	onStart func(ExecutionStatus),
 	onOutput func(ExecutionOutput),
 	onFinish func(ExecutionResult),
 ) *Execution {
-	execution := newExecution(bedID, ExecutionSession, "session_shell", shell.Close)
+	execution := newExecution(ctx, bedID, ExecutionSession, "session_shell", shell.Close)
 	r.mu.Lock()
 	r.executions[execution.ID] = execution
 	r.order = append(r.order, execution.ID)
 	r.mu.Unlock()
-	slog.Info("hostel execution started",
+	tracing.InfoContext(execution.ctx, "hostel execution started",
 		"execution_id", execution.ID,
 		"bed", execution.BedID,
 		"mode", execution.Mode,
@@ -397,6 +448,10 @@ func (r *ExecutionRegistry) trackSession(
 
 	if onStart != nil {
 		onStart(execution.Status())
+	}
+	var timeoutTimer *time.Timer
+	if timeout > 0 {
+		timeoutTimer = time.AfterFunc(timeout, func() { execution.RequestStop(CauseTimeout) })
 	}
 	if ctx != nil {
 		go func() {
@@ -409,7 +464,7 @@ func (r *ExecutionRegistry) trackSession(
 	}
 
 	go func() {
-		result, err := shell.Run(ctx, command, func(text string) {
+		result, err := shell.Run(execution.ctx, command, func(text string) {
 			output := execution.appendOutput(StreamStdout, text)
 			if onOutput != nil {
 				onOutput(output)
@@ -420,6 +475,9 @@ func (r *ExecutionRegistry) trackSession(
 			outcome = lostProcess(err)
 		} else {
 			outcome = exitedProcess(result.ExitCode)
+		}
+		if timeoutTimer != nil {
+			timeoutTimer.Stop()
 		}
 		execution.finish(outcome, onFinish)
 		r.prune()

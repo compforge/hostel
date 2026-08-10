@@ -94,7 +94,8 @@ func (s *Server) runCommand(c *gin.Context) {
 	}
 	timeout := time.Duration(req.TimeoutMs) * time.Millisecond
 	if req.Background {
-		execution, err := s.mgr.StartExecution(nil, b, bed.ExecutionBackground, req.Command, cwdInBed, req.Envs, timeout, nil, nil)
+		executionCtx := context.WithoutCancel(c.Request.Context())
+		execution, err := s.mgr.StartExecution(executionCtx, b, bed.ExecutionBackground, req.Command, cwdInBed, req.Envs, timeout, nil, nil)
 		if err != nil {
 			runtimeError(c, err.Error())
 			return

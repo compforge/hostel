@@ -50,7 +50,7 @@ func TestManagerFallsBackToShWhenBashMissing(t *testing.T) {
 	if filepath.Base(m.shellPath) != "sh" {
 		t.Fatalf("shellPath=%q, want sh fallback", m.shellPath)
 	}
-	b, err := m.Ensure("default")
+	b, err := m.Ensure(context.Background(), "default")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,14 +64,14 @@ func TestManagerFallsBackToShWhenBashMissing(t *testing.T) {
 func TestResolveDefaultBedAndValidation(t *testing.T) {
 	m := newTestManager(t)
 
-	b, err := m.Ensure("") // empty → default
+	b, err := m.Ensure(context.Background(), "") // empty → default
 	if err != nil || b.ID != "default" {
 		t.Fatalf("Resolve(\"\") = %v, %v", b, err)
 	}
-	if _, err := m.Ensure("bad id!"); err == nil {
+	if _, err := m.Ensure(context.Background(), "bad id!"); err == nil {
 		t.Fatal("Resolve invalid id: want error")
 	}
-	b2, _ := m.Ensure("conv-123")
+	b2, _ := m.Ensure(context.Background(), "conv-123")
 	if b2.ID != "conv-123" || b2.Workspace == b.Workspace {
 		t.Fatalf("distinct bed expected, got %+v", b2)
 	}
@@ -82,7 +82,7 @@ func TestResolveDefaultBedAndValidation(t *testing.T) {
 
 func TestResidentBedCountDoesNotWaitForManagerLock(t *testing.T) {
 	m := newTestManager(t)
-	if _, err := m.Ensure("conv-atomic"); err != nil {
+	if _, err := m.Ensure(context.Background(), "conv-atomic"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,19 +102,19 @@ func TestResidentBedCountDoesNotWaitForManagerLock(t *testing.T) {
 
 func TestResidentBedCountTracksRemoval(t *testing.T) {
 	m := newTestManager(t)
-	if _, err := m.Ensure("evict-me"); err != nil {
+	if _, err := m.Ensure(context.Background(), "evict-me"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Ensure("purge-me"); err != nil {
+	if _, err := m.Ensure(context.Background(), "purge-me"); err != nil {
 		t.Fatal(err)
 	}
 	if got := m.ResidentBedCount(); got != 2 {
 		t.Fatalf("ResidentBedCount before removal = %d, want 2", got)
 	}
-	if evicted, err := m.Evict("evict-me"); err != nil || !evicted {
+	if evicted, err := m.Evict(context.Background(), "evict-me"); err != nil || !evicted {
 		t.Fatalf("Evict: evicted=%v err=%v", evicted, err)
 	}
-	if err := m.Purge("purge-me"); err != nil {
+	if err := m.Purge(context.Background(), "purge-me"); err != nil {
 		t.Fatalf("Purge: %v", err)
 	}
 	if got := m.ResidentBedCount(); got != 0 {
@@ -135,7 +135,7 @@ func TestLifecycleObservations(t *testing.T) {
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(previousWriter) })
 
-	b, err := m.Ensure("observed")
+	b, err := m.Ensure(context.Background(), "observed")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestLifecycleObservations(t *testing.T) {
 		t.Fatalf("LastPersist failure = %+v", lifecycle.LastPersist)
 	}
 	fs.fail = false
-	if ok, err := m.Evict(b.ID); err != nil || !ok {
+	if ok, err := m.Evict(context.Background(), b.ID); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
 	if !strings.Contains(logs.String(), "action=activate stage=stat_snapshot event=start") ||
@@ -187,7 +187,7 @@ func lifecycleStageNames(record *LifecycleRecord) string {
 
 func TestForegroundShellPersistsState(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Ensure("default")
+	b, _ := m.Ensure(context.Background(), "default")
 
 	sh, err := m.ForegroundShell(b)
 	if err != nil {
@@ -217,8 +217,8 @@ func TestForegroundShellPersistsState(t *testing.T) {
 // observe it (each bed is rooted at its own data directory).
 func TestBedFileIsolation(t *testing.T) {
 	m := newTestManager(t)
-	a, _ := m.Ensure("session-a")
-	b, _ := m.Ensure("session-b")
+	a, _ := m.Ensure(context.Background(), "session-a")
+	b, _ := m.Ensure(context.Background(), "session-b")
 	ctx := context.Background()
 	if result, err := m.RunForeground(ctx, a, "printf alpha > shared.txt", "", nil, 0, nil); err != nil || result.Process.ExitCode != 0 {
 		t.Fatalf("write in session-a: result=%+v err=%v", result, err)
@@ -235,7 +235,7 @@ func TestBedFileIsolation(t *testing.T) {
 
 func TestShellExitCode(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Ensure("default")
+	b, _ := m.Ensure(context.Background(), "default")
 	sh, _ := m.ForegroundShell(b)
 	// Use a subshell so a non-zero exit doesn't kill the persistent session.
 	res, err := sh.Run(context.Background(), `sh -c "exit 7"`, nil)
@@ -258,7 +258,7 @@ func TestShellExitCode(t *testing.T) {
 // tore the whole session down ("shell: session exited during run").
 func TestRunForegroundIsolatesFailure(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Ensure("default")
+	b, _ := m.Ensure(context.Background(), "default")
 	ctx := context.Background()
 
 	result, err := m.RunForeground(ctx, b, "set -euo pipefail\nfalse\necho unreached", "", nil, 0, nil)
@@ -287,7 +287,7 @@ func TestRunForegroundIsolatesFailure(t *testing.T) {
 // still kills every process once lifecycle ownership has been claimed.
 func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Ensure("conv-kill")
+	b, _ := m.Ensure(context.Background(), "conv-kill")
 
 	started := make(chan struct{})
 	done := make(chan ExecutionResult, 1)
@@ -310,7 +310,7 @@ func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 		t.Fatalf("active operations = %d, want 1", got)
 	}
 
-	if ok, err := m.Evict("conv-kill"); err != nil || ok {
+	if ok, err := m.Evict(context.Background(), "conv-kill"); err != nil || ok {
 		t.Fatalf("Evict active bed: ok=%v err=%v", ok, err)
 	}
 	m.teardown(b)
@@ -329,7 +329,7 @@ func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 
 func TestBackgroundCommandAndLogs(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Ensure("default")
+	b, _ := m.Ensure(context.Background(), "default")
 
 	execution, err := m.StartExecution(nil, b, ExecutionBackground, "printf 'a\\nb\\nc\\n'", "", nil, 0, nil, nil)
 	if err != nil {
@@ -364,9 +364,9 @@ func executionOutputText(output []ExecutionOutput) string {
 
 func TestDeleteBedReleasesAndRemoves(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Ensure("conv-x")
+	b, _ := m.Ensure(context.Background(), "conv-x")
 	_, _ = m.ForegroundShell(b)
-	if ok, err := m.Evict("conv-x"); err != nil || !ok {
+	if ok, err := m.Evict(context.Background(), "conv-x"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
 	if _, ok := m.Get("conv-x"); ok {
@@ -377,10 +377,10 @@ func TestDeleteBedReleasesAndRemoves(t *testing.T) {
 func TestCollectExpiredSkipsDefault(t *testing.T) {
 	m := newTestManager(t)
 	m.SetBedIdleTTL(time.Millisecond)
-	_, _ = m.Ensure("default")
-	_, _ = m.Ensure("conv-idle")
+	_, _ = m.Ensure(context.Background(), "default")
+	_, _ = m.Ensure(context.Background(), "conv-idle")
 	time.Sleep(10 * time.Millisecond)
-	reaped := m.CollectExpired(time.Now())
+	reaped := m.CollectExpired(context.Background(), time.Now())
 	if len(reaped) != 1 || reaped[0] != "conv-idle" {
 		t.Fatalf("CollectExpired reaped %v, want [conv-idle]", reaped)
 	}
@@ -394,7 +394,7 @@ func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	idleTTL := 50 * time.Millisecond
 	execTimeout := 500 * time.Millisecond
 	m.SetBedIdleTTL(idleTTL)
-	b, err := m.Ensure("conv-running")
+	b, err := m.Ensure(context.Background(), "conv-running")
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	finishShortOperation()
 
 	// Even a delayed collector must not reap a command still in flight.
-	if reaped := m.CollectExpired(retainUntil.Add(time.Hour)); len(reaped) != 0 {
+	if reaped := m.CollectExpired(context.Background(), retainUntil.Add(time.Hour)); len(reaped) != 0 {
 		t.Fatalf("CollectExpired reaped running bed: %v", reaped)
 	}
 	finishOperation()
@@ -437,7 +437,7 @@ func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	if got := b.State(); got != StateIdle {
 		t.Fatalf("finished operation state = %q, want idle", got)
 	}
-	if reaped := m.CollectExpired(retainUntil.Add(time.Hour)); len(reaped) != 1 || reaped[0] != b.ID {
+	if reaped := m.CollectExpired(context.Background(), retainUntil.Add(time.Hour)); len(reaped) != 1 || reaped[0] != b.ID {
 		t.Fatalf("CollectExpired after finish = %v, want [%s]", reaped, b.ID)
 	}
 }
@@ -448,29 +448,29 @@ func TestMaxBedsCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	if _, err := m.Ensure("a"); err != nil {
+	if _, err := m.Ensure(context.Background(), "a"); err != nil {
 		t.Fatalf("bed a: %v", err)
 	}
-	if _, err := m.Ensure("b"); err != nil {
+	if _, err := m.Ensure(context.Background(), "b"); err != nil {
 		t.Fatalf("bed b: %v", err)
 	}
 	// Cap hit: a third bed is refused with the sentinel.
-	if _, err := m.Ensure("c"); !errors.Is(err, ErrBedLimit) {
+	if _, err := m.Ensure(context.Background(), "c"); !errors.Is(err, ErrBedLimit) {
 		t.Fatalf("bed c: want ErrBedLimit, got %v", err)
 	}
 	// Existing beds still resolve.
-	if _, err := m.Ensure("a"); err != nil {
+	if _, err := m.Ensure(context.Background(), "a"); err != nil {
 		t.Fatalf("existing bed a after cap: %v", err)
 	}
 	// The default bed is exempt — the single-tenant path never breaks.
-	if _, err := m.Ensure(""); err != nil {
+	if _, err := m.Ensure(context.Background(), ""); err != nil {
 		t.Fatalf("default bed exempt: %v", err)
 	}
 	// Evicting frees a slot.
-	if ok, err := m.Evict("a"); err != nil || !ok {
+	if ok, err := m.Evict(context.Background(), "a"); err != nil || !ok {
 		t.Fatalf("evict a: ok=%v err=%v", ok, err)
 	}
-	if _, err := m.Ensure("c"); err != nil {
+	if _, err := m.Ensure(context.Background(), "c"); err != nil {
 		t.Fatalf("bed c after free slot: %v", err)
 	}
 }
@@ -484,7 +484,7 @@ func TestMaxPinnedBedsAdmission(t *testing.T) {
 	if err := m.SetMaxPinnedBeds(1); err != nil {
 		t.Fatalf("SetMaxPinnedBeds: %v", err)
 	}
-	oldGuest, _ := m.Ensure("old-guest")
+	oldGuest, _ := m.Ensure(context.Background(), "old-guest")
 	finishInitialOldGuest, err := m.BeginOperation(oldGuest, OpExec, 0)
 	if err != nil {
 		t.Fatalf("initial old guest operation: %v", err)
@@ -508,7 +508,7 @@ func TestMaxPinnedBedsAdmission(t *testing.T) {
 		t.Fatalf("two operations changed pinned count to %d", got)
 	}
 
-	_, err = m.Ensure("new-guest")
+	_, err = m.Ensure(context.Background(), "new-guest")
 	var insufficient *InsufficientBedError
 	if !errors.Is(err, ErrInsufficientBed) || !errors.As(err, &insufficient) {
 		t.Fatalf("admit new guest: want InsufficientBedError, got %v", err)
@@ -521,7 +521,7 @@ func TestMaxPinnedBedsAdmission(t *testing.T) {
 		t.Fatal("manager did not report bed pressure at pinned capacity")
 	}
 	// The default bed is outside both capacity limits.
-	defaultBed, _ := m.Ensure("")
+	defaultBed, _ := m.Ensure(context.Background(), "")
 	finishDefault, err := m.BeginOperation(defaultBed, OpExec, 0)
 	if err != nil {
 		t.Fatalf("activate default bed: %v", err)
@@ -545,7 +545,7 @@ func TestMaxPinnedBedsAdmission(t *testing.T) {
 	if got := m.PinnedBedCount(); got != 0 || m.BedPressure() {
 		t.Fatalf("persist did not release capacity: pinned=%d pressure=%v", got, m.BedPressure())
 	}
-	newGuest, err := m.Ensure("new-guest")
+	newGuest, err := m.Ensure(context.Background(), "new-guest")
 	if err != nil {
 		t.Fatalf("admit new guest after release: %v", err)
 	}
@@ -596,8 +596,8 @@ func TestMaxPinnedBedsConcurrentAdmission(t *testing.T) {
 	if err := m.SetMaxPinnedBeds(1); err != nil {
 		t.Fatalf("SetMaxPinnedBeds: %v", err)
 	}
-	a, _ := m.Ensure("a")
-	b, _ := m.Ensure("b")
+	a, _ := m.Ensure(context.Background(), "a")
+	b, _ := m.Ensure(context.Background(), "b")
 
 	start := make(chan struct{})
 	type result struct {
@@ -655,7 +655,7 @@ func TestBedPressureStartsBeforeHardCapacity(t *testing.T) {
 
 	beds := make([]*Bed, 11)
 	for i := range beds {
-		beds[i], err = m.Ensure(fmt.Sprintf("bed-%d", i))
+		beds[i], err = m.Ensure(context.Background(), fmt.Sprintf("bed-%d", i))
 		if err != nil {
 			t.Fatalf("Ensure bed %d: %v", i, err)
 		}
@@ -697,7 +697,7 @@ func TestNoopDataDoesNotRemainPinned(t *testing.T) {
 	if err := m.SetMaxPinnedBeds(1); err != nil {
 		t.Fatalf("SetMaxPinnedBeds: %v", err)
 	}
-	b, _ := m.Ensure("noop-bed")
+	b, _ := m.Ensure(context.Background(), "noop-bed")
 	finish, err := m.BeginOperation(b, OpExec, 0)
 	if err != nil {
 		t.Fatalf("BeginOperation: %v", err)
@@ -722,7 +722,7 @@ func TestStoreSyncTriggerReleasesPinnedBed(t *testing.T) {
 	defer cancel()
 	go m.RunStoreSync(ctx, 0)
 
-	b, _ := m.Ensure("sync-trigger")
+	b, _ := m.Ensure(context.Background(), "sync-trigger")
 	finish, err := m.BeginOperation(b, OpExec, 0)
 	if err != nil {
 		t.Fatalf("BeginOperation: %v", err)
@@ -750,12 +750,12 @@ func TestPurgePinnedBedReleasesCapacity(t *testing.T) {
 	if err := m.SetMaxPinnedBeds(1); err != nil {
 		t.Fatalf("SetMaxPinnedBeds: %v", err)
 	}
-	a, _ := m.Ensure("a")
+	a, _ := m.Ensure(context.Background(), "a")
 	finish, err := m.BeginOperation(a, OpExec, 0)
 	if err != nil {
 		t.Fatalf("activate a: %v", err)
 	}
-	if err := m.Purge("a"); err != nil {
+	if err := m.Purge(context.Background(), "a"); err != nil {
 		t.Fatalf("Purge a: %v", err)
 	}
 	if got := m.PinnedBedCount(); got != 0 {
@@ -854,11 +854,11 @@ func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 
 	// Write data into a bed, evict it → snapshot taken, local dir stays
 	// behind as luggage.
-	b, _ := m.Ensure("conv-1")
+	b, _ := m.Ensure(context.Background(), "conv-1")
 	if err := os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("payload"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := m.Evict("conv-1"); err != nil || !ok {
+	if ok, err := m.Evict(context.Background(), "conv-1"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
 	if _, err := os.Stat(filepath.Join(b.Dir, "meta.json")); err != nil {
@@ -874,7 +874,7 @@ func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 
 	// Re-resolve the same bed id → warm start from luggage: the real file is
 	// still there and Restore was never called (no marker).
-	b2, err := m.Ensure("conv-1")
+	b2, err := m.Ensure(context.Background(), "conv-1")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
@@ -903,9 +903,9 @@ func TestStaleLuggageDiscardedOnResume(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Ensure("conv-s")
+	b, _ := m.Ensure(context.Background(), "conv-s")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("old"), 0o644)
-	if ok, err := m.Evict("conv-s"); err != nil || !ok {
+	if ok, err := m.Evict(context.Background(), "conv-s"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
 
@@ -914,7 +914,7 @@ func TestStaleLuggageDiscardedOnResume(t *testing.T) {
 	fs.gens["conv-s"] = fs.gens["conv-s"] + 1
 	fs.mu.Unlock()
 
-	b2, err := m.Ensure("conv-s")
+	b2, err := m.Ensure(context.Background(), "conv-s")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
@@ -933,9 +933,9 @@ func TestColdResumeRestoresFromSnapshot(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Ensure("conv-c")
+	b, _ := m.Ensure(context.Background(), "conv-c")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("payload"), 0o644)
-	if ok, err := m.Evict("conv-c"); err != nil || !ok {
+	if ok, err := m.Evict(context.Background(), "conv-c"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
 	// Simulate luggage GC / another instance: no local copy.
@@ -943,7 +943,7 @@ func TestColdResumeRestoresFromSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	b2, err := m.Ensure("conv-c")
+	b2, err := m.Ensure(context.Background(), "conv-c")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
@@ -958,8 +958,8 @@ func TestPersistFailureAbortsDelete(t *testing.T) {
 	fs.fail = true
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Ensure("conv-2")
-	if _, err := m.Evict("conv-2"); err == nil {
+	b, _ := m.Ensure(context.Background(), "conv-2")
+	if _, err := m.Evict(context.Background(), "conv-2"); err == nil {
 		t.Fatal("Evict should fail when persist fails")
 	}
 	// Bed must survive: not deleted from the map, workspace intact.
@@ -976,7 +976,7 @@ func TestPersistDirty(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Ensure("conv-3")
+	b, _ := m.Ensure(context.Background(), "conv-3")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("v1"), 0o644)
 
 	// Freshly created bed: persistedAt == created time; touch to mark dirty.
@@ -996,7 +996,7 @@ func TestPersistDirtyDoesNotWaitForSessionClose(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
-	b, _ := m.Ensure("session-sync")
+	b, _ := m.Ensure(context.Background(), "session-sync")
 	sess, err := m.OpenSession(b, SessionKindCDP, nil)
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
@@ -1033,7 +1033,7 @@ func TestPersistKeepsActivityAfterSnapshotPinned(t *testing.T) {
 		release:   make(chan struct{}),
 	}
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, fs)
-	b, _ := m.Ensure("watermark")
+	b, _ := m.Ensure(context.Background(), "watermark")
 
 	finish, err := m.BeginOperation(b, OpExec, 0)
 	if err != nil {
@@ -1077,7 +1077,7 @@ func TestPersistKeepsActivityAfterSnapshotPinned(t *testing.T) {
 // Before the runMu/mu split, this hung the entire daemon including /healthz.
 func TestDyingShellDoesNotDeadlock(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Ensure("default")
+	b, _ := m.Ensure(context.Background(), "default")
 	sh, err := m.ForegroundShell(b)
 	if err != nil {
 		t.Fatalf("ForegroundShell: %v", err)
@@ -1094,7 +1094,7 @@ func TestDyingShellDoesNotDeadlock(t *testing.T) {
 	// Manager.Resolve (m.mu) → touch (b.mu) → ForegroundShell (b.mu + Dead()).
 	probe := make(chan struct{})
 	go func() {
-		_, _ = m.Ensure("default")
+		_, _ = m.Ensure(context.Background(), "default")
 		_, _ = m.ForegroundShell(b) // may restart the shell; must not block forever
 		close(probe)
 	}()
@@ -1143,13 +1143,13 @@ func TestEvictCanceledByActivity(t *testing.T) {
 	ss := &slowStore{fakeStore: newFakeStore(), gate: make(chan struct{})}
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, ss)
 
-	b, _ := m.Ensure("conv-race")
+	b, _ := m.Ensure(context.Background(), "conv-race")
 	res := make(chan struct {
 		ok  bool
 		err error
 	}, 1)
 	go func() {
-		ok, err := m.Evict("conv-race")
+		ok, err := m.Evict(context.Background(), "conv-race")
 		res <- struct {
 			ok  bool
 			err error
@@ -1189,16 +1189,16 @@ func TestPurgeEndsIdentity(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Ensure("conv-p")
+	b, _ := m.Ensure(context.Background(), "conv-p")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
-	if ok, _ := m.Evict("conv-p"); !ok {
+	if ok, _ := m.Evict(context.Background(), "conv-p"); !ok {
 		t.Fatal("evict failed")
 	}
 	if info, _ := fs.Stat(context.Background(), "conv-p"); info == nil {
 		t.Fatal("snapshot should exist after evict (DORMANT)")
 	}
 	// Purge the dormant bed: snapshot AND luggage gone, resolve starts fresh.
-	if err := m.Purge("conv-p"); err != nil {
+	if err := m.Purge(context.Background(), "conv-p"); err != nil {
 		t.Fatalf("Purge: %v", err)
 	}
 	if info, _ := fs.Stat(context.Background(), "conv-p"); info != nil {
@@ -1207,7 +1207,7 @@ func TestPurgeEndsIdentity(t *testing.T) {
 	if _, err := os.Stat(b.Dir); !os.IsNotExist(err) {
 		t.Fatal("luggage should be removed after purge")
 	}
-	b2, _ := m.Ensure("conv-p")
+	b2, _ := m.Ensure(context.Background(), "conv-p")
 	if _, err := os.Stat(filepath.Join(b2.Workspace, "restored.txt")); err == nil {
 		t.Fatal("purged bed must start empty, not restored")
 	}
@@ -1215,7 +1215,7 @@ func TestPurgeEndsIdentity(t *testing.T) {
 		t.Fatal("purged bed must not resurrect old luggage data")
 	}
 	// Default bed is not purgeable.
-	if err := m.Purge("default"); err == nil {
+	if err := m.Purge(context.Background(), "default"); err == nil {
 		t.Fatal("purging the default bed must be refused")
 	}
 }
@@ -1228,7 +1228,7 @@ func TestGenerationMonotonicAcrossPersists(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Ensure("conv-g")
+	b, _ := m.Ensure(context.Background(), "conv-g")
 	if err := m.Checkpoint(context.Background(), "conv-g"); err != nil {
 		t.Fatalf("checkpoint 1: %v", err)
 	}
@@ -1271,12 +1271,12 @@ func TestCollectLuggageWatermarks(t *testing.T) {
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
 	mkLuggage := func(id string, size int) {
-		b, _ := m.Ensure(id)
+		b, _ := m.Ensure(context.Background(), id)
 		payload := make([]byte, size)
 		if err := os.WriteFile(filepath.Join(b.Workspace, "data.txt"), payload, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if ok, err := m.Evict(id); err != nil || !ok {
+		if ok, err := m.Evict(context.Background(), id); err != nil || !ok {
 			t.Fatalf("evict %s: ok=%v err=%v", id, ok, err)
 		}
 		time.Sleep(5 * time.Millisecond) // distinct LastActiveAt ordering
@@ -1312,9 +1312,9 @@ func TestCollectLuggageStaleFirst(t *testing.T) {
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
 	for _, id := range []string{"conv-a", "conv-b"} {
-		b, _ := m.Ensure(id)
+		b, _ := m.Ensure(context.Background(), id)
 		_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), make([]byte, 10_000), 0o644)
-		if ok, err := m.Evict(id); err != nil || !ok {
+		if ok, err := m.Evict(context.Background(), id); err != nil || !ok {
 			t.Fatalf("evict %s: ok=%v err=%v", id, ok, err)
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -1339,10 +1339,10 @@ func TestInventory(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	_, _ = m.Ensure("conv-live")
-	b, _ := m.Ensure("conv-cold")
+	_, _ = m.Ensure(context.Background(), "conv-live")
+	b, _ := m.Ensure(context.Background(), "conv-cold")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
-	if ok, err := m.Evict("conv-cold"); err != nil || !ok {
+	if ok, err := m.Evict(context.Background(), "conv-cold"); err != nil || !ok {
 		t.Fatalf("evict: ok=%v err=%v", ok, err)
 	}
 
@@ -1390,14 +1390,14 @@ func TestProfileAccumulatesAndSurvivesEvict(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
-	b, _ := m.Ensure("conv-prof")
+	b, _ := m.Ensure(context.Background(), "conv-prof")
 	b.RecordCommand(1500 * time.Millisecond)
 	b.RecordCommand(500 * time.Millisecond)
 	if p := b.Usage(); p.CmdCount != 2 || p.CmdTotalMs != 2000 {
 		t.Fatalf("profile = %+v, want 2 cmds / 2000ms", p)
 	}
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
-	if ok, err := m.Evict("conv-prof"); err != nil || !ok {
+	if ok, err := m.Evict(context.Background(), "conv-prof"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
 
@@ -1414,7 +1414,7 @@ func TestProfileAccumulatesAndSurvivesEvict(t *testing.T) {
 	}
 
 	// Warm resume seeds from meta and keeps counting on top.
-	b2, err := m.Ensure("conv-prof")
+	b2, err := m.Ensure(context.Background(), "conv-prof")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
@@ -1445,9 +1445,9 @@ func TestProfileRecordsMigrationCost(t *testing.T) {
 	ss := sleepyStore{fakeStore: newFakeStore()}
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, ss)
 
-	b, _ := m.Ensure("conv-cost")
+	b, _ := m.Ensure(context.Background(), "conv-cost")
 	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
-	if ok, err := m.Evict("conv-cost"); err != nil || !ok {
+	if ok, err := m.Evict(context.Background(), "conv-cost"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
 	meta, ok := loadMeta(filepath.Join(root, "conv-cost"))
@@ -1459,7 +1459,7 @@ func TestProfileRecordsMigrationCost(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(root, "conv-cost")); err != nil {
 		t.Fatal(err)
 	}
-	b2, err := m.Ensure("conv-cost")
+	b2, err := m.Ensure(context.Background(), "conv-cost")
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
@@ -1476,7 +1476,7 @@ func TestBedDirLayoutAndMetaAcrossRestart(t *testing.T) {
 	root := t.TempDir()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, nil)
 
-	b, _ := m.Ensure("default")
+	b, _ := m.Ensure(context.Background(), "default")
 	// Layout: {root}/default/{meta.json,data/workspace}; Home is the bed_home
 	// root (data), Workspace the real subdir below it.
 	if b.Home != filepath.Join(root, "default", "data") {
@@ -1493,7 +1493,7 @@ func TestBedDirLayoutAndMetaAcrossRestart(t *testing.T) {
 	// "Restart": a new Manager over the same root sees the same identity.
 	time.Sleep(5 * time.Millisecond)
 	m2, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, nil)
-	b2, _ := m2.Ensure("default")
+	b2, _ := m2.Ensure(context.Background(), "default")
 	if !b2.CreatedAt.Equal(created) {
 		t.Fatalf("CreatedAt not preserved across restart: %v vs %v", b2.CreatedAt, created)
 	}
