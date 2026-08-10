@@ -251,7 +251,7 @@ func (m *Manager) StartSessionExecution(
 	if err != nil {
 		return nil, err
 	}
-	execution := m.executions.trackSession(ctx, b.ID, shell, command, onStart, onOutput, func(result ExecutionResult) {
+	execution := m.executions.trackSession(ctx, b.ID, shell, command, timeout, onStart, onOutput, func(result ExecutionResult) {
 		finishOperation()
 		b.RecordCommand(result.Duration)
 	})

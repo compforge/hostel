@@ -17,6 +17,7 @@ package web
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -498,8 +499,8 @@ func TestMaxPinnedBedsBackpressure(t *testing.T) {
 		t.Fatalf("SetMaxPinnedBeds: %v", err)
 	}
 	s := NewServer(mgr)
-	one, _ := mgr.Ensure("one")
-	_, _ = mgr.Ensure("two")
+	one, _ := mgr.Ensure(context.Background(), "one")
+	_, _ = mgr.Ensure(context.Background(), "two")
 	finish, err := mgr.BeginOperation(one, bed.OpExec, time.Minute)
 	if err != nil {
 		t.Fatalf("activate one: %v", err)

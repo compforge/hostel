@@ -13,6 +13,7 @@ hostel 需要从三个层面回答同一组问题：
 
 - **日志**还原单次生命周期动作，适合排查具体 bed；
 - **接口**提供当前事实和有界的最近摘要，适合控制面诊断；
+- **Trace**串联入口请求、bed 生命周期和 execution，适合定位单次跨服务调用；
 - **metric**聚合整体成功率和耗时分布，适合趋势与 SLO。
 
 ### 当前状态与过程记录分离
@@ -35,14 +36,14 @@ hostel 需要从三个层面回答同一组问题：
 - `TerminationCause` 是 execution controller 在发信号前记录的 timeout / client canceled /
   interrupted / bed teardown 等意图。没有 stop 意图的 signal 只记 external signal，不猜 OOM。
 
-第一阶段统一三个 action：
+生命周期 action 包含：
 
 - **activate**：为一个非 resident bed 选择 fresh / luggage / snapshot 来源并使其可服务；
 - **persist**：串行生成新 generation、写入 store、提交持久化水位；
 - **evict**：尝试持久化并移除 resident runtime，可能因并发活动而 canceled。
 
 resident bed 只保留最近一次 activation 和 persist。它们是有界诊断摘要，不是历史库；
-evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史由日志和未来的时序指标承担。
+evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史由日志与 Trace 承担。
 
 ## 主流程
 
@@ -51,12 +52,11 @@ bed core
   ├─ Status：当前状态、版本、期限、活动请求数
   ├─ LifecycleRecord：action / result / source / trigger / stages
        ├─ structured logs
-       ├─ GET /v1/beds/:id lifecycle detail
-       └─ aggregate metrics（第二阶段）
+       └─ GET /v1/beds/:id lifecycle detail
   └─ Execution：identity / output / process outcome / termination cause
        ├─ SSE execution_start → stdout|stderr → execution_end
        ├─ status + cursor output API
-       └─ structured logs + aggregate metrics（第二阶段）
+       └─ structured logs + Trace
 ```
 
 阶段按真实等待边界划分，而不是按函数数量划分：
@@ -82,6 +82,30 @@ bed core
 spawner、process outcome、exit code 或 signal、termination cause 与 duration；不得记录 command、
 env 或原始输出。实际 spawner 同时进入 health / capabilities，调用方不从配置推断运行态。
 
+带有效 span context 的生命周期与 execution 日志增加 `trace_id` / `span_id`，用于从日志跳转到
+Trace；启动日志和没有上下文的后台日志保持原格式。
+
+## Trace
+
+Hostel 接收 W3C Trace Context 与 Baggage，并通过 OTLP gRPC 或 HTTP 导出。入站 HTTP span 使用
+Gin 路由模板命名；`/healthz`、`/ping`、`/metrics`、`/metrics/watch` 不创建 span，避免探针和
+高频采样淹没有效请求。
+
+领域 span 保持小而稳定：
+
+- `hostel.execution`：覆盖前台、后台和 session execution 的完整进程生命周期；
+- `hostel.bed.activate` / `hostel.bed.persist` / `hostel.bed.evict`：覆盖一次 bed 管理动作；
+- lifecycle stage 记录为 `stage.start` / `stage.end` event，不为每个函数制造 child span。
+
+后台 execution 继承发起请求的 trace identity，但不继承请求取消信号，因此 HTTP 响应返回后仍能
+完整记录命令终态。span 只包含 execution id、bed id、mode、spawner、process outcome、termination
+cause、exit code/signal、action/stage/result/source/trigger 与耗时；禁止写入 command、env、stdout、
+stderr、路径和错误原文以外的用户数据。
+
+非零退出、非预期 signal 和 runtime lost 标记为 error；client cancel、interrupt、bed teardown、
+daemon shutdown 属于预期控制动作，不把 trace 标红。启用 Trace 但未配置 endpoint 时保持 no-op；
+两种 endpoint 同时存在时优先 gRPC，与 sandctl 的部署语义一致。
+
 ## 接口
 
 `GET /v1/beds` 是调度 hint：实例容量、state 数量、每个本机 bed（resident + dormant
@@ -103,27 +127,10 @@ bed 的一次失败。
 sequence 的有界输出；游标落入已淘汰区间时显式返回 truncated。registry 只保留最近完成记录，
 不能成为无限增长的历史库。
 
-## Metric（第二阶段）
+## Metric 边界
 
-hostel 已有 OpenSandbox 兼容的 `/metrics` 与 `/metrics/watch`，它们返回目标 bed 的资源
-使用 JSON。Prometheus 生命周期指标必须使用独立入口，不能改变现有协议。
-
-metric 直接聚合同一份 lifecycle 事实，覆盖：
-
-- action 结果计数与总耗时；
-- stage 结果计数与耗时；
-- 当前各 state 的 bed 数量；
-- activate 来源和 persist 触发原因。
-
-execution metric 从同一份 `ExecutionResult` 聚合 mode、spawner、process outcome、termination
-cause、signal 与耗时；execution id、bed id、错误原文和输出不得成为 label。
-
-label 只允许 action、stage、result、source、trigger 等固定枚举。bed id、路径、
-generation、错误原文不得成为 label。错误需要聚合时使用有限错误类别，未知错误落入通用
-类别，不能把底层错误字符串直接标签化。
-
-metric 失败不得影响 bed 生命周期；上报不能扩大核心锁持有时间。具体名称和 bucket 在
-第二阶段结合 sandctl 压测查询确定，避免先固定一套没有消费方验证的指标。
+`/metrics` 与 `/metrics/watch` 是 OpenSandbox 兼容的目标 bed 资源 JSON，不是 Prometheus
+入口。Hostel 的 OpenTelemetry 接入只导出 Trace，不导出 Metrics 或 Logs。
 
 ## 并发与正确性边界
 
@@ -136,12 +143,3 @@ metric 失败不得影响 bed 生命周期；上报不能扩大核心锁持有�
 - timeline 有固定阶段和固定保留数量，读取返回副本。
 - stop cause 必须先于 kill 原子记录，多个 stop 请求只接受第一个；
 - `execution_start` 恰好对应一个携带 result 的 `execution_end`，输出 pipe 泄漏不能无限阻塞终态发布。
-
-## 分阶段落地
-
-1. **第一阶段**：activate / persist / evict 结构化日志，单 bed 最近 lifecycle 摘要，
-   以及详情接口；复用既有状态与并发模型。
-2. **第二阶段**：把同一事实投影为低基数 Prometheus metric，用 sandctl perf 验证
-   激活、持久化、回收耗时和错误率。
-3. **后续**：只有出现稳定、跨场景的诊断需求时，才把同一模式扩展到 amenity / instance；
-   不按单个故障不断增加孤立概念。

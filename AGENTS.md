@@ -56,6 +56,7 @@ deploy/docker/Dockerfile  多阶段多架构镜像(amd64/arm64,builder 原生交
 cmd/hostel/main.go     组装：config→isolation→amenity registry→store→bed manager→gin server；idle GC/luggage GC/持久兜底；--version/--health/__confine(landlock confiner 自 re-exec) 前置子命令；优雅关停
 internal/
 ├── config/            flags + HOSTEL_* env
+├── tracing/           OpenTelemetry 进程初始化：OTLP exporter、W3C propagation 与日志 trace/span 关联
 ├── isolation/         数据隔离房型档：New 按 env ceiling 路由；direct(dorm/全平台) + landlock(room/linux) + bwrap(suite/linux)
 ├── bed/               ★核心。bed=隔离单元=对外一个 sandbox
 │   ├── bed.go         Bed：隔离单元本体 + Status 三维事实(state/generation/retained_until) + touch/accessor
@@ -86,6 +87,7 @@ internal/
   - **luggage**：共享快照存在时只是本机缓存；同机 resume 按 generation 判新鲜，落后则整目录丢弃重拉；noop store 下 luggage 是唯一副本并会阻止 carrier 回收。`GET /v1/beds` 向调度器如实上报实例容量、各 state 数量和每个本机 Bed（含 dormant luggage）的事实。详见 `docs/store.md` §四。
   - **bed 容量准入**：`--max-beds` 限 resident tenant bed；pinned 接近 `--max-pinned-beds` 时上报软 `bed_pressure` 供上游提前扩容，达到硬上限才以 `INSUFFICIENT_BED` 拒绝新的 carrier 归属。新 resident、dormant restore、未 pinned 的 idle bed 重新激活时检查；pinned bed 继续由当前 carrier 承接。CPU/内存 pressure 仍单独执行资源准入。Hostel 通过 `pinned` / `data_synced` 上报事实，不自行选择 carrier；同步 trigger 只表达“尽快同步”，节奏、合并与重试由 Store 同步循环统一负责（详见 `docs/resource.md` / `docs/store.md`）。
 - **执行协议诚实表达进程终态**：每次前台、后台或 session run 都生成 `Execution`；`execution_start` 先于输出，之后恰有一个 `execution_end`。`ProcessOutcome` 表达 exited / signaled / lost，termination cause 独立表达 timeout / cancel / interrupt / teardown，禁止再用 `-1` 或错误字符串承载多种语义。
+- **Trace 是生命周期事实的投影**：HTTP 使用路由模板 span，bed activate/persist/evict 与 execution 使用稳定领域 span，stage 只记 event；不得把 command、env、stdout/stderr 写入 span。后台 execution 继承 trace identity 但不继承 HTTP cancel。详见 `docs/observability.md`。
 - **isolation 按「青年旅社房型」分档**（对外保证，非机制名）：`dorm`（通铺，无屏障=direct）/ `room`（单间锁门、厕所公用，数据 EACCES 但兄弟可见、系统路径共享=landlock，自 re-exec `hostel __confine`）/ `suite`（套房全私有，兄弟不可见+私有 mount 视图+`/workspace` 规范挂载=bwrap）/ `auto`（顶格取 env 上限）。`effective=min(requested,ceiling)`，请求超上限诚实降级。进程 env 与隔离机制正交：`HOSTEL_*` 只属 daemon、`BED_*` 只属 bed，三档统一由 `internal/bed/env.go` 显式组装。机制（direct/bwrap/landlock/uid）是内部细节，全走 `Isolator` 接口。详见 `docs/data.md`。
 - **amenity 通则**：重资产、自带多租的共享设施由 hostel 在 bed 外管一份，用应用原生机制切租（Chromium→BrowserContext、Jupyter→kernel），产物落对应 bed 的 workspace。amenity 有自己的生命周期（idle→running 按需启停）。新增实例 = 实现 `Amenity` + 注册，bed evict/purge 已接 `ReleaseAll` 钩子。北向只暴露 bed 级动作，**不透传 CDP/协议 socket**（会跨租户）。见 `docs/amenity.md`。
 - **常驻 shell 的坑**：一个 Shell 只能有**一个** stdout reader（否则 run 间串输出——v1 踩过）；Run 之间串行；`exit` 会杀死 session，非零退出码用子 shell（`sh -c "exit N"`）。**锁纪律**：`runMu` 串行化 Run 且只有 Run 碰；`mu` 只护 `dead` 标志、纳秒级持有——曾因单锁设计让「shell 死亡+未断开客户端」死锁整个 daemon（含 healthz），别往 `mu` 里加阻塞代码（见 shell.go LOCKING 注释）。

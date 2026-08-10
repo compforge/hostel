@@ -34,9 +34,9 @@ func (a *mutableAdmission) Report() resource.AdmissionReport {
 
 func TestResourceAdmissionChecksSyncedIdleAndNewBeds(t *testing.T) {
 	m := newTestManager(t)
-	a, _ := m.Ensure("a")
-	b, _ := m.Ensure("b")
-	defaultBed, _ := m.Ensure("")
+	a, _ := m.Ensure(context.Background(), "a")
+	b, _ := m.Ensure(context.Background(), "b")
+	defaultBed, _ := m.Ensure(context.Background(), "")
 	admission := &mutableAdmission{decision: resource.AdmissionDecision{Allowed: true}}
 	m.SetResourceAdmission(admission)
 
@@ -52,7 +52,7 @@ func TestResourceAdmissionChecksSyncedIdleAndNewBeds(t *testing.T) {
 	if _, err := m.BeginOperation(b, OpExec, 0); !errors.Is(err, ErrResourcePressure) {
 		t.Fatalf("activate synced idle b: want ErrResourcePressure, got %v", err)
 	}
-	if _, err := m.Ensure("new"); !errors.Is(err, ErrResourcePressure) {
+	if _, err := m.Ensure(context.Background(), "new"); !errors.Is(err, ErrResourcePressure) {
 		t.Fatalf("admit new resident: want ErrResourcePressure, got %v", err)
 	}
 	finishDefault, err := m.BeginOperation(defaultBed, OpExec, 0)
@@ -71,7 +71,7 @@ func TestResourceAdmissionAllowsUnsyncedIdleBed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	b, _ := m.Ensure("dirty")
+	b, _ := m.Ensure(context.Background(), "dirty")
 	finishInitial, err := m.BeginOperation(b, OpExec, 0)
 	if err != nil {
 		t.Fatalf("initial operation: %v", err)
@@ -97,7 +97,7 @@ func TestEnsureKeepsSyncedIdleBedEligibleForAdmission(t *testing.T) {
 	admission := &mutableAdmission{decision: resource.AdmissionDecision{Allowed: true}}
 	m.SetResourceAdmission(admission)
 
-	b, err := m.Ensure("resident")
+	b, err := m.Ensure(context.Background(), "resident")
 	if err != nil {
 		t.Fatalf("ensure resident: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestEnsureKeepsSyncedIdleBedEligibleForAdmission(t *testing.T) {
 		Allowed: false,
 		Reason:  "carrier CPU usage 95.0%",
 	}
-	resolved, err := m.Ensure("resident")
+	resolved, err := m.Ensure(context.Background(), "resident")
 	if err != nil {
 		t.Fatalf("resolve resident: %v", err)
 	}

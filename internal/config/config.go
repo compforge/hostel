@@ -36,6 +36,11 @@ const defaultAdmissionThresholdPercent = 90
 type Config struct {
 	ShowVersion bool
 	HealthCheck bool
+	// EnableTracing exports W3C-propagated HTTP and domain traces over OTLP.
+	// gRPC wins when both endpoints are set, matching sandctl deployment policy.
+	EnableTracing          bool
+	OTLPTracesGRPCEndpoint string
+	OTLPTracesHTTPEndpoint string
 	// Addr is the HTTP listen address.
 	Addr string
 	// WorkspaceRoot is the parent dir under which each bed gets its workspace
@@ -115,6 +120,9 @@ func Load(args []string) *Config {
 	// flags so addr resolution stays identical to the running server.
 	fs.BoolVar(&c.ShowVersion, "version", false, "print version and exit")
 	fs.BoolVar(&c.HealthCheck, "health", false, "GET local /healthz and exit (0=ok)")
+	fs.BoolVar(&c.EnableTracing, "enable-tracing", osx.EnvBool("HOSTEL_ENABLE_TRACING", false), "export OpenTelemetry traces")
+	fs.StringVar(&c.OTLPTracesGRPCEndpoint, "otel-traces-grpc-endpoint", osx.EnvStr("OTEL_EXPORTER_OTLP_TRACES_GRPC_ENDPOINT", ""), "OTLP gRPC traces endpoint")
+	fs.StringVar(&c.OTLPTracesHTTPEndpoint, "otel-traces-http-endpoint", osx.EnvStr("OTEL_EXPORTER_OTLP_TRACES_HTTP_ENDPOINT", ""), "OTLP HTTP traces endpoint")
 	fs.StringVar(&c.WorkspaceRoot, "workspace-root", osx.EnvStr("HOSTEL_WORKSPACE_ROOT", "/workspace"), "parent dir for per-bed workspaces")
 	fs.StringVar(&c.IsolationMode, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "data-isolation level: dorm | room | suite | auto (auto=env ceiling)")
 	fs.StringVar(&c.DefaultBed, "default-bed", osx.EnvStr("HOSTEL_DEFAULT_BED", "default"), "bed id used when a request omits one")

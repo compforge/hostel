@@ -18,13 +18,14 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 )
 
 func TestExecutionOutputRetentionIsBoundedWithoutTruncatingLiveOutput(t *testing.T) {
-	execution := newExecution("bed-output", ExecutionForeground, "test", nil)
+	execution := newExecution(context.Background(), "bed-output", ExecutionForeground, "test", nil)
 	text := strings.Repeat("x", executionOutputBytes+10)
 
 	live := execution.appendOutput(StreamStdout, text)
@@ -40,9 +41,26 @@ func TestExecutionOutputRetentionIsBoundedWithoutTruncatingLiveOutput(t *testing
 	}
 }
 
+func TestExecutionCompletionRejectsLateStop(t *testing.T) {
+	var stopped atomic.Bool
+	execution := newExecution(context.Background(), "bed-finish", ExecutionSession, "test", func() {
+		stopped.Store(true)
+	})
+	cause, stopDone := execution.claimFinish()
+	if cause != "" || stopDone != nil {
+		t.Fatalf("claimFinish = %q, %v", cause, stopDone)
+	}
+	if execution.RequestStop(CauseTimeout) {
+		t.Fatal("late timeout was accepted after process completion")
+	}
+	if stopped.Load() {
+		t.Fatal("late timeout invoked the session stop function")
+	}
+}
+
 func TestExecutionPreservesExternalSignal(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Ensure("signal")
+	b, _ := m.Ensure(context.Background(), "signal")
 
 	result, err := m.RunForeground(context.Background(), b, "kill -TERM $$", "", nil, 0, nil)
 	if err != nil {
@@ -56,7 +74,7 @@ func TestExecutionPreservesExternalSignal(t *testing.T) {
 
 func TestExecutionRecordsTimeoutBeforeKill(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Ensure("timeout")
+	b, _ := m.Ensure(context.Background(), "timeout")
 
 	result, err := m.RunForeground(context.Background(), b, "sleep 30", "", nil, 30*time.Millisecond, nil)
 	if err != nil {
@@ -70,7 +88,7 @@ func TestExecutionRecordsTimeoutBeforeKill(t *testing.T) {
 
 func TestExecutionRecordsClientCancellationBeforeKill(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Ensure("cancel")
+	b, _ := m.Ensure(context.Background(), "cancel")
 	ctx, cancel := context.WithCancel(context.Background())
 
 	result, err := m.RunForeground(ctx, b, "echo ready; sleep 30", "", nil, 0, func(ExecutionOutput) {
@@ -87,7 +105,7 @@ func TestExecutionRecordsClientCancellationBeforeKill(t *testing.T) {
 
 func TestBackgroundInterruptHasStructuredCause(t *testing.T) {
 	m := newTestManager(t)
-	b, _ := m.Ensure("interrupt")
+	b, _ := m.Ensure(context.Background(), "interrupt")
 	started := make(chan struct{})
 	var once sync.Once
 

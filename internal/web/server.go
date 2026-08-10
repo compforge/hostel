@@ -21,9 +21,11 @@ package web
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/fsops"
@@ -74,14 +76,35 @@ type Server struct {
 	metricSampleInterval time.Duration
 }
 
+type serverConfig struct {
+	tracing bool
+}
+
+type ServerOption func(*serverConfig)
+
+func WithTracing(enabled bool) ServerOption {
+	return func(cfg *serverConfig) { cfg.tracing = enabled }
+}
+
 // NewServer builds the gin engine with all routes registered.
-func NewServer(mgr *bed.Manager) *Server {
+func NewServer(mgr *bed.Manager, options ...ServerOption) *Server {
+	cfg := serverConfig{}
+	for _, option := range options {
+		option(&cfg)
+	}
 	gin.SetMode(gin.ReleaseMode)
 	e := gin.New()
+	if cfg.tracing {
+		e.Use(otelgin.Middleware("hostel", otelgin.WithFilter(traceHTTPPath)))
+	}
 	e.Use(gin.Recovery())
 	s := &Server{mgr: mgr, engine: e, metricSampleInterval: time.Second}
 	s.routes()
 	return s
+}
+
+func traceHTTPPath(request *http.Request) bool {
+	return !slices.Contains([]string{"/healthz", "/ping", "/metrics", "/metrics/watch"}, request.URL.Path)
 }
 
 // Handler exposes the engine for http.Server / tests.
@@ -195,7 +218,7 @@ func (s *Server) bedOf(c *gin.Context) *bed.Bed {
 	if id == "" {
 		id = c.Query("bed")
 	}
-	b, err := s.mgr.Ensure(id)
+	b, err := s.mgr.Ensure(c.Request.Context(), id)
 	if err != nil {
 		respondBedError(c, err)
 		return nil

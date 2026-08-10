@@ -294,7 +294,7 @@ func (m *Manager) SetBedIdleTTL(ttl time.Duration) { m.bedIdleTTL = ttl }
 
 // Ensure returns the bed for id, creating it on first use. An empty id maps to
 // the default bed — so callers that don't know about beds still get one.
-func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
+func (m *Manager) Ensure(ctx context.Context, id string) (resolved *Bed, retErr error) {
 	if id == "" {
 		id = m.defaultBed
 	}
@@ -327,7 +327,7 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 			return nil, err
 		}
 	}
-	trace := beginLifecycle(id, lifecycleActivate)
+	trace := beginLifecycle(ctx, id, lifecycleActivate)
 	defer func() {
 		record := trace.finish(lifecycleResult(retErr), retErr)
 		if resolved != nil {
@@ -350,7 +350,7 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 	var snapshot *store.SnapshotInfo
 	if err := trace.stage("stat_snapshot", func() error {
 		var err error
-		snapshot, err = m.store.Stat(context.Background(), id)
+		snapshot, err = m.store.Stat(ctx, id)
 		return err
 	}); err != nil {
 		return nil, fmt.Errorf("bed: check snapshot %s: %w", id, err)
@@ -376,7 +376,7 @@ func (m *Manager) Ensure(id string) (resolved *Bed, retErr error) {
 				return fmt.Errorf("recreate bed dir: %w", err)
 			}
 			t0 := time.Now()
-			if err := m.store.Restore(context.Background(), id, bedDir); err != nil {
+			if err := m.store.Restore(ctx, id, bedDir); err != nil {
 				return err
 			}
 			restoreMs = time.Since(t0).Milliseconds()
@@ -494,17 +494,17 @@ func (m *Manager) List() []*Bed {
 // activity during the persist window — serving beats reclaiming, and
 // removing runtime state after a mid-persist write would silently drop that
 // write. A persist failure aborts the evict (never destroy the only copy).
-func (m *Manager) Evict(id string) (bool, error) {
-	return m.evict(id, nil)
+func (m *Manager) Evict(ctx context.Context, id string) (bool, error) {
+	return m.evict(ctx, id, nil)
 }
 
 // evictExpired is the idle-GC path. Unlike explicit Evict, it atomically
 // re-checks the bed's deadline and running exec count before entering EVICTING.
-func (m *Manager) evictExpired(id string, now time.Time) (bool, error) {
-	return m.evict(id, &now)
+func (m *Manager) evictExpired(ctx context.Context, id string, now time.Time) (bool, error) {
+	return m.evict(ctx, id, &now)
 }
 
-func (m *Manager) evict(id string, expiryCutoff *time.Time) (evicted bool, retErr error) {
+func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time) (evicted bool, retErr error) {
 	if id == "" {
 		id = m.defaultBed
 	}
@@ -514,7 +514,7 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (evicted bool, retEr
 	if !ok {
 		return false, nil // not resident; nothing to evict
 	}
-	trace := beginLifecycle(id, lifecycleEvict)
+	trace := beginLifecycle(ctx, id, lifecycleEvict)
 	defer func() {
 		result := lifecycleResult(retErr)
 		if retErr == nil && !evicted {
@@ -547,7 +547,7 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (evicted bool, retEr
 		return nil
 	})
 
-	if err := m.persistBed(context.Background(), b, "evict"); err != nil {
+	if err := m.persistBed(ctx, b, "evict"); err != nil {
 		b.mu.Lock()
 		b.evicting = false
 		b.mu.Unlock()
@@ -591,11 +591,13 @@ func (m *Manager) evict(id string, expiryCutoff *time.Time) (evicted bool, retEr
 // default bed is the single-tenant fallback and cannot be purged.
 var ErrPurgeDefault = errors.New("bed: refusing to purge the default bed")
 
+const purgeStoreTimeout = 30 * time.Second
+
 // Purge ends a bed's identity: tear down (no persist), remove the local dir
 // (active workspace or leftover luggage), and delete the snapshot. Explicitly
 // destructive — the caller asked for the data to be gone, so concurrent
 // activity does not cancel it.
-func (m *Manager) Purge(id string) error {
+func (m *Manager) Purge(ctx context.Context, id string) error {
 	if id == "" || id == m.defaultBed {
 		return ErrPurgeDefault
 	}
@@ -624,7 +626,12 @@ func (m *Manager) Purge(id string) error {
 		return err
 	}
 	// DORMANT (or never-existed) beds still have a snapshot to remove.
-	return m.store.Delete(context.Background(), id)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
+	defer cancel()
+	return m.store.Delete(deleteCtx, id)
 }
 
 // teardown kills a bed's runtime state: shells, one-shot commands, service
@@ -650,7 +657,7 @@ func (m *Manager) teardown(b *Bed) {
 // expiry/running-exec check happens again under the bed lock in evictExpired,
 // closing the scan→evict race with a concurrent command.
 // The default bed is never reaped.
-func (m *Manager) CollectExpired(now time.Time) []string {
+func (m *Manager) CollectExpired(ctx context.Context, now time.Time) []string {
 	var stale []string
 	m.mu.Lock()
 	for id, b := range m.beds {
@@ -665,7 +672,7 @@ func (m *Manager) CollectExpired(now time.Time) []string {
 	m.mu.Unlock()
 	var reaped []string
 	for _, id := range stale {
-		if ok, _ := m.evictExpired(id, now); ok {
+		if ok, _ := m.evictExpired(ctx, id, now); ok {
 			reaped = append(reaped, id)
 		}
 	}
@@ -681,7 +688,7 @@ func (m *Manager) CollectExpired(now time.Time) []string {
 // accurate ("locally dirty"), while a falsely-advanced LastPersistedAt would
 // make restart-time dirty tracking skip data that never reached the store.
 func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retErr error) {
-	trace := beginLifecycle(b.ID, lifecyclePersist)
+	trace := beginLifecycle(ctx, b.ID, lifecyclePersist)
 	trace.trigger = trigger
 	defer func() {
 		b.recordLifecycle(trace.finish(lifecycleResult(retErr), retErr))

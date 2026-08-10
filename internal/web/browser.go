@@ -38,7 +38,7 @@ func (s *Server) browserOf(c *gin.Context) (*bed.Bed, amenity.Browser, func()) {
 			"browser amenity is not available on this hostel (no chromium binary or CDP endpoint)")
 		return nil, nil, nil
 	}
-	b, err := s.mgr.Ensure(c.Param("bedId"))
+	b, err := s.mgr.Ensure(c.Request.Context(), c.Param("bedId"))
 	if err != nil {
 		respondBedError(c, err)
 		return nil, nil, nil
@@ -101,7 +101,7 @@ func (s *Server) browserCDP(c *gin.Context) {
 	}
 	// Ensure before upgrading: ServeCDP ensures the tenant at dial time (the
 	// lazy browser boot point) and needs the bed's workspace for that create.
-	b, err := s.mgr.Ensure(bedID)
+	b, err := s.mgr.Ensure(c.Request.Context(), bedID)
 	if err != nil {
 		respondBedError(c, err)
 		return

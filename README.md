@@ -161,7 +161,13 @@ Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` /
 `--bed-init` / `--bed-env-passthrough` / `--store` /
 `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` /
 `--luggage-high-bytes` / `--luggage-low-bytes` /
-`--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port`.
+`--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` /
+`--enable-tracing`.
+
+OpenTelemetry traces use `OTEL_EXPORTER_OTLP_TRACES_GRPC_ENDPOINT` or
+`OTEL_EXPORTER_OTLP_TRACES_HTTP_ENDPOINT`; gRPC wins when both are set. Tracing
+is disabled by default and enabled with `HOSTEL_ENABLE_TRACING=true` (or
+`--enable-tracing`).
 
 Environment namespaces follow ownership: `HOSTEL_*` configures the daemon and
 is never inherited wholesale by bed processes; bed identity/capabilities use
