@@ -21,65 +21,109 @@ import (
 	"syscall"
 )
 
-// Spawn is the daemon side of one spawn: dial the bed's init, hand over the
-// command spec plus the three stdio fds, and return once the child is running.
-// The returned handle's WaitExit blocks for the exit reply. The caller keeps
-// ownership of the *os.File ends it passed (close your copies as usual — the
-// fds are dup'ed across the socket).
-func Spawn(socket string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File) (*Handle, error) {
-	raddr := &net.UnixAddr{Name: socket, Net: socketNetwork}
+// Client addresses one executor instance. Every operation uses a fresh socket;
+// process state lives in bed-init, never in a connection.
+type Client struct {
+	socket     string
+	executorID string
+}
+
+// RemoteError is a semantic rejection returned by a live Executor. Callers
+// must not mistake it for transport loss and replace the Executor.
+type RemoteError struct {
+	Operation string
+	Message   string
+}
+
+func (e *RemoteError) Error() string {
+	return fmt.Sprintf("bedinit: %s: %s", e.Operation, e.Message)
+}
+
+func NewClient(socket, executorID string) *Client {
+	return &Client{socket: socket, executorID: executorID}
+}
+
+func (c *Client) Describe() error {
+	_, err := c.call(request{Operation: opDescribe, ExecutorID: c.executorID}, nil)
+	return err
+}
+
+// Start is idempotent by processID + spec fingerprint. If the first response
+// is lost after fork, retrying cannot launch a duplicate command.
+func (c *Client) Start(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File) (int, error) {
+	req := request{
+		Operation:  opStart,
+		ExecutorID: c.executorID,
+		ProcessID:  processID,
+		SpecHash:   specHash(argv, dir, env),
+		Argv:       argv,
+		Dir:        dir,
+		Env:        env,
+	}
+	fds := []int{int(stdin.Fd()), int(stdout.Fd()), int(stderr.Fd())}
+	rep, err := c.call(req, fds)
+	if err != nil {
+		return 0, err
+	}
+	if rep.Pid <= 0 {
+		return 0, fmt.Errorf("bedinit: start %s returned invalid pid %d", processID, rep.Pid)
+	}
+	return rep.Pid, nil
+}
+
+func (c *Client) Get(processID string) (running bool, status *ExitStatus, err error) {
+	rep, err := c.call(request{Operation: opGet, ExecutorID: c.executorID, ProcessID: processID}, nil)
+	if err != nil {
+		return false, nil, err
+	}
+	return rep.State == processRunning, rep.Exit, nil
+}
+
+func (c *Client) Wait(processID string) (ExitStatus, error) {
+	rep, err := c.call(request{Operation: opWait, ExecutorID: c.executorID, ProcessID: processID}, nil)
+	if err != nil {
+		return ExitStatus{}, err
+	}
+	if rep.Exit == nil {
+		return ExitStatus{}, fmt.Errorf("bedinit: wait %s returned without terminal status", processID)
+	}
+	return *rep.Exit, nil
+}
+
+func (c *Client) Kill(processID string) error {
+	_, err := c.call(request{
+		Operation:  opSignal,
+		ExecutorID: c.executorID,
+		ProcessID:  processID,
+		Signal:     int(syscall.SIGKILL),
+	}, nil)
+	return err
+}
+
+func (c *Client) Shutdown() error {
+	_, err := c.call(request{Operation: opShutdown, ExecutorID: c.executorID}, nil)
+	return err
+}
+
+func (c *Client) call(req request, fds []int) (reply, error) {
+	raddr := &net.UnixAddr{Name: c.socket, Net: socketNetwork}
 	conn, err := net.DialUnix(socketNetwork, nil, raddr)
 	if err != nil {
-		return nil, fmt.Errorf("bedinit: dial %s: %w", socket, err)
+		return reply{}, fmt.Errorf("bedinit: dial executor %s: %w", c.executorID, err)
 	}
-	req := spawnRequest{Argv: argv, Dir: dir, Env: env}
-	fds := []int{int(stdin.Fd()), int(stdout.Fd()), int(stderr.Fd())}
+	defer conn.Close()
 	if err := writeMsg(conn, req, fds); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("bedinit: send spawn: %w", err)
+		return reply{}, fmt.Errorf("bedinit: send %s: %w", req.Operation, err)
 	}
 	var rep reply
 	if _, err := readMsg(conn, &rep); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("bedinit: read pid: %w", err)
+		return reply{}, fmt.Errorf("bedinit: read %s: %w", req.Operation, err)
+	}
+	if rep.ExecutorID != c.executorID {
+		return reply{}, fmt.Errorf("bedinit: executor mismatch: got %q want %q", rep.ExecutorID, c.executorID)
 	}
 	if rep.Error != "" {
-		conn.Close()
-		return nil, fmt.Errorf("bedinit: spawn: %s", rep.Error)
+		return reply{}, &RemoteError{Operation: string(req.Operation), Message: rep.Error}
 	}
-	return &Handle{conn: conn, pid: rep.Pid}, nil
-}
-
-// Handle is one spawned child, connection-scoped: the conn lives until the
-// exit reply.
-type Handle struct {
-	conn *net.UnixConn
-	pid  int
-}
-
-// Pid returns the child's pid (valid in the daemon's pid namespace at S1).
-func (h *Handle) Pid() int { return h.pid }
-
-// Kill asks bedinit to signal the child process group. Bedinit owns reaping,
-// so it can reject the request after the numeric PID/PGID stops identifying
-// this child.
-func (h *Handle) Kill() error {
-	return writeMsg(h.conn, signalRequest{Signal: int(syscall.SIGKILL)}, nil)
-}
-
-// WaitExit blocks until bedinit reports the child's terminal status. Call at
-// most once; the connection is closed on return.
-func (h *Handle) WaitExit() (ExitStatus, error) {
-	defer h.conn.Close()
-	var rep reply
-	if _, err := readMsg(h.conn, &rep); err != nil {
-		return ExitStatus{}, fmt.Errorf("bedinit: read exit: %w", err)
-	}
-	if rep.Error != "" {
-		return ExitStatus{}, fmt.Errorf("bedinit: %s", rep.Error)
-	}
-	if rep.Exit == nil {
-		return ExitStatus{}, fmt.Errorf("bedinit: exit reply without status")
-	}
-	return *rep.Exit, nil
+	return rep, nil
 }

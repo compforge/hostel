@@ -29,14 +29,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Run is the bedinit process entry (`hostel __bedinit --socket S --bed B`).
+// Run is the bed-init process entry
+// (`hostel __bedinit --socket S --bed B --executor E`).
 // It never returns to the caller's main path — the exit code is the process's.
 func Run(args []string) int {
 	fs := flag.NewFlagSet(InitArg, flag.ContinueOnError)
 	socket := fs.String("socket", "", "unix socket to serve spawn requests on")
 	bed := fs.String("bed", "", "bed id (ps visibility only)")
-	if err := fs.Parse(args); err != nil || *socket == "" {
-		log.Printf("bedinit: bad args (need --socket): %v", err)
+	executorID := fs.String("executor", "", "executor id")
+	if err := fs.Parse(args); err != nil || *socket == "" || *executorID == "" {
+		log.Printf("bedinit: bad args (need --socket and --executor): %v", err)
 		return 2
 	}
 
@@ -58,44 +60,95 @@ func Run(args []string) int {
 	}
 	defer os.Remove(*socket)
 
-	s := &server{bed: *bed, watchers: make(map[int]chan ExitStatus)}
-	go s.reap()
+	s := &server{
+		bed:             *bed,
+		executorID:      *executorID,
+		state:           executorReady,
+		processes:       make(map[string]*processRecord),
+		byPID:           make(map[int]*processRecord),
+		shutdown:        make(chan struct{}),
+		childrenStopped: make(chan struct{}),
+		listener:        ln,
+	}
+	// Install SIGCHLD handling before accepting Start RPCs. Registering inside
+	// the goroutine leaves a startup window where a short-lived child can exit
+	// before notification is active and remain an unreported zombie.
+	sigc := make(chan os.Signal, 64)
+	signal.Notify(sigc, syscall.SIGCHLD)
+	defer signal.Stop(sigc)
+	go s.reap(sigc)
 
-	// SIGTERM = bed teardown: stop serving, kill the whole tree, exit.
+	// Signals and the Shutdown RPC share one graceful path. There is no
+	// os.Exit in the signal goroutine: waiters must receive terminal statuses
+	// before the executor process disappears.
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(term)
 	go func() {
 		<-term
-		ln.Close()
-		s.killAll()
-		os.Exit(0)
+		s.requestShutdown()
 	}()
 
+	exitCode := 0
 	for {
 		conn, err := ln.AcceptUnix()
 		if err != nil {
-			// Listener closed by the SIGTERM path (or a fatal accept error
-			// with the daemon gone either way): let the signal goroutine win.
-			time.Sleep(time.Second)
-			return 0
+			select {
+			case <-s.shutdown:
+			default:
+				log.Printf("bedinit[%s/%s]: accept: %v", *bed, *executorID, err)
+				exitCode = 1
+				s.requestShutdown()
+			}
+			break
 		}
-		go s.serveSpawn(conn)
+		s.handlers.Add(1)
+		go func() {
+			defer s.handlers.Done()
+			s.serve(conn)
+		}()
 	}
+	s.killAll()
+	close(s.childrenStopped)
+	s.handlers.Wait()
+	return exitCode
 }
 
-type server struct {
-	bed string
+type executorState string
 
-	mu       sync.Mutex
-	watchers map[int]chan ExitStatus // pid → terminal-status delivery
+const (
+	executorReady    executorState = "ready"
+	executorDraining executorState = "draining"
+)
+
+type server struct {
+	bed        string
+	executorID string
+	listener   *net.UnixListener
+
+	shutdownOnce    sync.Once
+	shutdown        chan struct{}
+	childrenStopped chan struct{}
+	handlers        sync.WaitGroup
+
+	mu        sync.Mutex
+	state     executorState
+	processes map[string]*processRecord
+	byPID     map[int]*processRecord
+}
+
+type processRecord struct {
+	id       string
+	specHash string
+	pid      int
+	done     chan struct{}
+	status   *ExitStatus
 }
 
 // reap is the single wait loop: dispatches exit codes for spawned children and
 // silently collects adopted orphans. Nobody else may wait4 — os/exec is
 // deliberately unused in this process.
-func (s *server) reap() {
-	sigc := make(chan os.Signal, 64)
-	signal.Notify(sigc, syscall.SIGCHLD)
+func (s *server) reap(sigc <-chan os.Signal) {
 	for range sigc {
 		for {
 			// Fork+registration, group signalling, and reaping share this
@@ -120,91 +173,156 @@ func (s *server) reap() {
 					CoreDumped: ws.CoreDump(),
 				}
 			}
-			if ch, ok := s.watchers[pid]; ok {
-				delete(s.watchers, pid)
-				ch <- status
+			if process, ok := s.byPID[pid]; ok {
+				delete(s.byPID, pid)
+				process.status = &status
+				close(process.done)
 			}
 			s.mu.Unlock()
 		}
 	}
 }
 
-// serveSpawn handles one connection = one spawn: fork the requested command
-// with the fds that rode along, reply {pid}, then {exit} once reaped.
-func (s *server) serveSpawn(conn *net.UnixConn) {
+func (s *server) serve(conn *net.UnixConn) {
 	defer conn.Close()
-	var req spawnRequest
+	var req request
 	fds, err := readMsg(conn, &req)
-	// The child dups the fds at fork; our copies must go regardless of outcome.
-	defer func() {
-		for _, fd := range fds {
-			syscall.Close(fd)
-		}
-	}()
+	defer closeFDs(fds)
 	if err != nil {
-		_ = writeMsg(conn, reply{Error: "read spawn request: " + err.Error()}, nil)
+		_ = writeMsg(conn, reply{ExecutorID: s.executorID, Error: "read request: " + err.Error()}, nil)
 		return
 	}
-	if len(req.Argv) == 0 || len(fds) != 3 {
-		_ = writeMsg(conn, reply{Error: "spawn request needs argv and exactly 3 fds"}, nil)
+	if req.ExecutorID != s.executorID {
+		_ = writeMsg(conn, reply{ExecutorID: s.executorID, Error: "stale executor identity"}, nil)
 		return
 	}
 
-	exitc := make(chan ExitStatus, 1)
+	var rep reply
+	switch req.Operation {
+	case opDescribe:
+		rep = reply{ExecutorID: s.executorID}
+	case opStart:
+		rep = s.start(req, fds)
+	case opGet:
+		rep = s.get(req.ProcessID)
+	case opWait:
+		rep = s.wait(req.ProcessID)
+	case opSignal:
+		rep = s.signal(req.ProcessID, req.Signal)
+	case opShutdown:
+		s.requestShutdown()
+		<-s.childrenStopped
+		rep = reply{ExecutorID: s.executorID}
+	default:
+		rep = reply{ExecutorID: s.executorID, Error: "unknown operation"}
+	}
+	_ = writeMsg(conn, rep, nil)
+}
+
+func (s *server) start(req request, fds []int) reply {
+	base := reply{ExecutorID: s.executorID, ProcessID: req.ProcessID}
+	if req.ProcessID == "" || len(req.Argv) == 0 || len(fds) != 3 {
+		base.Error = "start needs process_id, argv and exactly 3 fds"
+		return base
+	}
+	if req.SpecHash != specHash(req.Argv, req.Dir, req.Env) {
+		base.Error = "invalid process specification fingerprint"
+		return base
+	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.processes[req.ProcessID]; ok {
+		if existing.specHash != req.SpecHash {
+			base.Error = "process id reused with different specification"
+			return base
+		}
+		return s.replyForLocked(existing)
+	}
+	if s.state != executorReady {
+		base.Error = "executor is draining"
+		return base
+	}
 	pid, err := syscall.ForkExec(req.Argv[0], req.Argv, &syscall.ProcAttr{
 		Dir:   req.Dir,
 		Env:   req.Env,
 		Files: []uintptr{uintptr(fds[0]), uintptr(fds[1]), uintptr(fds[2])},
 		Sys: &syscall.SysProcAttr{
-			Setpgid: true, // one pgid per command: the group kill takes its tree
-			// If bedinit itself dies unexpectedly, direct children must not
-			// leak into the pod as unattributable strays.
+			Setpgid:   true,
 			Pdeathsig: syscall.SIGKILL,
 		},
 	})
-	if err == nil {
-		s.watchers[pid] = exitc
-	}
-	s.mu.Unlock()
 	if err != nil {
-		_ = writeMsg(conn, reply{Error: "fork: " + err.Error()}, nil)
-		return
+		base.Error = "fork: " + err.Error()
+		return base
 	}
-	if err := writeMsg(conn, reply{Pid: pid}, nil); err != nil {
-		return // daemon gone; the reaper still collects the child
-	}
-	signalc := make(chan signalRequest, 1)
-	go func() {
-		var req signalRequest
-		fds, err := readMsg(conn, &req)
-		for _, fd := range fds {
-			_ = syscall.Close(fd)
-		}
-		if err == nil && len(fds) == 0 {
-			signalc <- req
-		}
-	}()
-	for {
-		select {
-		case status := <-exitc:
-			_ = writeMsg(conn, reply{Exit: &status}, nil)
-			return
-		case req := <-signalc:
-			if req.Signal == int(syscall.SIGKILL) {
-				s.signalProcessGroupIfRunning(pid, syscall.SIGKILL)
-			}
-		}
-	}
+	process := &processRecord{id: req.ProcessID, specHash: req.SpecHash, pid: pid, done: make(chan struct{})}
+	s.processes[process.id] = process
+	s.byPID[pid] = process
+	return s.replyForLocked(process)
 }
 
-func (s *server) signalProcessGroupIfRunning(pid int, signal syscall.Signal) {
+func (s *server) get(processID string) reply {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.watchers[pid]; !ok {
-		return
+	process, ok := s.processes[processID]
+	if !ok {
+		return reply{ExecutorID: s.executorID, ProcessID: processID, Error: "process not found"}
 	}
-	_ = signalSpawnedProcessGroup(pid, signal)
+	return s.replyForLocked(process)
+}
+
+func (s *server) wait(processID string) reply {
+	s.mu.Lock()
+	process, ok := s.processes[processID]
+	if !ok {
+		s.mu.Unlock()
+		return reply{ExecutorID: s.executorID, ProcessID: processID, Error: "process not found"}
+	}
+	done := process.done
+	s.mu.Unlock()
+	<-done
+	return s.get(processID)
+}
+
+func (s *server) signal(processID string, signal int) reply {
+	base := reply{ExecutorID: s.executorID, ProcessID: processID}
+	if signal != int(syscall.SIGKILL) {
+		base.Error = "only SIGKILL is supported"
+		return base
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	process, ok := s.processes[processID]
+	if !ok {
+		base.Error = "process not found"
+		return base
+	}
+	if process.status == nil {
+		_ = signalSpawnedProcessGroup(process.pid, syscall.SIGKILL)
+	}
+	return s.replyForLocked(process)
+}
+
+func (s *server) replyForLocked(process *processRecord) reply {
+	rep := reply{ExecutorID: s.executorID, ProcessID: process.id, Pid: process.pid}
+	if process.status == nil {
+		rep.State = processRunning
+		return rep
+	}
+	status := *process.status
+	rep.State = processExited
+	rep.Exit = &status
+	return rep
+}
+
+func (s *server) requestShutdown() {
+	s.shutdownOnce.Do(func() {
+		s.mu.Lock()
+		s.state = executorDraining
+		s.mu.Unlock()
+		close(s.shutdown)
+		_ = s.listener.Close()
+	})
 }
 
 var signalSpawnedProcessGroup = func(pid int, signal syscall.Signal) error {
@@ -219,7 +337,7 @@ func (s *server) killAll() {
 	self := os.Getpid()
 	for range 50 {
 		pids := childrenOf(self)
-		if len(pids) == 0 {
+		if len(pids) == 0 && s.runningCount() == 0 {
 			return
 		}
 		for _, pid := range pids {
@@ -229,6 +347,12 @@ func (s *server) killAll() {
 		time.Sleep(20 * time.Millisecond) // let the reaper drain
 	}
 	log.Printf("bedinit[%s]: descendants survived kill loop", s.bed)
+}
+
+func (s *server) runningCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.byPID)
 }
 
 // childrenOf lists live pids whose ppid is p (via /proc/*/stat; comm may

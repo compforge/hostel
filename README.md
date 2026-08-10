@@ -27,11 +27,15 @@ filesystem-level (beds share the host kernel) — a good fit for **trusted or
 semi-trusted** code; for **untrusted** code you want stronger isolation (a
 microVM or a dedicated VM/container).
 
-## Two-layer model
+## Runtime model
 
-- **A bed is one sandbox**: a workspace directory + a long-running shell (its
-  state — cwd, env — persists across commands) + its own mount namespace (under
-  bwrap).
+- **A bed is one durable sandbox identity**: its workspace and lifecycle survive
+  replacement of the process realm that currently serves it.
+- **An Executor is a bed's current process realm**: it owns command and session
+  processes and can be replaced without replacing the bed. An **Execution** is
+  one command run and records both its bed id and executor id.
+- A long-running shell exists only for an explicit `/session`; ordinary
+  `/command` calls each run in a fresh process.
 - **Default bed**: a request without a bed id lands on `default`, so if you only
   need one sandbox you can ignore beds entirely.
 - **Choosing a bed**: send the HTTP header `X-Hostel-Bed` (or `?bed=`); empty
@@ -158,7 +162,7 @@ reports `amenities: {chromium: idle|running}`.
 Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` /
 `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
 `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
-`--bed-init` / `--bed-env-passthrough` / `--store` /
+`--executor` / `--bed-env-passthrough` / `--store` /
 `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` /
 `--luggage-high-bytes` / `--luggage-low-bytes` /
 `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` /
@@ -177,11 +181,13 @@ names. `--bed-env-passthrough` selects carrier software variables such as
 invocation-scoped overlay. Callers cannot claim the reserved `HOSTEL_*` or
 `BED_*` namespaces.
 
-Process tree: `--bed-init auto` (default) runs each bed's processes under a
-per-bed init (`hostel __bedinit`) so bed teardown kills the bed's WHOLE tree —
-including `setsid`/double-fork daemons a plain pgid sweep can't reach. `auto`
-probes at boot and falls back to in-process forking where the init can't serve
-(non-linux dev); `off` forces in-process. See docs/kernel.md 〈进程树〉.
+Executor backend: `--executor auto` (default) probes the Linux bed-init backend
+and otherwise uses `local`. `bed_init` fails startup when the backend cannot
+serve; `local` explicitly keeps processes as direct hostel children. Bed-init
+owns the whole Executor process tree, including `setsid`/double-fork descendants
+that a plain process-group sweep cannot reach. Its RPCs are reconnectable,
+`Start` is idempotent by process id, and a lost Executor is reported as a stable
+`executor_lost` result rather than a raw socket EOF. See docs/kernel.md.
 
 Persistence: setting `--s3-bucket` (any S3-compatible endpoint) turns it on —
 the default `--store auto` resolves to `s3`, an incremental content-addressed

@@ -22,6 +22,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/qiankunli/hostel/internal/executor"
 )
 
 func installSpanRecorder(t *testing.T) (*sdktrace.TracerProvider, *tracetest.SpanRecorder) {
@@ -76,7 +78,7 @@ func TestExecutionSpanRecordsOutcomeWithoutCommandContent(t *testing.T) {
 	if span.Parent().SpanID() != parent.SpanContext().SpanID() {
 		t.Fatalf("execution parent = %s, want %s", span.Parent().SpanID(), parent.SpanContext().SpanID())
 	}
-	if got := spanAttribute(span.Attributes(), "hostel.execution.process.outcome"); got != string(ProcessExited) {
+	if got := spanAttribute(span.Attributes(), "hostel.execution.process.outcome"); got != string(executor.ProcessExited) {
 		t.Fatalf("process outcome = %q", got)
 	}
 	for _, attr := range span.Attributes() {

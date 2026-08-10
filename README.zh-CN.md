@@ -12,9 +12,11 @@
 
 hostel 走更轻的路：把多个隔离的 **bed** 装进一个进程。bed 创建近乎瞬时、空闲时几乎零成本，于是一台机器 / 一个容器能承载大量 bed，被多个 agent 复用。隔离是文件系统级的（bed 共享宿主内核）——适合**可信 / 半可信**代码；**不可信**代码应使用更强的隔离（microVM 或独立的 VM/容器）。
 
-## 两层模型
+## 运行时模型
 
-- **一个 bed 就是一个 sandbox**：一个 workspace 目录 + 一个常驻 shell（其状态——cwd、env——跨命令保持）+ 自己的 mount namespace（bwrap 下）。
+- **Bed 是一个持久的 sandbox 身份**：workspace 和生命周期不随当前进程承载域的替换而消失。
+- **Executor 是 Bed 当前的进程域**：拥有 command 与 session 进程，可以在不替换 Bed 的前提下重建；**Execution** 是一次命令运行，同时记录 bed id 与 executor id。
+- 常驻 shell 只属于显式创建的 `/session`；普通 `/command` 每次使用独立的新进程。
 - **默认 bed**：请求不带 bed id 就落到 `default`——只需要一个 sandbox 时可完全无视 bed 概念。
 - **选择 bed**：请求带 HTTP header `X-Hostel-Bed`（或 `?bed=`），空即默认。bed 之间互相隔离——一个 bed 的 shell 和文件对另一个不可见。
 
@@ -93,11 +95,13 @@ POST /v1/beds/:id/browser/close
 
 ## 配置
 
-Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isolation` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` / `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` / `--bed-init` / `--bed-env-passthrough` / `--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` / `--luggage-high-bytes` / `--luggage-low-bytes` / `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` / `--enable-tracing`。
+Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isolation` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` / `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` / `--executor` / `--bed-env-passthrough` / `--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` / `--luggage-high-bytes` / `--luggage-low-bytes` / `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` / `--enable-tracing`。
 
 OpenTelemetry Trace 默认关闭，通过 `HOSTEL_ENABLE_TRACING=true`（或 `--enable-tracing`）启用；出口使用 `OTEL_EXPORTER_OTLP_TRACES_GRPC_ENDPOINT` 或 `OTEL_EXPORTER_OTLP_TRACES_HTTP_ENDPOINT`，两者同时配置时优先 gRPC。
 
 环境变量按 owner 分命名空间：`HOSTEL_*` 只配置 daemon，不会整份继承进 bed；bed 身份/能力使用 `BED_*`（始终注入 `BED_ID`）；生态变量继续使用 PATH、HOME 等标准名称。`--bed-env-passthrough` 显式选择 carrier 的 PATH、locale、证书和 Python/npm/uv 等软件环境，request `envs` 只覆盖本次执行；调用方不能占用保留的 `HOSTEL_*` / `BED_*` 命名空间。
+
+Executor backend：`--executor auto`（默认）优先探测 Linux bed-init，失败时使用 `local`；显式 `bed_init` 时探测失败会终止启动，显式 `local` 时命令由 hostel 直接派生。bed-init 拥有整个 Executor 进程树，IPC 可重连，`Start` 按 process id 幂等；Executor 丢失对外返回稳定的 `executor_lost`，不会泄漏裸 EOF。
 
 持久化：`--store s3` 时每个 bed 快照到 S3 兼容对象存储——同 id 再建时恢复，驱逐（DELETE / idle 回收）或显式 checkpoint 时持久化。普通 operation 与 pressure 只提交可合并的同步诉求，Store 同步循环统一负责串行、失败退避和 `--persist-interval` 周期兜底。bed 的持久身份是快照，本地目录只是工作副本。`DELETE /v1/beds/:id` 是驱逐（身份保留），`?purge=true` 连快照一起删、终结身份；驱逐撞上并发流量返回 `409 BED_BUSY`，不丢在途写入。
 

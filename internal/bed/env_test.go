@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/resource"
 )
@@ -75,9 +76,13 @@ func TestBedProcessEnvHasExplicitOwnership(t *testing.T) {
 	}
 }
 
-func TestSpawnerRejectsImplicitDaemonEnvironment(t *testing.T) {
-	spawner := newInProcSpawner(resource.Noop("test"))
-	if _, err := spawner.Start("alice", exec.Command("true")); err == nil || !strings.Contains(err.Error(), "environment must be explicit") {
+func TestExecutorRejectsImplicitDaemonEnvironment(t *testing.T) {
+	factory := executor.NewLocalFactory(resource.Noop("test"))
+	bedExecutor, err := factory.Create(context.Background(), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bedExecutor.Start(context.Background(), "process-test", exec.Command("true")); err == nil || !strings.Contains(err.Error(), "environment must be explicit") {
 		t.Fatalf("Start with nil env error = %v", err)
 	}
 }

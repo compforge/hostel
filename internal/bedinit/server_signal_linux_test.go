@@ -33,13 +33,19 @@ func TestServerSignalsOnlyLiveChildIdentity(t *testing.T) {
 		}
 		return nil
 	}
-	s := &server{watchers: map[int]chan ExitStatus{42: make(chan ExitStatus, 1)}}
-	s.signalProcessGroupIfRunning(42, syscall.SIGKILL)
+	process := &processRecord{id: "process-test", pid: 42, done: make(chan struct{})}
+	s := &server{
+		executorID: "executor-test",
+		processes:  map[string]*processRecord{process.id: process},
+		byPID:      map[int]*processRecord{process.pid: process},
+	}
+	s.signal(process.id, int(syscall.SIGKILL))
 
 	s.mu.Lock()
-	delete(s.watchers, 42) // the reaper releases the numeric identity
+	delete(s.byPID, process.pid) // the reaper releases the numeric identity
+	process.status = &ExitStatus{Kind: ExitStatusSignaled, Signal: int(syscall.SIGKILL)}
 	s.mu.Unlock()
-	s.signalProcessGroupIfRunning(42, syscall.SIGKILL)
+	s.signal(process.id, int(syscall.SIGKILL))
 	if calls != 1 {
 		t.Fatalf("signal calls = %d, want 1", calls)
 	}

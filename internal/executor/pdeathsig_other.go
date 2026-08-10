@@ -1,3 +1,5 @@
+//go:build !linux
+
 // Copyright 2026 Li Qiankun
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,19 +14,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bed
+package executor
 
 import (
 	"os/exec"
 	"syscall"
 )
 
-// setPdeathsig ties the child's life to the daemon: if hostel dies, the bed
-// inits get SIGTERM, run their kill loop and take their trees with them —
-// no unattributable strays. Linux-only (the field doesn't exist elsewhere).
-func setPdeathsig(cmd *exec.Cmd) {
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
-	}
-	cmd.SysProcAttr.Pdeathsig = syscall.SIGTERM
-}
+func setPdeathsig(_ *exec.Cmd, _ syscall.Signal) {}

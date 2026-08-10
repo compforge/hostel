@@ -1,6 +1,6 @@
-# hostel 设计（v1 方案）
+# hostel 核心架构
 
-> 状态：**待确认**。确认后按本文实现 v1。
+> 状态：当前实现及后续演进边界。专题细节以同目录文档为准。
 
 ## 一、定位与边界
 
@@ -14,7 +14,9 @@ OpenSandbox execd 是主要设计参考。
 
 ## 二、核心模型：bed
 
-- **bed = 隔离单元 = 对外一个 sandbox**：一个 workspace 目录 + 自己的 mount namespace（bwrap 下）+ 归属于它的进程（一次性 exec、显式 session shell、amenity 租约）。名字与 hostel 对称。
+- **bed = 隔离单元 = 对外一个 sandbox**：持有 workspace 数据身份、隔离配置与生命周期；它不等于某个具体进程。
+- **executor = bed 当前的进程承载域**：一个 resident bed 同时至多有一个 current Executor。Executor 是短于 Bed 的可替换身份，负责派生、查询、停止和回收进程；bed-init 与 local 是 backend，不是领域对象。
+- **execution = 一次运行**：属于一个明确的 bed id 与 executor id，拥有独立 process id、输出和结构化终态。
 - **默认 bed 兜底**：原生请求不带 bed id → 落到 `default` bed。调用方可完全无视 bed 概念（单租户体验）；它不属于 `/v1/isolated/*` 的 session 视图。
 - **bed 路由**：HTTP header `X-Hostel-Bed`（或 query `bed`），缺省 default。
 - 一个 pod 只用 default bed = 独占；多 bed = 共享，每 bed 仍有私有 ns / workspace / shell state。
@@ -42,28 +44,31 @@ OpenSandbox execd 是主要设计参考。
 
 **k8s pod 内够到 suite 的三道闸**（真实集群踩点，前两道 hostel 自解、见 `data.md`〈k8s pod 内可达性〉）：`--unshare-user`（非特权 pod 建 mount ns）+ `--ro-bind /proc`（绕 masked /proc，弃 pidns）+ **AppArmor 豁免**（containerd 默认 profile deny mount，是部署项，由上层按集群策略自适应，非 hostel 硬性要求；探不过时 `apparmor_profile` 进 healthz 点名）。三点均无需特权。
 
-### 进程树（bed-init；S1 已落地，S2 待 userns）
+### 执行层次与进程树
 
-bed 的进程归属从"注册表扫 pgid"的约定升级为内核保证：
+领域层次固定为 `Hostel → Bed → Executor → Execution`：
 
 ```
 tini (pid=1)                      ← pod 级收尸兜底
  └─ hostel (daemon)               ← 内置 amenity supervisor（Registry），非独立进程
      ├─ chromium (amenity)        ← pod 级共享，按 bed 切租，不进任何 bed 的树
      ├─ jupyter  (amenity)
-     ├─ bed-init [bed A]          ← 每 bed 一个：fork 命令、收尸、死前杀光子树
-     │    ├─ exec command         ← 一次 exec 一个
-     │    └─ session shell
-     └─ bed-init [bed B] ...
+     └─ bed A                     ← workspace / sandbox 持久身份，不是 OS 进程
+          └─ executor E1          ← 当前 0/1；丢失后可替换为 E2
+               └─ bed-init       ← Linux backend 的具体 supervisor 进程
+                    ├─ execution X 的 process
+                    └─ session shell
 ```
 
-- **bed-init 必须是 spawner**（hostel 经 IPC 让它 fork，输出 fd 传回）：Linux 里爹由谁 fork 决定，光设 subreaper 收不到不在自己子树里的进程。不用 shell 当 init——stdin 带内协议是已被故障验证的脆弱面。
-- **bed-init 选型：自研，照 containerd shim 的形状**。业界现成品对不上号：tini/dumb-init 是纯 reaper（exec 单个孩子后不管事，无 IPC spawn 能力，位置是 pod PID 1）；supervisord/s6/runit 是"固定服务集"supervisor，非按请求 fork 的代理；containerd shim v2 / conmon 是同型原型但绑死 OCI 生态。落地形态：`hostel bedinit` 子命令 **re-exec 自己**（moby `reexec` 惯用法，零新二进制），unix socket + `SCM_RIGHTS` 传 fd，职责仅 fork / 收尸 / 死前杀树（兼设 subreaper 收双 fork 孤儿）。
-- **对照基线 execd：平树，它没解决这个问题**。execd 的命令全是 daemon 直接孩子（`Setpgid` + pgid 杀），无 init 层无 subreaper；其 `interrupt.go` 里 pgid 回收复用、zombie 轮询探测的大段处理正是平树的代价——"杀干净"只能做成概率近似。bed-init 是超越 execd 的点，不是移植。
-- **一次买四样**：teardown = 杀 bed-init 树（在途命令、`nohup` 孤儿 daemon 全灭，注册表扫描降为兜底）；`ps f` 直读进程归属；per-bed cgroup（`resource.md`）天然挂点；suite 档升级时 bed-init 原位变成 `bwrap --unshare-pid` 里的 PID 1（bed 从"进程树"升为"常驻 namespace"），spawner 协议与 exec 语义均不变。
+- **Bed 与 Executor 解耦**：Bed 的 workspace、generation、retention 不随 Executor 消亡；Executor lost 时，其在途 Execution 以 `process.kind=lost`、`termination_cause=executor_lost` 结束，下一次请求为同一 Bed 创建新 Executor id。API 不透传 Unix socket 的裸 EOF，transport detail 只进服务端日志与 Trace。
+- **Executor 契约**：调用方生成 process id；`Start(processID, spec)` 幂等，重复 id + 同 spec 返回同一进程，重复 id + 不同 spec 拒绝；`Get` / `Wait` 可换连接重试；每次请求携带 executor id 做 fencing，旧连接不能误投给替代实例；terminal status 保留到 Executor 结束。
+- **bed-init 是 Linux backend**：hostel re-exec 自己成为小型 supervisor，unixpacket + `SCM_RIGHTS` 传 stdio，负责 fork、subreaper 收尸与整树 Shutdown。信号与 Shutdown RPC 走同一优雅退出状态机，不在 signal goroutine 直接 `os.Exit`。Linux 里父子关系由 fork 方决定，所以单纯让 daemon 设 subreaper 无法替代这一层。
+- **local 是可移植 backend**：命令是 daemon 的直接子进程，以独立 pgid 管理。它保持相同 Executor / Process 接口与结构化终态，但不承诺清理脱离 pgid 的 double-fork 进程。
+- **为什么不直接叫 bed-init**：领域层需要表达“当前承载实例可丢、Bed 数据身份仍在”；bed-init 只是一个实现。未来把持久 namespace、remote worker 或其它 supervisor 接入时，只新增 backend，不改变 Bed / Execution API。
+- **对照 execd**：execd 是 daemon 直接派生的平树；其 pgid 与 zombie 处理对应 local backend。bed-init backend 通过真实父子树解决整域回收问题。
 - **amenity 监督内置于 daemon，不设独立 amenity-manager 进程**：pod 语义下 hostel 是主容器进程，hostel 死 = pod 重启，独立 manager 买不到任何存活性，只多一层 IPC 和"谁重启 manager"。`amenity.Registry` 升级为 supervisor（健康检查 → backoff 重启）；崩溃重启后的租约走**惰性重建**——tenant 标失效，下次 `AcquireTenant` 重建切片（bed 侧感知为一次"新开"），避免主动全量重建的重启风暴。
-- 分两步：**S1（已落地）** spawner 版 bed-init——`--bed-init auto` 启动时探活、失败诚实降级回 daemon 内 fork（非 linux 开发环境）；命令与 /session shell 都在 bed 的 init 下，Pdeathsig 双向兜底（init 死→杀树；daemon 死→init 收到 SIGTERM 自杀带树）。**S2** suite 档持久 ns + PID-1（依赖 pod 放开 userns；当前每次 exec 的 bwrap 是各自新开 namespace，视图相同但实例不同）。旁路备忘：cgroup v2 `cgroup.kill` 无需 init 进程即可整组必死，但只管杀、不管收尸、升不了 S2——是将来的叠加而非替代。
-- **落地对照**（实现锚点）：Spawner seam 在 `internal/bed`（in-process / bedinit 两实现，teardown 走 spawner sweep）；init 本体在 `internal/bedinit`（`__bedinit` re-exec、单 wait 循环、SIGTERM 杀树）；amenity 崩溃监督已按上述"惰性重建 + backoff 门"落在 chromium 自身（watcher 观察 master context 死亡）。
+- **后续边界**：suite 的持久 namespace + PID 1 可作为新 Executor backend 能力演进；cgroup v2 `cgroup.kill` 只补强“杀”，不替代 supervisor 的收尸与终态所有权。
+- **实现锚点**：抽象与 backend 在 `internal/executor`；bed-init 协议和 supervisor 在 `internal/bedinit`；Bed 只持有 current Executor，Execution 只消费 Process 终态。
 
 ## 三、通用 managed-service 框架
 
@@ -160,4 +165,4 @@ bed 的三个正交维度各有专门文档，本文只留一句定位：
 
 ## 十一、Roadmap（v1.1+）
 
-数据隔离补强（`data.md`，先行）· S3 Store 持久化（`store.md`）· bed-init 进程树 S1/S2（见〈进程树〉，S1 先行）· per-bed cgroup 硬限额（`resource.md`，挂 bed-init）· 数据隔离分档 dorm/room/suite + auto 路由 + ceiling probe（room=landlock，见 data.md）· bwrap 安全纵深（seccomp memfd / 真 setuid）· overlay CoW（临时层）· PTY WS · Jupyter amenity 实例 · 交互动作全集 · 上层调度系统对接 · 产品化外壳（API 版本化、独立发布）。
+持久 namespace Executor + PID 1 · per-bed cgroup 硬限额（`resource.md`）· bwrap 安全纵深（seccomp memfd / 真 setuid）· overlay CoW（临时层）· PTY WS · Jupyter amenity 实例 · 交互动作全集 · 上层调度系统对接 · 产品化外壳（API 版本化、独立发布）。

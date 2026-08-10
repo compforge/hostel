@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -48,7 +49,7 @@ const (
 	CauseDaemonShutdown TerminationCause = "daemon_shutdown"
 	CauseExternalSignal TerminationCause = "external_signal"
 	CauseOOM            TerminationCause = "oom"
-	CauseRuntimeLost    TerminationCause = "runtime_lost"
+	CauseExecutorLost   TerminationCause = "executor_lost"
 )
 
 // OutputStream identifies one side of an execution's output.
@@ -68,38 +69,41 @@ type ExecutionOutput struct {
 	Text     string
 }
 
-// ExecutionResult combines the process fact owned by the spawner with the
+// ExecutionResult combines the process fact owned by the Executor with the
 // termination intent owned by the execution controller.
 type ExecutionResult struct {
-	ExecutionID string
-	BedID       string
-	Mode        ExecutionMode
-	Spawner     string
-	StartedAt   time.Time
-	FinishedAt  time.Time
-	Duration    time.Duration
-	Process     ProcessOutcome
-	Cause       TerminationCause
+	ExecutionID     string
+	BedID           string
+	Mode            ExecutionMode
+	ExecutorID      string
+	ExecutorBackend string
+	StartedAt       time.Time
+	FinishedAt      time.Time
+	Duration        time.Duration
+	Process         executor.ProcessOutcome
+	Cause           TerminationCause
 }
 
 type ExecutionStatus struct {
-	ID         string
-	BedID      string
-	Mode       ExecutionMode
-	Spawner    string
-	Running    bool
-	StartedAt  time.Time
-	FinishedAt *time.Time
-	Result     *ExecutionResult
+	ID              string
+	BedID           string
+	Mode            ExecutionMode
+	ExecutorID      string
+	ExecutorBackend string
+	Running         bool
+	StartedAt       time.Time
+	FinishedAt      *time.Time
+	Result          *ExecutionResult
 }
 
 // Execution is one one-shot command lifetime. Foreground and background are
 // the same object; mode only decides whether the initiating HTTP request waits.
 type Execution struct {
-	ID      string
-	BedID   string
-	Mode    ExecutionMode
-	Spawner string
+	ID              string
+	BedID           string
+	Mode            ExecutionMode
+	ExecutorID      string
+	ExecutorBackend string
 
 	mu          sync.Mutex
 	ctx         context.Context
@@ -126,7 +130,7 @@ const (
 	executionDrainGrace      = 100 * time.Millisecond
 )
 
-func newExecution(ctx context.Context, bedID string, mode ExecutionMode, spawner string, stop func()) *Execution {
+func newExecution(ctx context.Context, bedID string, mode ExecutionMode, executorID, executorBackend string, stop func()) *Execution {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -135,19 +139,21 @@ func newExecution(ctx context.Context, bedID string, mode ExecutionMode, spawner
 		attribute.String("hostel.execution.id", executionID),
 		attribute.String("hostel.bed.id", bedID),
 		attribute.String("hostel.execution.mode", string(mode)),
-		attribute.String("hostel.execution.spawner", spawner),
+		attribute.String("hostel.executor.id", executorID),
+		attribute.String("hostel.executor.backend", executorBackend),
 	))
 	return &Execution{
-		ID:        executionID,
-		BedID:     bedID,
-		Mode:      mode,
-		Spawner:   spawner,
-		ctx:       ctx,
-		span:      span,
-		stop:      stop,
-		stopDone:  make(chan struct{}),
-		startedAt: time.Now(),
-		done:      make(chan struct{}),
+		ID:              executionID,
+		BedID:           bedID,
+		Mode:            mode,
+		ExecutorID:      executorID,
+		ExecutorBackend: executorBackend,
+		ctx:             ctx,
+		span:            span,
+		stop:            stop,
+		stopDone:        make(chan struct{}),
+		startedAt:       time.Now(),
+		done:            make(chan struct{}),
 	}
 }
 
@@ -204,7 +210,7 @@ func (e *Execution) appendOutput(stream OutputStream, text string) ExecutionOutp
 	return output
 }
 
-func (e *Execution) finish(outcome ProcessOutcome, onFinish func(ExecutionResult)) ExecutionResult {
+func (e *Execution) finish(outcome executor.ProcessOutcome, onFinish func(ExecutionResult)) ExecutionResult {
 	finishedAt := time.Now()
 	cause, stopDone := e.claimFinish()
 	if stopDone != nil {
@@ -215,25 +221,26 @@ func (e *Execution) finish(outcome ProcessOutcome, onFinish func(ExecutionResult
 	}
 	if cause == "" {
 		switch outcome.Kind {
-		case ProcessExited:
+		case executor.ProcessExited:
 			cause = CauseNatural
-		case ProcessSignaled:
+		case executor.ProcessSignaled:
 			cause = CauseExternalSignal
 		default:
-			cause = CauseRuntimeLost
+			cause = CauseExecutorLost
 		}
 	}
 	e.mu.Lock()
 	result := ExecutionResult{
-		ExecutionID: e.ID,
-		BedID:       e.BedID,
-		Mode:        e.Mode,
-		Spawner:     e.Spawner,
-		StartedAt:   e.startedAt,
-		FinishedAt:  finishedAt,
-		Duration:    finishedAt.Sub(e.startedAt),
-		Process:     outcome,
-		Cause:       cause,
+		ExecutionID:     e.ID,
+		BedID:           e.BedID,
+		Mode:            e.Mode,
+		ExecutorID:      e.ExecutorID,
+		ExecutorBackend: e.ExecutorBackend,
+		StartedAt:       e.startedAt,
+		FinishedAt:      finishedAt,
+		Duration:        finishedAt.Sub(e.startedAt),
+		Process:         outcome,
+		Cause:           cause,
 	}
 	e.finishedAt = &finishedAt
 	e.result = &result
@@ -252,19 +259,20 @@ func (e *Execution) finish(outcome ProcessOutcome, onFinish func(ExecutionResult
 		"execution_id", result.ExecutionID,
 		"bed", result.BedID,
 		"mode", result.Mode,
-		"spawner", result.Spawner,
+		"executor_id", result.ExecutorID,
+		"executor_backend", result.ExecutorBackend,
 		"outcome", result.Process.Kind,
 		"cause", result.Cause,
 		"duration_ms", result.Duration.Milliseconds(),
 	}
 	switch result.Process.Kind {
-	case ProcessExited:
+	case executor.ProcessExited:
 		e.span.SetAttributes(attribute.Int("hostel.execution.exit_code", result.Process.ExitCode))
 		attrs = append(attrs, "exit_code", result.Process.ExitCode)
 		if result.Process.ExitCode != 0 {
 			e.span.SetStatus(codes.Error, "command exited non-zero")
 		}
-	case ProcessSignaled:
+	case executor.ProcessSignaled:
 		e.span.SetAttributes(
 			attribute.Int("hostel.execution.signal", result.Process.Signal),
 			attribute.Bool("hostel.execution.core_dumped", result.Process.CoreDumped),
@@ -274,10 +282,14 @@ func (e *Execution) finish(outcome ProcessOutcome, onFinish func(ExecutionResult
 			result.Cause != CauseBedTeardown && result.Cause != CauseDaemonShutdown {
 			e.span.SetStatus(codes.Error, "command terminated by signal")
 		}
-	case ProcessLost:
-		e.span.RecordError(fmt.Errorf("process lost: %s", result.Process.Error))
-		e.span.SetStatus(codes.Error, "process runtime lost")
-		attrs = append(attrs, "error", result.Process.Error)
+	case executor.ProcessLost:
+		detail := result.Process.Detail
+		if detail == "" {
+			detail = result.Process.Error
+		}
+		e.span.RecordError(fmt.Errorf("process lost: %s", detail))
+		e.span.SetStatus(codes.Error, "executor lost")
+		attrs = append(attrs, "error", result.Process.Error, "error_detail", detail)
 	}
 	tracing.InfoContext(e.ctx, "hostel execution finished", attrs...)
 	e.span.End()
@@ -296,12 +308,13 @@ func (e *Execution) Status() ExecutionStatus {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	status := ExecutionStatus{
-		ID:        e.ID,
-		BedID:     e.BedID,
-		Mode:      e.Mode,
-		Spawner:   e.Spawner,
-		Running:   e.result == nil,
-		StartedAt: e.startedAt,
+		ID:              e.ID,
+		BedID:           e.BedID,
+		Mode:            e.Mode,
+		ExecutorID:      e.ExecutorID,
+		ExecutorBackend: e.ExecutorBackend,
+		Running:         e.result == nil,
+		StartedAt:       e.startedAt,
 	}
 	if e.finishedAt != nil {
 		finishedAt := *e.finishedAt
@@ -350,15 +363,15 @@ func (r *ExecutionRegistry) track(
 	ctx context.Context,
 	bedID string,
 	mode ExecutionMode,
-	spawner string,
-	proc Proc,
+	executorID, executorBackend string,
+	proc executor.Process,
 	stdout, stderr io.ReadCloser,
 	timeout time.Duration,
 	onStart func(ExecutionStatus),
 	onOutput func(ExecutionOutput),
 	onFinish func(ExecutionResult),
 ) *Execution {
-	execution := newExecution(ctx, bedID, mode, spawner, proc.Kill)
+	execution := newExecution(ctx, bedID, mode, executorID, executorBackend, proc.Kill)
 	r.mu.Lock()
 	r.executions[execution.ID] = execution
 	r.order = append(r.order, execution.ID)
@@ -367,7 +380,8 @@ func (r *ExecutionRegistry) track(
 		"execution_id", execution.ID,
 		"bed", execution.BedID,
 		"mode", execution.Mode,
-		"spawner", execution.Spawner,
+		"executor_id", execution.ExecutorID,
+		"executor_backend", execution.ExecutorBackend,
 	)
 
 	if onStart != nil {
@@ -409,7 +423,10 @@ func (r *ExecutionRegistry) track(
 		wg.Add(2)
 		go drain(StreamStdout, stdout)
 		go drain(StreamStderr, stderr)
-		outcome := proc.Wait()
+		outcome, waitErr := proc.Wait(context.Background())
+		if waitErr != nil {
+			outcome = executor.Lost(execution.ExecutorID, waitErr)
+		}
 		if timeoutTimer != nil {
 			timeoutTimer.Stop()
 		}
@@ -446,7 +463,7 @@ func (r *ExecutionRegistry) trackSession(
 	onOutput func(ExecutionOutput),
 	onFinish func(ExecutionResult),
 ) *Execution {
-	execution := newExecution(ctx, bedID, ExecutionSession, "session_shell", shell.Close)
+	execution := newExecution(ctx, bedID, ExecutionSession, shell.ExecutorID, shell.ExecutorBackend, shell.Close)
 	r.mu.Lock()
 	r.executions[execution.ID] = execution
 	r.order = append(r.order, execution.ID)
@@ -455,7 +472,8 @@ func (r *ExecutionRegistry) trackSession(
 		"execution_id", execution.ID,
 		"bed", execution.BedID,
 		"mode", execution.Mode,
-		"spawner", execution.Spawner,
+		"executor_id", execution.ExecutorID,
+		"executor_backend", execution.ExecutorBackend,
 	)
 
 	if onStart != nil {
@@ -482,11 +500,11 @@ func (r *ExecutionRegistry) trackSession(
 				onOutput(output)
 			}
 		})
-		outcome := ProcessOutcome{}
+		outcome := executor.ProcessOutcome{}
 		if err != nil {
-			outcome = lostProcess(err)
+			outcome = executor.Lost(shell.ExecutorID, err)
 		} else {
-			outcome = exitedProcess(result.ExitCode)
+			outcome = executor.Exited(result.ExitCode)
 		}
 		if timeoutTimer != nil {
 			timeoutTimer.Stop()

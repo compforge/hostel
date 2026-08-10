@@ -36,6 +36,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bedinit"
 	"github.com/qiankunli/hostel/internal/config"
+	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/resource"
 	"github.com/qiankunli/hostel/internal/store"
@@ -56,7 +57,7 @@ func main() {
 			os.Exit(runConfine(os.Args[2:]))
 		case isolation.AsUserArg: // uid: __asuser <uid> <dataDir> -- <cmd>...
 			os.Exit(runAsUser(os.Args[2:]))
-		case bedinit.InitArg: // per-bed init/spawner: __bedinit --socket S --bed B
+		case bedinit.InitArg: // bed-init Executor: __bedinit --socket S --bed B --executor E
 			os.Exit(bedinit.Run(os.Args[2:]))
 		}
 	}
@@ -170,17 +171,38 @@ func main() {
 		mgr.SetCDPAdvertise(addr)
 	}
 
-	// Per-bed init spawner (docs/kernel.md 〈进程树〉 S1): auto probes once at
-	// boot; a failed probe (non-linux, odd deployment) is an honest downgrade
-	// to in-process forking, logged, never a startup failure.
-	if cfg.BedInit != "off" {
-		if exe, err := os.Executable(); err != nil {
-			log.Printf("hostel: bed-init disabled (executable path: %v)", err)
-		} else if err := mgr.EnableBedInit(exe); err != nil {
-			log.Printf("hostel: bed-init unavailable, using in-process spawner: %v", err)
-		} else {
-			log.Printf("hostel: bed-init spawner enabled")
+	// Select one Executor backend before request admission. Auto is an honest
+	// portability fallback; explicitly requesting bed_init fails closed.
+	switch cfg.Executor {
+	case "local":
+		mgr.SetExecutorFactory(executor.NewLocalFactory(resources))
+	case "auto", "bed_init":
+		exe, executableErr := os.Executable()
+		var factory *executor.BedInitFactory
+		var factoryErr error
+		if executableErr == nil {
+			factory, factoryErr = executor.NewBedInitFactory(exe, resources)
 		}
+		probeCtx, cancelProbe := context.WithTimeout(context.Background(), 5*time.Second)
+		if factoryErr == nil && executableErr == nil {
+			factoryErr = factory.Probe(probeCtx)
+		}
+		cancelProbe()
+		if factoryErr != nil || executableErr != nil {
+			if factory != nil {
+				_ = factory.Close()
+			}
+			if cfg.Executor == "bed_init" {
+				log.Fatalf("hostel: bed-init executor unavailable: executable=%v probe=%v", executableErr, factoryErr)
+			}
+			log.Printf("hostel: bed-init executor unavailable, using local executor: executable=%v probe=%v", executableErr, factoryErr)
+			mgr.SetExecutorFactory(executor.NewLocalFactory(resources))
+		} else {
+			mgr.SetExecutorFactory(factory)
+			log.Printf("hostel: bed-init executor enabled")
+		}
+	default:
+		log.Fatalf("hostel: invalid executor backend %q", cfg.Executor)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -239,9 +261,14 @@ func main() {
 
 	<-ctx.Done()
 	log.Printf("hostel: shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
+	httpShutdownCtx, cancelHTTPShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	_ = srv.Shutdown(httpShutdownCtx)
+	cancelHTTPShutdown()
+	executorShutdownCtx, cancelExecutorShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelExecutorShutdown()
+	if err := mgr.Close(executorShutdownCtx); err != nil {
+		log.Printf("hostel: executor shutdown: %v", err)
+	}
 }
 
 // runConfine implements `hostel __confine <dataDir> -- <cmd> <args>...`: apply

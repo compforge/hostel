@@ -20,7 +20,9 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/go-stdx/shellx"
+	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
 )
 
@@ -53,34 +55,42 @@ func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string
 	return cmd, nil
 }
 
-// startOneShot builds and launches an isolated one-shot command via the
-// spawner. Explicit pipes preserve stdout/stderr across the bedinit IPC seam.
-func (m *Manager) startOneShot(b *Bed, command, cwdInBed string, envs map[string]string) (Proc, *os.File, *os.File, error) {
+// startOneShot builds and launches an isolated one-shot command in the Bed's
+// current Executor. Explicit pipes preserve output across the bed-init IPC seam.
+func (m *Manager) startOneShot(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string) (executor.Process, executor.Executor, *os.File, *os.File, error) {
 	cmd, err := m.buildCommand(b, command, cwdInBed, envs)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
 		stdoutR.Close()
 		stdoutW.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	cmd.Stdout = stdoutW
 	cmd.Stderr = stderrW
-	proc, err := m.spawner.Start(b.ID, cmd)
-	stdoutW.Close()
-	stderrW.Close()
-	if err != nil {
-		stdoutR.Close()
-		stderrR.Close()
-		return nil, nil, nil, err
+	bedExecutor, err := b.executorFor(ctx, m.executorFactory)
+	if err == nil {
+		procID := "process-" + randx.Hex(8)
+		var proc executor.Process
+		proc, err = bedExecutor.Start(ctx, procID, cmd)
+		stdoutW.Close()
+		stderrW.Close()
+		if err == nil {
+			return proc, bedExecutor, stdoutR, stderrR, nil
+		}
+	} else {
+		stdoutW.Close()
+		stderrW.Close()
 	}
-	return proc, stdoutR, stderrR, nil
+	stdoutR.Close()
+	stderrR.Close()
+	return nil, nil, nil, nil, err
 }
 
 // StartExecution launches and registers one command. Foreground and background
@@ -99,12 +109,12 @@ func (m *Manager) StartExecution(
 	if err != nil {
 		return nil, err
 	}
-	proc, stdout, stderr, err := m.startOneShot(b, command, cwdInBed, envs)
+	proc, bedExecutor, stdout, stderr, err := m.startOneShot(ctx, b, command, cwdInBed, envs)
 	if err != nil {
 		finishOperation()
 		return nil, err
 	}
-	execution := m.executions.track(ctx, b.ID, mode, m.spawner.Name(), proc, stdout, stderr, timeout, onStart, onOutput, func(result ExecutionResult) {
+	execution := m.executions.track(ctx, b.ID, mode, bedExecutor.ID(), bedExecutor.Backend(), proc, stdout, stderr, timeout, onStart, onOutput, func(result ExecutionResult) {
 		finishOperation()
 		b.RecordCommand(result.Duration)
 	})

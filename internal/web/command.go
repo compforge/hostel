@@ -210,13 +210,14 @@ func (s *Server) commandLogs(c *gin.Context) {
 
 func executionStatusPayload(status bed.ExecutionStatus) gin.H {
 	payload := gin.H{
-		"execution_id": status.ID,
-		"bed_id":       status.BedID,
-		"mode":         status.Mode,
-		"spawner":      status.Spawner,
-		"running":      status.Running,
-		"started_at":   status.StartedAt,
-		"finished_at":  status.FinishedAt,
+		"execution_id":     status.ID,
+		"bed_id":           status.BedID,
+		"mode":             status.Mode,
+		"executor_id":      status.ExecutorID,
+		"executor_backend": status.ExecutorBackend,
+		"running":          status.Running,
+		"started_at":       status.StartedAt,
+		"finished_at":      status.FinishedAt,
 	}
 	if status.Result != nil {
 		payload["result"] = resultPayload(*status.Result)

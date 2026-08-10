@@ -65,6 +65,19 @@ func TestResourceAdmissionThresholdDefaults(t *testing.T) {
 	}
 }
 
+func TestExecutorConfig(t *testing.T) {
+	if c := Load(nil); c.Executor != "auto" {
+		t.Fatalf("default executor = %q, want auto", c.Executor)
+	}
+	t.Setenv("HOSTEL_EXECUTOR", "bed_init")
+	if c := Load(nil); c.Executor != "bed_init" {
+		t.Fatalf("env executor = %q, want bed_init", c.Executor)
+	}
+	if c := Load([]string{"-executor", "local"}); c.Executor != "local" {
+		t.Fatalf("flag executor = %q, want local", c.Executor)
+	}
+}
+
 func TestTracingConfig(t *testing.T) {
 	t.Setenv("HOSTEL_ENABLE_TRACING", "true")
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_GRPC_ENDPOINT", "http://collector:4317")

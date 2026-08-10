@@ -14,9 +14,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bed
+package executor
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -81,14 +82,14 @@ func TestWaitCommandBarrierFailureKillsBeforePublishingExit(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	proc := &inProcProc{
-		cmd:     cmd,
-		pid:     cmd.Process.Pid,
-		untrack: func() {},
-	}
+	proc := &localProcess{cmd: cmd, pid: cmd.Process.Pid, executorID: "executor-test", done: make(chan struct{})}
 
-	outcome := proc.Wait()
-	if outcome.Kind != ProcessLost || !strings.Contains(outcome.Error, syscall.EINVAL.Error()) {
+	proc.reap()
+	outcome, err := proc.Wait(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Kind != ProcessLost || !strings.Contains(outcome.Detail, syscall.EINVAL.Error()) {
 		t.Fatalf("Wait = %+v, want exit barrier error", outcome)
 	}
 	if !proc.exited {

@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -34,13 +35,19 @@ import (
 // race os/exec used elsewhere.
 func TestMain(m *testing.M) {
 	if os.Getenv("BEDINIT_HELPER") == "1" {
-		os.Exit(Run([]string{"--socket", os.Getenv("BEDINIT_SOCKET"), "--bed", "test"}))
+		os.Exit(Run([]string{
+			"--socket", os.Getenv("BEDINIT_SOCKET"),
+			"--bed", "test",
+			"--executor", testExecutorID,
+		}))
 	}
 	os.Exit(m.Run())
 }
 
 // startInit launches the helper bedinit and waits for its socket.
-func startInit(t *testing.T) (socket string, proc *os.Process) {
+const testExecutorID = "executor-test"
+
+func startInit(t *testing.T) (socket string, proc *os.Process, client *Client) {
 	t.Helper()
 	socket = filepath.Join(t.TempDir(), "init.sock")
 	cmd := exec.Command(os.Args[0])
@@ -55,18 +62,21 @@ func startInit(t *testing.T) (socket string, proc *os.Process) {
 		_, _ = cmd.Process.Wait()
 	})
 	for i := 0; i < 100; i++ {
-		if _, err := os.Stat(socket); err == nil {
-			return socket, cmd.Process
+		client = NewClient(socket, testExecutorID)
+		if err := client.Describe(); err == nil {
+			return socket, cmd.Process, client
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("bedinit socket never appeared")
-	return "", nil
+	return "", nil, nil
 }
 
-// spawnSh spawns `sh -c script` via the init, returning the handle and the
-// read end of its combined output.
-func spawnSh(t *testing.T, socket, script string) (*Handle, *os.File) {
+var nextProcessID atomic.Uint64
+
+// spawnSh starts `sh -c script` through a fresh RPC and returns its stable
+// process identity, pid and combined output.
+func spawnSh(t *testing.T, client *Client, script string) (string, int, *os.File) {
 	t.Helper()
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
@@ -77,22 +87,23 @@ func spawnSh(t *testing.T, socket, script string) (*Handle, *os.File) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, err := Spawn(socket, []string{"/bin/sh", "-c", script}, "", os.Environ(), devnull, pw, pw)
+	processID := fmt.Sprintf("process-%d", nextProcessID.Add(1))
+	pid, err := client.Start(processID, []string{"/bin/sh", "-c", script}, "", os.Environ(), devnull, pw, pw)
 	pw.Close()
 	if err != nil {
 		pr.Close()
-		t.Fatalf("Spawn: %v", err)
+		t.Fatalf("Start: %v", err)
 	}
-	return h, pr
+	return processID, pid, pr
 }
 
 func TestSpawnExitCodeAndOutput(t *testing.T) {
-	socket, _ := startInit(t)
+	_, _, client := startInit(t)
 
-	h, out := spawnSh(t, socket, "echo hi from bedinit; exit 7")
+	processID, _, out := spawnSh(t, client, "echo hi from bedinit; exit 7")
 	data, _ := io.ReadAll(out)
 	out.Close()
-	status, err := h.WaitExit()
+	status, err := client.Wait(processID)
 	if err != nil {
 		t.Fatalf("WaitExit: %v", err)
 	}
@@ -105,14 +116,14 @@ func TestSpawnExitCodeAndOutput(t *testing.T) {
 }
 
 func TestKillSpawnedProcess(t *testing.T) {
-	socket, _ := startInit(t)
+	_, _, client := startInit(t)
 
-	h, out := spawnSh(t, socket, "sleep 60")
+	processID, _, out := spawnSh(t, client, "sleep 60")
 	defer out.Close()
-	if err := h.Kill(); err != nil {
+	if err := client.Kill(processID); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}
-	status, err := h.WaitExit()
+	status, err := client.Wait(processID)
 	if err != nil {
 		t.Fatalf("WaitExit: %v", err)
 	}
@@ -122,7 +133,7 @@ func TestKillSpawnedProcess(t *testing.T) {
 }
 
 func TestConcurrentShortLivedSpawns(t *testing.T) {
-	socket, _ := startInit(t)
+	_, _, client := startInit(t)
 	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -136,12 +147,13 @@ func TestConcurrentShortLivedSpawns(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			h, err := Spawn(socket, []string{"/bin/true"}, "", os.Environ(), devnull, devnull, devnull)
+			processID := fmt.Sprintf("process-concurrent-%d", nextProcessID.Add(1))
+			_, err := client.Start(processID, []string{"/bin/true"}, "", os.Environ(), devnull, devnull, devnull)
 			if err != nil {
 				errs <- err
 				return
 			}
-			status, err := h.WaitExit()
+			status, err := client.Wait(processID)
 			if err != nil {
 				errs <- err
 				return
@@ -162,18 +174,18 @@ func TestConcurrentShortLivedSpawns(t *testing.T) {
 // is a child of the INIT (not of this process), and SIGTERM to the init takes
 // the whole tree down — including a setsid daemon that escaped its pgid.
 func TestParentageAndSigtermKillsTree(t *testing.T) {
-	socket, initProc := startInit(t)
+	_, initProc, client := startInit(t)
 
 	// Long runner + a setsid-style escapee writing its pid.
 	pidfile := filepath.Join(t.TempDir(), "escapee.pid")
-	h, out := spawnSh(t, socket,
+	_, pid, out := spawnSh(t, client,
 		"setsid sh -c 'echo $$ > "+pidfile+"; sleep 60' & echo started; sleep 60")
 	go io.Copy(io.Discard, out) //nolint:errcheck // drain so the child never blocks
 	defer out.Close()
 
 	// Parentage: the child's ppid must be the init, not us.
 	waitFor(t, "child parented to init", func() bool {
-		stat, err := os.ReadFile("/proc/" + itoa(h.Pid()) + "/stat")
+		stat, err := os.ReadFile("/proc/" + itoa(pid) + "/stat")
 		return err == nil && strings.Contains(string(stat), ") S "+itoa(initProc.Pid)+" ")
 	})
 	var escapee int
@@ -189,7 +201,7 @@ func TestParentageAndSigtermKillsTree(t *testing.T) {
 	if err := initProc.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("SIGTERM init: %v", err)
 	}
-	waitFor(t, "direct child killed", func() bool { return !alive(h.Pid()) })
+	waitFor(t, "direct child killed", func() bool { return !alive(pid) })
 	waitFor(t, "setsid escapee killed", func() bool { return !alive(escapee) })
 }
 

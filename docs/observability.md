@@ -24,6 +24,7 @@ hostel 需要从三个层面回答同一组问题：
 - `generation` 表示本地数据版本；
 - `retained_until` 表示最早安全回收期限；
 - `inflight` 表示仍在执行的 bed 请求数。
+- `executor` 表示 resident bed 当前的进程域 identity、backend 与 state；没有执行需求时可为空。
 
 `BeginOperation` 是请求准入与并发正确性边界，不是观测 timeline。可观测性另用
 `LifecycleRecord` 描述已经完成的生命周期动作，避免“operation”同时表示业务请求和
@@ -32,7 +33,7 @@ hostel 需要从三个层面回答同一组问题：
 `Execution` 是一次命令运行的稳定身份，前台、后台和 session run 只改变等待方式，不改变
 结果语义。终态由两份正交事实组成：
 
-- `ProcessOutcome` 是 spawner 从内核 wait status 得到的 exited / signaled / lost；
+- `ProcessOutcome` 是 Executor 从内核 wait status 得到的 exited / signaled / lost；
 - `TerminationCause` 是 execution controller 在发信号前记录的 timeout / client canceled /
   interrupted / bed teardown 等意图。没有 stop 意图的 signal 只记 external signal，不猜 OOM。
 
@@ -53,7 +54,8 @@ bed core
   ├─ LifecycleRecord：action / result / source / trigger / stages
        ├─ structured logs
        └─ GET /v1/beds/:id lifecycle detail
-  └─ Execution：identity / output / process outcome / termination cause
+  └─ Executor：当前进程域 identity / backend / state
+       └─ Execution：identity / output / process outcome / termination cause
        ├─ SSE execution_start → stdout|stderr → execution_end
        ├─ status + cursor output API
        └─ structured logs + Trace
@@ -79,8 +81,8 @@ bed core
 日志不是稳定 API。控制面不得通过解析日志判断 bed 是否 active 或是否已持久化。
 
 每个 execution 至少写 started 与 finished 两条结构化日志。字段包含 execution id、bed、mode、
-spawner、process outcome、exit code 或 signal、termination cause 与 duration；不得记录 command、
-env 或原始输出。实际 spawner 同时进入 health / capabilities，调用方不从配置推断运行态。
+executor id、executor backend、process outcome、exit code 或 signal、termination cause 与 duration；
+不得记录 command、env 或原始输出。实际 backend 同时进入 health / capabilities，调用方不从配置推断运行态。
 
 带有效 span context 的生命周期与 execution 日志增加 `trace_id` / `span_id`，用于从日志跳转到
 Trace；启动日志和没有上下文的后台日志保持原格式。
@@ -98,11 +100,11 @@ Gin 路由模板命名；`/healthz`、`/ping`、`/metrics`、`/metrics/watch` �
 - lifecycle stage 记录为 `stage.start` / `stage.end` event，不为每个函数制造 child span。
 
 后台 execution 继承发起请求的 trace identity，但不继承请求取消信号，因此 HTTP 响应返回后仍能
-完整记录命令终态。span 只包含 execution id、bed id、mode、spawner、process outcome、termination
+完整记录命令终态。span 只包含 execution id、bed id、mode、executor id/backend、process outcome、termination
 cause、exit code/signal、action/stage/result/source/trigger 与耗时；禁止写入 command、env、stdout、
 stderr、路径和错误原文以外的用户数据。
 
-非零退出、非预期 signal 和 runtime lost 标记为 error；client cancel、interrupt、bed teardown、
+非零退出、非预期 signal 和 executor lost 标记为 error；client cancel、interrupt、bed teardown、
 daemon shutdown 属于预期控制动作，不把 trace 标红。启用 Trace 但未配置 endpoint 时保持 no-op；
 两种 endpoint 同时存在时优先 gRPC，与 sandctl 的部署语义一致。
 
@@ -114,6 +116,7 @@ luggage）的当前三维事实，不承载 timeline。
 `GET /v1/beds/:id` 是单 bed 诊断入口，在基本视图之外返回：
 
 - 当前 `generation` 和 `activity`（operations / sessions 按 kind 计数）；
+- 当前 `executor`（id / backend / state；尚未创建时省略）；
 - `lifecycle.last_activation`；
 - `lifecycle.last_persist`。
 

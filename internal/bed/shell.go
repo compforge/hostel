@@ -29,6 +29,7 @@ import (
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/go-stdx/shellx"
 
+	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
 )
 
@@ -78,7 +79,10 @@ func validBedID(id string) error {
 // Callers holding bed/manager locks may call Dead() safely for the same
 // reason. Never add code that holds mu while blocking.
 type Shell struct {
-	proc  Proc
+	ExecutorID      string
+	ExecutorBackend string
+
+	proc  executor.Process
 	stdin io.WriteCloser
 	lines chan string // every output line; closed on EOF/exit
 
@@ -87,13 +91,13 @@ type Shell struct {
 	dead  bool
 }
 
-// startShell launches the shell confined by iso to ws via the spawner. cwdInBed,
+// startShell launches the shell in the Bed's current Executor. cwdInBed,
 // when set, becomes the starting directory via an initial `cd`. env is the
 // bed-scoped environment (Manager.buildBedEnv) — the session shell would otherwise
 // inherit the daemon env, which lacks the bed identity and endpoints. Stdio is
 // explicit os.Pipe pairs (not StdinPipe/StdoutPipe) so the raw fds can cross a
-// process boundary when the spawner is the bed's init.
-func startShell(sp Spawner, bedID, shellPath string, env []string, iso isolation.Isolator, ws isolation.Workspace, cwdInBed string) (*Shell, error) {
+// process boundary when bed-init is the Executor backend.
+func startShell(bedExecutor executor.Executor, shellPath string, env []string, iso isolation.Isolator, ws isolation.Workspace, cwdInBed string) (*Shell, error) {
 	cmd := exec.Command(shellPath, shellInteractiveArgs(shellPath)...)
 	cmd.Env = env
 	if err := iso.Wrap(cmd, ws); err != nil {
@@ -112,7 +116,7 @@ func startShell(sp Spawner, bedID, shellPath string, env []string, iso isolation
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = outW // interleave, like a terminal
-	proc, err := sp.Start(bedID, cmd)
+	proc, err := bedExecutor.Start(context.Background(), "process-shell-"+randx.Hex(8), cmd)
 	// The child holds its own copies now (or never will, on error): drop ours
 	// of the child-side ends — outW in particular, or the reader never EOFs.
 	inR.Close()
@@ -123,7 +127,13 @@ func startShell(sp Spawner, bedID, shellPath string, env []string, iso isolation
 		return nil, err
 	}
 
-	s := &Shell{proc: proc, stdin: inW, lines: make(chan string, 64)}
+	s := &Shell{
+		ExecutorID:      bedExecutor.ID(),
+		ExecutorBackend: bedExecutor.Backend(),
+		proc:            proc,
+		stdin:           inW,
+		lines:           make(chan string, 64),
+	}
 	if cwdInBed != "" {
 		// Best-effort initial cwd; a failure surfaces in the first run's output.
 		_, _ = io.WriteString(inW, "cd -- "+shellx.Quote(cwdInBed)+" || true\n")
@@ -146,7 +156,7 @@ func startShell(sp Spawner, bedID, shellPath string, env []string, iso isolation
 			}
 		}
 	}()
-	go func() { _ = proc.Wait() }() // reap; EOF above drives dead state
+	go func() { _, _ = proc.Wait(context.Background()) }() // EOF above drives dead state
 	return s, nil
 }
 
@@ -225,7 +235,11 @@ func (m *Manager) CreateShell(b *Bed, cwdInBed string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sh, err := startShell(m.spawner, b.ID, m.shellPath, env, m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, cwdInBed)
+	bedExecutor, err := b.executorFor(context.Background(), m.executorFactory)
+	if err != nil {
+		return "", err
+	}
+	sh, err := startShell(bedExecutor, m.shellPath, env, m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, cwdInBed)
 	if err != nil {
 		return "", err
 	}
@@ -280,7 +294,11 @@ func (m *Manager) ForegroundShell(b *Bed) (*Shell, error) {
 	if err != nil {
 		return nil, err
 	}
-	sh, err := startShell(m.spawner, b.ID, m.shellPath, env, m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, "")
+	bedExecutor, err := b.executorFor(context.Background(), m.executorFactory)
+	if err != nil {
+		return nil, err
+	}
+	sh, err := startShell(bedExecutor, m.shellPath, env, m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, "")
 	if err != nil {
 		return nil, err
 	}

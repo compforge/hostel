@@ -23,11 +23,12 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bedinit"
+	"github.com/qiankunli/hostel/internal/executor"
 )
 
 // TestMain lets this test binary double as the __bedinit re-exec target (the
 // real hostel binary dispatches the same way in cmd/hostel/main.go), so
-// EnableBedInit(os.Args[0]) exercises the genuine fork path.
+// BedInitFactory exercises the genuine fork path.
 func TestMain(m *testing.M) {
 	if len(os.Args) >= 2 && os.Args[1] == bedinit.InitArg {
 		os.Exit(bedinit.Run(os.Args[2:]))
@@ -38,9 +39,16 @@ func TestMain(m *testing.M) {
 func newBedInitManager(t *testing.T) *Manager {
 	t.Helper()
 	m := newTestManager(t)
-	if err := m.EnableBedInit(os.Args[0]); err != nil {
-		t.Fatalf("EnableBedInit: %v", err)
+	factory, err := executor.NewBedInitFactory(os.Args[0], m.resources)
+	if err != nil {
+		t.Fatalf("NewBedInitFactory: %v", err)
 	}
+	m.SetExecutorFactory(factory)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = m.Close(ctx)
+	})
 	return m
 }
 
@@ -57,9 +65,9 @@ func resolveBedInit(t *testing.T, m *Manager, id string) *Bed {
 	return b
 }
 
-// TestBedInitForegroundExec runs the full wired path: Manager → initSpawner →
-// bedinit → command. Exit codes, output streaming, env and set -e isolation
-// must behave exactly like the in-process spawner.
+// TestBedInitForegroundExec runs the full wired path: Manager → Executor →
+// bed-init → command. Exit codes, output streaming, env and set -e isolation
+// must behave exactly like the local Executor.
 func TestBedInitForegroundExec(t *testing.T) {
 	m := newBedInitManager(t)
 	b := resolveBedInit(t, m, "conv-init")
@@ -80,6 +88,33 @@ func TestBedInitForegroundExec(t *testing.T) {
 	}
 	if result, err := m.RunForeground(ctx, b, "true", "", nil, 0, nil); err != nil || result.Process.ExitCode != 0 {
 		t.Fatalf("bed unusable after failure: result=%+v err=%v", result, err)
+	}
+}
+
+func TestBedKeepsIdentityWhenExecutorIsReplaced(t *testing.T) {
+	m := newBedInitManager(t)
+	b := resolveBedInit(t, m, "conv-executor-replace")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	first, err := m.RunForeground(ctx, b, "true", "", nil, 0, nil)
+	if err != nil || first.Process.ExitCode != 0 {
+		t.Fatalf("first execution: result=%+v err=%v", first, err)
+	}
+	status := b.Status()
+	if status.Executor == nil || status.Executor.ID != first.ExecutorID {
+		t.Fatalf("bed executor status = %+v, execution = %+v", status.Executor, first)
+	}
+	if err := b.executor.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown first executor: %v", err)
+	}
+
+	second, err := m.RunForeground(ctx, b, "true", "", nil, 0, nil)
+	if err != nil || second.Process.ExitCode != 0 {
+		t.Fatalf("second execution: result=%+v err=%v", second, err)
+	}
+	if second.BedID != first.BedID || second.ExecutorID == first.ExecutorID {
+		t.Fatalf("replacement identities: first=%+v second=%+v", first, second)
 	}
 }
 
@@ -120,7 +155,7 @@ func TestBedInitTeardownKillsTree(t *testing.T) {
 	}
 	select {
 	case result := <-done:
-		if result.Process.Kind != ProcessSignaled || result.Cause != CauseBedTeardown {
+		if result.Process.Kind != executor.ProcessSignaled || result.Cause != CauseBedTeardown {
 			t.Fatalf("killed command result = %+v", result)
 		}
 	case <-time.After(5 * time.Second):
