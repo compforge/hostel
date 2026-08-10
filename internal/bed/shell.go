@@ -146,7 +146,7 @@ func startShell(sp Spawner, bedID, shellPath string, env []string, iso isolation
 			}
 		}
 	}()
-	go func() { _, _ = proc.Wait() }() // reap; EOF above drives dead state
+	go func() { _ = proc.Wait() }() // reap; EOF above drives dead state
 	return s, nil
 }
 
@@ -234,6 +234,28 @@ func (m *Manager) CreateShell(b *Bed, cwdInBed string) (string, error) {
 	b.shells[id] = sh
 	b.mu.Unlock()
 	return id, nil
+}
+
+// StartSessionExecution runs one command in a stateful shell while exposing
+// the same identity, output and terminal record as one-shot executions.
+func (m *Manager) StartSessionExecution(
+	ctx context.Context,
+	b *Bed,
+	shell *Shell,
+	command string,
+	timeout time.Duration,
+	onStart func(ExecutionStatus),
+	onOutput func(ExecutionOutput),
+) (*Execution, error) {
+	finishOperation, err := m.BeginOperation(b, OpExec, timeout)
+	if err != nil {
+		return nil, err
+	}
+	execution := m.executions.trackSession(ctx, b.ID, shell, command, onStart, onOutput, func(result ExecutionResult) {
+		finishOperation()
+		b.RecordCommand(result.Duration)
+	})
+	return execution, nil
 }
 
 // foregroundShellID is the well-known session backing the explicit /session

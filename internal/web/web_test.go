@@ -186,10 +186,10 @@ func TestCommandForegroundSSE(t *testing.T) {
 		t.Fatalf("content-type = %q", ct)
 	}
 	evs := parseSSE(t, rec.Body.String())
-	var sawInit, sawPing, sawStdout, sawComplete bool
+	var sawStarted, sawPing, sawStdout, sawFinished bool
 	for _, ev := range evs {
-		if ev.Type == EventInit {
-			sawInit = true
+		if ev.Type == EventExecutionStart && ev.ExecutionID != "" {
+			sawStarted = true
 		}
 		if ev.Type == EventPing && ev.Text == "pong" {
 			sawPing = true
@@ -197,15 +197,15 @@ func TestCommandForegroundSSE(t *testing.T) {
 		if ev.Type == EventStdout && strings.Contains(ev.Text, "hostel-ok") {
 			sawStdout = true
 		}
-		if ev.Type == EventComplete {
-			sawComplete = true
-			if ev.ExitCode == nil || *ev.ExitCode != 0 {
-				t.Fatalf("complete exit code = %v", ev.ExitCode)
+		if ev.Type == EventExecutionEnd {
+			sawFinished = true
+			if ev.Result == nil || ev.Result.Process.ExitCode == nil || *ev.Result.Process.ExitCode != 0 {
+				t.Fatalf("finished result = %+v", ev.Result)
 			}
 		}
 	}
-	if !sawInit || !sawPing || !sawStdout || !sawComplete {
-		t.Fatalf("SSE missing events: init=%v ping=%v stdout=%v complete=%v (%+v)", sawInit, sawPing, sawStdout, sawComplete, evs)
+	if !sawStarted || !sawPing || !sawStdout || !sawFinished {
+		t.Fatalf("SSE missing events: started=%v ping=%v stdout=%v finished=%v (%+v)", sawStarted, sawPing, sawStdout, sawFinished, evs)
 	}
 }
 
@@ -230,8 +230,8 @@ func TestCommandSilentExecStartsStreamBeforeCompletion(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(frame)), &ev); err != nil {
 		t.Fatalf("decode first command event %q: %v", frame, err)
 	}
-	if ev.Type != EventInit {
-		t.Fatalf("first command event = %q, want init", ev.Type)
+	if ev.Type != EventExecutionStart || ev.ExecutionID == "" {
+		t.Fatalf("first command event = %+v, want execution_start", ev)
 	}
 }
 
@@ -275,8 +275,10 @@ func TestCommandForegroundPreservesStdoutAndStderr(t *testing.T) {
 			stdout += ev.Text
 		case EventStderr:
 			stderr += ev.Text
-		case EventComplete:
-			exitCode = ev.ExitCode
+		case EventExecutionEnd:
+			if ev.Result != nil {
+				exitCode = ev.Result.Process.ExitCode
+			}
 		}
 	}
 	if stdout != "out" || stderr != "err" || exitCode == nil || *exitCode != 7 {

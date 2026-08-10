@@ -39,7 +39,7 @@ func TestUnixpacketKeepsRepliesSeparate(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		exit := 0
+		exit := ExitStatus{Kind: ExitStatusExited, ExitCode: 0}
 		if err := writeMsg(conn, reply{Pid: 42}, nil); err != nil {
 			serverErr <- err
 			return
@@ -63,8 +63,8 @@ func TestUnixpacketKeepsRepliesSeparate(t *testing.T) {
 	if _, err := readMsg(conn, &exited); err != nil {
 		t.Fatalf("read exit: %v", err)
 	}
-	if exited.Exit == nil || *exited.Exit != 0 {
-		t.Fatalf("exit = %v, want 0", exited.Exit)
+	if exited.Exit == nil || exited.Exit.Kind != ExitStatusExited || exited.Exit.ExitCode != 0 {
+		t.Fatalf("exit = %+v, want exited with code 0", exited.Exit)
 	}
 	if err := <-serverErr; err != nil {
 		t.Fatal(err)

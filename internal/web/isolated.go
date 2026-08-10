@@ -285,12 +285,6 @@ func (s *Server) isolatedRun(c *gin.Context) {
 	}
 
 	timeout := time.Duration(req.TimeoutSeconds) * time.Second
-	finish, err := s.mgr.BeginOperation(b, bed.OpExec, timeout)
-	if err != nil {
-		respondBedError(c, err)
-		return
-	}
-	defer finish()
 	sh, err := s.mgr.ForegroundShell(b)
 	if err != nil {
 		runtimeError(c, err.Error())
@@ -304,33 +298,23 @@ func (s *Server) isolatedRun(c *gin.Context) {
 		defer cancel()
 	}
 	sse := newSSE(c)
-	start := time.Now()
-	result, err := sh.Run(ctx, isolatedRunScript(req.Code, req.Envs), func(line string) {
-		sse.send(StreamEvent{Type: EventStdout, Text: line})
+	stopSSE := func() {}
+	defer func() { stopSSE() }()
+	startedExecutionID := ""
+	execution, err := s.mgr.StartSessionExecution(ctx, b, sh, isolatedRunScript(req.Code, req.Envs), timeout, func(status bed.ExecutionStatus) {
+		startedExecutionID = status.ID
+		stopSSE = sse.start(ctx, status.ID, ssePingInterval)
+	}, func(output bed.ExecutionOutput) {
+		sequence := output.Sequence
+		sse.send(StreamEvent{Type: EventStdout, ExecutionID: startedExecutionID, Sequence: &sequence, Text: output.Text})
 	})
-	b.RecordCommand(time.Since(start))
 	if err != nil {
-		// Shell.Run stops consuming output when its context ends. Kill that
-		// shell so stale output cannot be consumed by the next serialized run.
-		if ctx.Err() != nil {
-			sh.Close()
-		}
-		sse.send(StreamEvent{Type: EventError, Error: err.Error()})
+		respondBedError(c, err)
 		return
 	}
-	if result.ExitCode != 0 {
-		sse.send(StreamEvent{
-			Type:     EventError,
-			Error:    fmt.Sprintf("command exited with code %d", result.ExitCode),
-			ExitCode: &result.ExitCode,
-		})
-		return
-	}
-	sse.send(StreamEvent{
-		Type:          EventComplete,
-		ExecutionTime: time.Since(start).Milliseconds(),
-		ExitCode:      &result.ExitCode,
-	})
+	result := execution.Wait()
+	payload := resultPayload(result)
+	sse.send(StreamEvent{Type: EventExecutionEnd, ExecutionID: result.ExecutionID, Result: &payload})
 }
 
 // isolatedRunScript matches OpenSandbox's state contract: normal code runs in

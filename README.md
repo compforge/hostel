@@ -8,8 +8,10 @@ shell sessions in them, and read/write their files — built for AI agents that
 each need a scratch space to execute in. Each sandbox is called a **bed**. It
 runs anywhere: your laptop, a VM, a CI job, or a container.
 
-It **implements the [OpenSandbox](https://github.com/alibaba/opensandbox) execd
-HTTP API**, so existing OpenSandbox SDKs work against hostel unchanged.
+Its resource and file APIs use [OpenSandbox](https://github.com/alibaba/opensandbox)
+execd as a design baseline. Command execution is hostel-native: every run has
+a stable execution id and a structured terminal result that preserves exit,
+signal and termination-cause semantics.
 
 ## Why
 
@@ -53,7 +55,7 @@ curl -s 'localhost:8872/files/download?path=/workspace/a.txt'
 curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv-1'
 ```
 
-## API (v1, OpenSandbox-compatible)
+## API (v1)
 
 | Group | Endpoints |
 |---|---|
@@ -67,13 +69,14 @@ curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv
 | Beds | `GET/POST /v1/beds`, `GET/DELETE /v1/beds/:id`, `POST /v1/beds/:id/checkpoint`, `GET /v1/beds/capabilities` |
 | Scheduler | `GET /v1/beds` — instance capacity, state counts + every local bed's (resident + dormant) lifecycle, generation and retention |
 
-The OpenSandbox isolated-session surface is a compatibility view: one isolated
-session maps directly to one non-default bed, so it does not introduce a second
-lifecycle object. The default bed only serves native requests that omit a bed
-id and is never listed or attached as an isolated session. Creation currently
-supports the balanced profile with the bed-owned read-write `/workspace` and
-shared network; unsupported isolation options are rejected instead of being
-silently ignored. Diff and commit report `NOT_SUPPORTED`.
+The isolated-session resource model maps one session directly to one non-default
+bed, so it does not introduce a second lifecycle object. Its run stream uses the
+same hostel-native execution events as `/command`. The default bed only serves
+requests that omit a bed id and is never listed or attached as an isolated
+session. Creation currently supports the balanced profile with the bed-owned
+read-write `/workspace` and shared network; unsupported isolation options are
+rejected instead of being silently ignored. Diff and commit report
+`NOT_SUPPORTED`.
 
 Metrics follow the selected bed (`X-Hostel-Bed` / `?bed=`): with delegated
 cgroup v2, CPU usage and current memory come from that bed's accounting group,

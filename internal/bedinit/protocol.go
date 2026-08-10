@@ -61,12 +61,29 @@ type signalRequest struct {
 	Signal int `json:"signal"`
 }
 
+// ExitStatus is the kernel-level terminal fact observed by bedinit. Keeping
+// signal separate from exit code avoids the lossy 128+signal convention at
+// the process boundary.
+type ExitStatusKind string
+
+const (
+	ExitStatusExited   ExitStatusKind = "exited"
+	ExitStatusSignaled ExitStatusKind = "signaled"
+)
+
+type ExitStatus struct {
+	Kind       ExitStatusKind `json:"kind"`
+	ExitCode   int            `json:"exit_code,omitempty"`
+	Signal     int            `json:"signal,omitempty"`
+	CoreDumped bool           `json:"core_dumped,omitempty"`
+}
+
 // reply is bedinit → daemon. Exactly two replies per connection: {pid} once
 // the child is running (or {error}), then {exit} when it is reaped.
 type reply struct {
-	Pid   int    `json:"pid,omitempty"`
-	Exit  *int   `json:"exit,omitempty"`
-	Error string `json:"error,omitempty"`
+	Pid   int         `json:"pid,omitempty"`
+	Exit  *ExitStatus `json:"exit,omitempty"`
+	Error string      `json:"error,omitempty"`
 }
 
 // writeMsg sends one length-prefixed JSON message, with fds attached as

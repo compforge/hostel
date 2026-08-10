@@ -33,7 +33,7 @@ func TestServerSignalsOnlyLiveChildIdentity(t *testing.T) {
 		}
 		return nil
 	}
-	s := &server{watchers: map[int]chan int{42: make(chan int, 1)}}
+	s := &server{watchers: map[int]chan ExitStatus{42: make(chan ExitStatus, 1)}}
 	s.signalProcessGroupIfRunning(42, syscall.SIGKILL)
 
 	s.mu.Lock()

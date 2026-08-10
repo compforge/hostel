@@ -58,7 +58,7 @@ func Run(args []string) int {
 	}
 	defer os.Remove(*socket)
 
-	s := &server{bed: *bed, watchers: make(map[int]chan int)}
+	s := &server{bed: *bed, watchers: make(map[int]chan ExitStatus)}
 	go s.reap()
 
 	// SIGTERM = bed teardown: stop serving, kill the whole tree, exit.
@@ -87,7 +87,7 @@ type server struct {
 	bed string
 
 	mu       sync.Mutex
-	watchers map[int]chan int // pid → exit-code delivery
+	watchers map[int]chan ExitStatus // pid → terminal-status delivery
 }
 
 // reap is the single wait loop: dispatches exit codes for spawned children and
@@ -112,13 +112,17 @@ func (s *server) reap() {
 				s.mu.Unlock()
 				continue // stopped/continued: not terminal
 			}
-			code := ws.ExitStatus()
+			status := ExitStatus{Kind: ExitStatusExited, ExitCode: ws.ExitStatus()}
 			if ws.Signaled() {
-				code = 128 + int(ws.Signal())
+				status = ExitStatus{
+					Kind:       ExitStatusSignaled,
+					Signal:     int(ws.Signal()),
+					CoreDumped: ws.CoreDump(),
+				}
 			}
 			if ch, ok := s.watchers[pid]; ok {
 				delete(s.watchers, pid)
-				ch <- code
+				ch <- status
 			}
 			s.mu.Unlock()
 		}
@@ -146,7 +150,7 @@ func (s *server) serveSpawn(conn *net.UnixConn) {
 		return
 	}
 
-	exitc := make(chan int, 1)
+	exitc := make(chan ExitStatus, 1)
 	s.mu.Lock()
 	pid, err := syscall.ForkExec(req.Argv[0], req.Argv, &syscall.ProcAttr{
 		Dir:   req.Dir,
@@ -183,8 +187,8 @@ func (s *server) serveSpawn(conn *net.UnixConn) {
 	}()
 	for {
 		select {
-		case code := <-exitc:
-			_ = writeMsg(conn, reply{Exit: &code}, nil)
+		case status := <-exitc:
+			_ = writeMsg(conn, reply{Exit: &status}, nil)
 			return
 		case req := <-signalc:
 			if req.Signal == int(syscall.SIGKILL) {

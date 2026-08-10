@@ -66,20 +66,20 @@ func TestBedInitForegroundExec(t *testing.T) {
 	ctx := context.Background()
 
 	var out strings.Builder
-	code, err := m.RunForeground(ctx, b, "echo via-init; echo v=$BEDINIT_T", "", map[string]string{"BEDINIT_T": "42"}, 0, func(l string) { out.WriteString(l) })
-	if err != nil || code != 0 {
-		t.Fatalf("RunForeground: code=%d err=%v", code, err)
+	result, err := m.RunForeground(ctx, b, "echo via-init; echo v=$BEDINIT_T", "", map[string]string{"BEDINIT_T": "42"}, 0, func(output ExecutionOutput) { out.WriteString(output.Text) })
+	if err != nil || result.Process.ExitCode != 0 {
+		t.Fatalf("RunForeground: result=%+v err=%v", result, err)
 	}
 	if !strings.Contains(out.String(), "via-init") || !strings.Contains(out.String(), "v=42") {
 		t.Fatalf("output = %q", out.String())
 	}
 
 	// set -e failure stays isolated; the bed remains usable (execd parity).
-	if code, err := m.RunForeground(ctx, b, "set -euo pipefail\nfalse", "", nil, 0, nil); err != nil || code == 0 {
-		t.Fatalf("set -e run: code=%d err=%v", code, err)
+	if result, err := m.RunForeground(ctx, b, "set -euo pipefail\nfalse", "", nil, 0, nil); err != nil || result.Process.ExitCode == 0 {
+		t.Fatalf("set -e run: result=%+v err=%v", result, err)
 	}
-	if code, err := m.RunForeground(ctx, b, "true", "", nil, 0, nil); err != nil || code != 0 {
-		t.Fatalf("bed unusable after failure: code=%d err=%v", code, err)
+	if result, err := m.RunForeground(ctx, b, "true", "", nil, 0, nil); err != nil || result.Process.ExitCode != 0 {
+		t.Fatalf("bed unusable after failure: result=%+v err=%v", result, err)
 	}
 }
 
@@ -91,11 +91,11 @@ func TestBedInitTeardownKillsTree(t *testing.T) {
 	b := resolveBedInit(t, m, "conv-init-kill")
 
 	pidfile := t.TempDir() + "/escapee.pid"
-	done := make(chan int, 1)
+	done := make(chan ExecutionResult, 1)
 	go func() {
-		code, _ := m.RunForeground(context.Background(), b,
+		result, _ := m.RunForeground(context.Background(), b,
 			"setsid sh -c 'echo $$ > "+pidfile+"; sleep 60' & sleep 60", "", nil, 0, nil)
-		done <- code
+		done <- result
 	}()
 	var escapee int
 	waitForCond(t, "escapee pidfile", func() bool {
@@ -119,9 +119,9 @@ func TestBedInitTeardownKillsTree(t *testing.T) {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
 	select {
-	case code := <-done:
-		if code == 0 {
-			t.Fatal("killed command reported exit 0")
+	case result := <-done:
+		if result.Process.Kind != ProcessSignaled || result.Cause != CauseBedTeardown {
+			t.Fatalf("killed command result = %+v", result)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("in-flight command escaped bed teardown")

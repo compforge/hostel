@@ -69,11 +69,11 @@ func TestIsolatedSessionLifecycleAndStatefulRun(t *testing.T) {
 	}
 
 	events := runIsolated(t, s, id, `{"code":"export SESSION_TEST_STATE=kept"}`)
-	if events[len(events)-1].Type != EventComplete {
+	if events[len(events)-1].Type != EventExecutionEnd {
 		t.Fatalf("first run events = %+v", events)
 	}
 	events = runIsolated(t, s, id, `{"code":"echo \"$SESSION_TEST_STATE\""}`)
-	if !isolatedOutputContains(events, "kept") || events[len(events)-1].Type != EventComplete {
+	if !isolatedOutputContains(events, "kept") || events[len(events)-1].Type != EventExecutionEnd {
 		t.Fatalf("stateful run events = %+v", events)
 	}
 

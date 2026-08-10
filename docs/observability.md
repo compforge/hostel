@@ -1,4 +1,4 @@
-# Bed 可观测性
+# Hostel 可观测性
 
 ## 理念与概念
 
@@ -6,7 +6,8 @@ hostel 需要从三个层面回答同一组问题：
 
 1. bed 当前能否接收请求、何时可以安全回收；
 2. 最近一次激活、持久化或回收是否成功；
-3. 慢或失败具体发生在哪个等待边界。
+3. 一次 execution 是否正常退出；若被终止，内核观察和发起原因分别是什么；
+4. 慢或失败具体发生在哪个等待边界。
 
 三层各有职责，不应各自发明状态和阶段：
 
@@ -27,6 +28,13 @@ hostel 需要从三个层面回答同一组问题：
 `LifecycleRecord` 描述已经完成的生命周期动作，避免“operation”同时表示业务请求和
 管理动作。
 
+`Execution` 是一次命令运行的稳定身份，前台、后台和 session run 只改变等待方式，不改变
+结果语义。终态由两份正交事实组成：
+
+- `ProcessOutcome` 是 spawner 从内核 wait status 得到的 exited / signaled / lost；
+- `TerminationCause` 是 execution controller 在发信号前记录的 timeout / client canceled /
+  interrupted / bed teardown 等意图。没有 stop 意图的 signal 只记 external signal，不猜 OOM。
+
 第一阶段统一三个 action：
 
 - **activate**：为一个非 resident bed 选择 fresh / luggage / snapshot 来源并使其可服务；
@@ -41,10 +49,14 @@ evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史�
 ```text
 bed core
   ├─ Status：当前状态、版本、期限、活动请求数
-  └─ LifecycleRecord：action / result / source / trigger / stages
+  ├─ LifecycleRecord：action / result / source / trigger / stages
        ├─ structured logs
        ├─ GET /v1/beds/:id lifecycle detail
        └─ aggregate metrics（第二阶段）
+  └─ Execution：identity / output / process outcome / termination cause
+       ├─ SSE execution_start → stdout|stderr → execution_end
+       ├─ status + cursor output API
+       └─ structured logs + aggregate metrics（第二阶段）
 ```
 
 阶段按真实等待边界划分，而不是按函数数量划分：
@@ -66,6 +78,10 @@ bed core
 
 日志不是稳定 API。控制面不得通过解析日志判断 bed 是否 active 或是否已持久化。
 
+每个 execution 至少写 started 与 finished 两条结构化日志。字段包含 execution id、bed、mode、
+spawner、process outcome、exit code 或 signal、termination cause 与 duration；不得记录 command、
+env 或原始输出。实际 spawner 同时进入 health / capabilities，调用方不从配置推断运行态。
+
 ## 接口
 
 `GET /v1/beds` 是调度 hint：实例容量、state 数量、每个本机 bed（resident + dormant
@@ -83,6 +99,10 @@ luggage）的当前三维事实，不承载 timeline。
 实例 health / capabilities 只表达 hostel 实例是否可服务及支持什么能力，不能混入某个
 bed 的一次失败。
 
+所有 execution 进入同一个有界 registry。status 返回结构化终态，logs 返回带 stream 与单调
+sequence 的有界输出；游标落入已淘汰区间时显式返回 truncated。registry 只保留最近完成记录，
+不能成为无限增长的历史库。
+
 ## Metric（第二阶段）
 
 hostel 已有 OpenSandbox 兼容的 `/metrics` 与 `/metrics/watch`，它们返回目标 bed 的资源
@@ -94,6 +114,9 @@ metric 直接聚合同一份 lifecycle 事实，覆盖：
 - stage 结果计数与耗时；
 - 当前各 state 的 bed 数量；
 - activate 来源和 persist 触发原因。
+
+execution metric 从同一份 `ExecutionResult` 聚合 mode、spawner、process outcome、termination
+cause、signal 与耗时；execution id、bed id、错误原文和输出不得成为 label。
 
 label 只允许 action、stage、result、source、trigger 等固定枚举。bed id、路径、
 generation、错误原文不得成为 label。错误需要聚合时使用有限错误类别，未知错误落入通用
@@ -111,6 +134,8 @@ metric 失败不得影响 bed 生命周期；上报不能扩大核心锁持有�
 - evict 仍在 persist 后原子复核 `activitySeq` / `inflight`；
 - persist 失败必须中止 evict，不能销毁唯一副本；
 - timeline 有固定阶段和固定保留数量，读取返回副本。
+- stop cause 必须先于 kill 原子记录，多个 stop 请求只接受第一个；
+- `execution_start` 恰好对应一个携带 result 的 `execution_end`，输出 pipe 泄漏不能无限阻塞终态发布。
 
 ## 分阶段落地
 

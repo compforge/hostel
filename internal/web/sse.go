@@ -22,32 +22,87 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/qiankunli/hostel/internal/bed"
 )
 
-// StreamEventType matches execd's ServerStreamEvent.type enum.
 type StreamEventType string
 
 const (
-	EventInit     StreamEventType = "init"
-	EventStatus   StreamEventType = "status"
-	EventError    StreamEventType = "error"
-	EventStdout   StreamEventType = "stdout"
-	EventStderr   StreamEventType = "stderr"
-	EventComplete StreamEventType = "execution_complete"
-	EventPing     StreamEventType = "ping"
+	EventExecutionStart StreamEventType = "execution_start"
+	EventStdout         StreamEventType = "stdout"
+	EventStderr         StreamEventType = "stderr"
+	EventExecutionEnd   StreamEventType = "execution_end"
+	EventPing           StreamEventType = "ping"
 )
 
 const ssePingInterval = 3 * time.Second
 
-// StreamEvent is one SSE frame payload (JSON), shaped like execd's
-// ServerStreamEvent so SDK stream parsers work unchanged.
+type processOutcomePayload struct {
+	Kind       bed.ProcessOutcomeKind `json:"kind"`
+	ExitCode   *int                   `json:"exit_code,omitempty"`
+	Signal     *int                   `json:"signal,omitempty"`
+	CoreDumped bool                   `json:"core_dumped,omitempty"`
+	Error      string                 `json:"error,omitempty"`
+}
+
+type executionResultPayload struct {
+	ExecutionID string                `json:"execution_id"`
+	BedID       string                `json:"bed_id"`
+	Mode        bed.ExecutionMode     `json:"mode"`
+	Spawner     string                `json:"spawner"`
+	StartedAt   time.Time             `json:"started_at"`
+	FinishedAt  time.Time             `json:"finished_at"`
+	DurationMs  int64                 `json:"duration_ms"`
+	Process     processOutcomePayload `json:"process"`
+	Cause       bed.TerminationCause  `json:"termination_cause"`
+}
+
+type executionOutputPayload struct {
+	Sequence int64            `json:"sequence"`
+	Stream   bed.OutputStream `json:"stream"`
+	Text     string           `json:"text"`
+}
+
+func outputPayload(output bed.ExecutionOutput) executionOutputPayload {
+	return executionOutputPayload{
+		Sequence: output.Sequence,
+		Stream:   output.Stream,
+		Text:     output.Text,
+	}
+}
+
 type StreamEvent struct {
-	Type          StreamEventType `json:"type,omitempty"`
-	Text          string          `json:"text,omitempty"`
-	ExecutionTime int64           `json:"execution_time,omitempty"`
-	Timestamp     int64           `json:"timestamp,omitempty"`
-	Error         string          `json:"error,omitempty"`
-	ExitCode      *int            `json:"exit_code,omitempty"`
+	Type        StreamEventType         `json:"type"`
+	ExecutionID string                  `json:"execution_id,omitempty"`
+	Sequence    *int64                  `json:"sequence,omitempty"`
+	Text        string                  `json:"text,omitempty"`
+	Result      *executionResultPayload `json:"result,omitempty"`
+	Timestamp   int64                   `json:"timestamp"`
+}
+
+func resultPayload(result bed.ExecutionResult) executionResultPayload {
+	process := processOutcomePayload{
+		Kind:       result.Process.Kind,
+		CoreDumped: result.Process.CoreDumped,
+		Error:      result.Process.Error,
+	}
+	switch result.Process.Kind {
+	case bed.ProcessExited:
+		process.ExitCode = &result.Process.ExitCode
+	case bed.ProcessSignaled:
+		process.Signal = &result.Process.Signal
+	}
+	return executionResultPayload{
+		ExecutionID: result.ExecutionID,
+		BedID:       result.BedID,
+		Mode:        result.Mode,
+		Spawner:     result.Spawner,
+		StartedAt:   result.StartedAt,
+		FinishedAt:  result.FinishedAt,
+		DurationMs:  result.Duration.Milliseconds(),
+		Process:     process,
+		Cause:       result.Cause,
+	}
 }
 
 // sseStream owns an SSE response: sets headers once, writes framed events.
@@ -92,12 +147,10 @@ func (s *sseStream) send(ev StreamEvent) {
 	s.flush()
 }
 
-// start matches execd's stream lifecycle: commit an init frame, then keep a
-// silent execution observable until the request ends. The returned cleanup
-// waits for the writer goroutine so it cannot race with net/http closing the
-// response after the handler returns.
-func (s *sseStream) start(ctx context.Context, initText string, interval time.Duration) func() {
-	s.send(StreamEvent{Type: EventInit, Text: initText})
+// start commits the execution identity before any output and keeps a silent
+// execution observable until its terminal event.
+func (s *sseStream) start(ctx context.Context, executionID string, interval time.Duration) func() {
+	s.send(StreamEvent{Type: EventExecutionStart, ExecutionID: executionID})
 	s.send(StreamEvent{Type: EventPing, Text: "pong"})
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -123,14 +176,6 @@ func (s *sseStream) start(ctx context.Context, initText string, interval time.Du
 
 func (s *sseStream) flush() {
 	flush(s.c.Writer)
-}
-
-// started reports whether any SSE header/frame has been committed — callers use
-// it to decide between a JSON error (nothing sent yet) and an error event.
-func (s *sseStream) hasStarted() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.started
 }
 
 func flush(w http.ResponseWriter) {

@@ -314,6 +314,7 @@ func (s *Server) capabilities(c *gin.Context) {
 		// inside the sandbox (bwrap): shell paths == file-API paths. False
 		// under direct, where /workspace is only the file-API virtual prefix.
 		"workspace_mount": iso.MountPoint() != "",
+		"spawner":         s.mgr.SpawnerName(),
 		"max_beds":        s.mgr.MaxBeds(),
 		"max_pinned_beds": s.mgr.MaxPinnedBeds(),
 		"persistence":     s.mgr.StoreName(),
