@@ -1,4 +1,4 @@
-//go:build linux
+//go:build !linux
 
 // Copyright 2026 Li Qiankun
 //
@@ -14,30 +14,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bed
+package executor
 
 import (
 	"os/exec"
-	"syscall"
 
 	"github.com/qiankunli/hostel/internal/resource"
 )
 
-// bindProcessCgroup configures CLONE_INTO_CGROUP so the child and every
-// descendant are accounted from their first instruction; there is no
-// fork-before-attach window for short-lived commands.
-func bindProcessCgroup(cmd *exec.Cmd, tracker resource.Tracker, bedID string) (func(), error) {
-	group, err := tracker.OpenGroup(bedID)
-	if err != nil {
-		return nil, err
-	}
-	if group == nil {
-		return func() {}, nil
-	}
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
-	}
-	cmd.SysProcAttr.UseCgroupFD = true
-	cmd.SysProcAttr.CgroupFD = int(group.Fd())
-	return func() { _ = group.Close() }, nil
+func bindProcessCgroup(_ *exec.Cmd, _ resource.Tracker, _ string) (func(), error) {
+	return func() {}, nil
 }

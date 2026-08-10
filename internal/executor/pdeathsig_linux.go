@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build linux
 
 // Copyright 2026 Li Qiankun
 //
@@ -14,14 +14,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bed
+package executor
 
 import (
 	"os/exec"
-
-	"github.com/qiankunli/hostel/internal/resource"
+	"syscall"
 )
 
-func bindProcessCgroup(_ *exec.Cmd, _ resource.Tracker, _ string) (func(), error) {
-	return func() {}, nil
+func setPdeathsig(cmd *exec.Cmd, signal syscall.Signal) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Pdeathsig = signal
 }

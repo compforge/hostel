@@ -108,7 +108,7 @@ shape 以配置代码及 README 为准，避免设计文档随调参漂移。
 ### 1. per-bed 记账已落地，但不等于隔离
 
 获得 cgroup v2 子树委派时，`Tracker` 为每个 bed 建立子 cgroup，并用 `CLONE_INTO_CGROUP` 让
-bed-init 或直接命令从第一条指令起进入目标组。这样 `cpu.stat` 能累计已经退出的短命令，避免
+bed-init 或 local Executor 的直接命令从第一条指令起进入目标组。这样 `cpu.stat` 能累计已经退出的短命令，避免
 `/proc` 扫描漏记，也为未来硬限额复用同一资源边界。
 
 使用 `CLONE_INTO_CGROUP` 而不是启动后再写 `cgroup.procs`，是为了消除 fork 与迁移之间的窗口：

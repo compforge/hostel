@@ -30,6 +30,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
 )
 
@@ -75,6 +76,9 @@ func TestPingAndHealthz(t *testing.T) {
 	}
 	if h["beds"] != float64(0) {
 		t.Fatalf("/healthz beds = %v, want 0", h["beds"])
+	}
+	if h["executor_backend"] != "local" || h["spawner"] != nil {
+		t.Fatalf("/healthz executor fields = %v", h)
 	}
 }
 
@@ -270,6 +274,7 @@ func TestCommandForegroundPreservesStdoutAndStderr(t *testing.T) {
 	}
 	var stdout, stderr string
 	var exitCode *int
+	var result *executionResultPayload
 	for _, ev := range parseSSE(t, rec.Body.String()) {
 		switch ev.Type {
 		case EventStdout:
@@ -278,12 +283,34 @@ func TestCommandForegroundPreservesStdoutAndStderr(t *testing.T) {
 			stderr += ev.Text
 		case EventExecutionEnd:
 			if ev.Result != nil {
+				result = ev.Result
 				exitCode = ev.Result.Process.ExitCode
 			}
 		}
 	}
 	if stdout != "out" || stderr != "err" || exitCode == nil || *exitCode != 7 {
 		t.Fatalf("typed command output: stdout=%q stderr=%q exit=%v", stdout, stderr, exitCode)
+	}
+	if result == nil || result.ExecutorID == "" || result.ExecutorBackend != "local" {
+		t.Fatalf("execution executor identity = %+v", result)
+	}
+}
+
+func TestLostExecutorResultDoesNotExposeTransportError(t *testing.T) {
+	payload := resultPayload(bed.ExecutionResult{
+		ExecutionID:     "exec-test",
+		BedID:           "bed-test",
+		ExecutorID:      "executor-test",
+		ExecutorBackend: "bed_init",
+		Process:         executor.Lost("executor-test", io.EOF),
+		Cause:           bed.CauseExecutorLost,
+	})
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "EOF") || payload.Process.Error != "executor executor-test lost" {
+		t.Fatalf("public lost result = %s", encoded)
 	}
 }
 
@@ -387,6 +414,11 @@ func TestBedsCRUD(t *testing.T) {
 				Trigger string `json:"trigger"`
 			} `json:"last_persist"`
 		} `json:"lifecycle"`
+		Executor *struct {
+			ID      string `json:"id"`
+			Backend string `json:"backend"`
+			State   string `json:"state"`
+		} `json:"executor"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("decode bed detail: %v", err)
@@ -400,6 +432,9 @@ func TestBedsCRUD(t *testing.T) {
 	}
 	if detail.Generation != 0 || len(detail.Activity.Operations) != 0 {
 		t.Fatalf("bed detail current state = generation %d activity %+v", detail.Generation, detail.Activity)
+	}
+	if detail.Executor != nil {
+		t.Fatalf("unused bed unexpectedly has executor %+v", detail.Executor)
 	}
 
 	rec = do(t, s, "POST", "/v1/beds/conv-1/checkpoint", nil, nil)

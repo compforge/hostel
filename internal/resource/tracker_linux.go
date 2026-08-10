@@ -211,7 +211,7 @@ func (t *cgroupTracker) Release(bedID string) error {
 	path := t.groupPath(bedID)
 	if err := os.WriteFile(filepath.Join(path, "cgroup.kill"), []byte("1"), 0o644); err != nil &&
 		!errors.Is(err, os.ErrNotExist) {
-		// Older cgroup v2 kernels may lack cgroup.kill; the spawner already
+		// Older cgroup v2 kernels may lack cgroup.kill; the Executor already
 		// killed the tree, so continue to the populated/rmdir check.
 	}
 	for range 20 {

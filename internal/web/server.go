@@ -268,17 +268,17 @@ func (s *Server) healthz(c *gin.Context) {
 	high, low := s.mgr.LuggageLimits()
 	resources := s.mgr.ResourceReport()
 	c.JSON(http.StatusOK, gin.H{
-		"ok":              true,
-		"isolator":        iso.Name(),
-		"isolator_ok":     iso.Available(),
-		"workspace_mount": iso.MountPoint() != "",
-		"spawner":         s.mgr.SpawnerName(),
-		"beds":            s.mgr.ResidentBedCount(),
-		"max_beds":        s.mgr.MaxBeds(),
-		"pinned_beds":     s.mgr.PinnedBedCount(),
-		"max_pinned_beds": s.mgr.MaxPinnedBeds(),
-		"bed_pressure":    s.mgr.BedPressure(),
-		"persistence":     s.mgr.StoreName(),
+		"ok":               true,
+		"isolator":         iso.Name(),
+		"isolator_ok":      iso.Available(),
+		"workspace_mount":  iso.MountPoint() != "",
+		"executor_backend": s.mgr.ExecutorBackend(),
+		"beds":             s.mgr.ResidentBedCount(),
+		"max_beds":         s.mgr.MaxBeds(),
+		"pinned_beds":      s.mgr.PinnedBedCount(),
+		"max_pinned_beds":  s.mgr.MaxPinnedBeds(),
+		"bed_pressure":     s.mgr.BedPressure(),
+		"persistence":      s.mgr.StoreName(),
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,
 			"available": resources.Available,

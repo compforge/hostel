@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bed
+package executor
 
 import (
 	"sync/atomic"
@@ -34,7 +34,7 @@ func TestInProcExitBarrierSerializesProcessGroupSignal(t *testing.T) {
 		<-releaseSignal
 		return nil
 	}
-	proc := &inProcProc{pid: 424242, untrack: func() {}}
+	proc := &localProcess{pid: 424242}
 
 	killDone := make(chan struct{})
 	go func() {

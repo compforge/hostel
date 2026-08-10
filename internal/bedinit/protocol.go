@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package bedinit implements the per-bed init process (docs/kernel.md
-// 〈进程树〉, S1): a tiny spawner-reaper the daemon re-execs once per bed. Bed
+// Package bedinit implements the process backend for one Executor: a tiny
+// supervisor-reaper the daemon re-execs for a Bed's current Executor. Bed
 // commands are forked BY bedinit (parentage is decided by who forks), so the
 // bed owns a real process tree: teardown = SIGTERM bedinit → it kills every
 // descendant (a /proc ppid scan also catches reparented setsid orphans — it is
 // the subreaper) and exits. The daemon talks to it over a unix socket, one
-// connection per spawn, stdio crossing as SCM_RIGHTS fds.
+// RPC per connection, with stdio crossing as SCM_RIGHTS fds on Start.
 //
 // Shape follows containerd's shim (small per-unit process owning a tree,
 // IPC to the daemon); tini/dumb-init don't fit (pure reapers, no spawn IPC)
@@ -27,6 +27,7 @@
 package bedinit
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -37,8 +38,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// InitArg is the hidden subcommand hostel re-execs into to become a bed's
-// init: `hostel __bedinit --socket <path> --bed <id>`.
+// InitArg is the hidden subcommand hostel re-execs into to become an Executor:
+// `hostel __bedinit --socket <path> --bed <id> --executor <id>`.
 const InitArg = "__bedinit"
 
 const (
@@ -46,19 +47,36 @@ const (
 	maxMessageSize = 128 << 10
 )
 
-// spawnRequest asks bedinit to fork one fully-specified command. Argv[0] is an
-// absolute path (the daemon resolves via exec.LookPath); Env is the COMPLETE
-// child environment. Three SCM_RIGHTS fds ride along: stdin, stdout, stderr.
-type spawnRequest struct {
-	Argv []string `json:"argv"`
-	Dir  string   `json:"dir,omitempty"`
-	Env  []string `json:"env"`
-}
+type operation string
 
-// signalRequest is daemon → bedinit after a successful spawn. Bedinit accepts
-// the signal only while pid is still present in its live-child table.
-type signalRequest struct {
-	Signal int `json:"signal"`
+const (
+	opDescribe operation = "describe"
+	opStart    operation = "start"
+	opGet      operation = "get"
+	opWait     operation = "wait"
+	opSignal   operation = "signal"
+	opShutdown operation = "shutdown"
+)
+
+type processState string
+
+const (
+	processRunning processState = "running"
+	processExited  processState = "exited"
+)
+
+// request is one connection-scoped RPC. Process identity is independent of
+// the connection: callers may redial Get/Wait after an EOF, and Start is
+// idempotent for the same process id and specification fingerprint.
+type request struct {
+	Operation  operation `json:"operation"`
+	ExecutorID string    `json:"executor_id"`
+	ProcessID  string    `json:"process_id,omitempty"`
+	SpecHash   string    `json:"spec_hash,omitempty"`
+	Argv       []string  `json:"argv,omitempty"`
+	Dir        string    `json:"dir,omitempty"`
+	Env        []string  `json:"env,omitempty"`
+	Signal     int       `json:"signal,omitempty"`
 }
 
 // ExitStatus is the kernel-level terminal fact observed by bedinit. Keeping
@@ -78,12 +96,24 @@ type ExitStatus struct {
 	CoreDumped bool           `json:"core_dumped,omitempty"`
 }
 
-// reply is bedinit → daemon. Exactly two replies per connection: {pid} once
-// the child is running (or {error}), then {exit} when it is reaped.
+// reply is one RPC result. A terminal status is retained by the executor, so a
+// waiter that lost its socket can reconnect without losing the process fact.
 type reply struct {
-	Pid   int         `json:"pid,omitempty"`
-	Exit  *ExitStatus `json:"exit,omitempty"`
-	Error string      `json:"error,omitempty"`
+	ExecutorID string       `json:"executor_id,omitempty"`
+	ProcessID  string       `json:"process_id,omitempty"`
+	State      processState `json:"state,omitempty"`
+	Pid        int          `json:"pid,omitempty"`
+	Exit       *ExitStatus  `json:"exit,omitempty"`
+	Error      string       `json:"error,omitempty"`
+}
+
+func specHash(argv []string, dir string, env []string) string {
+	payload, _ := json.Marshal(struct {
+		Argv []string `json:"argv"`
+		Dir  string   `json:"dir"`
+		Env  []string `json:"env"`
+	}{Argv: argv, Dir: dir, Env: env})
+	return fmt.Sprintf("%x", sha256.Sum256(payload))
 }
 
 // writeMsg sends one length-prefixed JSON message, with fds attached as

@@ -87,6 +87,12 @@ type activityView struct {
 	Sessions   map[bed.SessionKind]int   `json:"sessions,omitempty"`
 }
 
+type executorView struct {
+	ID      string `json:"id"`
+	Backend string `json:"backend"`
+	State   string `json:"state"`
+}
+
 type bedDetailView struct {
 	bedView
 	Generation         int64          `json:"generation"`
@@ -96,6 +102,7 @@ type bedDetailView struct {
 	RestoreBytes       int64          `json:"restore_bytes,omitempty"`
 	Activity           activityView   `json:"activity"`
 	Lifecycle          *lifecycleView `json:"lifecycle,omitempty"`
+	Executor           *executorView  `json:"executor,omitempty"`
 }
 
 // instanceStatus is the hostel-layer status (docs/lifecycle.md): the only way
@@ -237,7 +244,15 @@ func (s *Server) bedGet(c *gin.Context) {
 			LastActivation: lifecycleRecordToView(lifecycle.LastActivation),
 			LastPersist:    lifecycleRecordToView(lifecycle.LastPersist),
 		},
+		Executor: executorViewFromStatus(status.Executor),
 	})
+}
+
+func executorViewFromStatus(status *bed.ExecutorStatus) *executorView {
+	if status == nil {
+		return nil
+	}
+	return &executorView{ID: status.ID, Backend: status.Backend, State: string(status.State)}
 }
 
 func lifecycleRecordToView(record *bed.LifecycleRecord) *lifecycleRecordView {
@@ -313,11 +328,11 @@ func (s *Server) capabilities(c *gin.Context) {
 		// True when the bed workspace is mounted at the canonical /workspace
 		// inside the sandbox (bwrap): shell paths == file-API paths. False
 		// under direct, where /workspace is only the file-API virtual prefix.
-		"workspace_mount": iso.MountPoint() != "",
-		"spawner":         s.mgr.SpawnerName(),
-		"max_beds":        s.mgr.MaxBeds(),
-		"max_pinned_beds": s.mgr.MaxPinnedBeds(),
-		"persistence":     s.mgr.StoreName(),
+		"workspace_mount":  iso.MountPoint() != "",
+		"executor_backend": s.mgr.ExecutorBackend(),
+		"max_beds":         s.mgr.MaxBeds(),
+		"max_pinned_beds":  s.mgr.MaxPinnedBeds(),
+		"persistence":      s.mgr.StoreName(),
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,
 			"available": resources.Available,

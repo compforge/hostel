@@ -27,9 +27,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiankunli/hostel/internal/amenity"
+	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/store"
 )
+
+type closeTestAmenity struct {
+	released []string
+	revoked  []string
+}
+
+func (*closeTestAmenity) Name() string  { return "close-test" }
+func (*closeTestAmenity) State() string { return amenity.StateIdle }
+func (*closeTestAmenity) AcquireTenant(string, string) (amenity.Tenant, error) {
+	return nil, nil
+}
+func (a *closeTestAmenity) ReleaseTenant(bedID string) error {
+	a.released = append(a.released, bedID)
+	return nil
+}
+func (a *closeTestAmenity) RevokeBedSecrets(bedID string) {
+	a.revoked = append(a.revoked, bedID)
+}
 
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
@@ -56,7 +76,7 @@ func TestManagerFallsBackToShWhenBashMissing(t *testing.T) {
 	}
 	var out strings.Builder
 	result, err := m.RunForeground(context.Background(), b, "printf fallback", "", nil, 0, func(output ExecutionOutput) { out.WriteString(output.Text) })
-	if err != nil || result.Process.Kind != ProcessExited || result.Process.ExitCode != 0 || strings.TrimSpace(out.String()) != "fallback" {
+	if err != nil || result.Process.Kind != executor.ProcessExited || result.Process.ExitCode != 0 || strings.TrimSpace(out.String()) != "fallback" {
 		t.Fatalf("fallback exec: result=%+v err=%v output=%q", result, err, out.String())
 	}
 }
@@ -77,6 +97,29 @@ func TestResolveDefaultBedAndValidation(t *testing.T) {
 	}
 	if got := m.ResidentBedCount(); got != 2 {
 		t.Fatalf("ResidentBedCount = %d, want 2", got)
+	}
+}
+
+func TestManagerCloseReleasesBedAmenityState(t *testing.T) {
+	root := t.TempDir()
+	registry := amenity.NewRegistry()
+	facility := &closeTestAmenity{}
+	registry.Register(facility)
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), registry, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Ensure(context.Background(), "close-amenity"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(facility.released) != 1 || facility.released[0] != "close-amenity" {
+		t.Fatalf("released tenants = %v", facility.released)
+	}
+	if len(facility.revoked) != 1 || facility.revoked[0] != "close-amenity" {
+		t.Fatalf("revoked secrets = %v", facility.revoked)
 	}
 }
 
@@ -265,7 +308,7 @@ func TestRunForegroundIsolatesFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunForeground: %v", err)
 	}
-	if result.Process.Kind != ProcessExited || result.Process.ExitCode == 0 {
+	if result.Process.Kind != executor.ProcessExited || result.Process.ExitCode == 0 {
 		t.Fatal("want non-zero exit from set -e failure, got 0")
 	}
 
@@ -282,7 +325,8 @@ func TestRunForegroundIsolatesFailure(t *testing.T) {
 	}
 }
 
-// TestTeardownKillsInflightForeground locks in the spawner sweep: an in-flight
+// TestEvictProtectsAndTeardownKillsInflightForeground locks in Executor
+// ownership of an in-flight process tree.
 // Explicit eviction is cooperative and refuses active work. The teardown path
 // still kills every process once lifecycle ownership has been claimed.
 func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
@@ -316,7 +360,7 @@ func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 	m.teardown(b)
 	select {
 	case result := <-done:
-		if result.Process.Kind != ProcessSignaled || result.Cause != CauseBedTeardown {
+		if result.Process.Kind != executor.ProcessSignaled || result.Cause != CauseBedTeardown {
 			t.Fatalf("killed command result = %+v", result)
 		}
 		if got := b.Inflight(); got != 0 {

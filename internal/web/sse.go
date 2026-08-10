@@ -23,6 +23,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/executor"
 )
 
 type StreamEventType string
@@ -38,23 +39,24 @@ const (
 const ssePingInterval = 3 * time.Second
 
 type processOutcomePayload struct {
-	Kind       bed.ProcessOutcomeKind `json:"kind"`
-	ExitCode   *int                   `json:"exit_code,omitempty"`
-	Signal     *int                   `json:"signal,omitempty"`
-	CoreDumped bool                   `json:"core_dumped,omitempty"`
-	Error      string                 `json:"error,omitempty"`
+	Kind       executor.ProcessOutcomeKind `json:"kind"`
+	ExitCode   *int                        `json:"exit_code,omitempty"`
+	Signal     *int                        `json:"signal,omitempty"`
+	CoreDumped bool                        `json:"core_dumped,omitempty"`
+	Error      string                      `json:"error,omitempty"`
 }
 
 type executionResultPayload struct {
-	ExecutionID string                `json:"execution_id"`
-	BedID       string                `json:"bed_id"`
-	Mode        bed.ExecutionMode     `json:"mode"`
-	Spawner     string                `json:"spawner"`
-	StartedAt   time.Time             `json:"started_at"`
-	FinishedAt  time.Time             `json:"finished_at"`
-	DurationMs  int64                 `json:"duration_ms"`
-	Process     processOutcomePayload `json:"process"`
-	Cause       bed.TerminationCause  `json:"termination_cause"`
+	ExecutionID     string                `json:"execution_id"`
+	BedID           string                `json:"bed_id"`
+	Mode            bed.ExecutionMode     `json:"mode"`
+	ExecutorID      string                `json:"executor_id"`
+	ExecutorBackend string                `json:"executor_backend"`
+	StartedAt       time.Time             `json:"started_at"`
+	FinishedAt      time.Time             `json:"finished_at"`
+	DurationMs      int64                 `json:"duration_ms"`
+	Process         processOutcomePayload `json:"process"`
+	Cause           bed.TerminationCause  `json:"termination_cause"`
 }
 
 type executionOutputPayload struct {
@@ -87,21 +89,22 @@ func resultPayload(result bed.ExecutionResult) executionResultPayload {
 		Error:      result.Process.Error,
 	}
 	switch result.Process.Kind {
-	case bed.ProcessExited:
+	case executor.ProcessExited:
 		process.ExitCode = &result.Process.ExitCode
-	case bed.ProcessSignaled:
+	case executor.ProcessSignaled:
 		process.Signal = &result.Process.Signal
 	}
 	return executionResultPayload{
-		ExecutionID: result.ExecutionID,
-		BedID:       result.BedID,
-		Mode:        result.Mode,
-		Spawner:     result.Spawner,
-		StartedAt:   result.StartedAt,
-		FinishedAt:  result.FinishedAt,
-		DurationMs:  result.Duration.Milliseconds(),
-		Process:     process,
-		Cause:       result.Cause,
+		ExecutionID:     result.ExecutionID,
+		BedID:           result.BedID,
+		Mode:            result.Mode,
+		ExecutorID:      result.ExecutorID,
+		ExecutorBackend: result.ExecutorBackend,
+		StartedAt:       result.StartedAt,
+		FinishedAt:      result.FinishedAt,
+		DurationMs:      result.Duration.Milliseconds(),
+		Process:         process,
+		Cause:           result.Cause,
 	}
 }
 

@@ -22,10 +22,12 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/executor"
 )
 
 func TestExecutionOutputRetentionIsBoundedWithoutTruncatingLiveOutput(t *testing.T) {
-	execution := newExecution(context.Background(), "bed-output", ExecutionForeground, "test", nil)
+	execution := newExecution(context.Background(), "bed-output", ExecutionForeground, "executor-test", "local", nil)
 	text := strings.Repeat("x", executionOutputBytes+10)
 
 	live := execution.appendOutput(StreamStdout, text)
@@ -43,7 +45,7 @@ func TestExecutionOutputRetentionIsBoundedWithoutTruncatingLiveOutput(t *testing
 
 func TestExecutionCompletionRejectsLateStop(t *testing.T) {
 	var stopped atomic.Bool
-	execution := newExecution(context.Background(), "bed-finish", ExecutionSession, "test", func() {
+	execution := newExecution(context.Background(), "bed-finish", ExecutionSession, "executor-test", "local", func() {
 		stopped.Store(true)
 	})
 	cause, stopDone := execution.claimFinish()
@@ -66,7 +68,7 @@ func TestExecutionPreservesExternalSignal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunForeground: %v", err)
 	}
-	if result.Process.Kind != ProcessSignaled || result.Process.Signal != int(syscall.SIGTERM) ||
+	if result.Process.Kind != executor.ProcessSignaled || result.Process.Signal != int(syscall.SIGTERM) ||
 		result.Cause != CauseExternalSignal {
 		t.Fatalf("signal result = %+v", result)
 	}
@@ -80,7 +82,7 @@ func TestExecutionRecordsTimeoutBeforeKill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunForeground: %v", err)
 	}
-	if result.Process.Kind != ProcessSignaled || result.Process.Signal != int(syscall.SIGKILL) ||
+	if result.Process.Kind != executor.ProcessSignaled || result.Process.Signal != int(syscall.SIGKILL) ||
 		result.Cause != CauseTimeout {
 		t.Fatalf("timeout result = %+v", result)
 	}
@@ -97,7 +99,7 @@ func TestExecutionRecordsClientCancellationBeforeKill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunForeground: %v", err)
 	}
-	if result.Process.Kind != ProcessSignaled || result.Process.Signal != int(syscall.SIGKILL) ||
+	if result.Process.Kind != executor.ProcessSignaled || result.Process.Signal != int(syscall.SIGKILL) ||
 		result.Cause != CauseClientCanceled {
 		t.Fatalf("cancellation result = %+v", result)
 	}
@@ -124,7 +126,7 @@ func TestBackgroundInterruptHasStructuredCause(t *testing.T) {
 		t.Fatal("interrupt was not accepted")
 	}
 	result := execution.Wait()
-	if result.Process.Kind != ProcessSignaled || result.Process.Signal != int(syscall.SIGKILL) ||
+	if result.Process.Kind != executor.ProcessSignaled || result.Process.Signal != int(syscall.SIGKILL) ||
 		result.Cause != CauseInterrupted {
 		t.Fatalf("interrupt result = %+v", result)
 	}

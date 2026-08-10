@@ -70,10 +70,9 @@ type Config struct {
 	// percentage. Zero disables that resource dimension.
 	AdmissionCPUThreshold    int
 	AdmissionMemoryThreshold int
-	// BedInit selects the process spawner: "auto" (default) probes the per-bed
-	// init (docs/kernel.md 〈进程树〉) at boot and falls back to in-process
-	// forking where it can't serve; "off" forces in-process.
-	BedInit string
+	// Executor selects the Bed process realm: "auto" probes bed-init and falls
+	// back to local; explicit "bed_init" fails startup when unavailable.
+	Executor string
 
 	// Workspace persistence (docs/store.md). Backend "auto" (default)
 	// resolves to "s3" when a bucket is configured and "noop" otherwise.
@@ -133,7 +132,7 @@ func Load(args []string) *Config {
 	fs.IntVar(&c.MaxPinnedBeds, "max-pinned-beds", osx.EnvInt("HOSTEL_MAX_PINNED_BEDS", 0), "max pinned beds, 0=inherit max-beds (default bed exempt)")
 	fs.IntVar(&c.AdmissionCPUThreshold, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.AdmissionMemoryThreshold, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
-	fs.StringVar(&c.BedInit, "bed-init", osx.EnvStr("HOSTEL_BED_INIT", "auto"), "per-bed init spawner: auto (probe at boot, fall back in-process) | off")
+	fs.StringVar(&c.Executor, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | bed_init | local")
 	fs.StringVar(&c.StoreBackend, "store", osx.EnvStr("HOSTEL_STORE", "auto"), "workspace persistence backend: auto (s3 when --s3-bucket is set, else noop) | noop | s3")
 	fs.StringVar(&c.S3Bucket, "s3-bucket", osx.EnvStr("HOSTEL_S3_BUCKET", ""), "S3 bucket for bed snapshots")
 	fs.StringVar(&c.S3Prefix, "s3-prefix", osx.EnvStr("HOSTEL_S3_PREFIX", "hostel"), "key prefix for bed snapshots")

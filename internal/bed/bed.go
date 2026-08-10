@@ -20,9 +20,11 @@
 package bed
 
 import (
+	"context"
 	"sync"
 	"time"
 
+	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/fsops"
 )
 
@@ -61,6 +63,9 @@ type Bed struct {
 	// durable is immutable: noop treats local changes as already accepted,
 	// while a real store keeps dirty data pinned until its snapshot commits.
 	durable bool
+
+	executorMu sync.Mutex // serializes lazy create, replacement and shutdown
+	executor   executor.Executor
 
 	mu             sync.Mutex
 	persistMu      sync.Mutex // serializes generation bumps and snapshot uploads
@@ -113,6 +118,15 @@ type Status struct {
 	Operations map[OperationKind]int
 	Sessions   map[SessionKind]int
 	Usage      Usage
+	Executor   *ExecutorStatus
+}
+
+// ExecutorStatus is the current process realm attached to a resident Bed.
+// It is ephemeral and never persisted with workspace metadata.
+type ExecutorStatus struct {
+	ID      string
+	Backend string
+	State   executor.State
 }
 
 // RestoreBytes estimates how much durable data this carrier must download
@@ -152,19 +166,24 @@ func (b *Bed) pinnedLocked() bool {
 // Status reports lifecycle, version and deadline from one lock acquisition.
 func (b *Bed) Status() Status {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	ops := make(map[OperationKind]int, len(b.inflightByKind))
 	for k, n := range b.inflightByKind {
 		ops[k] = n
 	}
 	sessions := make(map[SessionKind]int, 2)
-	if n := len(b.shells); n > 0 {
+	liveShells := 0
+	for _, shell := range b.shells {
+		if !shell.Dead() {
+			liveShells++
+		}
+	}
+	if n := liveShells; n > 0 {
 		sessions[SessionKindShell] = n
 	}
 	if n := len(b.sessions); n > 0 {
 		sessions[SessionKindCDP] = n
 	}
-	return Status{
+	status := Status{
 		State:              b.stateLocked(),
 		Generation:         b.generation,
 		SnapshotGeneration: b.snapshotGeneration,
@@ -179,6 +198,59 @@ func (b *Bed) Status() Status {
 		Sessions:           sessions,
 		Usage:              b.usage,
 	}
+	currentExecutor := b.executor
+	b.mu.Unlock()
+	if currentExecutor != nil {
+		status.Executor = &ExecutorStatus{
+			ID: currentExecutor.ID(), Backend: currentExecutor.Backend(), State: currentExecutor.State(),
+		}
+	}
+	return status
+}
+
+func (b *Bed) executorFor(ctx context.Context, factory executor.Factory) (executor.Executor, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	b.executorMu.Lock()
+	defer b.executorMu.Unlock()
+	b.mu.Lock()
+	current := b.executor
+	b.mu.Unlock()
+	if current != nil && current.State() == executor.StateReady {
+		return current, nil
+	}
+	if current != nil {
+		// A Bed survives Executor loss. Finish cleanup for the old process realm
+		// before publishing a replacement identity for the next request.
+		_ = current.Shutdown(ctx)
+	}
+	created, err := factory.Create(ctx, b.ID)
+	if err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	b.executor = created
+	b.mu.Unlock()
+	return created, nil
+}
+
+func (b *Bed) shutdownExecutor(ctx context.Context) error {
+	b.executorMu.Lock()
+	defer b.executorMu.Unlock()
+	b.mu.Lock()
+	current := b.executor
+	b.mu.Unlock()
+	if current == nil {
+		return nil
+	}
+	err := current.Shutdown(ctx)
+	b.mu.Lock()
+	if b.executor != nil && b.executor.ID() == current.ID() {
+		b.executor = nil
+	}
+	b.mu.Unlock()
+	return err
 }
 
 // State reports the current operational state.

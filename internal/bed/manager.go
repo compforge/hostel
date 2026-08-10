@@ -27,6 +27,7 @@ import (
 
 	"github.com/qiankunli/go-stdx/filepathx"
 	"github.com/qiankunli/hostel/internal/amenity"
+	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/fsops"
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/resource"
@@ -35,21 +36,21 @@ import (
 
 // Manager owns the set of beds and their lifecycle. Safe for concurrent use.
 type Manager struct {
-	root          string
-	defaultBed    string
-	iso           isolation.Isolator
-	shellPath     string
-	amenities     *amenity.Registry  // nil-safe; ReleaseAll on bed teardown
-	executions    *ExecutionRegistry // one-shot executions, daemon-global ids
-	spawner       Spawner            // forks bed processes; owns the teardown sweep
-	resources     resource.Tracker   // per-bed cgroup accounting; noop when unavailable
-	admission     resource.Admitter  // cached carrier-pressure verdict; never performs request-path I/O
-	maxBeds       int                // cap on resident tenant beds; 0 = unlimited
-	maxPinnedBeds int                // new-resident admission threshold by pinned count; 0 = unlimited
-	pinnedBeds    atomic.Int64       // tenant beds running work or holding data not yet durable
-	store         store.Store        // workspace persistence (Noop when disabled)
-	storeSync     chan struct{}      // coalesced requests; the store loop owns execution cadence
-	processEnv    processEnv         // explicit carrier software env; never daemon-wide inheritance
+	root            string
+	defaultBed      string
+	iso             isolation.Isolator
+	shellPath       string
+	amenities       *amenity.Registry  // nil-safe; ReleaseAll on bed teardown
+	executions      *ExecutionRegistry // one-shot executions, daemon-global ids
+	executorFactory executor.Factory   // creates each Bed's replaceable process realm
+	resources       resource.Tracker   // per-bed cgroup accounting; noop when unavailable
+	admission       resource.Admitter  // cached carrier-pressure verdict; never performs request-path I/O
+	maxBeds         int                // cap on resident tenant beds; 0 = unlimited
+	maxPinnedBeds   int                // new-resident admission threshold by pinned count; 0 = unlimited
+	pinnedBeds      atomic.Int64       // tenant beds running work or holding data not yet durable
+	store           store.Store        // workspace persistence (Noop when disabled)
+	storeSync       chan struct{}      // coalesced requests; the store loop owns execution cadence
+	processEnv      processEnv         // explicit carrier software env; never daemon-wide inheritance
 	// bedIdleTTL is set once at startup. Accepted operations extend their bed
 	// through timeout+idleTTL so the idle reaper cannot kill in-flight work.
 	bedIdleTTL time.Duration
@@ -123,16 +124,16 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 	}
 	resources := resource.Noop("resource tracker not configured")
 	return &Manager{
-		root:       root,
-		defaultBed: defaultBed,
-		iso:        iso,
-		shellPath:  shellPath,
-		amenities:  amenities,
-		executions: newExecutionRegistry(),
-		spawner:    newInProcSpawner(resources),
-		resources:  resources,
-		admission:  resource.NoopAdmission("resource admission not configured"),
-		maxBeds:    maxBeds,
+		root:            root,
+		defaultBed:      defaultBed,
+		iso:             iso,
+		shellPath:       shellPath,
+		amenities:       amenities,
+		executions:      newExecutionRegistry(),
+		executorFactory: executor.NewLocalFactory(resources),
+		resources:       resources,
+		admission:       resource.NoopAdmission("resource admission not configured"),
+		maxBeds:         maxBeds,
 		// Zero max-pinned-beds inherits this value; initialize the effective
 		// default here so direct Manager users get the same semantics as main.
 		maxPinnedBeds: maxBeds,
@@ -151,7 +152,15 @@ func (m *Manager) SetResourceTracker(tracker resource.Tracker) {
 		tracker = resource.Noop("resource tracker not configured")
 	}
 	m.resources = tracker
-	m.spawner = newInProcSpawner(tracker)
+	m.executorFactory = executor.NewLocalFactory(tracker)
+}
+
+// SetExecutorFactory selects the process-realm implementation before serving.
+func (m *Manager) SetExecutorFactory(factory executor.Factory) {
+	if factory == nil {
+		factory = executor.NewLocalFactory(m.resources)
+	}
+	m.executorFactory = factory
 }
 
 // ResourceReport describes whether exact per-bed accounting is active.
@@ -186,9 +195,8 @@ func (m *Manager) Amenities() *amenity.Registry { return m.amenities }
 // global because status/log endpoints do not carry a bed dimension.
 func (m *Manager) Executions() *ExecutionRegistry { return m.executions }
 
-// SpawnerName reports the actual process-lifetime implementation. It is
-// exposed in health/capabilities so deployments never infer it from config.
-func (m *Manager) SpawnerName() string { return m.spawner.Name() }
+// ExecutorBackend reports the configured process-realm implementation.
+func (m *Manager) ExecutorBackend() string { return m.executorFactory.Backend() }
 
 // MaxBeds reports the configured cap (0 = unlimited) for capacity reporting.
 func (m *Manager) MaxBeds() int { return m.maxBeds }
@@ -639,18 +647,40 @@ func (m *Manager) Purge(ctx context.Context, id string) error {
 // evict path the shells are already closed (revoke stage, before persist);
 // the close here covers Purge, which has no revoke.
 func (m *Manager) teardown(b *Bed) {
+	// Publish the controller's intent before any Shell/Executor action can make
+	// a waiter observe EOF or SIGKILL. The first terminal actor owns Cause.
+	m.executions.killBed(b.ID, CauseBedTeardown)
 	b.mu.Lock()
 	for sid, sh := range b.shells {
 		sh.Close()
 		delete(b.shells, sid)
 	}
 	b.mu.Unlock()
-	m.executions.killBed(b.ID, CauseBedTeardown)
-	// The spawner sweep is the authoritative kill: it also catches processes
-	// the registry never saw (foreground RunForeground runs are unregistered).
-	m.spawner.KillBed(b.ID)
-	_ = m.resources.Release(b.ID)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	_ = b.shutdownExecutor(shutdownCtx)
+	cancel()
 	m.amenities.ReleaseAll(b.ID)
+}
+
+// Close drains every resident Bed's process realm. HTTP admission must already
+// be stopped so no fresh Executor can appear while shutdown is in progress.
+func (m *Manager) Close(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var closeErr error
+	for _, b := range m.List() {
+		m.executions.killBed(b.ID, CauseDaemonShutdown)
+		m.revokeSessions(b)
+		if err := b.shutdownExecutor(ctx); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("bed %s executor: %w", b.ID, err))
+		}
+		m.amenities.ReleaseAll(b.ID)
+	}
+	if err := m.executorFactory.Close(); err != nil {
+		closeErr = errors.Join(closeErr, err)
+	}
+	return closeErr
 }
 
 // CollectExpired reaps beds whose promised expiry has elapsed. The final

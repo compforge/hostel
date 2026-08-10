@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build linux
 
 // Copyright 2026 Li Qiankun
 //
@@ -14,14 +14,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bed
+package executor
 
-import "os/exec"
+import (
+	"errors"
+	"fmt"
+	"os/exec"
+
+	"golang.org/x/sys/unix"
+)
+
+var waitid = unix.Waitid
 
 func waitCommandBeforeReap(cmd *exec.Cmd, markBeforeReap func(error) error) error {
-	err := cmd.Wait()
-	if markErr := markBeforeReap(nil); markErr != nil {
-		return markErr
+	var (
+		info       unix.Siginfo
+		barrierErr error
+	)
+	for {
+		err := waitid(unix.P_PID, cmd.Process.Pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
+		if err == nil {
+			break
+		}
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		barrierErr = fmt.Errorf("executor: waitid WNOWAIT for pid %d: %w", cmd.Process.Pid, err)
+		break
 	}
-	return err
+	if err := markBeforeReap(barrierErr); err != nil {
+		return errors.Join(barrierErr, err)
+	}
+	if barrierErr != nil {
+		return errors.Join(barrierErr, cmd.Wait())
+	}
+	return cmd.Wait()
 }

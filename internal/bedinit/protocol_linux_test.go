@@ -22,7 +22,7 @@ import (
 	"testing"
 )
 
-func TestUnixpacketKeepsRepliesSeparate(t *testing.T) {
+func TestUnixpacketKeepsProtocolFramesSeparate(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "protocol.sock")
 	addr := &net.UnixAddr{Name: socket, Net: socketNetwork}
 	ln, err := net.ListenUnix(socketNetwork, addr)

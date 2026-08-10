@@ -1,3 +1,5 @@
+//go:build linux
+
 // Copyright 2026 Li Qiankun
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,15 +14,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !linux
+package executor
 
-package bedinit
+import (
+	"os/exec"
+	"syscall"
 
-import "log"
+	"github.com/qiankunli/hostel/internal/resource"
+)
 
-// Run is linux-only (subreaper + /proc scan); elsewhere the daemon never
-// re-execs into it — the local Executor backend is used instead.
-func Run(args []string) int {
-	log.Printf("bedinit: unsupported on this platform")
-	return 1
+func bindProcessCgroup(cmd *exec.Cmd, tracker resource.Tracker, bedID string) (func(), error) {
+	group, err := tracker.OpenGroup(bedID)
+	if err != nil {
+		return nil, err
+	}
+	if group == nil {
+		return func() {}, nil
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.UseCgroupFD = true
+	cmd.SysProcAttr.CgroupFD = int(group.Fd())
+	return func() { _ = group.Close() }, nil
 }
