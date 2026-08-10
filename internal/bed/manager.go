@@ -39,17 +39,17 @@ type Manager struct {
 	defaultBed    string
 	iso           isolation.Isolator
 	shellPath     string
-	amenities     *amenity.Registry // nil-safe; ReleaseAll on bed teardown
-	commands      *CommandRegistry  // one-shot commands, daemon-global ids
-	spawner       Spawner           // forks bed processes; owns the teardown sweep
-	resources     resource.Tracker  // per-bed cgroup accounting; noop when unavailable
-	admission     resource.Admitter // cached carrier-pressure verdict; never performs request-path I/O
-	maxBeds       int               // cap on resident tenant beds; 0 = unlimited
-	maxPinnedBeds int               // new-resident admission threshold by pinned count; 0 = unlimited
-	pinnedBeds    atomic.Int64      // tenant beds running work or holding data not yet durable
-	store         store.Store       // workspace persistence (Noop when disabled)
-	storeSync     chan struct{}     // coalesced requests; the store loop owns execution cadence
-	processEnv    processEnv        // explicit carrier software env; never daemon-wide inheritance
+	amenities     *amenity.Registry  // nil-safe; ReleaseAll on bed teardown
+	executions    *ExecutionRegistry // one-shot executions, daemon-global ids
+	spawner       Spawner            // forks bed processes; owns the teardown sweep
+	resources     resource.Tracker   // per-bed cgroup accounting; noop when unavailable
+	admission     resource.Admitter  // cached carrier-pressure verdict; never performs request-path I/O
+	maxBeds       int                // cap on resident tenant beds; 0 = unlimited
+	maxPinnedBeds int                // new-resident admission threshold by pinned count; 0 = unlimited
+	pinnedBeds    atomic.Int64       // tenant beds running work or holding data not yet durable
+	store         store.Store        // workspace persistence (Noop when disabled)
+	storeSync     chan struct{}      // coalesced requests; the store loop owns execution cadence
+	processEnv    processEnv         // explicit carrier software env; never daemon-wide inheritance
 	// bedIdleTTL is set once at startup. Accepted operations extend their bed
 	// through timeout+idleTTL so the idle reaper cannot kill in-flight work.
 	bedIdleTTL time.Duration
@@ -128,7 +128,7 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		iso:        iso,
 		shellPath:  shellPath,
 		amenities:  amenities,
-		commands:   newCommandRegistry(),
+		executions: newExecutionRegistry(),
 		spawner:    newInProcSpawner(resources),
 		resources:  resources,
 		admission:  resource.NoopAdmission("resource admission not configured"),
@@ -182,9 +182,13 @@ func (m *Manager) Isolator() isolation.Isolator { return m.iso }
 // Amenities exposes the amenity manager (for capabilities + web adapters).
 func (m *Manager) Amenities() *amenity.Registry { return m.amenities }
 
-// Commands exposes the one-shot command registry (spec /command endpoints are
-// bed-agnostic on status/logs lookups — command ids are daemon-global).
-func (m *Manager) Commands() *CommandRegistry { return m.commands }
+// Executions exposes the bounded one-shot execution registry. IDs are daemon
+// global because status/log endpoints do not carry a bed dimension.
+func (m *Manager) Executions() *ExecutionRegistry { return m.executions }
+
+// SpawnerName reports the actual process-lifetime implementation. It is
+// exposed in health/capabilities so deployments never infer it from config.
+func (m *Manager) SpawnerName() string { return m.spawner.Name() }
 
 // MaxBeds reports the configured cap (0 = unlimited) for capacity reporting.
 func (m *Manager) MaxBeds() int { return m.maxBeds }
@@ -634,7 +638,7 @@ func (m *Manager) teardown(b *Bed) {
 		delete(b.shells, sid)
 	}
 	b.mu.Unlock()
-	m.commands.killBed(b.ID)
+	m.executions.killBed(b.ID, CauseBedTeardown)
 	// The spawner sweep is the authoritative kill: it also catches processes
 	// the registry never saw (foreground RunForeground runs are unregistered).
 	m.spawner.KillBed(b.ID)

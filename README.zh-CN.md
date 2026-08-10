@@ -4,7 +4,7 @@
 
 **hostel 是一个面向 AI agent 的 sandbox runtime**：用一个进程管理多个互相隔离的 sandbox，对外提供 HTTP API——创建 sandbox、在其中执行命令与 shell 会话、读写它的文件。每个 sandbox 称为一个 **bed**。可跑在任何地方：你的电脑、一台 VM、CI、或一个容器里。
 
-**实现 [OpenSandbox](https://github.com/alibaba/opensandbox) execd 的 HTTP API 规范**，因此现有 OpenSandbox SDK 可直接对接 hostel、无需改动。
+资源与文件 API 以 [OpenSandbox](https://github.com/alibaba/opensandbox) execd 为设计基线；命令执行采用 hostel 原生协议，每次运行都有稳定 execution id，并以结构化终态保留 exit、signal 与 termination cause。
 
 ## 初衷
 
@@ -35,7 +35,7 @@ curl -s 'localhost:8872/files/download?path=/workspace/a.txt'
 curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv-1'
 ```
 
-## API（v1，OpenSandbox 兼容）
+## API（v1）
 
 | 组 | 端点 |
 |---|---|
@@ -48,7 +48,7 @@ curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv
 | 隔离会话 | `/v1/isolated/session(s)`、`run`(SSE)、会话级文件/目录接口、`capabilities` |
 | bed 管理 | `GET/POST /v1/beds`、`GET/DELETE /v1/beds/:id`、`POST /v1/beds/:id/checkpoint`、`GET /v1/beds/capabilities` |
 
-OpenSandbox 隔离会话接口是一层兼容视图：一个 isolated session 直接对应一个非 default bed，
+隔离会话的资源模型直接把一个 isolated session 对应到一个非 default bed，run 流与 `/command` 使用同一套 hostel 原生 execution 事件，
 不额外引入第二套生命周期对象。default bed 只服务原生 API 未指定 bed 的请求，不会出现在 session
 列表中，也不能通过 session 接口 attach。创建当前支持 balanced profile、bed 自有的读写
 `/workspace` 和共享网络；做不到的隔离参数会明确拒绝，不会静默忽略。diff / commit 返回

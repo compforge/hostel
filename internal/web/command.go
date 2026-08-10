@@ -17,10 +17,8 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -69,8 +67,8 @@ func (s *Server) resolveCwd(c *gin.Context, b *bed.Bed, ops *fsops.Ops, cwd stri
 	return inBed, true
 }
 
-// POST /command — SSE stream. Foreground runs in the bed's shared stateful
-// shell; background detaches and returns an init event with the command id.
+// POST /command starts one execution. Foreground streams through its terminal
+// event; background returns after execution_start and remains queryable.
 func (s *Server) runCommand(c *gin.Context) {
 	b, ops, finishRequest := s.opsOf(c)
 	if ops == nil {
@@ -95,19 +93,14 @@ func (s *Server) runCommand(c *gin.Context) {
 		return
 	}
 	timeout := time.Duration(req.TimeoutMs) * time.Millisecond
-	log.Printf("hostel exec: bed=%s tier=%s bg=%v cwd=%q cmd=%q", b.Short(), s.mgr.Isolator().Name(), req.Background, req.Cwd, logSummary(req.Command))
-
 	if req.Background {
-		cmd, err := s.mgr.StartCommand(b, req.Command, cwdInBed, req.Envs, timeout, nil)
+		execution, err := s.mgr.StartExecution(nil, b, bed.ExecutionBackground, req.Command, cwdInBed, req.Envs, timeout, nil, nil)
 		if err != nil {
-			log.Printf("hostel exec error: bed=%s cwd=%q err=%v", b.Short(), req.Cwd, err)
 			runtimeError(c, err.Error())
 			return
 		}
-		log.Printf("hostel exec started: bed=%s id=%s (background)", b.Short(), cmd.ID)
 		sse := newSSE(c)
-		sse.send(StreamEvent{Type: EventInit, Text: cmd.ID})
-		sse.send(StreamEvent{Type: EventComplete})
+		sse.send(StreamEvent{Type: EventExecutionStart, ExecutionID: execution.ID})
 		return
 	}
 
@@ -118,42 +111,29 @@ func (s *Server) runCommand(c *gin.Context) {
 	sse := newSSE(c)
 	stopSSE := func() {}
 	defer func() { stopSSE() }()
-	start := time.Now()
-	exitCode, err := s.mgr.RunForegroundTyped(c.Request.Context(), b, req.Command, cwdInBed, req.Envs, timeout, func() {
-		// Start streaming only after the process exists, so synchronous launch
-		// failures can still use the normal JSON error response.
-		stopSSE = sse.start(c.Request.Context(), "", ssePingInterval)
-	}, func(line bed.OutputLine) {
+	startedExecutionID := ""
+	execution, err := s.mgr.StartExecution(c.Request.Context(), b, bed.ExecutionForeground, req.Command, cwdInBed, req.Envs, timeout, func(status bed.ExecutionStatus) {
+		startedExecutionID = status.ID
+		stopSSE = sse.start(c.Request.Context(), status.ID, ssePingInterval)
+	}, func(output bed.ExecutionOutput) {
 		eventType := EventStdout
-		if line.Stream == bed.StreamStderr {
+		if output.Stream == bed.StreamStderr {
 			eventType = EventStderr
 		}
-		sse.send(StreamEvent{Type: eventType, Text: line.Text})
+		sequence := output.Sequence
+		sse.send(StreamEvent{Type: eventType, ExecutionID: startedExecutionID, Sequence: &sequence, Text: output.Text})
 	})
 	if err != nil {
-		log.Printf("hostel exec error: bed=%s cwd=%q err=%v", b.Short(), req.Cwd, err)
-		if sse.hasStarted() {
-			sse.send(StreamEvent{Type: EventError, Error: err.Error()})
-		} else {
-			runtimeError(c, err.Error())
-		}
+		runtimeError(c, err.Error())
 		return
 	}
-	log.Printf("hostel exec done: bed=%s exit=%d dur=%dms", b.Short(), exitCode, time.Since(start).Milliseconds())
+	result := execution.Wait()
+	payload := resultPayload(result)
 	sse.send(StreamEvent{
-		Type:          EventComplete,
-		ExecutionTime: time.Since(start).Milliseconds(),
-		ExitCode:      &exitCode,
+		Type:        EventExecutionEnd,
+		ExecutionID: result.ExecutionID,
+		Result:      &payload,
 	})
-}
-
-// logSummary flattens a command to one short line for a log field.
-func logSummary(s string) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > 120 {
-		return s[:120] + "…"
-	}
-	return s
 }
 
 // wrapWithCwd prefixes a subshell cd + env exports so a foreground command runs
@@ -180,35 +160,26 @@ func (s *Server) interruptCommand(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing query parameter 'id'")
 		return
 	}
-	cmd, ok := s.mgr.Commands().Get(id)
+	execution, ok := s.mgr.Executions().Get(id)
 	if !ok {
 		respondError(c, http.StatusNotFound, ErrCommandNotFound, "command not found: "+id)
 		return
 	}
-	cmd.Interrupt()
+	execution.RequestStop(bed.CauseInterrupted)
 	c.Status(http.StatusOK)
 }
 
 // GET /command/status/:id
 func (s *Server) commandStatus(c *gin.Context) {
-	cmd, ok := s.mgr.Commands().Get(c.Param("id"))
+	execution, ok := s.mgr.Executions().Get(c.Param("id"))
 	if !ok {
 		respondError(c, http.StatusNotFound, ErrCommandNotFound, "command not found")
 		return
 	}
-	st := cmd.Status()
-	c.JSON(http.StatusOK, gin.H{
-		"id":          st.ID,
-		"content":     st.Content,
-		"running":     st.Running,
-		"exit_code":   st.ExitCode,
-		"error":       st.Err,
-		"started_at":  st.StartedAt,
-		"finished_at": st.FinishedAt,
-	})
+	c.JSON(http.StatusOK, executionStatusPayload(execution.Status()))
 }
 
-// GET /command/:id/logs?cursor=N — plain text; next cursor in header.
+// GET /command/:id/logs?cursor=N returns ordered, typed output fragments.
 func (s *Server) commandLogs(c *gin.Context) {
 	id := c.Param("id")
 	cursor := int64(-1)
@@ -217,14 +188,39 @@ func (s *Server) commandLogs(c *gin.Context) {
 			cursor = n
 		}
 	}
-	content, next, running, err := s.mgr.Commands().Logs(id, cursor)
-	if err != nil {
-		respondError(c, http.StatusNotFound, ErrCommandNotFound, err.Error())
+	execution, ok := s.mgr.Executions().Get(id)
+	if !ok {
+		respondError(c, http.StatusNotFound, ErrCommandNotFound, "execution not found")
 		return
 	}
-	c.Header("EXECD-COMMANDS-TAIL-CURSOR", strconv.FormatInt(next, 10))
-	c.Header("EXECD-COMMANDS-RUNNING", strconv.FormatBool(running))
-	c.String(http.StatusOK, content)
+	output, next, running, truncated := execution.Logs(cursor)
+	payload := make([]executionOutputPayload, 0, len(output))
+	for _, item := range output {
+		payload = append(payload, outputPayload(item))
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"execution_id": id,
+		"output":       payload,
+		"next_cursor":  next,
+		"running":      running,
+		"truncated":    truncated,
+	})
+}
+
+func executionStatusPayload(status bed.ExecutionStatus) gin.H {
+	payload := gin.H{
+		"execution_id": status.ID,
+		"bed_id":       status.BedID,
+		"mode":         status.Mode,
+		"spawner":      status.Spawner,
+		"running":      status.Running,
+		"started_at":   status.StartedAt,
+		"finished_at":  status.FinishedAt,
+	}
+	if status.Result != nil {
+		payload["result"] = resultPayload(*status.Result)
+	}
+	return payload
 }
 
 // --- /session: explicit stateful bash sessions ---
@@ -290,32 +286,24 @@ func (s *Server) sessionRun(c *gin.Context) {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(req.Timeout)*time.Millisecond)
 		defer cancel()
 	}
-	finishOperation, err := s.mgr.BeginOperation(b, bed.OpExec, time.Duration(req.Timeout)*time.Millisecond)
+	sse := newSSE(c)
+	stopSSE := func() {}
+	defer func() { stopSSE() }()
+	startedExecutionID := ""
+	execution, err := s.mgr.StartSessionExecution(ctx, b, sh, wrapWithCwd(req.Command, cwdInBed, nil), time.Duration(req.Timeout)*time.Millisecond, func(status bed.ExecutionStatus) {
+		startedExecutionID = status.ID
+		stopSSE = sse.start(ctx, status.ID, ssePingInterval)
+	}, func(output bed.ExecutionOutput) {
+		sequence := output.Sequence
+		sse.send(StreamEvent{Type: EventStdout, ExecutionID: startedExecutionID, Sequence: &sequence, Text: output.Text})
+	})
 	if err != nil {
 		respondBedError(c, err)
 		return
 	}
-	defer finishOperation()
-	log.Printf("hostel session run: bed=%s session=%s cwd=%q cmd=%q", b.Short(), c.Param("sessionId"), req.Cwd, logSummary(req.Command))
-	sse := newSSE(c)
-	stopSSE := sse.start(ctx, c.Param("sessionId"), ssePingInterval)
-	defer stopSSE()
-	start := time.Now()
-	res, err := sh.Run(ctx, wrapWithCwd(req.Command, cwdInBed, nil), func(line string) {
-		sse.send(StreamEvent{Type: EventStdout, Text: line})
-	})
-	b.RecordCommand(time.Since(start))
-	if err != nil {
-		log.Printf("hostel session run error: bed=%s session=%s err=%v", b.Short(), c.Param("sessionId"), err)
-		if sse.hasStarted() {
-			sse.send(StreamEvent{Type: EventError, Error: err.Error()})
-		} else {
-			runtimeError(c, err.Error())
-		}
-		return
-	}
-	log.Printf("hostel session run done: bed=%s session=%s exit=%d dur=%dms", b.Short(), c.Param("sessionId"), res.ExitCode, time.Since(start).Milliseconds())
-	sse.send(StreamEvent{Type: EventComplete, ExecutionTime: time.Since(start).Milliseconds(), ExitCode: &res.ExitCode})
+	result := execution.Wait()
+	payload := resultPayload(result)
+	sse.send(StreamEvent{Type: EventExecutionEnd, ExecutionID: result.ExecutionID, Result: &payload})
 }
 
 // DELETE /session/:sessionId

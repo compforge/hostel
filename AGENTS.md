@@ -2,7 +2,7 @@
 
 ## 项目定位与边界
 
-**面向 AI agent 的 sandbox runtime**：在一台机器 / 一个容器内管理多个隔离执行单元（**bed**），对外提供 **OpenSandbox 兼容** HTTP API。形态上 hostel = **web server + bed manager + amenity manager + store** 的组合（后续可扩充更多 manager）。可单机跑（laptop/VM/CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
+**面向 AI agent 的 sandbox runtime**：在一台机器 / 一个容器内管理多个隔离执行单元（**bed**）。资源与文件 API 以 OpenSandbox 为设计基线，执行协议由 hostel 自己拥有。形态上 hostel = **web server + bed manager + amenity manager + store** 的组合（后续可扩充更多 manager）。可单机跑（laptop/VM/CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
 
 - **做**：bed 生命周期、exec / file、共享多租服务（Chromium/Jupyter…）管理。
 - **不做**（留给上层调度系统）：实例调度、跨实例路由、计费配额。
@@ -65,9 +65,10 @@ internal/
 │   ├── session.go     session（可撤销有状态持有，cdp 类）：OpenSession/Touch/Close；revokeSessions 供 evict 在 persist 前吊销（shell 走 shell.go 自备机制，revoke 时一并 Close）
 │   ├── env.go         bed 进程环境唯一组装点：carrier allowlist + BED_* context + request overlay
 │   ├── observability.go Bed 生命周期记录：activate/persist/evict 的结构化 stage 日志与最近摘要
+│   ├── execution.go   Execution：前台/后台/session 统一身份、输出、进程终态、stop cause 与有界 registry
 │   ├── luggage.go     luggage（evict 留下的现场缓存）：磁盘水位 GC（stale 优先→LRU）、Inventory（调度器视图）
 │   ├── shell.go       常驻 bash：CreateShell/ForegroundShell；单 reader goroutine→lines chan，Run 用 marker 分帧、单消费（状态跨 run 保持）
-│   └── command.go     一次性命令：buildCommand/StartCommand/RunForeground + registry（前台/后台、status、logs cursor 增量、环形缓冲）
+│   └── command.go     一次性命令构建与启动；所有终态和观测事实归 execution.go
 ├── fsops/             bed_home rooted 文件操作；Resolve 把任意客户端路径单射 rebase 进 bed_home + 拒逃逸；新建路径按属主 chown（单一属主不变式）
 ├── store/             Hostel 直管的 bed 持久化与 Restore：Store 接口 + noop/s3(desync 内容寻址增量,只传变更块)，默认 auto 按 bucket 有无解析；见 docs/store.md
 ├── resource/          per-bed cgroup v2 记账 + carrier CPU/内存准入；只读准入不要求子树委派
@@ -84,7 +85,7 @@ internal/
   - **生命周期事实分维度**：`state=active|idle|evicting|dormant` 只表达互斥操作态，`generation` 表达数据版本，`retained_until` 表达最早安全回收期限；`pinned` 不是新状态，而是“有 operation 或 durable store 尚有未同步数据”的复合容量事实（noop 只看 operation）。Bed 级请求分两类（`docs/lifecycle.md`）：operation 无状态、超时被系统截断，经 `BeginOperation` 持有、不可被普通 Evict 杀死；session 有状态、客户端显式开闭、不抬高 status，evict 以 revoke 主动终结。
   - **luggage**：共享快照存在时只是本机缓存；同机 resume 按 generation 判新鲜，落后则整目录丢弃重拉；noop store 下 luggage 是唯一副本并会阻止 carrier 回收。`GET /v1/beds` 向调度器如实上报实例容量、各 state 数量和每个本机 Bed（含 dormant luggage）的事实。详见 `docs/store.md` §四。
   - **bed 容量准入**：`--max-beds` 限 resident tenant bed；pinned 接近 `--max-pinned-beds` 时上报软 `bed_pressure` 供上游提前扩容，达到硬上限才以 `INSUFFICIENT_BED` 拒绝新的 carrier 归属。新 resident、dormant restore、未 pinned 的 idle bed 重新激活时检查；pinned bed 继续由当前 carrier 承接。CPU/内存 pressure 仍单独执行资源准入。Hostel 通过 `pinned` / `data_synced` 上报事实，不自行选择 carrier；同步 trigger 只表达“尽快同步”，节奏、合并与重试由 Store 同步循环统一负责（详见 `docs/resource.md` / `docs/store.md`）。
-- **API 对齐 execd**：响应 JSON 结构、错误码、SSE 帧（`<json>\n\n`，事件 shape = execd `ServerStreamEvent`）都对齐 OpenSandbox，SDK 不改。加/改端点先对 `OpenSandbox/specs/execd-api.yaml`。
+- **执行协议诚实表达进程终态**：每次前台、后台或 session run 都生成 `Execution`；`execution_start` 先于输出，之后恰有一个 `execution_end`。`ProcessOutcome` 表达 exited / signaled / lost，termination cause 独立表达 timeout / cancel / interrupt / teardown，禁止再用 `-1` 或错误字符串承载多种语义。
 - **isolation 按「青年旅社房型」分档**（对外保证，非机制名）：`dorm`（通铺，无屏障=direct）/ `room`（单间锁门、厕所公用，数据 EACCES 但兄弟可见、系统路径共享=landlock，自 re-exec `hostel __confine`）/ `suite`（套房全私有，兄弟不可见+私有 mount 视图+`/workspace` 规范挂载=bwrap）/ `auto`（顶格取 env 上限）。`effective=min(requested,ceiling)`，请求超上限诚实降级。进程 env 与隔离机制正交：`HOSTEL_*` 只属 daemon、`BED_*` 只属 bed，三档统一由 `internal/bed/env.go` 显式组装。机制（direct/bwrap/landlock/uid）是内部细节，全走 `Isolator` 接口。详见 `docs/data.md`。
 - **amenity 通则**：重资产、自带多租的共享设施由 hostel 在 bed 外管一份，用应用原生机制切租（Chromium→BrowserContext、Jupyter→kernel），产物落对应 bed 的 workspace。amenity 有自己的生命周期（idle→running 按需启停）。新增实例 = 实现 `Amenity` + 注册，bed evict/purge 已接 `ReleaseAll` 钩子。北向只暴露 bed 级动作，**不透传 CDP/协议 socket**（会跨租户）。见 `docs/amenity.md`。
 - **常驻 shell 的坑**：一个 Shell 只能有**一个** stdout reader（否则 run 间串输出——v1 踩过）；Run 之间串行；`exit` 会杀死 session，非零退出码用子 shell（`sh -c "exit N"`）。**锁纪律**：`runMu` 串行化 Run 且只有 Run 碰；`mu` 只护 `dead` 标志、纳秒级持有——曾因单锁设计让「shell 死亡+未断开客户端」死锁整个 daemon（含 healthz），别往 `mu` 里加阻塞代码（见 shell.go LOCKING 注释）。

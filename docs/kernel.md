@@ -4,7 +4,7 @@
 
 ## 一、定位与边界
 
-**hostel = 面向 AI agent 的 sandbox runtime**，可以理解为单个 carrier 内的“小型 kubelet”：管理一台机器 / 一个容器内的多个隔离执行单元，对外提供 **OpenSandbox 兼容 API**。可单机跑（laptop / VM / CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
+**hostel = 面向 AI agent 的 sandbox runtime**，可以理解为单个 carrier 内的“小型 kubelet”：管理一台机器 / 一个容器内的多个隔离执行单元。资源与文件能力以 OpenSandbox 为设计基线，执行协议由 hostel 自己拥有。可单机跑（laptop / VM / CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
 
 | hostel 做 | 不做（留给上层调度系统） |
 |---|---|
@@ -92,15 +92,15 @@ type ManagedService interface {
 
 **v1 只做钩子**：`bed.Manager` 持有一个（v1 为空的）service registry，Delete / CollectIdle 时遍历 `ReleaseTenant(bedID)`。实例（Chromium/Jupyter）推 v1.1，此钩子让其 drop-in。
 
-## 四、API（OpenSandbox 兼容，响应 JSON 结构对齐 execd）
+## 四、API
 
 **v1 实现**：
 - `/ping`、`/healthz`（isolator 名 + 可用性 + bed 数）
 - `/files/*`：info、mv、permissions、search、replace、upload、download、DELETE
 - `/directories/*`：list、create、delete
-- `/command`（SSE）：前台/后台都是一次性隔离进程（见〈exec 模型〉），只差 wait 模式；后台带 `/command/status/{id}` + `/command/{id}/logs`
+- `/command`：前台/后台共享同一个 `Execution` 生命周期，只差 initiating request 是否等待；SSE 依次表达 execution_start、stdout/stderr、execution_end，终态区分 exited / signaled / lost，并保留 timeout / cancel / interrupt / teardown cause；后台带 `/command/status/{id}` + `/command/{id}/logs`
 - `/session`：bash 会话 create / run / delete（显式有状态会话，常驻 shell 只存在于此）
-- `/v1/isolated/*`：OpenSandbox isolated-session 兼容视图，`session_id` 与非 default bed ID 一一对应；default 只服务原生 API 的缺省路由，不向 session list / attach 暴露。兼容视图复用 bed 的生命周期、常驻 shell 与文件/目录能力，不再维护一套平行 session 状态。当前支持 balanced + 读写 `/workspace` + 共享网络，超出能力边界的参数明确返回 `NOT_SUPPORTED`
+- `/v1/isolated/*`：`session_id` 与非 default bed ID 一一对应；default 只服务原生 API 的缺省路由，不向 session list / attach 暴露。该视图复用 bed 的生命周期、常驻 shell、Execution 与文件/目录能力，不再维护平行状态。当前支持 balanced + 读写 `/workspace` + 共享网络，超出能力边界的参数明确返回 `NOT_SUPPORTED`
 - `/v1/beds`：CRUD + capabilities（hostel 特有，bed 管理）
 
 **v1 不做（v1.1+）**：`/code`（委托 Jupyter，AS 用不上，砍）、`/pty` WS。`/v1/isolated/*` 的 diff / commit 路由为兼容性保留并明确报告不支持；持久身份仍由 bed 快照负责，不另造 isolated-session persist。

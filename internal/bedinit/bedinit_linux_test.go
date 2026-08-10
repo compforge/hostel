@@ -92,12 +92,12 @@ func TestSpawnExitCodeAndOutput(t *testing.T) {
 	h, out := spawnSh(t, socket, "echo hi from bedinit; exit 7")
 	data, _ := io.ReadAll(out)
 	out.Close()
-	code, err := h.WaitExit()
+	status, err := h.WaitExit()
 	if err != nil {
 		t.Fatalf("WaitExit: %v", err)
 	}
-	if code != 7 {
-		t.Fatalf("exit = %d, want 7", code)
+	if status.Kind != "exited" || status.ExitCode != 7 {
+		t.Fatalf("exit = %+v, want code 7", status)
 	}
 	if !strings.Contains(string(data), "hi from bedinit") {
 		t.Fatalf("output = %q", data)
@@ -112,12 +112,12 @@ func TestKillSpawnedProcess(t *testing.T) {
 	if err := h.Kill(); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}
-	code, err := h.WaitExit()
+	status, err := h.WaitExit()
 	if err != nil {
 		t.Fatalf("WaitExit: %v", err)
 	}
-	if code != 128+int(syscall.SIGKILL) {
-		t.Fatalf("exit = %d, want %d", code, 128+int(syscall.SIGKILL))
+	if status.Kind != "signaled" || status.Signal != int(syscall.SIGKILL) {
+		t.Fatalf("exit = %+v, want SIGKILL", status)
 	}
 }
 
@@ -141,13 +141,13 @@ func TestConcurrentShortLivedSpawns(t *testing.T) {
 				errs <- err
 				return
 			}
-			code, err := h.WaitExit()
+			status, err := h.WaitExit()
 			if err != nil {
 				errs <- err
 				return
 			}
-			if code != 0 {
-				errs <- fmt.Errorf("exit = %d, want 0", code)
+			if status.Kind != "exited" || status.ExitCode != 0 {
+				errs <- fmt.Errorf("exit = %+v, want code 0", status)
 			}
 		}()
 	}

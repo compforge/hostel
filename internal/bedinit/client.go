@@ -67,19 +67,19 @@ func (h *Handle) Kill() error {
 	return writeMsg(h.conn, signalRequest{Signal: int(syscall.SIGKILL)}, nil)
 }
 
-// WaitExit blocks until bedinit reports the child's exit code. Call at most
-// once; the connection is closed on return.
-func (h *Handle) WaitExit() (int, error) {
+// WaitExit blocks until bedinit reports the child's terminal status. Call at
+// most once; the connection is closed on return.
+func (h *Handle) WaitExit() (ExitStatus, error) {
 	defer h.conn.Close()
 	var rep reply
 	if _, err := readMsg(h.conn, &rep); err != nil {
-		return -1, fmt.Errorf("bedinit: read exit: %w", err)
+		return ExitStatus{}, fmt.Errorf("bedinit: read exit: %w", err)
 	}
 	if rep.Error != "" {
-		return -1, fmt.Errorf("bedinit: %s", rep.Error)
+		return ExitStatus{}, fmt.Errorf("bedinit: %s", rep.Error)
 	}
 	if rep.Exit == nil {
-		return -1, fmt.Errorf("bedinit: exit reply without code")
+		return ExitStatus{}, fmt.Errorf("bedinit: exit reply without status")
 	}
 	return *rep.Exit, nil
 }

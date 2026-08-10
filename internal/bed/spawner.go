@@ -35,6 +35,9 @@ import (
 // children, liveness tracked in a map) and, on linux, the bed-init spawner
 // (S1: commands are children of the bed's own init, teardown = kill its tree).
 type Spawner interface {
+	// Name identifies the active process-lifetime implementation in execution
+	// records. It is a bounded diagnostic dimension, not a user-facing tier.
+	Name() string
 	// Start launches cmd on behalf of the bed and returns its handle.
 	Start(bedID string, cmd *exec.Cmd) (Proc, error)
 	// KillBed force-kills every live process started for the bed. The safety
@@ -42,15 +45,46 @@ type Spawner interface {
 	KillBed(bedID string)
 }
 
+// ProcessOutcome is the kernel-level terminal fact for one started process.
+// It deliberately does not contain timeout/cancel/teardown intent: the caller
+// that requested a stop owns that fact and combines it into ExecutionResult.
+type ProcessOutcome struct {
+	Kind       ProcessOutcomeKind
+	ExitCode   int
+	Signal     int
+	CoreDumped bool
+	Error      string
+}
+
+type ProcessOutcomeKind string
+
+const (
+	ProcessExited   ProcessOutcomeKind = "exited"
+	ProcessSignaled ProcessOutcomeKind = "signaled"
+	ProcessLost     ProcessOutcomeKind = "lost"
+)
+
+func exitedProcess(code int) ProcessOutcome {
+	return ProcessOutcome{Kind: ProcessExited, ExitCode: code}
+}
+
+func signaledProcess(signal int, coreDumped bool) ProcessOutcome {
+	return ProcessOutcome{Kind: ProcessSignaled, Signal: signal, CoreDumped: coreDumped}
+}
+
+func lostProcess(err error) ProcessOutcome {
+	return ProcessOutcome{Kind: ProcessLost, Error: err.Error()}
+}
+
 // Proc is one started bed process.
 type Proc interface {
 	Pid() int
 	// Kill force-kills the process group.
 	Kill()
-	// Wait blocks until the process exits and returns its exit code. A non-exit
-	// failure (wait error, spawner channel broken) returns -1 and the error.
+	// Wait blocks until the process terminates and preserves whether the kernel
+	// observed a normal exit, a signal, or a lost wait channel.
 	// Call at most once.
-	Wait() (int, error)
+	Wait() ProcessOutcome
 }
 
 // inProcSpawner forks commands as direct children of the daemon and tracks
@@ -66,6 +100,8 @@ type inProcSpawner struct {
 func newInProcSpawner(resources resource.Tracker) *inProcSpawner {
 	return &inProcSpawner{resources: resources, live: make(map[string]map[int]*inProcProc)}
 }
+
+func (*inProcSpawner) Name() string { return "in_process" }
 
 func (s *inProcSpawner) Start(bedID string, cmd *exec.Cmd) (Proc, error) {
 	if cmd.Env == nil {
@@ -141,15 +177,18 @@ func (p *inProcProc) Kill() {
 	_ = signalProcessGroup(p.pid, syscall.SIGKILL)
 }
 
-func (p *inProcProc) Wait() (int, error) {
+func (p *inProcProc) Wait() ProcessOutcome {
 	err := waitCommandBeforeReap(p.cmd, p.markExitedBeforeReap)
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return ee.ExitCode(), nil
-		}
-		return -1, err
+	if err == nil {
+		return exitedProcess(0)
 	}
-	return 0, nil
+	if ee, ok := err.(*exec.ExitError); ok {
+		if status, ok := ee.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			return signaledProcess(int(status.Signal()), status.CoreDump())
+		}
+		return exitedProcess(ee.ExitCode())
+	}
+	return lostProcess(err)
 }
 
 // markExitedBeforeReap publishes the terminal state while Linux still

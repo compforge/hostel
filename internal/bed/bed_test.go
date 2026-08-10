@@ -55,9 +55,9 @@ func TestManagerFallsBackToShWhenBashMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out strings.Builder
-	code, err := m.RunForeground(context.Background(), b, "printf fallback", "", nil, 0, func(line string) { out.WriteString(line) })
-	if err != nil || code != 0 || strings.TrimSpace(out.String()) != "fallback" {
-		t.Fatalf("fallback exec: code=%d err=%v output=%q", code, err, out.String())
+	result, err := m.RunForeground(context.Background(), b, "printf fallback", "", nil, 0, func(output ExecutionOutput) { out.WriteString(output.Text) })
+	if err != nil || result.Process.Kind != ProcessExited || result.Process.ExitCode != 0 || strings.TrimSpace(out.String()) != "fallback" {
+		t.Fatalf("fallback exec: result=%+v err=%v output=%q", result, err, out.String())
 	}
 }
 
@@ -220,16 +220,16 @@ func TestBedFileIsolation(t *testing.T) {
 	a, _ := m.Ensure("session-a")
 	b, _ := m.Ensure("session-b")
 	ctx := context.Background()
-	if code, err := m.RunForeground(ctx, a, "printf alpha > shared.txt", "", nil, 0, nil); err != nil || code != 0 {
-		t.Fatalf("write in session-a: code=%d err=%v", code, err)
+	if result, err := m.RunForeground(ctx, a, "printf alpha > shared.txt", "", nil, 0, nil); err != nil || result.Process.ExitCode != 0 {
+		t.Fatalf("write in session-a: result=%+v err=%v", result, err)
 	}
 	var out strings.Builder
-	if code, err := m.RunForeground(ctx, a, "cat shared.txt", "", nil, 0, func(s string) { out.WriteString(s) }); err != nil || code != 0 || strings.TrimSpace(out.String()) != "alpha" {
-		t.Fatalf("read back in session-a: code=%d err=%v out=%q", code, err, out.String())
+	if result, err := m.RunForeground(ctx, a, "cat shared.txt", "", nil, 0, func(output ExecutionOutput) { out.WriteString(output.Text) }); err != nil || result.Process.ExitCode != 0 || strings.TrimSpace(out.String()) != "alpha" {
+		t.Fatalf("read back in session-a: result=%+v err=%v out=%q", result, err, out.String())
 	}
 	// A missing file is the observable cross-session isolation guarantee.
-	if code, err := m.RunForeground(ctx, b, "test ! -e shared.txt", "", nil, 0, nil); err != nil || code != 0 {
-		t.Fatalf("session-b observed session-a file: code=%d err=%v", code, err)
+	if result, err := m.RunForeground(ctx, b, "test ! -e shared.txt", "", nil, 0, nil); err != nil || result.Process.ExitCode != 0 {
+		t.Fatalf("session-b observed session-a file: result=%+v err=%v", result, err)
 	}
 }
 
@@ -261,24 +261,24 @@ func TestRunForegroundIsolatesFailure(t *testing.T) {
 	b, _ := m.Ensure("default")
 	ctx := context.Background()
 
-	code, err := m.RunForeground(ctx, b, "set -euo pipefail\nfalse\necho unreached", "", nil, 0, nil)
+	result, err := m.RunForeground(ctx, b, "set -euo pipefail\nfalse\necho unreached", "", nil, 0, nil)
 	if err != nil {
 		t.Fatalf("RunForeground: %v", err)
 	}
-	if code == 0 {
+	if result.Process.Kind != ProcessExited || result.Process.ExitCode == 0 {
 		t.Fatal("want non-zero exit from set -e failure, got 0")
 	}
 
 	// The bed is still fully usable for the next command (no session was killed).
 	var out strings.Builder
-	code2, err := m.RunForeground(ctx, b, "echo alive", "", nil, 0, func(l string) { out.WriteString(l) })
-	if err != nil || code2 != 0 || !strings.Contains(out.String(), "alive") {
-		t.Fatalf("bed unusable after set -e command: code=%d err=%v out=%q", code2, err, out.String())
+	result2, err := m.RunForeground(ctx, b, "echo alive", "", nil, 0, func(output ExecutionOutput) { out.WriteString(output.Text) })
+	if err != nil || result2.Process.ExitCode != 0 || !strings.Contains(out.String(), "alive") {
+		t.Fatalf("bed unusable after set -e command: result=%+v err=%v out=%q", result2, err, out.String())
 	}
 
 	// Explicit exit code propagates.
-	if code3, err := m.RunForeground(ctx, b, "exit 7", "", nil, 0, nil); err != nil || code3 != 7 {
-		t.Fatalf("exit code not propagated: code=%d err=%v", code3, err)
+	if result3, err := m.RunForeground(ctx, b, "exit 7", "", nil, 0, nil); err != nil || result3.Process.ExitCode != 7 {
+		t.Fatalf("exit code not propagated: result=%+v err=%v", result3, err)
 	}
 }
 
@@ -290,16 +290,16 @@ func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 	b, _ := m.Ensure("conv-kill")
 
 	started := make(chan struct{})
-	done := make(chan int, 1)
+	done := make(chan ExecutionResult, 1)
 	go func() {
-		code, _ := m.RunForeground(context.Background(), b, `sleep 30 & child=$!; echo up; wait "$child"`, "", nil, 0, func(string) {
+		result, _ := m.RunForeground(context.Background(), b, `sleep 30 & child=$!; echo up; wait "$child"`, "", nil, 0, func(ExecutionOutput) {
 			select {
 			case <-started:
 			default:
 				close(started)
 			}
 		})
-		done <- code
+		done <- result
 	}()
 	select {
 	case <-started: // the sleep is running
@@ -315,9 +315,9 @@ func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 	}
 	m.teardown(b)
 	select {
-	case code := <-done:
-		if code == 0 {
-			t.Fatalf("killed command reported exit 0")
+	case result := <-done:
+		if result.Process.Kind != ProcessSignaled || result.Cause != CauseBedTeardown {
+			t.Fatalf("killed command result = %+v", result)
 		}
 		if got := b.Inflight(); got != 0 {
 			t.Fatalf("active operations after teardown = %d, want 0", got)
@@ -331,27 +331,35 @@ func TestBackgroundCommandAndLogs(t *testing.T) {
 	m := newTestManager(t)
 	b, _ := m.Ensure("default")
 
-	cmd, err := m.StartCommand(b, "printf 'a\\nb\\nc\\n'", "", nil, 0, nil)
+	execution, err := m.StartExecution(nil, b, ExecutionBackground, "printf 'a\\nb\\nc\\n'", "", nil, 0, nil, nil)
 	if err != nil {
-		t.Fatalf("StartCommand: %v", err)
+		t.Fatalf("StartExecution: %v", err)
 	}
-	cmd.Wait()
-	st := cmd.Status()
-	if st.Running || st.ExitCode == nil || *st.ExitCode != 0 {
+	result := execution.Wait()
+	st := execution.Status()
+	if st.Running || st.Result == nil || result.Process.ExitCode != 0 {
 		t.Fatalf("status after wait: %+v", st)
 	}
-	content, next, running, err := m.Commands().Logs(cmd.ID, -1)
-	if err != nil || running {
-		t.Fatalf("Logs: running=%v err=%v", running, err)
+	output, next, running, truncated := execution.Logs(-1)
+	if running || truncated {
+		t.Fatalf("Logs: running=%v truncated=%v", running, truncated)
 	}
-	if content != "a\nb\nc\n" || next != 2 {
-		t.Fatalf("Logs content=%q next=%d", content, next)
+	if executionOutputText(output) != "a\nb\nc\n" || next != 2 {
+		t.Fatalf("Logs output=%+v next=%d", output, next)
 	}
 	// Incremental read from cursor 0 → lines after line 0.
-	inc, _, _, _ := m.Commands().Logs(cmd.ID, 0)
-	if inc != "b\nc\n" {
-		t.Fatalf("incremental Logs = %q", inc)
+	inc, _, _, _ := execution.Logs(0)
+	if executionOutputText(inc) != "b\nc\n" {
+		t.Fatalf("incremental Logs = %+v", inc)
 	}
+}
+
+func executionOutputText(output []ExecutionOutput) string {
+	var text strings.Builder
+	for _, item := range output {
+		text.WriteString(item.Text)
+	}
+	return text.String()
 }
 
 func TestDeleteBedReleasesAndRemoves(t *testing.T) {

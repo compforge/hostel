@@ -17,10 +17,10 @@
 package bed
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -87,9 +87,9 @@ func TestWaitCommandBarrierFailureKillsBeforePublishingExit(t *testing.T) {
 		untrack: func() {},
 	}
 
-	exitCode, err := proc.Wait()
-	if err == nil || !errors.Is(err, syscall.EINVAL) {
-		t.Fatalf("Wait = (%d, %v), want exit barrier error", exitCode, err)
+	outcome := proc.Wait()
+	if outcome.Kind != ProcessLost || !strings.Contains(outcome.Error, syscall.EINVAL.Error()) {
+		t.Fatalf("Wait = %+v, want exit barrier error", outcome)
 	}
 	if !proc.exited {
 		t.Fatal("process was not marked exited after forced termination")

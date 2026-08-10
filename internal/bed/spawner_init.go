@@ -221,7 +221,22 @@ func (p *initProc) Pid() int { return p.h.Pid() }
 // the daemon never acts on a numeric child PID after bedinit may have reaped it.
 func (p *initProc) Kill() { _ = p.h.Kill() }
 
-func (p *initProc) Wait() (int, error) { return p.h.WaitExit() }
+func (p *initProc) Wait() ProcessOutcome {
+	status, err := p.h.WaitExit()
+	if err != nil {
+		return lostProcess(err)
+	}
+	switch status.Kind {
+	case bedinit.ExitStatusExited:
+		return exitedProcess(status.ExitCode)
+	case bedinit.ExitStatusSignaled:
+		return signaledProcess(status.Signal, status.CoreDumped)
+	default:
+		return lostProcess(fmt.Errorf("bedinit: unknown exit kind %q", status.Kind))
+	}
+}
+
+func (*initSpawner) Name() string { return "bed_init" }
 
 // EnableBedInit switches the manager to the bedinit spawner after a smoke test
 // (start a probe init, run /bin/true through it, tear it down). On platforms or
@@ -253,9 +268,10 @@ func (m *Manager) EnableBedInit(exe string) error {
 		sp.KillBed(probe)
 		return fmt.Errorf("bedinit probe: %w", err)
 	}
-	if code, err := proc.Wait(); err != nil || code != 0 {
+	outcome := proc.Wait()
+	if outcome.Kind != ProcessExited || outcome.ExitCode != 0 {
 		sp.KillBed(probe)
-		return fmt.Errorf("bedinit probe: exit=%d err=%v", code, err)
+		return fmt.Errorf("bedinit probe: outcome=%+v", outcome)
 	}
 	sp.KillBed(probe)
 	m.spawner = sp
