@@ -22,7 +22,7 @@ import (
 )
 
 // A session is a revocable stateful hold: it shows up in Status.Sessions by
-// kind, never raises the bed's State, and deregisters on Close.
+// kind, never raises the bed's Activity, and deregisters on Close.
 func TestSessionStatusAndClose(t *testing.T) {
 	m := newTestManager(t)
 	m.SetBedIdleTTL(time.Minute)
@@ -39,8 +39,8 @@ func TestSessionStatusAndClose(t *testing.T) {
 	if status.Sessions[SessionKindCDP] != 1 {
 		t.Fatalf("sessions by kind = %v, want cdp:1", status.Sessions)
 	}
-	if status.State != StateIdle {
-		t.Fatalf("state = %s, want idle — a session must not raise the bed's state", status.State)
+	if status.Activity != ActivityIdle {
+		t.Fatalf("activity = %s, want idle — a session must not raise bed activity", status.Activity)
 	}
 	if status.LastActiveAt.IsZero() {
 		t.Fatal("OpenSession should touch the bed")
@@ -179,8 +179,8 @@ func TestStatusOperationsByKind(t *testing.T) {
 	if status.Inflight != 2 || status.Operations[OpExec] != 1 || status.Operations[OpFile] != 1 {
 		t.Fatalf("status = inflight %d operations %v, want 2 and exec:1 file:1", status.Inflight, status.Operations)
 	}
-	if status.State != StateActive {
-		t.Fatalf("state = %s, want active with inflight operations", status.State)
+	if status.Activity != ActivityActive {
+		t.Fatalf("activity = %s, want active with inflight operations", status.Activity)
 	}
 
 	finishExec()
@@ -188,7 +188,7 @@ func TestStatusOperationsByKind(t *testing.T) {
 		t.Fatalf("operations after finishing exec = %v, want file:1 only", status.Operations)
 	}
 	finishFile()
-	if status := b.Status(); status.Inflight != 0 || len(status.Operations) != 0 || status.State != StateIdle {
-		t.Fatalf("status after finishing all = inflight %d operations %v state %s", status.Inflight, status.Operations, status.State)
+	if status := b.Status(); status.Inflight != 0 || len(status.Operations) != 0 || status.Activity != ActivityIdle {
+		t.Fatalf("status after finishing all = inflight %d operations %v activity %s", status.Inflight, status.Operations, status.Activity)
 	}
 }

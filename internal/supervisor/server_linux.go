@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bedinit
+package supervisor
 
 import (
 	"flag"
@@ -29,16 +29,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Run is the bed-init process entry
-// (`hostel __bedinit --socket S --bed B --executor E`).
+// Run is the Executor supervisor process entry
+// (`hostel __supervisor --socket S --bed B --executor E`).
 // It never returns to the caller's main path — the exit code is the process's.
 func Run(args []string) int {
-	fs := flag.NewFlagSet(InitArg, flag.ContinueOnError)
+	fs := flag.NewFlagSet(Arg, flag.ContinueOnError)
 	socket := fs.String("socket", "", "unix socket to serve spawn requests on")
 	bed := fs.String("bed", "", "bed id (ps visibility only)")
 	executorID := fs.String("executor", "", "executor id")
 	if err := fs.Parse(args); err != nil || *socket == "" || *executorID == "" {
-		log.Printf("bedinit: bad args (need --socket and --executor): %v", err)
+		log.Printf("supervisor: bad args (need --socket and --executor): %v", err)
 		return 2
 	}
 
@@ -46,7 +46,7 @@ func Run(args []string) int {
 	// not to pid 1 — that is what makes the /proc ppid scan in killAll able to
 	// enumerate double-forked daemons, and what lets the reaper collect them.
 	if err := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); err != nil {
-		log.Printf("bedinit[%s]: set subreaper: %v", *bed, err)
+		log.Printf("supervisor[%s]: set subreaper: %v", *bed, err)
 		return 1
 	}
 
@@ -55,7 +55,7 @@ func Run(args []string) int {
 	// when a short-lived command exits before the daemon reads either reply.
 	ln, err := net.ListenUnix(socketNetwork, &net.UnixAddr{Name: *socket, Net: socketNetwork})
 	if err != nil {
-		log.Printf("bedinit[%s]: listen %s: %v", *bed, *socket, err)
+		log.Printf("supervisor[%s]: listen %s: %v", *bed, *socket, err)
 		return 1
 	}
 	defer os.Remove(*socket)
@@ -96,7 +96,7 @@ func Run(args []string) int {
 			select {
 			case <-s.shutdown:
 			default:
-				log.Printf("bedinit[%s/%s]: accept: %v", *bed, *executorID, err)
+				log.Printf("supervisor[%s/%s]: accept: %v", *bed, *executorID, err)
 				exitCode = 1
 				s.requestShutdown()
 			}
@@ -346,7 +346,7 @@ func (s *server) killAll() {
 		}
 		time.Sleep(20 * time.Millisecond) // let the reaper drain
 	}
-	log.Printf("bedinit[%s]: descendants survived kill loop", s.bed)
+	log.Printf("supervisor[%s]: descendants survived kill loop", s.bed)
 }
 
 func (s *server) runningCount() int {

@@ -185,13 +185,20 @@ names. `--bed-env-passthrough` selects carrier software variables such as
 invocation-scoped overlay. Callers cannot claim the reserved `HOSTEL_*` or
 `BED_*` namespaces.
 
-Executor backend: `--executor auto` (default) probes the Linux bed-init backend
-and otherwise uses `local`. `bed_init` fails startup when the backend cannot
-serve; `local` explicitly keeps processes as direct hostel children. Bed-init
+Executor backend: `--executor auto` (default) probes the Linux `supervisor` backend
+and otherwise uses `local`. Explicit `supervisor` fails startup when the backend cannot
+serve; `local` explicitly keeps processes as direct hostel children. The supervisor
 owns the whole Executor process tree, including `setsid`/double-fork descendants
 that a plain process-group sweep cannot reach. Its RPCs are reconnectable,
 `Start` is idempotent by process id, and a lost Executor is reported as a stable
 `executor_lost` result rather than a raw socket EOF. See docs/kernel.md.
+
+Bed initialization is asynchronous at the management boundary: `POST /v1/beds`
+returns `202` with `status.phase=initializing`; poll `GET /v1/beds/:id` until
+`status.readiness.status=true`. Snapshot inspection, restore, BedFS preparation,
+and failures are exposed through readiness reason/message. Native data-plane
+requests still create on first use by joining the same initialization and waiting
+for Ready, so they never observe a partial BedFS.
 
 Persistence: setting `--s3-bucket` (any S3-compatible endpoint) turns it on —
 the default `--store auto` resolves to `s3`, an incremental content-addressed
@@ -229,7 +236,7 @@ ceiling for pinned capacity.
 A pinned bed keeps its carrier commitment. At 80% of `M`, `GET /v1/beds`
 reports soft `bed_pressure` so the upstream can warm capacity and avoid new
 placements while retaining the final 20% for source-carrier fallback. At the
-hard limit, new/dormant placement and unpinned-idle activation return retryable
+hard limit, new/dormant placement and unpinned-idle admission return retryable
 `429 INSUFFICIENT_BED`; resident count exhaustion remains `429
 BED_LIMIT_EXCEEDED`. `pinned` and `data_synced` are reported per bed, and the
 capacity error includes the pinned/resident count and limit snapshot.

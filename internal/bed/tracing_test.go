@@ -48,15 +48,15 @@ func TestLifecycleSpanUsesRequestParentAndStageEvents(t *testing.T) {
 	}
 	parent.End()
 
-	span := endedSpanByName(t, recorder, "hostel.bed.activate")
+	span := endedSpanByName(t, recorder, "hostel.bed.initialize")
 	if span.Parent().SpanID() != parent.SpanContext().SpanID() {
-		t.Fatalf("activate parent = %s, want %s", span.Parent().SpanID(), parent.SpanContext().SpanID())
+		t.Fatalf("initialize parent = %s, want %s", span.Parent().SpanID(), parent.SpanContext().SpanID())
 	}
 	if got := spanAttribute(span.Attributes(), "hostel.bed.id"); got != "traced-bed" {
 		t.Fatalf("hostel.bed.id = %q", got)
 	}
 	if len(span.Events()) == 0 {
-		t.Fatal("activate span has no stage events")
+		t.Fatal("initialize span has no stage events")
 	}
 }
 

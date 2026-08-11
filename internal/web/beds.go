@@ -27,14 +27,14 @@ import (
 
 // bedView is the JSON shape for a bed in the management API.
 type bedView struct {
-	ID           string    `json:"id"`
-	State        bed.State `json:"state"` // active | idle | evicting
-	DataSynced   bool      `json:"data_synced"`
-	Pinned       bool      `json:"pinned"`
-	Workspace    string    `json:"workspace"`
-	CreatedAt    time.Time `json:"created_at"`
-	LastActiveAt time.Time `json:"last_active_at"`
-	RetainUntil  time.Time `json:"retained_until,omitzero"`
+	ID           string        `json:"id"`
+	Status       bed.BedStatus `json:"status"`
+	DataSynced   bool          `json:"data_synced"`
+	Pinned       bool          `json:"pinned"`
+	Workspace    string        `json:"workspace,omitempty"`
+	CreatedAt    time.Time     `json:"created_at,omitzero"`
+	LastActiveAt time.Time     `json:"last_active_at,omitzero"`
+	RetainUntil  time.Time     `json:"retained_until,omitzero"`
 }
 
 func (s *Server) viewOf(b *bed.Bed) bedView {
@@ -44,7 +44,7 @@ func (s *Server) viewOf(b *bed.Bed) bedView {
 func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 	return bedView{
 		ID:           b.ID,
-		State:        status.State,
+		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
 		Pinned:       status.Pinned,
 		Workspace:    b.Workspace(),
@@ -52,6 +52,10 @@ func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 		LastActiveAt: status.LastActiveAt,
 		RetainUntil:  status.RetainUntil,
 	}
+}
+
+func initializationView(status bed.InitializationStatus) bedView {
+	return bedView{ID: status.ID, Status: status.BedStatus}
 }
 
 type lifecycleStageView struct {
@@ -74,13 +78,13 @@ type lifecycleRecordView struct {
 }
 
 type lifecycleView struct {
-	LastActivation *lifecycleRecordView `json:"last_activation,omitempty"`
-	LastPersist    *lifecycleRecordView `json:"last_persist,omitempty"`
+	LastInitialization *lifecycleRecordView `json:"last_initialization,omitempty"`
+	LastPersist        *lifecycleRecordView `json:"last_persist,omitempty"`
 }
 
 // activityView is what the bed is doing right now, by request category
 // (docs/lifecycle.md): operations are in-flight stateless requests, sessions
-// are open stateful holds. Sessions never raise the bed's state — an idle bed
+// are open stateful holds. Sessions never raise the bed's activity — an idle bed
 // may still hold cdp connections.
 type activityView struct {
 	Operations map[bed.OperationKind]int `json:"operations,omitempty"`
@@ -123,7 +127,14 @@ const (
 func statusOfInstance(beds []bed.InventoryBed, store string, now time.Time) instanceStatus {
 	hasResident, hasDormant, allExpired := false, false, true
 	for _, b := range beds {
-		if b.State == bed.StateDormant {
+		switch b.Status.Phase {
+		case bed.PhaseInitializing:
+			hasResident = true
+			allExpired = false
+			continue
+		case bed.PhaseFailed:
+			continue
+		case bed.PhaseDormant:
 			hasDormant = true
 			continue
 		}
@@ -145,26 +156,37 @@ func statusOfInstance(beds []bed.InventoryBed, store string, now time.Time) inst
 }
 
 // GET /v1/beds — the scheduler's one-poll picture: instance capacity plus
-// every bed this instance holds (resident active/idle/evicting, dormant as
+// every bed this instance holds (resident/evicting plus activity, dormant as
 // luggage on disk) with its last persisted generation. Everything here is a
-// stale-tolerant hint — freshness is re-enforced at activation, so routing on
+// stale-tolerant hint — freshness is re-enforced at initialization, so routing on
 // outdated data is slow, never wrong. Callers must treat store "noop" as
 // "beds are pinned here": no snapshot exists elsewhere to migrate from.
 func (s *Server) bedList(c *gin.Context) {
 	beds := s.mgr.Inventory()
 	hasBeds := false
 	counts := map[string]int{
-		string(bed.StateActive):   0,
-		string(bed.StateIdle):     0,
-		string(bed.StateEvicting): 0,
-		string(bed.StateDormant):  0,
+		string(bed.ActivityActive):    0,
+		string(bed.ActivityIdle):      0,
+		string(bed.PhaseEvicting):     0,
+		string(bed.PhaseDormant):      0,
+		string(bed.PhaseInitializing): 0,
+		string(bed.PhaseFailed):       0,
 	}
 	var luggageBytes int64
 	var retainUntil time.Time
 	retentionKnown := true
 	for _, b := range beds {
-		counts[string(b.State)]++
-		if b.State == bed.StateDormant {
+		if b.Status.Phase == bed.PhaseInitializing || b.Status.Phase == bed.PhaseFailed {
+			counts[string(b.Status.Phase)]++
+		} else if b.Status.Phase == bed.PhaseEvicting || b.Status.Phase == bed.PhaseDormant {
+			counts[string(b.Status.Phase)]++
+		} else {
+			counts[string(b.Status.Activity)]++
+		}
+		if b.Status.Phase == bed.PhaseFailed {
+			continue
+		}
+		if b.Status.Phase == bed.PhaseDormant {
 			luggageBytes += b.LocalBytes
 		} else {
 			hasBeds = true
@@ -212,18 +234,31 @@ func (s *Server) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	b, err := s.mgr.Ensure(c.Request.Context(), id)
+	status, err := s.mgr.InitializeBed(c.Request.Context(), id)
 	if err != nil {
 		respondBedError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, s.viewOf(b))
+	if status.Readiness.Ready {
+		b, ok := s.mgr.Get(id)
+		if !ok {
+			runtimeError(c, "initialized bed is not resident")
+			return
+		}
+		c.JSON(http.StatusOK, s.viewOf(b))
+		return
+	}
+	c.JSON(http.StatusAccepted, initializationView(status))
 }
 
 // GET /v1/beds/:bedId
 func (s *Server) bedGet(c *gin.Context) {
 	b, ok := s.mgr.Get(c.Param("bedId"))
 	if !ok {
+		if initialization, initializing := s.mgr.Initialization(c.Param("bedId")); initializing {
+			c.JSON(http.StatusOK, initializationView(initialization))
+			return
+		}
 		respondError(c, http.StatusNotFound, ErrBedInvalid, "bed not found")
 		return
 	}
@@ -241,8 +276,8 @@ func (s *Server) bedGet(c *gin.Context) {
 			Sessions:   status.Sessions,
 		},
 		Lifecycle: &lifecycleView{
-			LastActivation: lifecycleRecordToView(lifecycle.LastActivation),
-			LastPersist:    lifecycleRecordToView(lifecycle.LastPersist),
+			LastInitialization: lifecycleRecordToView(lifecycle.LastInitialization),
+			LastPersist:        lifecycleRecordToView(lifecycle.LastPersist),
 		},
 		Executor: executorViewFromStatus(status.Executor),
 	})

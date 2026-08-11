@@ -96,7 +96,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 - noop 下没有待完成的远端同步步骤，瞬时 operation 结束即释放 pinned 名额。
 - pinned bed 的后续 operation 在承诺范围内，不做资源准入；未 pinned 的 idle bed 可重新调度。
 - `BED_PRESSURE` 是提前扩容和调度避让的软信号；剩余 pinned 容量保留给已有 source carrier
-  的兜底承接。达到硬上限后，`INSUFFICIENT_BED` 才表示本次 activation 无法准入。
+  的兜底承接。达到硬上限后，`INSUFFICIENT_BED` 才表示本次承接无法准入。
 - 已接纳的 bed 不会因采样越线被暂停或杀死；default bed 也不参与资源准入。
 - 采集失败、无有限 limit 或非 Linux 环境均诚实上报 unavailable，并 fail-open 到数量策略。
 
@@ -108,7 +108,7 @@ shape 以配置代码及 README 为准，避免设计文档随调参漂移。
 ### 1. per-bed 记账已落地，但不等于隔离
 
 获得 cgroup v2 子树委派时，`Tracker` 为每个 bed 建立子 cgroup，并用 `CLONE_INTO_CGROUP` 让
-bed-init 或 local Executor 的直接命令从第一条指令起进入目标组。这样 `cpu.stat` 能累计已经退出的短命令，避免
+supervisor 或 local Executor 的直接命令从第一条指令起进入目标组。这样 `cpu.stat` 能累计已经退出的短命令，避免
 `/proc` 扫描漏记，也为未来硬限额复用同一资源边界。
 
 使用 `CLONE_INTO_CGROUP` 而不是启动后再写 `cgroup.procs`，是为了消除 fork 与迁移之间的窗口：

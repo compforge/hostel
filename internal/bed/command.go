@@ -33,9 +33,9 @@ func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string
 	// uses), NOT via cmd.Dir. Under suite cwdInBed is a sandbox-internal path
 	// (/workspace/…) that doesn't exist on the carrier host, so setting it as
 	// the outer (bwrap) process's Dir makes ForkExec's chdir fail with ENOENT
-	// ("bedinit: spawn: fork: no such file or directory"). The cd runs in the
+	// ("supervisor: spawn: fork: no such file or directory"). The cd runs in the
 	// command's own view — inside bwrap under suite, directly under direct —
-	// where cwdInBed is valid (web.resolveCwd materialized the dir via EnsureDir).
+	// where cwdInBed is valid (web.resolveCwd prepared the dir via EnsureDir).
 	if cwdInBed != "" {
 		command = "cd -- " + shellx.Quote(cwdInBed) + " && { " + command + " ; }"
 	}
@@ -55,7 +55,7 @@ func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string
 }
 
 // startOneShot builds and launches an isolated one-shot command in the Bed's
-// current Executor. Explicit pipes preserve output across the bed-init IPC seam.
+// current Executor. Explicit pipes preserve output across the supervisor IPC seam.
 func (m *Manager) startOneShot(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string) (executor.Process, executor.Executor, *os.File, *os.File, error) {
 	cmd, err := m.buildCommand(b, command, cwdInBed, envs)
 	if err != nil {

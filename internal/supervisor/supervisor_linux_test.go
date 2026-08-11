@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bedinit
+package supervisor
 
 import (
 	"fmt"
@@ -29,14 +29,14 @@ import (
 	"time"
 )
 
-// TestMain doubles as the bedinit helper process (stdlib helper idiom): the
+// TestMain doubles as the supervisor helper process (stdlib helper idiom): the
 // subreaper semantics under test require a REAL separate process — in-process
 // Serve would make children of the test binary and its wait4(-1) loop would
 // race os/exec used elsewhere.
 func TestMain(m *testing.M) {
-	if os.Getenv("BEDINIT_HELPER") == "1" {
+	if os.Getenv("SUPERVISOR_HELPER") == "1" {
 		os.Exit(Run([]string{
-			"--socket", os.Getenv("BEDINIT_SOCKET"),
+			"--socket", os.Getenv("SUPERVISOR_SOCKET"),
 			"--bed", "test",
 			"--executor", testExecutorID,
 		}))
@@ -44,14 +44,14 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// startInit launches the helper bedinit and waits for its socket.
+// startSupervisor launches the helper supervisor and waits for its socket.
 const testExecutorID = "executor-test"
 
-func startInit(t *testing.T) (socket string, proc *os.Process, client *Client) {
+func startSupervisor(t *testing.T) (socket string, proc *os.Process, client *Client) {
 	t.Helper()
 	socket = filepath.Join(t.TempDir(), "init.sock")
 	cmd := exec.Command(os.Args[0])
-	cmd.Env = append(os.Environ(), "BEDINIT_HELPER=1", "BEDINIT_SOCKET="+socket)
+	cmd.Env = append(os.Environ(), "SUPERVISOR_HELPER=1", "SUPERVISOR_SOCKET="+socket)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -68,7 +68,7 @@ func startInit(t *testing.T) (socket string, proc *os.Process, client *Client) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("bedinit socket never appeared")
+	t.Fatalf("supervisor socket never appeared")
 	return "", nil, nil
 }
 
@@ -98,9 +98,9 @@ func spawnSh(t *testing.T, client *Client, script string) (string, int, *os.File
 }
 
 func TestSpawnExitCodeAndOutput(t *testing.T) {
-	_, _, client := startInit(t)
+	_, _, client := startSupervisor(t)
 
-	processID, _, out := spawnSh(t, client, "echo hi from bedinit; exit 7")
+	processID, _, out := spawnSh(t, client, "echo hi from supervisor; exit 7")
 	data, _ := io.ReadAll(out)
 	out.Close()
 	status, err := client.Wait(processID)
@@ -110,13 +110,13 @@ func TestSpawnExitCodeAndOutput(t *testing.T) {
 	if status.Kind != "exited" || status.ExitCode != 7 {
 		t.Fatalf("exit = %+v, want code 7", status)
 	}
-	if !strings.Contains(string(data), "hi from bedinit") {
+	if !strings.Contains(string(data), "hi from supervisor") {
 		t.Fatalf("output = %q", data)
 	}
 }
 
 func TestKillSpawnedProcess(t *testing.T) {
-	_, _, client := startInit(t)
+	_, _, client := startSupervisor(t)
 
 	processID, _, out := spawnSh(t, client, "sleep 60")
 	defer out.Close()
@@ -133,7 +133,7 @@ func TestKillSpawnedProcess(t *testing.T) {
 }
 
 func TestConcurrentShortLivedSpawns(t *testing.T) {
-	_, _, client := startInit(t)
+	_, _, client := startSupervisor(t)
 	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -170,11 +170,11 @@ func TestConcurrentShortLivedSpawns(t *testing.T) {
 	}
 }
 
-// TestParentageAndSigtermKillsTree is the point of bedinit: the spawned child
+// TestParentageAndSigtermKillsTree is the point of the supervisor: the spawned child
 // is a child of the INIT (not of this process), and SIGTERM to the init takes
 // the whole tree down — including a setsid daemon that escaped its pgid.
 func TestParentageAndSigtermKillsTree(t *testing.T) {
-	_, initProc, client := startInit(t)
+	_, initProc, client := startSupervisor(t)
 
 	// Long runner + a setsid-style escapee writing its pid.
 	pidfile := filepath.Join(t.TempDir(), "escapee.pid")
@@ -219,8 +219,8 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 
 func alive(pid int) bool {
 	// Signal 0 probes existence; a zombie still "exists" but its stat state is
-	// Z and it is gone for our purposes once the parent (bedinit) reaped it —
-	// after bedinit exits, reparenting to real init reaps promptly.
+	// Z and it is gone for our purposes once the supervisor reaped it —
+	// after the supervisor exits, reparenting to real init reaps promptly.
 	err := syscall.Kill(pid, 0)
 	if err != nil {
 		return false

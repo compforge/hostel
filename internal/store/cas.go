@@ -109,7 +109,7 @@ func (s *casStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error
 
 func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation int64) error {
 	// Fencing guard (docs/store.md §3.5): remote generation >= ours
-	// means another instance persisted this bed after our activation —
+	// means another instance persisted this bed after our initialization —
 	// refuse rather than silently overwrite.
 	prevMeta, _, prevExists, err := s.obj.head(ctx, s.indexKey(bedID))
 	if err != nil {

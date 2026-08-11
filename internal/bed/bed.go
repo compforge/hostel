@@ -32,7 +32,7 @@ import (
 // ids look like "sandbox-<uuidv7>": the shared prefix carries no information
 // (uuidv7 leads with a timestamp) while the entropy sits at the tail, so keep
 // the tail. Display only — the full id stays the identity everywhere; the
-// "bed resident" line logged at activation anchors the full↔short mapping, and
+// "bed resident" line logged at initialization anchors the full↔short mapping, and
 // grepping a tail also hits lines that print the full id.
 func ShortID(id string) string {
 	const tail = 8
@@ -69,7 +69,7 @@ type Bed struct {
 	activitySeq    uint64    // changes whenever activity starts or finishes
 	generation     int64     // latest local data generation
 	persistedAt    time.Time // last successful snapshot (zero = never)
-	// Snapshot* describes the durable copy last observed at an activation or
+	// Snapshot* describes the durable copy last observed at initialization or
 	// persist boundary. LocalBytes is sampled asynchronously by the Store
 	// controller; all three are stale-tolerant scheduling hints.
 	snapshotGeneration int64
@@ -79,24 +79,30 @@ type Bed struct {
 	shells             map[string]*Shell   // stateful bash sessions (spec /session)
 	sessions           map[string]*Session // revocable stateful holds (session.go)
 	usage              Usage               // cumulative; seeded from meta, flushed at persist
-	lastActivation     *LifecycleRecord    // bounded diagnostics, never historical
+	lastInitialization *LifecycleRecord    // bounded diagnostics, never historical
 	lastPersist        *LifecycleRecord
 }
 
-// State is the mutually-exclusive operational state reported to the scheduler.
-// Data freshness (Generation) and retention (RetainUntil) are separate dimensions.
-type State string
+// Activity is the derived operation activity of a resident Bed. Lifecycle
+// location belongs to Phase; evicting and dormant are therefore not activity
+// values.
+type Activity string
 
 const (
-	StateActive   State = "active"
-	StateIdle     State = "idle"
-	StateEvicting State = "evicting"
-	StateDormant  State = "dormant"
+	ActivityActive Activity = "active"
+	ActivityIdle   Activity = "idle"
 )
+
+// BedStatus is the lifecycle status shared by management detail and inventory.
+type BedStatus struct {
+	Phase     Phase     `json:"phase"`
+	Readiness Readiness `json:"readiness"`
+	Activity  Activity  `json:"activity,omitempty"`
+}
 
 // Status is one atomic view of a resident bed's scheduler-facing facts.
 type Status struct {
-	State              State
+	BedStatus
 	Generation         int64
 	SnapshotGeneration int64
 	SnapshotBytes      int64
@@ -107,7 +113,7 @@ type Status struct {
 	RetainUntil        time.Time
 	Inflight           int
 	// Operations breaks Inflight down by kind; Sessions counts open stateful
-	// holds by kind (docs/lifecycle.md: sessions never raise State).
+	// holds by kind (docs/lifecycle.md: sessions never raise Activity).
 	Operations map[OperationKind]int
 	Sessions   map[SessionKind]int
 	Usage      Usage
@@ -136,14 +142,11 @@ func estimatedRestoreBytes(generation, snapshotGeneration, snapshotBytes int64, 
 	return snapshotBytes
 }
 
-func (b *Bed) stateLocked() State {
+func (b *Bed) activityLocked() Activity {
 	if b.inflight > 0 {
-		return StateActive
+		return ActivityActive
 	}
-	if b.evicting {
-		return StateEvicting
-	}
-	return StateIdle
+	return ActivityIdle
 }
 
 func (b *Bed) dataSyncedLocked() bool {
@@ -176,8 +179,22 @@ func (b *Bed) Status() Status {
 	if n := len(b.sessions); n > 0 {
 		sessions[SessionKindCDP] = n
 	}
+	updatedAt := b.lastActiveAt
+	if updatedAt.IsZero() {
+		updatedAt = b.CreatedAt
+	}
+	phase := PhaseResident
+	reason := "Initialized"
+	if b.evicting {
+		phase = PhaseEvicting
+		reason = "Evicting"
+	}
 	status := Status{
-		State:              b.stateLocked(),
+		BedStatus: BedStatus{
+			Phase:     phase,
+			Readiness: Readiness{Ready: true, Reason: reason, UpdatedAt: updatedAt},
+			Activity:  b.activityLocked(),
+		},
 		Generation:         b.generation,
 		SnapshotGeneration: b.snapshotGeneration,
 		SnapshotBytes:      b.snapshotBytes,
@@ -246,8 +263,8 @@ func (b *Bed) shutdownExecutor(ctx context.Context) error {
 	return err
 }
 
-// State reports the current operational state.
-func (b *Bed) State() State { return b.Status().State }
+// Activity reports whether this resident Bed currently holds an operation.
+func (b *Bed) Activity() Activity { return b.Status().Activity }
 
 // Short is ShortID(b.ID) — the log-friendly form of this bed's id.
 func (b *Bed) Short() string { return ShortID(b.ID) }

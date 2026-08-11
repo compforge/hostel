@@ -63,7 +63,7 @@ type bedMeta struct {
 	// It orders snapshots where wall clocks cannot (beds migrate across hosts).
 	Generation int64 `json:"generation,omitempty"`
 	// Snapshot* records the last durable Stat result. It is a hint carried in
-	// luggage; activation always rechecks Store.Stat before trusting freshness.
+	// luggage; initialization always rechecks Store.Stat before trusting freshness.
 	SnapshotGeneration int64 `json:"snapshot_generation,omitempty"`
 	SnapshotBytes      int64 `json:"snapshot_bytes,omitempty"`
 	// LastActiveAt is stamped at evict time so luggage GC can order cold local

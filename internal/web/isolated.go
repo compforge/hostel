@@ -240,7 +240,7 @@ func (s *Server) isolatedList(c *gin.Context) {
 func isolatedState(b *bed.Bed) isolatedSessionState {
 	st := b.Status()
 	status := "active"
-	if st.State == bed.StateEvicting {
+	if st.Phase == bed.PhaseEvicting {
 		status = "dead"
 	}
 	var remaining *int

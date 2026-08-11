@@ -25,21 +25,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/bedinit"
 	"github.com/qiankunli/hostel/internal/resource"
+	"github.com/qiankunli/hostel/internal/supervisor"
 )
 
 // TestMain lets the package test binary serve as the re-exec target used by
-// BedInitFactory, exactly as cmd/hostel does in production.
+// SupervisorFactory, exactly as cmd/hostel does in production.
 func TestMain(m *testing.M) {
-	if len(os.Args) >= 2 && os.Args[1] == bedinit.InitArg {
-		os.Exit(bedinit.Run(os.Args[2:]))
+	if len(os.Args) >= 2 && os.Args[1] == supervisor.Arg {
+		os.Exit(supervisor.Run(os.Args[2:]))
 	}
 	os.Exit(m.Run())
 }
 
-func TestBedInitStartIsIdempotentAndTerminalStatusReconnects(t *testing.T) {
-	factory, err := NewBedInitFactory(os.Args[0], resource.Noop("test"))
+func TestSupervisorStartIsIdempotentAndTerminalStatusReconnects(t *testing.T) {
+	factory, err := NewSupervisorFactory(os.Args[0], resource.Noop("test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,14 +89,14 @@ func TestBedInitStartIsIdempotentAndTerminalStatusReconnects(t *testing.T) {
 	}
 	closeCommandOutput(t, different)
 
-	concrete := bedExecutor.(*bedInitExecutor)
-	if err := bedinit.NewClient(concrete.socket, "executor-stale").Describe(); err == nil || !strings.Contains(err.Error(), "executor mismatch") {
+	concrete := bedExecutor.(*supervisedExecutor)
+	if err := supervisor.NewClient(concrete.socket, "executor-stale").Describe(); err == nil || !strings.Contains(err.Error(), "executor mismatch") {
 		t.Fatalf("stale executor fencing error = %v", err)
 	}
 }
 
-func TestBedInitLossIsStructuredAndReplacementGetsNewIdentity(t *testing.T) {
-	factory, err := NewBedInitFactory(os.Args[0], resource.Noop("test"))
+func TestSupervisorLossIsStructuredAndReplacementGetsNewIdentity(t *testing.T) {
+	factory, err := NewSupervisorFactory(os.Args[0], resource.Noop("test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestBedInitLossIsStructuredAndReplacementGetsNewIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	closeCommandOutput(t, cmd)
-	concrete := bedExecutor.(*bedInitExecutor)
+	concrete := bedExecutor.(*supervisedExecutor)
 	if err := concrete.proc.Kill(); err != nil {
 		t.Fatal(err)
 	}

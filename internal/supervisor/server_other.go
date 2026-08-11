@@ -14,13 +14,13 @@
 
 //go:build !linux
 
-package bedinit
+package supervisor
 
 import "log"
 
 // Run is linux-only (subreaper + /proc scan); elsewhere the daemon never
 // re-execs into it — the local Executor backend is used instead.
 func Run(args []string) int {
-	log.Printf("bedinit: unsupported on this platform")
+	log.Printf("supervisor: unsupported on this platform")
 	return 1
 }

@@ -27,7 +27,7 @@ import (
 )
 
 // LocalFactory creates Executors whose processes are direct Hostel children.
-// It is the portable backend and the honest fallback when bed-init is absent.
+// It is the portable backend and the honest fallback when supervisor is absent.
 type LocalFactory struct {
 	resources resource.Tracker
 }

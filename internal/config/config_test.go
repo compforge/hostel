@@ -69,9 +69,9 @@ func TestExecutorConfig(t *testing.T) {
 	if c := Load(nil); c.Executor != "auto" {
 		t.Fatalf("default executor = %q, want auto", c.Executor)
 	}
-	t.Setenv("HOSTEL_EXECUTOR", "bed_init")
-	if c := Load(nil); c.Executor != "bed_init" {
-		t.Fatalf("env executor = %q, want bed_init", c.Executor)
+	t.Setenv("HOSTEL_EXECUTOR", "supervisor")
+	if c := Load(nil); c.Executor != "supervisor" {
+		t.Fatalf("env executor = %q, want supervisor", c.Executor)
 	}
 	if c := Load([]string{"-executor", "local"}); c.Executor != "local" {
 		t.Fatalf("flag executor = %q, want local", c.Executor)

@@ -101,7 +101,9 @@ OpenTelemetry Trace 默认关闭，通过 `HOSTEL_ENABLE_TRACING=true`（或 `--
 
 环境变量按 owner 分命名空间：`HOSTEL_*` 只配置 daemon，不会整份继承进 bed；bed 身份/能力使用 `BED_*`（始终注入 `BED_ID`）；生态变量继续使用 PATH、HOME 等标准名称。`--bed-env-passthrough` 显式选择 carrier 的 PATH、locale、证书和 Python/npm/uv 等软件环境，request `envs` 只覆盖本次执行；调用方不能占用保留的 `HOSTEL_*` / `BED_*` 命名空间。
 
-Executor backend：`--executor auto`（默认）优先探测 Linux bed-init，失败时使用 `local`；显式 `bed_init` 时探测失败会终止启动，显式 `local` 时命令由 hostel 直接派生。bed-init 拥有整个 Executor 进程树，IPC 可重连，`Start` 按 process id 幂等；Executor 丢失对外返回稳定的 `executor_lost`，不会泄漏裸 EOF。
+Executor backend：`--executor auto`（默认）优先探测 Linux `supervisor`，失败时使用 `local`；显式 `supervisor` 时探测失败会终止启动，显式 `local` 时命令由 hostel 直接派生。supervisor 拥有整个 Executor 进程树，IPC 可重连，`Start` 按 process id 幂等；Executor 丢失对外返回稳定的 `executor_lost`，不会泄漏裸 EOF。
+
+Bed 初始化在管理面异步执行：`POST /v1/beds` 返回 `202` 与 `status.phase=initializing`；调用方通过 `GET /v1/beds/:id` 等待 `status.readiness.status=true`。快照检查、恢复、BedFS 准备和失败原因都投影到 readiness reason/message。原生数据面仍支持首次请求惰性创建，但会加入同一个初始化并等待 Ready，不会看到半成品 BedFS。
 
 持久化：`--store s3` 时每个 bed 快照到 S3 兼容对象存储——同 id 再建时恢复，驱逐（DELETE / idle 回收）或显式 checkpoint 时持久化。普通 operation 与 pressure 只提交可合并的同步诉求，Store 同步循环统一负责串行、失败退避和 `--persist-interval` 周期兜底。bed 的持久身份是快照，本地目录只是工作副本。`DELETE /v1/beds/:id` 是驱逐（身份保留），`?purge=true` 连快照一起删、终结身份；驱逐撞上并发流量返回 `409 BED_BUSY`，不丢在途写入。
 
