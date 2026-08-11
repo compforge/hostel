@@ -121,7 +121,7 @@ bedProcessEnv = carrierSoftwareEnv + bedContextEnv + requestEnv
 
 - **mac/CI 可跑**：argv 构造单测——给定 root/bedID，断言遮蔽序列、bind 目标和顺序敏感项（argv 构造放在无 build tag 的 `bwrap_args.go`，exec 侧才是 `bwrap_linux.go`）。
 - **三档共同 env 契约**：同一组测试断言 daemon 的 `HOSTEL_*`/AWS 凭据不进入 bed、allowlist 标准变量可见、`BED_ID` 正确且请求不可伪造、request env 只在本次执行生效。
-- **三档共同契约**：对 dorm/room/suite 跑同一组路径表，断言 `/workspace/a`、`/tmp/workspace/a` 和相对路径都落到对应 `bed_home`，并覆盖 `..` 规范化与宿主路径越界；symlink 逃逸另以 descriptor-relative 文件操作补齐。隔离等级只改变跨 bed 访问结果，不改变映射结果。
+- **三档共同契约**：对 dorm/room/suite 跑同一组路径表，断言 `/workspace/a`、`/tmp/workspace/a` 和相对路径都落到对应 `bed_home`，并覆盖 `..` 规范化与宿主路径越界；daemon 文件 API 通过 descriptor-relative 文件操作拒绝 symlink 逃逸。隔离等级只改变跨 bed 访问结果，不改变映射结果。
 - **Linux 真验证**（devbox）：起两个 bed，A 写文件，断言 B 内 `ls <workspace-root>` 看不到 A 的目录、`cat` A 的宿主路径报不存在；`/workspace` 内读写互通 file API。
 - 回归：direct 模式行为不变（现有 web/bed 测试全绿）。
 
@@ -136,7 +136,7 @@ bedProcessEnv = carrierSoftwareEnv + bedContextEnv + requestEnv
 
 已实现：`internal/isolation/` 在 boot 时做 bwrap 全形态 smoke，负责 namespace/遮蔽、carrier 共享 `/usr/local`、BedFS View 与诚实降级；`internal/bed/env.go` 统一负责三档进程环境的 allowlist、bed context 和 request overlay。mac argv 单测覆盖共享挂载顺序，bed/web 单测覆盖命名空间与泄漏边界；**Linux 真机验证已通过**（devbox，bwrap 0.8.0 / kernel 5.15：兄弟遮蔽、规范挂载、敏感路径、direct 负面对照，以及 `cwd=/`、`cwd=/tmp/job`、`cwd=/workspace` 与 file API 同数据均 PASS；共享软件写入尚待随 carrier 镜像联调）。
 
-**共同路径契约的兑现状态**：Bed 持有的 `bedfs.FS` 已把 bed_home、workspace、client/carrier/Executor 三类路径落成一个领域对象——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对；三档的结构化 cwd 统一使用 BedFS View，suite 也可访问 workspace 外的 BedFS cwd。尚未补齐的部分是命令字面量的跨房型统一（不能靠字符串改写）和 daemon 文件操作的完整 symlink 防逃逸；后者继续归 BedFS，而非散落到 handler。
+**共同路径契约的兑现状态**：Bed 持有的 `bedfs.FS` 已把 bed_home、workspace、client/carrier/Executor 三类路径落成一个领域对象——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对；三档的结构化 cwd 统一使用 BedFS View，suite 也可访问 workspace 外的 BedFS cwd。daemon 文件操作以 `bed_home` 目录句柄执行，symlink 解析不能逃出该根。尚未补齐的部分是命令字面量的跨房型统一，不能靠字符串改写。
 
 ## 隔离分档模型：青年旅社房型（档 / 机制 / 上限 / 请求）
 

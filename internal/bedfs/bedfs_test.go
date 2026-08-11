@@ -20,9 +20,19 @@ import (
 	"testing"
 )
 
+func newTestFS(t *testing.T, root string) *FS {
+	t.Helper()
+	filesystem, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = filesystem.Close() })
+	return filesystem
+}
+
 func TestResolveConfinement(t *testing.T) {
 	root := t.TempDir()
-	o := New(root)
+	o := newTestFS(t, root)
 
 	cases := []struct {
 		in      string
@@ -59,7 +69,7 @@ func TestResolveConfinement(t *testing.T) {
 }
 
 func TestWriteReadListReplace(t *testing.T) {
-	o := New(t.TempDir())
+	o := newTestFS(t, t.TempDir())
 
 	if err := o.Write("/workspace/dir/hello.txt", []byte("localhost:8080\nkeep\n"), 0); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -99,8 +109,83 @@ func TestWriteReadListReplace(t *testing.T) {
 	}
 }
 
+// BedFS is a daemon-side security boundary: a symlink created by bed code must
+// not make file APIs resolve a carrier path outside bed_home. Internal relative
+// symlinks remain valid because they do not cross that boundary.
+func TestFileOperationsConfineSymlinkTargets(t *testing.T) {
+	root := t.TempDir()
+	o := newTestFS(t, root)
+	if err := o.MakeDir("/workspace"); err != nil {
+		t.Fatal(err)
+	}
+
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "workspace", "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.Read("/workspace/escape/secret.txt"); err == nil {
+		t.Fatal("Read followed a symlink outside bed_home")
+	}
+	if err := o.Write("/workspace/escape/secret.txt", []byte("overwritten"), 0); err == nil {
+		t.Fatal("Write followed a symlink outside bed_home")
+	}
+	if _, err := o.Stat("/workspace/escape/secret.txt"); err == nil {
+		t.Fatal("Stat followed a symlink outside bed_home")
+	}
+	if _, err := o.Replace("/workspace/escape/secret.txt", ReplaceItem{Old: "outside", New: "changed"}); err == nil {
+		t.Fatal("Replace followed a symlink outside bed_home")
+	}
+	if err := o.Chmod("/workspace/escape/secret.txt", Permission{Mode: 0o600}); err == nil {
+		t.Fatal("Chmod followed a symlink outside bed_home")
+	}
+	if err := o.Remove([]string{"/workspace/escape/secret.txt"}); err == nil {
+		t.Fatal("Remove followed a symlink outside bed_home")
+	}
+	if _, err := o.List("/workspace/escape", 1); err == nil {
+		t.Fatal("List followed a symlink outside bed_home")
+	}
+	if _, err := o.Search("/workspace/escape", "*.txt"); err == nil {
+		t.Fatal("Search followed a symlink outside bed_home")
+	}
+	if err := o.MakeDir("/workspace/escape/new"); err == nil {
+		t.Fatal("MakeDir followed a symlink outside bed_home")
+	}
+	if err := o.Write("/workspace/move.txt", []byte("move"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Rename("/workspace/move.txt", "/workspace/escape/moved.txt"); err == nil {
+		t.Fatal("Rename followed a symlink outside bed_home")
+	}
+	if got, err := os.ReadFile(secret); err != nil || string(got) != "outside" {
+		t.Fatalf("outside file changed: %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "new")); !os.IsNotExist(err) {
+		t.Fatalf("outside directory created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "moved.txt")); !os.IsNotExist(err) {
+		t.Fatalf("outside rename created a file: %v", err)
+	}
+
+	if err := o.MakeDir("/workspace/inside"); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Write("/workspace/inside/value.txt", []byte("inside"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("inside", filepath.Join(root, "workspace", "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := o.Read("/workspace/alias/value.txt"); err != nil || string(got) != "inside" {
+		t.Fatalf("safe internal symlink = %q, %v", got, err)
+	}
+}
+
 func TestReadLines(t *testing.T) {
-	o := New(t.TempDir())
+	o := newTestFS(t, t.TempDir())
 	_ = o.Write("f", []byte("l0\nl1\nl2\nl3\n"), 0)
 	got, err := o.ReadLines("f", 1, 2)
 	if err != nil || got != "l1\nl2\n" {
@@ -113,7 +198,7 @@ func TestReadLines(t *testing.T) {
 }
 
 func TestSearch(t *testing.T) {
-	o := New(t.TempDir())
+	o := newTestFS(t, t.TempDir())
 	_ = o.Write("a/x.go", nil, 0)
 	_ = o.Write("a/y.txt", nil, 0)
 	_ = o.Write("b/z.go", nil, 0)
@@ -131,7 +216,7 @@ func TestSearch(t *testing.T) {
 // pin the plumbing around it.
 func TestOwnerInheritance(t *testing.T) {
 	t.Run("self-owned workspace disables chown", func(t *testing.T) {
-		o := New(t.TempDir())
+		o := newTestFS(t, t.TempDir())
 		if o.uid != -1 || o.gid != -1 {
 			t.Fatalf("self-owned root: owner = %d:%d, want -1:-1 (no chown)", o.uid, o.gid)
 		}
@@ -141,7 +226,7 @@ func TestOwnerInheritance(t *testing.T) {
 		// Chown-to-self is always permitted, so wiring uid/gid to the current
 		// user drives the chownNew/mkdirAllOwned code paths for real.
 		root := t.TempDir()
-		o := New(root)
+		o := newTestFS(t, root)
 		o.uid, o.gid = os.Geteuid(), os.Getegid()
 
 		if err := o.Write("/workspace/a/b/c.txt", []byte("x"), 0); err != nil {
@@ -160,7 +245,7 @@ func TestOwnerInheritance(t *testing.T) {
 
 	t.Run("hardlinked file is not rehomed", func(t *testing.T) {
 		root := t.TempDir()
-		o := New(root)
+		o := newTestFS(t, root)
 		o.uid, o.gid = os.Geteuid(), os.Getegid()
 
 		orig := filepath.Join(root, "orig")
@@ -178,7 +263,7 @@ func TestOwnerInheritance(t *testing.T) {
 
 func TestEnsureDirCreatesNested(t *testing.T) {
 	root := t.TempDir()
-	o := New(root)
+	o := newTestFS(t, root)
 
 	// A caller-named workdir deep under the workspace that doesn't exist yet.
 	host, err := o.Resolve("/workspace/sub/deep/dir")

@@ -32,6 +32,7 @@ const (
 	PhaseInitializing Phase = "initializing"
 	PhaseResident     Phase = "resident"
 	PhaseEvicting     Phase = "evicting"
+	PhasePurging      Phase = "purging"
 	PhaseDormant      Phase = "dormant"
 	PhaseFailed       Phase = "failed"
 )
@@ -103,8 +104,8 @@ func (m *Manager) Ensure(ctx context.Context, id string) (*Bed, error) {
 	}
 }
 
-// Initialization returns an in-flight or recently failed initialization.
-// Resident beds are deliberately read through Get instead.
+// Initialization returns an in-flight initialization, purge, or recently
+// failed initialization. Resident beds are deliberately read through Get.
 func (m *Manager) Initialization(id string) (InitializationStatus, bool) {
 	if id == "" {
 		id = m.defaultBed
@@ -112,6 +113,9 @@ func (m *Manager) Initialization(id string) (InitializationStatus, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.pruneFailedInitializationsLocked(time.Now())
+	if purge, ok := m.purges[id]; ok {
+		return purge.status, true
+	}
 	initialization, ok := m.initializations[id]
 	if !ok {
 		return InitializationStatus{}, false
@@ -123,9 +127,15 @@ func (m *Manager) initializationStatuses() []InitializationStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.pruneFailedInitializationsLocked(time.Now())
-	statuses := make([]InitializationStatus, 0, len(m.initializations))
-	for _, initialization := range m.initializations {
+	statuses := make([]InitializationStatus, 0, len(m.initializations)+len(m.purges))
+	for id, initialization := range m.initializations {
+		if _, purging := m.purges[id]; purging {
+			continue
+		}
 		statuses = append(statuses, initialization.status)
+	}
+	for _, purge := range m.purges {
+		statuses = append(statuses, purge.status)
 	}
 	return statuses
 }
@@ -146,6 +156,10 @@ func (m *Manager) beginInitialization(
 
 	m.mu.Lock()
 	m.pruneFailedInitializationsLocked(time.Now())
+	if _, purging := m.purges[id]; purging {
+		m.mu.Unlock()
+		return nil, nil, ErrBedPurging
+	}
 	if resident, ok := m.beds[id]; ok {
 		m.mu.Unlock()
 		return nil, resident, nil
@@ -202,6 +216,12 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 		m.finishInitialization(initialization, nil, err)
 		return
 	}
+	published := false
+	defer func() {
+		if !published {
+			_ = resident.BedFS().Close()
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		m.finishInitialization(initialization, nil, err)
 		return
@@ -211,6 +231,7 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 		m.finishInitialization(initialization, nil, err)
 		return
 	}
+	published = true
 
 	// The one full-id log line is the grep anchor from an upstream sandbox id.
 	log.Printf("hostel bed resident: bed=%s short=%s", bedID, resident.Short())
@@ -301,17 +322,17 @@ func (m *Manager) updateInitializationStageIn(initialization *bedInitialization,
 	}
 }
 
-func (m *Manager) cancelInitialization(ctx context.Context, id string) bool {
+func (m *Manager) cancelInitialization(ctx context.Context, id string) (bool, error) {
 	m.mu.Lock()
 	initialization, ok := m.initializations[id]
 	if !ok {
 		m.mu.Unlock()
-		return false
+		return false, nil
 	}
-	delete(m.initializations, id)
 	if initialization.status.Phase != PhaseInitializing {
+		delete(m.initializations, id)
 		m.mu.Unlock()
-		return true
+		return true, nil
 	}
 	initialization.cancel()
 	m.mu.Unlock()
@@ -320,9 +341,10 @@ func (m *Manager) cancelInitialization(ctx context.Context, id string) bool {
 	}
 	select {
 	case <-initialization.done:
+		return true, nil
 	case <-ctx.Done():
+		return true, ctx.Err()
 	}
-	return true
 }
 
 func (m *Manager) cancelAllInitializations(ctx context.Context) {

@@ -71,6 +71,7 @@ type Permission struct {
 // Executor replacement; all daemon file operations are confined to it.
 type FS struct {
 	paths paths
+	root  *os.Root
 	// uid/gid of the workspace dir when it differs from the daemon's euid
 	// (uid-isolated beds), else -1. Mechanism-independent invariant: whatever
 	// lands in a bed's workspace belongs to the bed — BedFS runs as the
@@ -82,14 +83,31 @@ type FS struct {
 // New returns file ops confined to home (the bed_home host directory).
 // File ops never need the mount view, so the embedded Paths carries no mount
 // point; exec-side callers use the bed's own Paths for that.
-func New(root string) *FS {
-	o := &FS{paths: newPaths(root), uid: -1, gid: -1}
+func New(root string) (*FS, error) {
+	confined, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("bedfs: open root %q: %w", root, err)
+	}
+	o := &FS{paths: newPaths(root), root: confined, uid: -1, gid: -1}
 	if fi, err := os.Lstat(root); err == nil {
 		if uid, gid, ok := ownerOf(fi); ok && uid != os.Geteuid() {
 			o.uid, o.gid = uid, gid
 		}
 	}
-	return o
+	return o, nil
+}
+
+// Close releases the descriptor anchoring this BedFS. A Bed keeps it open for
+// its resident lifetime so renames and symlink swaps cannot redirect daemon
+// file operations outside bed_home.
+func (o *FS) Close() error { return o.root.Close() }
+
+func (o *FS) relative(full string) (string, error) {
+	rel, err := filepath.Rel(o.Home(), full)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("bedfs: carrier path %q is outside bed_home %q", full, o.Home())
+	}
+	return rel, nil
 }
 
 // chownNew hands a path BedFS just created over to the workspace owner.
@@ -103,14 +121,18 @@ func (o *FS) chownNew(full string) {
 	if o.uid < 0 {
 		return
 	}
-	fi, err := os.Lstat(full)
+	rel, err := o.relative(full)
+	if err != nil {
+		return
+	}
+	fi, err := o.root.Lstat(rel)
 	if err != nil {
 		return
 	}
 	if fi.Mode().IsRegular() && nlinkOf(fi) > 1 {
 		return
 	}
-	_ = os.Lchown(full, o.uid, o.gid)
+	_ = o.root.Lchown(rel, o.uid, o.gid)
 }
 
 // mkdirAllOwned is MkdirAll + owner handover on the directories that need it.
@@ -121,21 +143,29 @@ func (o *FS) chownNew(full string) {
 // and skipped), and the post-walk also heals daemon-owned dirs left by older
 // hostel versions. Directories can't be hardlinked, so rehoming is safe.
 func (o *FS) mkdirAllOwned(dir string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	rel, err := o.relative(dir)
+	if err != nil {
+		return err
+	}
+	if err := o.root.MkdirAll(rel, 0o755); err != nil {
 		return err
 	}
 	if o.uid < 0 {
 		return nil
 	}
 	for d := dir; strings.HasPrefix(d, o.Home()); d = filepath.Dir(d) {
-		fi, err := os.Lstat(d)
+		rel, err := o.relative(d)
+		if err != nil {
+			break
+		}
+		fi, err := o.root.Lstat(rel)
 		if err != nil {
 			break
 		}
 		if uid, _, ok := ownerOf(fi); !ok || uid == o.uid {
 			break
 		}
-		_ = os.Lchown(d, o.uid, o.gid)
+		_ = o.root.Lchown(rel, o.uid, o.gid)
 	}
 	return nil
 }
@@ -184,7 +214,11 @@ func (o *FS) Stat(p string) (FileInfo, error) {
 	if err != nil {
 		return FileInfo{}, err
 	}
-	li, err := os.Lstat(full)
+	rel, err := o.relative(full)
+	if err != nil {
+		return FileInfo{}, err
+	}
+	li, err := o.root.Lstat(rel)
 	if err != nil {
 		return FileInfo{}, err
 	}
@@ -197,7 +231,11 @@ func (o *FS) Read(p string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.ReadFile(full)
+	rel, err := o.relative(full)
+	if err != nil {
+		return nil, err
+	}
+	return o.root.ReadFile(rel)
 }
 
 // ReadLines returns up to limit lines starting at 0-based line offset.
@@ -234,7 +272,11 @@ func (o *FS) Write(p string, data []byte, mode int) error {
 	if mode != 0 {
 		fm = os.FileMode(mode) & os.ModePerm
 	}
-	if err := os.WriteFile(full, data, fm); err != nil {
+	rel, err := o.relative(full)
+	if err != nil {
+		return err
+	}
+	if err := o.root.WriteFile(rel, data, fm); err != nil {
 		return err
 	}
 	o.chownNew(full)
@@ -248,7 +290,11 @@ func (o *FS) Remove(paths []string) error {
 		if err != nil {
 			return err
 		}
-		li, err := os.Lstat(full)
+		rel, err := o.relative(full)
+		if err != nil {
+			return err
+		}
+		li, err := o.root.Lstat(rel)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -258,7 +304,7 @@ func (o *FS) Remove(paths []string) error {
 		if li.IsDir() {
 			return fmt.Errorf("bedfs: %q is a directory (use the directories API)", p)
 		}
-		if err := os.Remove(full); err != nil {
+		if err := o.root.Remove(rel); err != nil {
 			return err
 		}
 	}
@@ -278,7 +324,15 @@ func (o *FS) Rename(src, dest string) error {
 	if err := o.mkdirAllOwned(filepath.Dir(d)); err != nil {
 		return err
 	}
-	return os.Rename(s, d)
+	sRel, err := o.relative(s)
+	if err != nil {
+		return err
+	}
+	dRel, err := o.relative(d)
+	if err != nil {
+		return err
+	}
+	return o.root.Rename(sRel, dRel)
 }
 
 // Chmod applies mode bits. Owner/group are accepted for spec compatibility but
@@ -289,7 +343,16 @@ func (o *FS) Chmod(p string, perm Permission) error {
 	if err != nil {
 		return err
 	}
-	return os.Chmod(full, os.FileMode(perm.Mode)&os.ModePerm)
+	rel, err := o.relative(full)
+	if err != nil {
+		return err
+	}
+	f, err := o.root.Open(rel)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Chmod(os.FileMode(perm.Mode) & os.ModePerm)
 }
 
 // Replace substitutes all occurrences of old with new in one file.
@@ -298,7 +361,11 @@ func (o *FS) Replace(p string, item ReplaceItem) (ReplaceResult, error) {
 	if err != nil {
 		return ReplaceResult{}, err
 	}
-	data, err := os.ReadFile(full)
+	rel, err := o.relative(full)
+	if err != nil {
+		return ReplaceResult{}, err
+	}
+	data, err := o.root.ReadFile(rel)
 	if err != nil {
 		return ReplaceResult{}, err
 	}
@@ -309,13 +376,13 @@ func (o *FS) Replace(p string, item ReplaceItem) (ReplaceResult, error) {
 	if count == 0 {
 		return ReplaceResult{ReplacedCount: 0}, nil
 	}
-	li, _ := os.Lstat(full)
+	li, _ := o.root.Stat(rel)
 	mode := os.FileMode(0o644)
 	if li != nil {
 		mode = li.Mode().Perm()
 	}
 	out := strings.ReplaceAll(string(data), item.Old, item.New)
-	if err := os.WriteFile(full, []byte(out), mode); err != nil {
+	if err := o.root.WriteFile(rel, []byte(out), mode); err != nil {
 		return ReplaceResult{}, err
 	}
 	return ReplaceResult{ReplacedCount: count}, nil
@@ -336,7 +403,11 @@ func (o *FS) RemoveDir(p string) error {
 	if err != nil {
 		return err
 	}
-	li, err := os.Lstat(full)
+	rel, err := o.relative(full)
+	if err != nil {
+		return err
+	}
+	li, err := o.root.Lstat(rel)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -346,7 +417,7 @@ func (o *FS) RemoveDir(p string) error {
 	if !li.IsDir() {
 		return fmt.Errorf("bedfs: %q is not a directory", p)
 	}
-	return os.RemoveAll(full)
+	return o.root.RemoveAll(rel)
 }
 
 // List returns entries of a directory down to depth levels (1 = immediate).
@@ -355,7 +426,11 @@ func (o *FS) List(p string, depth int) ([]FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	li, err := os.Lstat(full)
+	rel, err := o.relative(full)
+	if err != nil {
+		return nil, err
+	}
+	li, err := o.root.Lstat(rel)
 	if err != nil {
 		return nil, err
 	}
@@ -369,11 +444,19 @@ func (o *FS) List(p string, depth int) ([]FileInfo, error) {
 		depth = 1
 	}
 	var out []FileInfo
-	var walk func(dir string, d int) error
-	walk = func(dir string, d int) error {
-		entries, err := os.ReadDir(dir)
+	var walk func(dir, rel string, d int) error
+	walk = func(dir, rel string, d int) error {
+		opened, err := o.root.Open(rel)
 		if err != nil {
 			return err
+		}
+		entries, err := opened.ReadDir(-1)
+		closeErr := opened.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
 		}
 		for _, e := range entries {
 			fi, err := e.Info()
@@ -382,14 +465,14 @@ func (o *FS) List(p string, depth int) ([]FileInfo, error) {
 			}
 			out = append(out, o.info(filepath.Join(dir, e.Name()), fi))
 			if e.IsDir() && d > 1 {
-				if err := walk(filepath.Join(dir, e.Name()), d-1); err != nil {
+				if err := walk(filepath.Join(dir, e.Name()), filepath.Join(rel, e.Name()), d-1); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	if err := walk(full, depth); err != nil {
+	if err := walk(full, rel, depth); err != nil {
 		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
@@ -417,25 +500,48 @@ func (o *FS) Search(p, pattern string) ([]FileInfo, error) {
 			match = func(name string) bool { return strings.Contains(name, pattern) }
 		}
 	}
-	var out []FileInfo
-	err = filepath.WalkDir(full, func(fp string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil // skip unreadable entries
-		}
-		if len(out) >= searchLimit {
-			return filepath.SkipAll
-		}
-		if d.IsDir() || !match(d.Name()) {
-			return nil
-		}
-		fi, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		out = append(out, o.info(fp, fi))
-		return nil
-	})
+	rel, err := o.relative(full)
 	if err != nil {
+		return nil, err
+	}
+	var out []FileInfo
+	var walk func(dir, rel string) error
+	walk = func(dir, rel string) error {
+		opened, err := o.root.Open(rel)
+		if err != nil {
+			return err
+		}
+		entries, err := opened.ReadDir(-1)
+		closeErr := opened.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		for _, entry := range entries {
+			if len(out) >= searchLimit {
+				return nil
+			}
+			entryPath := filepath.Join(dir, entry.Name())
+			entryRel := filepath.Join(rel, entry.Name())
+			if entry.IsDir() {
+				if err := walk(entryPath, entryRel); err != nil {
+					return err
+				}
+				continue
+			}
+			if !match(entry.Name()) {
+				continue
+			}
+			fi, err := entry.Info()
+			if err == nil {
+				out = append(out, o.info(entryPath, fi))
+			}
+		}
+		return nil
+	}
+	if err := walk(full, rel); err != nil {
 		return nil, err
 	}
 	return out, nil

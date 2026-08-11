@@ -111,7 +111,7 @@ type bedDetailView struct {
 
 // instanceStatus is the hostel-layer status (docs/lifecycle.md): the only way
 // a hostel says "you may release me". The verdict is computed here so upstream
-// reads a conclusion instead of reassembling bed_counts / store / luggage.
+// reads a conclusion instead of reassembling phase/activity counts, store and luggage.
 type instanceStatus string
 
 const (
@@ -131,6 +131,9 @@ func statusOfInstance(beds []bed.InventoryBed, store string, now time.Time) inst
 		case bed.PhaseInitializing:
 			hasResident = true
 			allExpired = false
+			continue
+		case bed.PhasePurging:
+			hasResident = true
 			continue
 		case bed.PhaseFailed:
 			continue
@@ -164,24 +167,25 @@ func statusOfInstance(beds []bed.InventoryBed, store string, now time.Time) inst
 func (s *Server) bedList(c *gin.Context) {
 	beds := s.mgr.Inventory()
 	hasBeds := false
-	counts := map[string]int{
-		string(bed.ActivityActive):    0,
-		string(bed.ActivityIdle):      0,
+	phaseCounts := map[string]int{
+		string(bed.PhaseResident):     0,
 		string(bed.PhaseEvicting):     0,
+		string(bed.PhasePurging):      0,
 		string(bed.PhaseDormant):      0,
 		string(bed.PhaseInitializing): 0,
 		string(bed.PhaseFailed):       0,
+	}
+	activityCounts := map[string]int{
+		string(bed.ActivityActive): 0,
+		string(bed.ActivityIdle):   0,
 	}
 	var luggageBytes int64
 	var retainUntil time.Time
 	retentionKnown := true
 	for _, b := range beds {
-		if b.Status.Phase == bed.PhaseInitializing || b.Status.Phase == bed.PhaseFailed {
-			counts[string(b.Status.Phase)]++
-		} else if b.Status.Phase == bed.PhaseEvicting || b.Status.Phase == bed.PhaseDormant {
-			counts[string(b.Status.Phase)]++
-		} else {
-			counts[string(b.Status.Activity)]++
+		phaseCounts[string(b.Status.Phase)]++
+		if b.Status.Activity != "" {
+			activityCounts[string(b.Status.Activity)]++
 		}
 		if b.Status.Phase == bed.PhaseFailed {
 			continue
@@ -211,7 +215,8 @@ func (s *Server) bedList(c *gin.Context) {
 			"pinned_beds":        s.mgr.PinnedBedCount(),
 			"max_pinned_beds":    s.mgr.MaxPinnedBeds(),
 			"bed_pressure":       s.mgr.BedPressure(),
-			"bed_counts":         counts,
+			"phase_counts":       phaseCounts,
+			"activity_counts":    activityCounts,
 			"retained_until":     instanceRetainUntil,
 			"luggage_bytes":      luggageBytes,
 			"luggage_high_bytes": high,

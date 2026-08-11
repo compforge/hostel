@@ -239,10 +239,6 @@ func (s *Server) isolatedList(c *gin.Context) {
 
 func isolatedState(b *bed.Bed) isolatedSessionState {
 	st := b.Status()
-	status := "active"
-	if st.Phase == bed.PhaseEvicting {
-		status = "dead"
-	}
 	var remaining *int
 	if !st.RetainUntil.IsZero() {
 		seconds := max(0, int(time.Until(st.RetainUntil).Seconds()))
@@ -250,7 +246,9 @@ func isolatedState(b *bed.Bed) isolatedSessionState {
 	}
 	shareNet := true
 	return isolatedSessionState{
-		Status:               status,
+		// Evicting is deliberately still active here: activity may cancel the
+		// eviction, while "dead" is terminal in the isolated-session contract.
+		Status:               "active",
 		CreatedAt:            b.CreatedAt,
 		LastRunAt:            st.LastActiveAt,
 		IdleRemainingSeconds: remaining,

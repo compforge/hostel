@@ -22,7 +22,31 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/store"
 )
+
+type isolatedBlockingStore struct {
+	store.Noop
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *isolatedBlockingStore) Persist(ctx context.Context, _ string, _ string, _ int64) error {
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.release:
+		return nil
+	}
+}
 
 func createIsolatedSession(t *testing.T, s *Server) string {
 	t.Helper()
@@ -105,6 +129,50 @@ func TestIsolatedSessionLifecycleAndStatefulRun(t *testing.T) {
 	rec = do(t, s, http.MethodGet, "/v1/isolated/session/"+id, nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("get deleted isolated session = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestIsolatedSessionRemainsActiveWhileEvicting(t *testing.T) {
+	root := t.TempDir()
+	backend := &isolatedBlockingStore{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := mgr.Close(ctx); err != nil {
+			t.Errorf("close manager: %v", err)
+		}
+	})
+	const id = "isolated-evicting"
+	if _, err := mgr.Ensure(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(mgr)
+	evictDone := make(chan error, 1)
+	go func() {
+		_, err := mgr.Evict(context.Background(), id)
+		evictDone <- err
+	}()
+	<-backend.started
+
+	rec := do(t, s, http.MethodGet, "/v1/isolated/session/"+id, nil, nil)
+	var state isolatedSessionState
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &state) != nil {
+		t.Fatalf("get evicting session = %d %s", rec.Code, rec.Body.String())
+	}
+	if state.Status != "active" {
+		t.Fatalf("evicting session status = %q, want active", state.Status)
+	}
+
+	close(backend.release)
+	if err := <-evictDone; err != nil {
+		t.Fatal(err)
 	}
 }
 

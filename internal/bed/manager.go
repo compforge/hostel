@@ -69,6 +69,9 @@ type Manager struct {
 	// It is separate from beds so a partially prepared BedFS can never be
 	// resolved by data-plane requests.
 	initializations map[string]*bedInitialization
+	// purges fence a bed identity from initialization acceptance until both its
+	// local and durable data have been deleted.
+	purges map[string]*bedPurge
 	// residentBeds mirrors len(beds) for lock-free instance health reads.
 	// Map mutations update it under mu; healthz may observe either side of an
 	// in-flight mutation, but never waits behind initialization or restore work.
@@ -146,6 +149,7 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		processEnv:      processEnv,
 		beds:            make(map[string]*Bed),
 		initializations: make(map[string]*bedInitialization),
+		purges:          make(map[string]*bedPurge),
 	}, nil
 }
 
@@ -359,16 +363,25 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 	}
 	wsDir := filepath.Join(dataDir, "workspace")
 	m.updateInitialization(initialization, "PreparingBedFS", "preparing BedFS and isolation")
+	var filesystem *bedfs.FS
 	if err := trace.stage("prepare_bedfs", func() error {
 		if err := os.MkdirAll(wsDir, 0o755); err != nil {
 			return err
 		}
+		var err error
+		filesystem, err = bedfs.New(dataDir)
+		if err != nil {
+			return err
+		}
 		// Prepare after restore repopulates the tree and before the bed serves.
 		if p, ok := m.iso.(isolation.Preparer); ok {
-			return p.Prepare(bedfs.New(dataDir))
+			return p.Prepare(filesystem)
 		}
 		return nil
 	}); err != nil {
+		if filesystem != nil {
+			_ = filesystem.Close()
+		}
 		return nil, fmt.Errorf("bed: prepare workspace %s: %w", id, err)
 	}
 
@@ -409,7 +422,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 			shells:             make(map[string]*Shell),
 			sessions:           make(map[string]*Session),
 			inflightByKind:     make(map[OperationKind]int),
-			filesystem:         bedfs.New(dataDir),
+			filesystem:         filesystem,
 		}
 		resolved = b
 		if staged.Snapshot != nil {
@@ -421,6 +434,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 		}
 		return nil
 	}); err != nil {
+		_ = filesystem.Close()
 		return nil, fmt.Errorf("bed: write meta %s: %w", id, err)
 	}
 	return b, nil
@@ -475,7 +489,11 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 	b, ok := m.beds[id]
 	m.mu.Unlock()
 	if !ok {
-		if m.cancelInitialization(ctx, id) {
+		canceled, err := m.cancelInitialization(ctx, id)
+		if err != nil {
+			return false, fmt.Errorf("bed: cancel initialization before evict %s: %w", id, err)
+		}
+		if canceled {
 			return true, nil
 		}
 		return false, nil // not resident; nothing to evict
@@ -553,59 +571,6 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 	return true, nil
 }
 
-// ErrPurgeDefault marks a client mistake (4xx), not a server failure: the
-// default bed is the single-tenant fallback and cannot be purged.
-var ErrPurgeDefault = errors.New("bed: refusing to purge the default bed")
-
-const purgeStoreTimeout = 30 * time.Second
-
-// Purge ends a bed's identity: tear down (no persist), remove the local dir
-// (active workspace or leftover luggage), and delete the snapshot. Explicitly
-// destructive — the caller asked for the data to be gone, so concurrent
-// activity does not cancel it.
-func (m *Manager) Purge(ctx context.Context, id string) error {
-	if id == "" || id == m.defaultBed {
-		return ErrPurgeDefault
-	}
-	// Purge touches the filesystem even for beds not in memory (luggage), so
-	// the id must be validated here too — never path-join an unchecked id.
-	if err := validBedID(id); err != nil {
-		return err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	// Purge must join an in-flight initializer before removing the directory;
-	// otherwise a canceled request could return while Restore recreates data
-	// after the identity was declared gone.
-	cancelCtx, cancelInitialization := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
-	m.cancelInitialization(cancelCtx, id)
-	cancelInitialization()
-	m.mu.Lock()
-	b, ok := m.beds[id]
-	if ok {
-		b.mu.Lock()
-		delete(m.beds, id)
-		m.residentBeds.Add(-1)
-		if b.pinnedLocked() {
-			m.pinnedBeds.Add(-1)
-		}
-		b.mu.Unlock()
-	}
-	m.mu.Unlock()
-	if ok {
-		m.teardown(b)
-	}
-	// DORMANT beds may leave luggage (same path as an active bed's dir).
-	if err := os.RemoveAll(filepath.Join(m.root, id)); err != nil {
-		return err
-	}
-	// DORMANT (or never-existed) beds still have a snapshot to remove.
-	deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
-	defer cancel()
-	return m.store.Delete(deleteCtx, id)
-}
-
 // teardown kills a bed's runtime state: shells, one-shot commands, service
 // tenants. The workspace is untouched — callers decide its fate. On the
 // evict path the shells are already closed (revoke stage, before persist);
@@ -624,6 +589,7 @@ func (m *Manager) teardown(b *Bed) {
 	_ = b.shutdownExecutor(shutdownCtx)
 	cancel()
 	m.amenities.ReleaseAll(b.ID)
+	_ = b.BedFS().Close()
 }
 
 // Close drains every resident Bed's process realm. HTTP admission must already
@@ -641,6 +607,9 @@ func (m *Manager) Close(ctx context.Context) error {
 			closeErr = errors.Join(closeErr, fmt.Errorf("bed %s executor: %w", b.ID, err))
 		}
 		m.amenities.ReleaseAll(b.ID)
+		if err := b.BedFS().Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("bed %s filesystem: %w", b.ID, err))
+		}
 	}
 	if err := m.executorFactory.Close(); err != nil {
 		closeErr = errors.Join(closeErr, err)
@@ -696,6 +665,12 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 		return err
 	}
 	defer b.persistMu.Unlock()
+	b.mu.Lock()
+	purging := b.purging
+	b.mu.Unlock()
+	if purging {
+		return ErrBedPurging
+	}
 
 	var meta bedMeta
 	var snapshotWatermark time.Time
@@ -803,7 +778,7 @@ func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, b
 		// must not block durability; real session traffic touches lastActiveAt,
 		// so activity after persistBed captures its watermark keeps the bed
 		// dirty for a follow-up pass.
-		dirty := b.lastActiveAt.After(b.persistedAt) && b.inflight == 0 && !b.evicting
+		dirty := b.lastActiveAt.After(b.persistedAt) && b.inflight == 0 && !b.evicting && !b.purging
 		b.mu.Unlock()
 		if !dirty {
 			continue

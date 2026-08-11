@@ -123,7 +123,7 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 
 共享 store 模式下 luggage 是纯缓存，删错只会多付一次 Restore，所以磁盘上限走独立水位而不占 max-beds：超过 `--luggage-high-bytes` 时按"generation 过期优先（纯垃圾）→ LRU"的顺序删到 `--luggage-low-bytes` 以下。这个排序是 cost-aware 驱逐的演化缝，v1 只认新旧。
 
-`GET /v1/beds` 把容量、`bed_counts`（phase/activity 聚合）和每个本机 Bed 的 `status/generation/retained_until` 一次给上层调度器。上游据此优先命中 resident Bed，其次选择最高 generation 的 luggage；回收 carrier 前则确认不存在 resident Bed。inventory 是一次事实快照，不代替上游的单写者约束：同 bedID 双活仍由调度器归属 + store 侧 generation 冲突探测兜底。
+`GET /v1/beds` 把容量、`phase_counts`、`activity_counts` 和每个本机 Bed 的 `status/generation/retained_until` 一次给上层调度器。上游据此优先命中 resident Bed，其次选择最高 generation 的 luggage；回收 carrier 前则确认不存在 resident Bed。inventory 是一次事实快照，不代替上游的单写者约束：同 bedID 双活仍由调度器归属 + store 侧 generation 冲突探测兜底。
 
 ### 恢复成本与后续增量 Restore
 
