@@ -715,7 +715,8 @@ func TestBedListEndpoint(t *testing.T) {
 			MaxBeds          int            `json:"max_beds"`
 			PinnedBeds       int            `json:"pinned_beds"`
 			MaxPinnedBeds    int            `json:"max_pinned_beds"`
-			BedCounts        map[string]int `json:"bed_counts"`
+			PhaseCounts      map[string]int `json:"phase_counts"`
+			ActivityCounts   map[string]int `json:"activity_counts"`
 			RetainUntil      time.Time      `json:"retained_until"`
 			LuggageHighBytes int64          `json:"luggage_high_bytes"`
 		} `json:"instance"`
@@ -736,9 +737,11 @@ func TestBedListEndpoint(t *testing.T) {
 	if body.Instance.Status != "retained" {
 		t.Fatalf("instance status = %s, want retained (a bed is within its retention promise)", body.Instance.Status)
 	}
-	if body.Instance.Store != "noop" || body.Instance.PinnedBeds != 1 || body.Instance.BedCounts["active"] != 1 ||
-		body.Instance.BedCounts["idle"] != 1 || body.Instance.BedCounts["evicting"] != 0 ||
-		body.Instance.BedCounts["dormant"] != 1 || body.Instance.RetainUntil.IsZero() ||
+	if body.Instance.Store != "noop" || body.Instance.PinnedBeds != 1 ||
+		body.Instance.ActivityCounts["active"] != 1 || body.Instance.ActivityCounts["idle"] != 1 ||
+		body.Instance.PhaseCounts["resident"] != 2 || body.Instance.PhaseCounts["evicting"] != 0 ||
+		body.Instance.PhaseCounts["purging"] != 0 || body.Instance.PhaseCounts["dormant"] != 1 ||
+		body.Instance.RetainUntil.IsZero() ||
 		body.Instance.LuggageHighBytes != 1000 {
 		t.Fatalf("instance = %+v", body.Instance)
 	}

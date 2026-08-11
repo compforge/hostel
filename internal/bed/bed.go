@@ -76,6 +76,7 @@ type Bed struct {
 	snapshotBytes      int64
 	localBytes         int64
 	evicting           bool                // an evict's persist is in flight
+	purging            bool                // rejects queued persists once identity deletion owns the bed
 	shells             map[string]*Shell   // stateful bash sessions (spec /session)
 	sessions           map[string]*Session // revocable stateful holds (session.go)
 	usage              Usage               // cumulative; seeded from meta, flushed at persist

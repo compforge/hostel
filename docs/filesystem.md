@@ -12,7 +12,7 @@ BedFS 统一拥有以下语义：
 - workspace：`bed_home/workspace`，客户端与进程的规范路径为 `/workspace`；
 - client path → carrier path：file API、cwd 等结构化路径的存放位置；
 - carrier path → Executor path：不同隔离机制下进程应使用的路径；
-- Bed 内文件操作、属主交接与后续 symlink 防逃逸策略。
+- Bed 内文件操作、属主交接与 symlink 防逃逸边界。
 
 隔离机制不再自行解释客户端路径。它只选择 BedFS 如何投影到 Executor，并负责兑现该视图所需的 bind、Landlock 或 uid 规则。
 
@@ -67,5 +67,4 @@ Hostel 解析 file API 的 `path`、命令的 `cwd` 等结构化字段，因此�
 - isolation realizes View：不拥有数据命名和持久化规则；
 - web 只做协议适配：不能拼 carrier 路径或 mount point。
 
-当前仍需在 BedFS 内继续收口的安全项是 daemon 文件 API 的 symlink 逃逸：词法规范化已经落地，但彻底防止并发 symlink 替换需要 descriptor-relative 文件操作。该问题属于 BedFS，不应散回各 handler。
-
+daemon 文件 API 先做客户端路径规范化，再以 `bed_home` 的目录句柄执行 descriptor-relative 文件操作。路径中的 symlink 只允许解析到该根之内；逃出根目录或与并发 symlink 替换竞态的操作会失败。这条安全边界属于 BedFS，不散落到各 handler。

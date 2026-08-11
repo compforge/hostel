@@ -820,6 +820,7 @@ type fakeStore struct {
 	lastDeleteErr      error
 	lastDeleteValue    any
 	lastDeleteDeadline bool
+	deleteCalls        int
 }
 
 type blockingStore struct {
@@ -835,6 +836,27 @@ type initializationBlockingStore struct {
 	statError error
 	mu        sync.Mutex
 	statCalls int
+}
+
+type purgeBlockingStore struct {
+	*fakeStore
+	started  chan struct{}
+	canceled chan struct{}
+	release  chan struct{}
+}
+
+func (s *purgeBlockingStore) Stat(ctx context.Context, id string) (*store.SnapshotInfo, error) {
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	select {
+	case s.canceled <- struct{}{}:
+	default:
+	}
+	<-s.release
+	return nil, ctx.Err()
 }
 
 func (s *initializationBlockingStore) Stat(ctx context.Context, id string) (*store.SnapshotInfo, error) {
@@ -916,9 +938,16 @@ func (f *fakeStore) Delete(ctx context.Context, id string) error {
 	f.lastDeleteErr = ctx.Err()
 	f.lastDeleteValue = ctx.Value(purgeContextKey{})
 	_, f.lastDeleteDeadline = ctx.Deadline()
+	f.deleteCalls++
 	delete(f.snaps, id)
 	delete(f.gens, id)
 	return nil
+}
+
+func (f *fakeStore) deletes() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deleteCalls
 }
 
 // generation returns the stored snapshot generation (0 = no snapshot).
@@ -1450,6 +1479,108 @@ func TestPurgeJoinsCanceledInitializationBeforeDeleting(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "purged-initialization")); !os.IsNotExist(err) {
 		t.Fatalf("purged initialization recreated its directory: %v", err)
+	}
+}
+
+func TestPurgeFencesConcurrentInitializationUntilCanceledWorkStops(t *testing.T) {
+	root := t.TempDir()
+	backend := &purgeBlockingStore{
+		fakeStore: newFakeStore(),
+		started:   make(chan struct{}, 1),
+		canceled:  make(chan struct{}, 1),
+		release:   make(chan struct{}),
+	}
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "purge-fence"
+	if err := os.MkdirAll(filepath.Join(root, id), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.InitializeBed(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	<-backend.started
+
+	purgeDone := make(chan error, 1)
+	go func() { purgeDone <- m.Purge(context.Background(), id) }()
+	<-backend.canceled
+
+	status, ok := m.Initialization(id)
+	if !ok || status.Phase != PhasePurging {
+		t.Fatalf("status during purge = %+v, %t; want purging", status, ok)
+	}
+	if _, err := m.InitializeBed(context.Background(), id); !errors.Is(err, ErrBedPurging) {
+		t.Fatalf("InitializeBed during purge = %v, want ErrBedPurging", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, id)); err != nil {
+		t.Fatalf("initializing directory removed before initialization joined: %v", err)
+	}
+
+	close(backend.release)
+	if err := <-purgeDone; err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.Initialization(id); ok {
+		t.Fatal("purge fence remains observable after completion")
+	}
+	if _, err := os.Stat(filepath.Join(root, id)); !os.IsNotExist(err) {
+		t.Fatalf("purged directory remains: %v", err)
+	}
+}
+
+func TestPurgeJoinsConcurrentPersistBeforeDeletingSnapshot(t *testing.T) {
+	root := t.TempDir()
+	backend := &blockingStore{
+		fakeStore: newFakeStore(),
+		started:   make(chan struct{}, 1),
+		release:   make(chan struct{}),
+	}
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "purge-persist"
+	if _, err := m.Ensure(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	evictDone := make(chan error, 1)
+	go func() {
+		_, err := m.Evict(context.Background(), id)
+		evictDone <- err
+	}()
+	<-backend.started
+
+	purgeDone := make(chan error, 1)
+	go func() { purgeDone <- m.Purge(context.Background(), id) }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		status, ok := m.Initialization(id)
+		if ok && status.Phase == PhasePurging {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("purge did not acquire the identity fence")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got := backend.deletes(); got != 0 {
+		t.Fatalf("store deletes before persist joins = %d, want 0", got)
+	}
+
+	close(backend.release)
+	if err := <-evictDone; err != nil && !errors.Is(err, ErrBedPurging) {
+		t.Fatalf("Evict: %v", err)
+	}
+	if err := <-purgeDone; err != nil {
+		t.Fatalf("Purge: %v", err)
+	}
+	if got := backend.deletes(); got != 1 {
+		t.Fatalf("store deletes after persist joins = %d, want 1", got)
+	}
+	if got := backend.generation(id); got != 0 {
+		t.Fatalf("snapshot generation after purge = %d, want absent", got)
 	}
 }
 

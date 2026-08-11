@@ -63,6 +63,10 @@ func respondBedError(c *gin.Context, err error) {
 		respondError(c, http.StatusConflict, ErrBedBusy, err.Error())
 		return
 	}
+	if errors.Is(err, bed.ErrBedPurging) {
+		respondError(c, http.StatusConflict, ErrBedBusy, err.Error())
+		return
+	}
 	respondError(c, http.StatusBadRequest, ErrBedInvalid, err.Error())
 }
 

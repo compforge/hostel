@@ -34,7 +34,7 @@ operation ──持有关系──▶ bed.status.activity   ──聚合──�
                                                 releasable  无 resident、快照在远端
                                                 pinned      store=noop（本地是唯一副本）
 
-bed.status.phase：initializing → resident → evicting → dormant；初始化失败为 failed
+bed.status.phase：initializing → resident → evicting → dormant；Purge 期间为 purging；初始化失败为 failed
 bed.status.readiness：status + reason + message + updated_at
 ```
 
@@ -71,7 +71,7 @@ hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。�
    evicting ─revoke session → persist → 原子复核→ dormant（luggage 留在本机）
    dormant  ─同机 resume 且 generation 新鲜→ initializing → resident
    dormant  ─磁盘水位 GC→ 删除（快照仍在 store）
-   任意态   ─Purge（显式销毁）→ 身份终结（删目录 + 删快照）
+   任意态   ─Purge（显式销毁）→ purging ─等待同 id 初始化退出→ 身份终结（删目录 + 删快照）
 ```
 
 三条驱动线：
@@ -90,7 +90,7 @@ hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。�
 → SIGTERM 优雅关停
 ```
 
-hostel 不自杀，也没有 drain 接口。它表达"可以释放我"的唯一方式是 `GET /v1/beds` 里的 `instance.status`（retained / draining / releasable / pinned）——判据收敛在 hostel 内，上游只读结论，不再自己拼 bed_counts / store / luggage。
+hostel 不自杀，也没有 drain 接口。它表达"可以释放我"的唯一方式是 `GET /v1/beds` 里的 `instance.status`（retained / draining / releasable / pinned）——判据收敛在 hostel 内，上游只读结论，不再自己拼 phase/activity counts、store 和 luggage。
 
 容量准入与这里的生命周期状态正交：`instance.status` 回答“能否安全释放这个 Hostel”，未来的
 `admission.accepting_new_beds` 回答“资源余量是否还能承接新的未 pinned bed”。短期数量安全阀与长期

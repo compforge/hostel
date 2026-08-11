@@ -20,7 +20,7 @@ hostel 需要从三个层面回答同一组问题：
 
 `Status` 是当前状态的唯一事实源：
 
-- `phase=initializing|resident|evicting|dormant|failed` 表示 Bed 生命周期位置；
+- `phase=initializing|resident|evicting|purging|dormant|failed` 表示 Bed 生命周期位置；
 - `readiness.status/reason/message/updated_at` 表示是否可接收数据面请求及当前等待或失败边界；
 - `activity=active|idle` 表示 resident / evicting Bed 当前有无 operation，由 inflight 派生；
 - `generation` 表示本地数据版本；
@@ -117,8 +117,8 @@ socket 实现细节；`GetFileMetadata` 等业务操作名由调用方 span 负�
 
 ## 接口
 
-`GET /v1/beds` 是调度 hint：实例容量、phase/activity 数量、每个本机 bed（initializing / failed /
-resident / dormant luggage）的当前事实，不承载 timeline。
+`GET /v1/beds` 是调度 hint：实例容量、分别聚合的 phase/activity 数量、每个本机 bed（initializing /
+purging / failed / resident / dormant luggage）的当前事实，不承载 timeline。
 
 `GET /v1/beds/:id` 是单 bed 诊断入口。初始化期间先返回 phase/readiness；resident 后在基本视图之外返回：
 

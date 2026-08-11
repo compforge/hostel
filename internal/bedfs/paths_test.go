@@ -49,7 +49,7 @@ func TestPathsFromClient(t *testing.T) {
 
 func TestViewPath(t *testing.T) {
 	root := t.TempDir()
-	fs := New(root)
+	fs := newTestFS(t, root)
 	workspace := fs.Workspace()
 
 	t.Run("private mount", func(t *testing.T) {
