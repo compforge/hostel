@@ -246,7 +246,8 @@ finite cgroup limits, latest usage ratios, thresholds, and `accepting` verdict.
 ## Container image
 
 `deploy/docker/Dockerfile` is a multi-stage build: a static, pure-Go hostel binary on a
-`debian-slim` runtime that bundles the two optional facilities — **bubblewrap**
+`debian-slim` runtime that bundles the two optional facilities — a pinned,
+non-setuid **bubblewrap**
 (the `suite` level) and **chromium** (the browser amenity). Both stay optional:
 hostel probes them at boot and degrades honestly, so a locked-down pod without
 namespaces still serves.
@@ -258,11 +259,11 @@ make image-multiarch IMAGE=repo/hostel:tag   # linux/amd64 + arm64, pushed to a 
 docker run -p 8872:8872 hostel:dev
 ```
 
-The build is multi-arch (`linux/amd64`, `linux/arm64`): being pure Go, the
-builder cross-compiles natively (no QEMU) and only the debian runtime stage runs
-per-target so apt pulls the right-arch bwrap/chromium. `make image-multiarch`
-needs `docker buildx` and pushes directly (a multi-platform image can't load into
-the local docker).
+The build is multi-arch (`linux/amd64`, `linux/arm64`): the Go builder
+cross-compiles natively, while the pinned bwrap source build and Debian runtime
+run per target so their native dependencies match the image architecture.
+`make image-multiarch` needs `docker buildx` and pushes directly (a
+multi-platform image can't load into the local docker).
 
 In-container defaults (all overridable via `HOSTEL_*`): `--isolation suite`,
 `--workspace-root /workspace` (a declared volume), `--chromium-path
