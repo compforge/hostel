@@ -27,6 +27,8 @@ package isolation
 import (
 	"log"
 	"os/exec"
+
+	"github.com/qiankunli/hostel/internal/bedfs"
 )
 
 // Level is a data-isolation guarantee, ordered weakest→strongest.
@@ -70,19 +72,6 @@ func parseRequest(s string) Level {
 	}
 }
 
-// Workspace is what a bed's commands are confined to and rooted at. Two
-// anchors because confinement and the canonical mount cover different scopes:
-type Workspace struct {
-	// Home is the bed_home on the host ({bed dir}/data) — everything
-	// the bed may touch. Confinement mechanisms anchor here (landlock rules,
-	// uid chown), so client paths outside /workspace (e.g. /tmp/x, rebased
-	// below Home by fsops) stay writable in room.
-	Home string
-	// Path is the workspace subdir (Home/workspace): the bind source for the
-	// canonical /workspace mount under suite, and the default cwd everywhere.
-	Path string
-}
-
 // Isolator confines an exec.Cmd. Each mechanism reports the Level it provides.
 type Isolator interface {
 	// Name is the mechanism: direct | landlock | bwrap.
@@ -92,12 +81,14 @@ type Isolator interface {
 	// Available reports whether the mechanism actually works on this host
 	// (probed at construction). direct is always available.
 	Available() bool
-	// MountPoint is where the workspace appears inside the sandbox
-	// ("/workspace" for suite/bwrap; "" otherwise — real host paths).
-	MountPoint() string
-	// Wrap prepares cmd to run confined to ws. A mechanism reported Available
+	// View returns how this mechanism projects a BedFS into its Executor.
+	View(*bedfs.FS) bedfs.View
+	// WorkspaceMounted reports whether the stable /workspace process mount is
+	// present. It is exposed as a capability independently of a particular Bed.
+	WorkspaceMounted() bool
+	// Wrap prepares cmd to run confined to fs. A mechanism reported Available
 	// must NOT silently degrade here — failing to build the sandbox is an error.
-	Wrap(cmd *exec.Cmd, ws Workspace) error
+	Wrap(cmd *exec.Cmd, fs *bedfs.FS) error
 }
 
 // Report is the boot-time resolution, exposed for capabilities/healthz: the
@@ -117,7 +108,7 @@ type Report interface {
 // data dir. The resolved result always satisfies Preparer (no-op when the
 // chosen mechanism isn't one), so callers can assert unconditionally.
 type Preparer interface {
-	Prepare(ws Workspace) error
+	Prepare(fs *bedfs.FS) error
 }
 
 // resolved wraps the chosen mechanism with the resolution facts.
@@ -136,9 +127,9 @@ func (r *resolved) Facts() HostFacts  { return r.facts }
 // Prepare forwards to the chosen mechanism when it needs data-dir preparation
 // (uid), else no-ops — so the bed manager can assert Preparer on the result
 // unconditionally, without knowing which mechanism won.
-func (r *resolved) Prepare(ws Workspace) error {
+func (r *resolved) Prepare(fs *bedfs.FS) error {
 	if p, ok := r.Isolator.(Preparer); ok {
-		return p.Prepare(ws)
+		return p.Prepare(fs)
 	}
 	return nil
 }
@@ -203,11 +194,12 @@ type unavailable struct {
 	lvl  Level
 }
 
-func (u unavailable) Name() string       { return u.name }
-func (u unavailable) Level() Level       { return u.lvl }
-func (u unavailable) Available() bool    { return false }
-func (u unavailable) MountPoint() string { return "" }
-func (u unavailable) Wrap(*exec.Cmd, Workspace) error {
+func (u unavailable) Name() string                 { return u.name }
+func (u unavailable) Level() Level                 { return u.lvl }
+func (u unavailable) Available() bool              { return false }
+func (u unavailable) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
+func (u unavailable) WorkspaceMounted() bool       { return false }
+func (u unavailable) Wrap(*exec.Cmd, *bedfs.FS) error {
 	return errUnavailable
 }
 
@@ -221,11 +213,12 @@ func (e *isoError) Error() string { return e.msg }
 // bed workspace. The dorm level: no enforced isolation. Always available.
 type direct struct{}
 
-func (direct) Name() string       { return "direct" }
-func (direct) Level() Level       { return Dorm }
-func (direct) Available() bool    { return true }
-func (direct) MountPoint() string { return "" }
-func (direct) Wrap(cmd *exec.Cmd, ws Workspace) error {
-	cmd.Dir = ws.Path
+func (direct) Name() string                 { return "direct" }
+func (direct) Level() Level                 { return Dorm }
+func (direct) Available() bool              { return true }
+func (direct) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
+func (direct) WorkspaceMounted() bool       { return false }
+func (direct) Wrap(cmd *exec.Cmd, fs *bedfs.FS) error {
+	cmd.Dir = fs.Workspace()
 	return nil
 }

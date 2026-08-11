@@ -12,15 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package fsops implements bed-scoped filesystem operations. Every path is
-// resolved and confined under the bed's workspace root, so one bed's file API
-// can never touch another bed's data even though the daemon runs unconfined.
+// Package bedfs owns one bed's filesystem identity and operations. A BedFS is
+// rooted at bed_home: it defines the client namespace, carrier placement and
+// Executor views independently of any particular isolation mechanism.
 //
-// Path contract (OpenSandbox SDK compatible): clients address files under the
-// virtual prefix "/workspace" (e.g. "/workspace/a.txt"); hostel rebases that
-// onto the bed's host workspace dir. Relative paths are workspace-relative.
-// Absolute paths outside the prefix are rejected — a bed never sees the host.
-package fsops
+// Path contract: the client's "/" is bed_home. Absolute paths are rebased
+// below it, /workspace names a real subdirectory, and relative paths are
+// workspace-relative. A Bed never sees carrier paths through the API.
+package bedfs
 
 import (
 	"fmt"
@@ -31,17 +30,6 @@ import (
 	"strings"
 	"time"
 )
-
-// VirtualPrefix is where a bed's workspace appears to clients. This is the
-// OpenSandbox SDK contract — clients hardcode `/workspace/...` — so it is
-// deliberately NOT configurable (unlike the host-side workspace root).
-// The client's "/" is the bed_home, so this prefix is not an alias:
-// it names the real `workspace` subdir under the root, by the same rule as
-// any other absolute path.
-// Must stay equal to isolation.BwrapMountPoint: that constant is the same
-// contract seen from the shell side, and the two packages don't import each
-// other, so nothing but this comment ties them together.
-const VirtualPrefix = "/workspace"
 
 // FileInfo mirrors the OpenSandbox execd file metadata shape so existing SDKs
 // deserialize hostel responses unchanged. Paths are reported back in client
@@ -79,14 +67,13 @@ type Permission struct {
 	Mode  int    `json:"mode"`
 }
 
-// Ops is rooted at one bed_home: Paths for the path spaces plus the
-// actual file operations (which always act on host paths, as the daemon).
-type Ops struct {
-	paths Paths
-	home  string // == paths.Home(); kept as a field for the hot internal uses
+// FS is one bed's filesystem. It is created with the Bed and survives
+// Executor replacement; all daemon file operations are confined to it.
+type FS struct {
+	paths paths
 	// uid/gid of the workspace dir when it differs from the daemon's euid
 	// (uid-isolated beds), else -1. Mechanism-independent invariant: whatever
-	// lands in a bed's workspace belongs to the bed — fsops runs as the
+	// lands in a bed's workspace belongs to the bed — BedFS runs as the
 	// daemon, so without this, file-API writes would leave daemon-owned files
 	// the bed can read but not modify (docs/data.md, room/uid).
 	uid, gid int
@@ -95,8 +82,8 @@ type Ops struct {
 // New returns file ops confined to home (the bed_home host directory).
 // File ops never need the mount view, so the embedded Paths carries no mount
 // point; exec-side callers use the bed's own Paths for that.
-func New(root string) *Ops {
-	o := &Ops{paths: NewPaths(root, ""), home: root, uid: -1, gid: -1}
+func New(root string) *FS {
+	o := &FS{paths: newPaths(root), uid: -1, gid: -1}
 	if fi, err := os.Lstat(root); err == nil {
 		if uid, gid, ok := ownerOf(fi); ok && uid != os.Geteuid() {
 			o.uid, o.gid = uid, gid
@@ -105,14 +92,14 @@ func New(root string) *Ops {
 	return o
 }
 
-// chownNew hands a path fsops just created over to the workspace owner.
+// chownNew hands a path BedFS just created over to the workspace owner.
 // Best-effort: if the daemon lacks CAP_CHOWN the file stays daemon-owned,
 // which is the pre-invariant behavior (bed reads it, next Prepare re-chowns).
 // Same hardlink discipline as isolation's chownTree: a multiply-linked file is
 // a second name for an inode possibly outside the workspace — rehoming it
 // would gift the bed ownership of a host file, so leave it alone. Lchown so a
 // symlink planted at the path can't redirect the chown to its referent.
-func (o *Ops) chownNew(full string) {
+func (o *FS) chownNew(full string) {
 	if o.uid < 0 {
 		return
 	}
@@ -133,14 +120,14 @@ func (o *Ops) chownNew(full string) {
 // ancestor deleted between probe and MkdirAll would be recreated daemon-owned
 // and skipped), and the post-walk also heals daemon-owned dirs left by older
 // hostel versions. Directories can't be hardlinked, so rehoming is safe.
-func (o *Ops) mkdirAllOwned(dir string) error {
+func (o *FS) mkdirAllOwned(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	if o.uid < 0 {
 		return nil
 	}
-	for d := dir; strings.HasPrefix(d, o.home); d = filepath.Dir(d) {
+	for d := dir; strings.HasPrefix(d, o.Home()); d = filepath.Dir(d) {
 		fi, err := os.Lstat(d)
 		if err != nil {
 			break
@@ -156,20 +143,25 @@ func (o *Ops) mkdirAllOwned(dir string) error {
 // EnsureDir creates host directory dir (and any missing parents) with the
 // workspace's owner, for callers that resolved a host path via Resolve and need
 // it to exist — e.g. an exec cwd the caller named but hasn't created yet. dir
-// must already be workspace-confined (Resolve guarantees this); ownership
+// must already be bed_home-confined (Resolve guarantees this); ownership
 // handover keeps it usable under the uid isolation tier.
-func (o *Ops) EnsureDir(dir string) error {
+func (o *FS) EnsureDir(dir string) error {
 	return o.mkdirAllOwned(dir)
 }
 
-// Resolve maps a client path to a host path under the workspace, rejecting
-// escapes. Exported for exec cwd resolution. (Delegates to Paths — the one
-// place that owns path-space conversion.)
-func (o *Ops) Resolve(p string) (string, error) { return o.paths.FromClient(p) }
+// Resolve maps a client path to a carrier path under bed_home. It is shared by
+// file operations and structured Executor paths such as cwd.
+func (o *FS) Resolve(p string) (string, error) { return o.paths.FromClient(p) }
 
-func (o *Ops) virtual(full string) string { return o.paths.ToClient(full) }
+// Home is the carrier path of bed_home, which is the client's "/".
+func (o *FS) Home() string { return o.paths.Home() }
 
-func (o *Ops) info(full string, li os.FileInfo) FileInfo {
+// Workspace is the carrier path of the Bed's default workspace.
+func (o *FS) Workspace() string { return o.paths.WorkspaceHost() }
+
+func (o *FS) virtual(full string) string { return o.paths.ToClient(full) }
+
+func (o *FS) info(full string, li os.FileInfo) FileInfo {
 	typ := "file"
 	switch {
 	case li.IsDir():
@@ -187,7 +179,7 @@ func (o *Ops) info(full string, li os.FileInfo) FileInfo {
 }
 
 // Stat returns metadata for one path.
-func (o *Ops) Stat(p string) (FileInfo, error) {
+func (o *FS) Stat(p string) (FileInfo, error) {
 	full, err := o.Resolve(p)
 	if err != nil {
 		return FileInfo{}, err
@@ -200,7 +192,7 @@ func (o *Ops) Stat(p string) (FileInfo, error) {
 }
 
 // Read returns full file contents.
-func (o *Ops) Read(p string) ([]byte, error) {
+func (o *FS) Read(p string) ([]byte, error) {
 	full, err := o.Resolve(p)
 	if err != nil {
 		return nil, err
@@ -209,7 +201,7 @@ func (o *Ops) Read(p string) ([]byte, error) {
 }
 
 // ReadLines returns up to limit lines starting at 0-based line offset.
-func (o *Ops) ReadLines(p string, offset, limit int) (string, error) {
+func (o *FS) ReadLines(p string, offset, limit int) (string, error) {
 	data, err := o.Read(p)
 	if err != nil {
 		return "", err
@@ -230,7 +222,7 @@ func (o *Ops) ReadLines(p string, offset, limit int) (string, error) {
 }
 
 // Write creates/overwrites a file (0644 when mode==0), making parent dirs.
-func (o *Ops) Write(p string, data []byte, mode int) error {
+func (o *FS) Write(p string, data []byte, mode int) error {
 	full, err := o.Resolve(p)
 	if err != nil {
 		return err
@@ -250,7 +242,7 @@ func (o *Ops) Write(p string, data []byte, mode int) error {
 }
 
 // Remove deletes files (not directories); missing files are ignored.
-func (o *Ops) Remove(paths []string) error {
+func (o *FS) Remove(paths []string) error {
 	for _, p := range paths {
 		full, err := o.Resolve(p)
 		if err != nil {
@@ -264,7 +256,7 @@ func (o *Ops) Remove(paths []string) error {
 			return err
 		}
 		if li.IsDir() {
-			return fmt.Errorf("fsops: %q is a directory (use the directories API)", p)
+			return fmt.Errorf("bedfs: %q is a directory (use the directories API)", p)
 		}
 		if err := os.Remove(full); err != nil {
 			return err
@@ -274,7 +266,7 @@ func (o *Ops) Remove(paths []string) error {
 }
 
 // Rename moves src to dest (creating dest parents).
-func (o *Ops) Rename(src, dest string) error {
+func (o *FS) Rename(src, dest string) error {
 	s, err := o.Resolve(src)
 	if err != nil {
 		return err
@@ -292,7 +284,7 @@ func (o *Ops) Rename(src, dest string) error {
 // Chmod applies mode bits. Owner/group are accepted for spec compatibility but
 // not applied in v1 (single-uid beds); real setuid lands with the OSEP-0013
 // isolation port.
-func (o *Ops) Chmod(p string, perm Permission) error {
+func (o *FS) Chmod(p string, perm Permission) error {
 	full, err := o.Resolve(p)
 	if err != nil {
 		return err
@@ -301,7 +293,7 @@ func (o *Ops) Chmod(p string, perm Permission) error {
 }
 
 // Replace substitutes all occurrences of old with new in one file.
-func (o *Ops) Replace(p string, item ReplaceItem) (ReplaceResult, error) {
+func (o *FS) Replace(p string, item ReplaceItem) (ReplaceResult, error) {
 	full, err := o.Resolve(p)
 	if err != nil {
 		return ReplaceResult{}, err
@@ -311,7 +303,7 @@ func (o *Ops) Replace(p string, item ReplaceItem) (ReplaceResult, error) {
 		return ReplaceResult{}, err
 	}
 	if item.Old == "" {
-		return ReplaceResult{}, fmt.Errorf("fsops: empty 'old' for %q", p)
+		return ReplaceResult{}, fmt.Errorf("bedfs: empty 'old' for %q", p)
 	}
 	count := strings.Count(string(data), item.Old)
 	if count == 0 {
@@ -330,7 +322,7 @@ func (o *Ops) Replace(p string, item ReplaceItem) (ReplaceResult, error) {
 }
 
 // MakeDir creates a directory (and parents).
-func (o *Ops) MakeDir(p string) error {
+func (o *FS) MakeDir(p string) error {
 	full, err := o.Resolve(p)
 	if err != nil {
 		return err
@@ -339,7 +331,7 @@ func (o *Ops) MakeDir(p string) error {
 }
 
 // RemoveDir removes a directory tree.
-func (o *Ops) RemoveDir(p string) error {
+func (o *FS) RemoveDir(p string) error {
 	full, err := o.Resolve(p)
 	if err != nil {
 		return err
@@ -352,13 +344,13 @@ func (o *Ops) RemoveDir(p string) error {
 		return err
 	}
 	if !li.IsDir() {
-		return fmt.Errorf("fsops: %q is not a directory", p)
+		return fmt.Errorf("bedfs: %q is not a directory", p)
 	}
 	return os.RemoveAll(full)
 }
 
 // List returns entries of a directory down to depth levels (1 = immediate).
-func (o *Ops) List(p string, depth int) ([]FileInfo, error) {
+func (o *FS) List(p string, depth int) ([]FileInfo, error) {
 	full, err := o.Resolve(p)
 	if err != nil {
 		return nil, err
@@ -368,10 +360,10 @@ func (o *Ops) List(p string, depth int) ([]FileInfo, error) {
 		return nil, err
 	}
 	if li.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("fsops: %q is a symlink, refusing to traverse", p)
+		return nil, fmt.Errorf("bedfs: %q is a symlink, refusing to traverse", p)
 	}
 	if !li.IsDir() {
-		return nil, fmt.Errorf("fsops: %q is not a directory", p)
+		return nil, fmt.Errorf("bedfs: %q is not a directory", p)
 	}
 	if depth < 1 {
 		depth = 1
@@ -409,7 +401,7 @@ const searchLimit = 1000
 
 // Search walks under p and returns files whose base name matches pattern
 // (glob when pattern contains meta characters, substring otherwise).
-func (o *Ops) Search(p, pattern string) ([]FileInfo, error) {
+func (o *FS) Search(p, pattern string) ([]FileInfo, error) {
 	full, err := o.Resolve(p)
 	if err != nil {
 		return nil, err

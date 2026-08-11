@@ -22,7 +22,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/qiankunli/hostel/internal/fsops"
+	"github.com/qiankunli/hostel/internal/bedfs"
 )
 
 // GET /files/info?path=...(&path=...) → map[path]FileInfo
@@ -37,7 +37,7 @@ func (s *Server) filesInfo(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing query parameter 'path'")
 		return
 	}
-	out := make(map[string]fsops.FileInfo, len(paths))
+	out := make(map[string]bedfs.FileInfo, len(paths))
 	for _, p := range paths {
 		fi, err := ops.Stat(p)
 		if err != nil {
@@ -79,7 +79,7 @@ func (s *Server) filesRename(c *gin.Context) {
 		return
 	}
 	defer finishOperation()
-	var items []fsops.RenameItem
+	var items []bedfs.RenameItem
 	if err := c.ShouldBindJSON(&items); err != nil {
 		badRequest(c, err.Error())
 		return
@@ -100,7 +100,7 @@ func (s *Server) filesChmod(c *gin.Context) {
 		return
 	}
 	defer finishOperation()
-	var m map[string]fsops.Permission
+	var m map[string]bedfs.Permission
 	if err := c.ShouldBindJSON(&m); err != nil {
 		badRequest(c, err.Error())
 		return
@@ -141,12 +141,12 @@ func (s *Server) filesReplace(c *gin.Context) {
 		return
 	}
 	defer finishOperation()
-	var m map[string]fsops.ReplaceItem
+	var m map[string]bedfs.ReplaceItem
 	if err := c.ShouldBindJSON(&m); err != nil {
 		badRequest(c, err.Error())
 		return
 	}
-	out := make(map[string]fsops.ReplaceResult, len(m))
+	out := make(map[string]bedfs.ReplaceResult, len(m))
 	for p, item := range m {
 		res, err := ops.Replace(p, item)
 		if err != nil {

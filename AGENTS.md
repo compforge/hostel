@@ -16,8 +16,9 @@
 - **bed id**：bed 的标识，**由调用方给定、对 hostel 不透明**——hostel 不解释其业务语义（不认识 conversation / tenant 等上层概念，也不据此派生任何子目录）；缺省兜底 id 为 `default`，只服务原生 API 的无 bed 路由，不属于 isolated-session 兼容视图。
 - **workspace-root**：所有 bed 目录的**父目录**，**可配、不写死**（`--workspace-root` / `HOSTEL_WORKSPACE_ROOT`，默认 `/workspace`）；**daemon 启动时创建一次**。
 - **bed 目录**：`{workspace-root}/{bed id}`，含 `meta.json`（可移植身份）+ `data/`；**该 bed 首次被 Ensure（即首次收到指向它的请求）时惰性创建**。
-- **bed_home（data 目录）**：`{bed 目录}/data`——**客户端视角的 `/`**，bed 表现得像独占整个 pod fs：任意客户端绝对路径单射 rebase 到它下面、回显对称；持久化 / 快照的对象，bed 只见它。
-- **bed workspace**：`bed_home/workspace` 真实子目录（非别名）——OpenSandbox 契约的 `/workspace`（`fsops.VirtualPrefix`）、相对路径的基准、默认 cwd、suite 下的真实挂载点。
+- **BedFS**：Bed 持有的文件系统数据域；统一拥有 bed_home、workspace、客户端/宿主/Executor 三个路径空间与文件操作。Executor 替换不改变 BedFS 身份，详见 `docs/filesystem.md`。
+- **bed_home（data 目录）**：BedFS 的宿主根 `{bed 目录}/data`——**客户端视角的 `/`**，任意客户端绝对路径单射 rebase 到它下面、回显对称；持久化 / 快照的对象，bed 只见它。
+- **bed workspace**：`bed_home/workspace` 真实子目录（非别名）——OpenSandbox 契约的 `/workspace`（`bedfs.WorkspacePath`）、相对路径的基准、默认 cwd、suite 下的真实挂载点。
 - **房型（dorm / room / suite）**：bed 的隔离档，与 bed 正交（见〈关键约定〉isolation）。
 - **luggage**：bed evict 后留在本机的现场缓存（快照才是身份，luggage 只是加速）。
 - **amenity**：bed 外由 hostel 统一管理的共享重资产设施（Chromium / Jupyter…）。
@@ -42,15 +43,17 @@ tini (pid1)                       pod 级收尸兜底
 
 ```
 客户端任意路径：/workspace/x → data/workspace/x；/tmp/x → data/tmp/x；相对路径 = workspace 相对
-   │  fsops.Resolve：单射 rebase + 拒逃逸（回显 ToClient 是其逆映射）
+   │  BedFS.Resolve：单射 rebase（回显为其逆映射）
    ▼
 <workspace-root>/                 宿主侧，所有 bed 父目录；可配 HOSTEL_WORKSPACE_ROOT，默认 /workspace，daemon 启动建
 └─ <bed id>/                      bed 目录；首次 Resolve 惰性建
    ├─ meta.json                   可移植身份
    └─ data/                       bed_home（客户端的 /）；持久化/快照对象
       └─ workspace/               OpenSandbox workspace，真实子目录
-           suite       → bind 挂载到沙箱内 /workspace（shell 路径 == file API 路径；bed_home 其余部分无进程视图名）
-           direct/room → 无挂载，shell cwd = 宿主真实目录（整个 bed_home 可达）
+
+Executor View：
+  suite       → 整个 bed_home 内部挂载 + workspace 规范挂载到 /workspace
+  direct/room → 使用宿主真实路径；隔离机制负责访问边界
 ```
 
 ## 代码地图与核心模块
@@ -76,14 +79,14 @@ internal/
 │   ├── luggage.go     luggage（evict 留下的现场缓存）：磁盘水位 GC（stale 优先→LRU）、Inventory（调度器视图）
 │   ├── shell.go       常驻 bash：CreateShell/ForegroundShell；单 reader goroutine→lines chan，Run 用 marker 分帧、单消费（状态跨 run 保持）
 │   └── command.go     一次性命令构建与启动；所有终态和观测事实归 execution.go
-├── fsops/             bed_home rooted 文件操作；Resolve 把任意客户端路径单射 rebase 进 bed_home + 拒逃逸；新建路径按属主 chown（单一属主不变式）
+├── bedfs/             BedFS 数据域：bed_home/workspace、client/carrier/Executor 路径投影与文件操作；新建路径按属主 chown
 ├── store/             Hostel 直管的 bed 持久化与 Restore：Store 接口 + noop/s3(desync 内容寻址增量,只传变更块)，默认 auto 按 bucket 有无解析；见 docs/store.md
 ├── resource/          per-bed cgroup v2 记账 + carrier CPU/内存准入；只读准入不要求子树委派
 ├── amenity/           Amenity 接口(生命周期 State)+ Registry；chromium 实例(共享浏览器/每 bed BrowserContext)；见 docs/amenity.md
 └── web/               gin 薄适配层：server(路由+bedOf 解析) / errors / sse / files / command / beds
 ```
 
-**数据流**：请求 →`web` 按 `X-Hostel-Bed`(缺省 default) 解析 bed → 调 `bed`/`fsops` 核心 → 响应（命令走 SSE）。核心层（bed/fsops/isolation/service）**不含任何 HTTP 类型**，换框架只动 `web/`。
+**数据流**：请求 →`web` 按 `X-Hostel-Bed`(缺省 default) 解析 bed → 调 `bed`/`bedfs` 核心 → 响应（命令走 SSE）。核心层（bed/bedfs/isolation/service）**不含任何 HTTP 类型**，换框架只动 `web/`。
 
 ## 关键约定
 
@@ -105,6 +108,7 @@ internal/
 
 - 设计文档（定位、bed 模型、managed-service 框架、决策表、v1 范围与 roadmap）：`docs/kernel.md`
 - 生命周期（request / bed / hostel 三粒度、operation 与 session 两类请求、status 推导链）：`docs/lifecycle.md`
+- BedFS（bed_home、workspace、client/carrier/Executor 路径空间与职责边界）：`docs/filesystem.md`
 - 数据治理方案（tmpfs 遮蔽兄弟 bed、`/workspace` 规范挂载统一两套路径语义、降级与测试策略）：`docs/data.md`
 - Store（Hostel 直管各 bed 的持久化与 Restore；本地 workspace=工作副本、S3 快照=持久身份）：`docs/store.md`
 - 资源治理方案（carrier 采集/汇报/admission + per-bed accounting 已落地，per-bed limits 待实现）：`docs/resource.md`

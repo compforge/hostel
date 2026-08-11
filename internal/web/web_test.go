@@ -165,6 +165,27 @@ func TestAbsolutePathAndCommandCwdShareBedHome(t *testing.T) {
 	}
 }
 
+func TestCommandCwdCanBeBedRoot(t *testing.T) {
+	s := newTestServer(t)
+	rec := do(t, s, http.MethodPost, "/command",
+		strings.NewReader(`{"command":"printf bed-root > marker.txt","cwd":"/"}`),
+		map[string]string{"Content-Type": "application/json"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("command cwd=/ = %d %s", rec.Code, rec.Body.String())
+	}
+	events := parseSSE(t, rec.Body.String())
+	if len(events) == 0 || events[len(events)-1].Result == nil ||
+		events[len(events)-1].Result.Process.ExitCode == nil ||
+		*events[len(events)-1].Result.Process.ExitCode != 0 {
+		t.Fatalf("command cwd=/ events = %+v", events)
+	}
+
+	rec = do(t, s, http.MethodGet, "/files/download?path=/marker.txt", nil, nil)
+	if rec.Code != http.StatusOK || rec.Body.String() != "bed-root" {
+		t.Fatalf("bed root file = %d %q", rec.Code, rec.Body.String())
+	}
+}
+
 // parseSSE extracts the JSON event frames from an SSE body.
 func parseSSE(t *testing.T, body string) []StreamEvent {
 	t.Helper()

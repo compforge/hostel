@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 
 	ll "github.com/landlock-lsm/go-landlock/landlock"
+	"github.com/qiankunli/hostel/internal/bedfs"
 )
 
 // ConfineArg is the hidden subcommand hostel re-execs into to apply Landlock
@@ -113,24 +114,25 @@ func landlockSmoke(self, workspaceRoot string) error {
 	return fmt.Errorf("smoke test: %w (%s)", err, out)
 }
 
-func (l *landlock) Name() string       { return "landlock" }
-func (l *landlock) Level() Level       { return Room }
-func (l *landlock) Available() bool    { return true } // only constructed when ABI≥1
-func (l *landlock) MountPoint() string { return "" }   // no remount; real host paths
+func (l *landlock) Name() string                 { return "landlock" }
+func (l *landlock) Level() Level                 { return Room }
+func (l *landlock) Available() bool              { return true } // only constructed when ABI≥1
+func (l *landlock) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
+func (l *landlock) WorkspaceMounted() bool       { return false }
 
-func (l *landlock) Wrap(cmd *exec.Cmd, ws Workspace) error {
+func (l *landlock) Wrap(cmd *exec.Cmd, fs *bedfs.FS) error {
 	// Prefix `hostel __confine <bed_home> --` before the user command,
 	// so the confiner child applies Landlock then execs it. Confine to Root
 	// (not the workspace subdir): client paths like /tmp/x rebase below bed_home
 	// and must stay writable. cmd.Dir gives the shell its starting cwd — the
 	// workspace subdir (real host path, since there's no /workspace remount).
-	prefix := []string{l.self, ConfineArg, ws.Home, "--"}
+	prefix := []string{l.self, ConfineArg, fs.Home(), "--"}
 	userArgs := cmd.Args
 	cmd.Args = make([]string, 0, len(prefix)+len(userArgs))
 	cmd.Args = append(cmd.Args, prefix...)
 	cmd.Args = append(cmd.Args, userArgs...)
 	cmd.Path = l.self
-	cmd.Dir = ws.Path
+	cmd.Dir = fs.Workspace()
 	return nil
 }
 

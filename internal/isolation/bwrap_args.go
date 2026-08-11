@@ -14,16 +14,15 @@
 
 package isolation
 
+import "github.com/qiankunli/hostel/internal/bedfs"
+
 // This file has no build tag: the argv builder is pure string assembly so its
 // tests run on every platform (the exec-ing side lives in bwrap_linux.go).
 
-// BwrapMountPoint is where a bed's workspace is bind-mounted inside the
-// sandbox. Fixed and canonical: it makes shell paths and file-API paths the
-// same string, matching OpenSandbox SDK expectations. Must stay equal to
-// fsops.VirtualPrefix (the same contract seen from the file-API side); the
-// packages deliberately don't import each other, so keep the two constants
-// in sync by hand.
-const BwrapMountPoint = "/workspace"
+// bwrapBedHomeMountPoint is the mechanism-private projection of bed_home.
+// It lives under bwrap's private /tmp because the carrier root is read-only;
+// callers never need to know it and use BedFS client paths instead.
+const bwrapBedHomeMountPoint = "/tmp/.hostel/bed"
 
 // carrierSoftwareRoot is shared by every bed in the carrier. The host root is
 // otherwise read-only under suite, so this path must be re-bound read-write for
@@ -51,13 +50,15 @@ const carrierSoftwareRoot = "/usr/local"
 //     is bound (not --proc) so no procfs remount is needed under masked /proc
 //  5. Masking: --tmpfs over workspaceRoot (sibling beds cease to exist),
 //     and over each maskPath (host user data / mounted secrets)
-//  6. --bind <bed workspace> /workspace — own data only, canonical name
+//  6. Create the private BedFS mount point under /tmp, then bind bed_home
+//     there. This gives every structured BedFS path an Executor-visible name.
+//  7. --bind <bed workspace> /workspace — stable public workspace name
 //     (must come AFTER the workspaceRoot mask so it re-opens only our dir)
-//  7. --chdir /workspace, --die-with-parent, --
+//  8. --chdir /workspace, --die-with-parent, --
 //
 // maskPaths are host paths that exist. Environment ownership lives in bed's
 // process-env builder, so isolation mechanisms never inherit or filter it.
-func buildBwrapArgs(workspaceRoot, wsPath string, maskPaths []string) []string {
+func buildBwrapArgs(workspaceRoot, bedHome, workspace string, maskPaths []string) []string {
 	argv := []string{
 		// 1.
 		"--unshare-user", "--unshare-uts", "--unshare-ipc",
@@ -76,11 +77,18 @@ func buildBwrapArgs(workspaceRoot, wsPath string, maskPaths []string) []string {
 	for _, p := range maskPaths {
 		argv = append(argv, "--tmpfs", p)
 	}
-	// 6.
-	argv = append(argv, "--bind", wsPath, BwrapMountPoint)
-	// 7.
+	// 6. /tmp is a private tmpfs by now, so these mount-point directories do
+	// not require the carrier image (or root user) to pre-create anything.
 	argv = append(argv,
-		"--chdir", BwrapMountPoint,
+		"--dir", "/tmp/.hostel",
+		"--dir", bwrapBedHomeMountPoint,
+		"--bind", bedHome, bwrapBedHomeMountPoint,
+	)
+	// 7.
+	argv = append(argv, "--bind", workspace, bedfs.WorkspacePath)
+	// 8.
+	argv = append(argv,
+		"--chdir", bedfs.WorkspacePath,
 		"--die-with-parent",
 		"--",
 	)

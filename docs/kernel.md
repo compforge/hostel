@@ -15,6 +15,7 @@ OpenSandbox execd 是主要设计参考。
 ## 二、核心模型：bed
 
 - **bed = 隔离单元 = 对外一个 sandbox**：持有 workspace 数据身份、隔离配置与生命周期；它不等于某个具体进程。
+- **BedFS = bed 的文件系统数据域**：持有 bed_home、workspace 与 client/carrier/Executor 路径语义；Executor 替换只重建 View，不改变数据身份。细节见 `filesystem.md`。
 - **executor = bed 当前的进程承载域**：一个 resident bed 同时至多有一个 current Executor。Executor 是短于 Bed 的可替换身份，负责派生、查询、停止和回收进程；bed-init 与 local 是 backend，不是领域对象。
 - **execution = 一次运行**：属于一个明确的 bed id 与 executor id，拥有独立 process id、输出和结构化终态。
 - **默认 bed 兜底**：原生请求不带 bed id → 落到 `default` bed。调用方可完全无视 bed 概念（单租户体验）；它不属于 `/v1/isolated/*` 的 session 视图。
@@ -29,11 +30,11 @@ OpenSandbox execd 是主要设计参考。
 - **`/session` = 显式有状态会话**：调用方自己 create / 持有 / delete 的常驻 bash（REPL 式 `export`/`cd` 延续）；死了只影响自己。有状态是 opt-in 的例外，不是每个 exec 的默认。
 - **进程环境按 owner 分层**：`HOSTEL_*` 只供 daemon 配置，bed 身份与能力使用 `BED_*`，生态变量保持 PATH/HOME 等标准名称；每个 bed 进程只接收显式选择的 carrier 软件环境、bed context 与本次 request env，不继承 daemon 全量环境。完整边界见 `data.md`〈敏感数据边界〉。
 
-### 路径一致性：agent 把 bed 当独享机器
+### BedFS：agent 把 bed 当独享机器
 
 **对外契约（调用方的预期）**：调用方（上层调度、planit 注入、agent 发 exec）把 bed 当独享机器——`/workspace` 就是"我的工作区"，`/workspace/skills` 就是"我的 skill"。这不是 sandctl 一家的约定，是 sync + planit 路径注入 + agent bash 三方共享的心智，pod 档下天然成立（一 pod 一 sandbox，`/workspace` 就是那份 workspace）。弱档要无差别替换 pod 档，须原样兑现：**同 pod 内 conv1 的 `/workspace` 与 conv2 的 `/workspace` 是两份不同数据、互不可见**。这一契约由 suite 完整兑现，低档只能部分兑现（见〈降级〉）。
 
-**兑现方式：`/workspace` 规范挂载（suite）**。opaque agent bash 里的字面 `/workspace/skills` 无法被 hostel 改写（file API / workdir 能经 fsops rebase，bash 内绝对路径不能），只有 mount namespace 能让它物理落进 bed——`--bind <root>/<bedID> /workspace` + tmpfs 遮蔽兄弟。`/`（`/usr /opt /bin /etc` 工具链、node、`/opt/sandbox/commands`）仍是 carrier pod 的共享只读根，agent 工具链照旧可见；隔离只加在 `/workspace` 与兄弟目录上。room/landlock、dorm 造不了挂载点，给不了这层——这是 `/workspace` 契约对 suite 的硬依赖。
+**兑现方式：BedFS + Executor View**。file API 的 path、workdir/cwd 等结构化字段先由 BedFS 映射到 bed_home，再投影到当前 Executor。suite 先 tmpfs 遮蔽兄弟 Bed，随后把完整 bed_home bind 到机制私有入口，并把 `bed_home/workspace` 额外 bind 到规范 `/workspace`；所以 `cwd="/"`、`cwd="/tmp/job"` 与 workspace cwd 都可用。opaque agent bash 里的绝对字面量无法可靠改写，只有 `/workspace/...` 由规范挂载保证同名同物；`/usr /opt /bin /etc` 等 carrier 工具链仍来自共享只读根。完整路径模型见 `filesystem.md`。
 
 **为什么独享 `/workspace` 而不独享 `/`**：bed 要的是"独享一台机器"的**数据面**——工作区私有、互不串数据；而**系统面**（`/usr /bin /lib /etc` 工具链、`/opt/sandbox/commands`、node/python 解释器、skill 自带工具）是**只读、无租户数据、天然可共享**的。让每个 bed 独享 `/` 等于每 bed 复制一整套 rootfs，与"一个 carrier pod 装一份重运行时、N 个 bed 共享它"的弱档初衷（省内存/启动、高密度）直接矛盾；而共享只读 `/` 零泄漏风险（读到的是公共二进制，不是别人的数据）。所以隔离精确地只加在**有租户数据的那一层**（`/workspace` + 兄弟目录），把无数据的系统层留作共享——这既是安全上的必要（数据面必隔离），也是成本上的最优（系统面不必复制）。代价是"独享 `/`"这类更强诉求（conv1 `ls /` 看不到 conv2）弱档不提供，需要它就上强档（microVM）。
 
@@ -113,12 +114,12 @@ type ManagedService interface {
 ## 五、isolation
 
 - `direct`（默认，全平台）：仅 chdir 到 workspace，无隔离——dev / 可信单租户；
-- `bwrap`（linux，build tag）：new mount/pid/uts/ipc ns + RO 根 + workspace bind；非 linux 退化 direct；
+- `bwrap`（linux，build tag）：user/uts/ipc + 私有 mount 视图、RO 根与 BedFS bind；非 linux 诚实降级；
 - 更强档（真 setuid / seccomp / per-bed cgroup）v1.1 按 OSEP-0013 增补。
 
 ## 六、文件与数据
 
-- **workspace = `<root>/<bedID>` 目录**；pod 里 `<root>` 是共享 RWX FS 的 bind → bed 目录天然持久、跨 pod、ms 级绑定；
+- **BedFS home = `<root>/<bedID>/data`**，workspace 是其真实子目录 `data/workspace`；Bed 目录还包含不暴露给进程的 `meta.json`。持久身份与跨 carrier 恢复由 Store 负责；
 - overlay / upper（CoW）**v1 不做**：持久数据走 rw-bind，overlay 留临时态，v1.1 再加（内核 overlayfs 的 upper 不能放网络 FS，见 `store.md`）。
 
 ## 七、目录结构
@@ -128,16 +129,19 @@ hostel/
 ├── cmd/hostel/main.go
 ├── internal/
 │   ├── config/      flags + env（HOSTEL_*）
-│   ├── bed/         bed 模型 / manager / 常驻 shell（marker 分帧）/ idle GC / service registry 钩子
-│   ├── isolation/   Isolator 接口 + direct + bwrap(linux)
-│   ├── fsops/       bed-workspace-rooted 文件操作（路径逃逸防护）
-│   ├── service/     ManagedService 接口 + registry（v1 空）
+│   ├── bed/         Bed 生命周期、Execution、shell 与 Store 同步调度
+│   ├── bedfs/       bed_home/workspace、三类路径投影与 Bed 内文件操作
+│   ├── executor/    Executor 抽象与 local / bed-init backend
+│   ├── bedinit/     Linux supervisor/reaper 与可重连 IPC
+│   ├── isolation/   Isolator 接口 + direct / landlock / uid / bwrap
+│   ├── amenity/     共享设施接口、Registry 与 Chromium
+│   ├── store/       noop / S3 快照、恢复与持久身份
 │   └── web/         gin：router / sse / files / command / beds / errors（薄适配层）
 ├── docs/kernel.md
 ├── Makefile / README.md / NOTICE / .gitignore
 ```
 
-**关键约束**：`bed` / `fsops` / `shell` / `isolation` 纯 Go、**不含任何 HTTP 类型** → 换框架只动 `web/`。
+**关键约束**：`bed` / `bedfs` / `executor` / `isolation` 纯 Go、**不含任何 HTTP 类型** → 换框架只动 `web/`。
 
 ## 八、技术选型决策
 

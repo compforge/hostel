@@ -115,10 +115,7 @@ func (m *Manager) buildBedEnv(b *Bed, requestEnv map[string]string) ([]string, e
 		env[name] = value
 	}
 
-	home := b.Workspace
-	if mount := m.iso.MountPoint(); mount != "" {
-		home = mount
-	}
+	home := m.iso.View(b.BedFS()).Workspace()
 	env["BED_ID"] = b.ID
 	env["HOME"] = home
 	env["TMPDIR"] = "/tmp"

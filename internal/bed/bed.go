@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/executor"
-	"github.com/qiankunli/hostel/internal/fsops"
 )
 
 // ShortID derives a display-only short form of a bed id for log lines. Caller
@@ -47,19 +47,12 @@ type Bed struct {
 	ID string
 	// Dir is the bed's dir: meta.json + data/ (docs/store.md §4).
 	// Snapshots pack this dir; bed code never sees it.
-	Dir string
-	// Home is Dir/data — the bed_home: the client's "/" and all the
-	// bed may touch. Everything a client path names lands below it.
-	Home string
-	// Workspace is Home/workspace — the OpenSandbox workspace: canonical
-	// /workspace bind source under suite, default cwd, browser artifact home.
-	Workspace string
+	Dir       string
 	CreatedAt time.Time // survives evict/resume via snapshot meta
 
-	// paths converts between this bed's three path spaces (client / host /
-	// in-bed). THE place for any path stitching — callers must not rebuild
-	// MountPoint()+Rel+Join by hand (that's how the exec-cwd ENOENT happened).
-	paths fsops.Paths
+	// filesystem is the Bed's durable data realm. Executor replacement changes
+	// only its process View; bed_home and file identity stay here with the Bed.
+	filesystem *bedfs.FS
 	// durable is immutable: noop treats local changes as already accepted,
 	// while a real store keeps dirty data pinned until its snapshot commits.
 	durable bool
@@ -291,9 +284,15 @@ func (b *Bed) Inflight() int {
 	return b.inflight
 }
 
-// Paths converts between this bed's path spaces (client / host / in-bed).
-// Immutable value set at creation; safe without the lock.
-func (b *Bed) Paths() fsops.Paths { return b.paths }
+// BedFS returns the filesystem owned by this Bed.
+func (b *Bed) BedFS() *bedfs.FS { return b.filesystem }
+
+// Home is the carrier path of bed_home. It is derived from BedFS rather than
+// reconstructed from the workspace-root path convention.
+func (b *Bed) Home() string { return b.filesystem.Home() }
+
+// Workspace is the carrier path of the Bed's default workspace.
+func (b *Bed) Workspace() string { return b.filesystem.Workspace() }
 
 // RecordCommand adds one finished run (foreground, session or background) to
 // the bed's usage counters. Failed runs count too — they are load all the same.

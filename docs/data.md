@@ -1,6 +1,6 @@
 # bed 数据隔离方案
 
-聚焦**数据隔离**：一个 bed 不能读、更不能写另一个 bed（或宿主）的数据。资源治理见 `resource.md`，持久化见 `store.md`，安全纵深（seccomp / 真 setuid）推后单独设计。
+聚焦**数据隔离**：一个 bed 不能读、更不能写另一个 bed（或宿主）的数据。BedFS 路径语义见 `filesystem.md`，资源治理见 `resource.md`，持久化见 `store.md`，安全纵深（seccomp / 真 setuid）推后单独设计。
 
 ## 一、理念
 
@@ -19,6 +19,7 @@
 /            ← 宿主根，只读（工具链、解释器可用）
 /usr/local   ← carrier 软件环境，所有 bed 共享且可写
 /workspace   ← 只有自己：bind <bed_home>/workspace → /workspace（rw）
+/tmp/.hostel/bed ← 机制私有：完整 bed_home 的 Executor 投影（rw）
 /tmp         ← per-process tmpfs（不跨 bed、不落盘）
 /dev /proc   ← 全新挂载
 <workspace-root>  ← tmpfs 遮蔽：兄弟 bed 的目录不可见（不是"不可读"，是"不存在"）
@@ -35,11 +36,13 @@ bwrap --unshare-user --unshare-uts --unshare-ipc \
   --dev /dev --ro-bind /proc /proc --tmpfs /tmp \
   --tmpfs <workspace-root> \            # 遮蔽所有 bed 目录
   --tmpfs /root --tmpfs /home \         # 遮蔽宿主用户数据（及存在时的 /run/secrets、/var/run/secrets）
-  --bind <bed_home>/workspace /workspace \  # 只挂自己的 workspace，且给规范名
+  --dir /tmp/.hostel --dir /tmp/.hostel/bed \
+  --bind <bed_home> /tmp/.hostel/bed \   # 完整 BedFS 的内部进程视图
+  --bind <bed_home>/workspace /workspace \  # workspace 额外保留规范名
   --chdir /workspace --die-with-parent -- <cmd>
 ```
 
-顺序敏感：`--bind /usr/local /usr/local` 必须在 `--ro-bind / /` 之后，才能把只读根里的共享软件目录重新开放为可写；`--tmpfs <workspace-root>` 同样必须在只读根之后（后挂的盖前面的）。`--bind ... /workspace` 与两者无冲突（挂载点不同）。
+顺序敏感：`--bind /usr/local /usr/local` 必须在 `--ro-bind / /` 之后，才能把只读根里的共享软件目录重新开放为可写；`--tmpfs <workspace-root>` 同样必须在只读根之后（后挂的盖前面的）。BedFS 与 workspace 的 bind 都必须在遮蔽之后，只重新开放当前 Bed 的数据。
 
 **k8s pod 内可达性（真实集群踩点）**：以上 argv 有两处不是随手选的，是让 suite 在**普通非特权 pod** 里够得着的硬前提——
 
@@ -77,7 +80,7 @@ bed 已由 `X-Hostel-Bed` 选定后，所有房型共用同一套客户端路径
 
 `/workspace` 的规范挂载是 suite 实现这份契约的一种**进程视图机制**，不是路径映射本身：
 
-- suite 把 `bed_home/workspace` bind 到 `/workspace`，shell 与 file API 在 workspace 内可直接使用同名路径；bed_home 的其余部分（如 `bed_home/tmp`）在 suite 进程视图里**没有名字**——cwd 指向 workspace 外时诚实拒绝，不猜；
+- suite 把完整 `bed_home` bind 到机制私有入口，并把 `bed_home/workspace` 额外 bind 到 `/workspace`；因此 `/`、`/tmp/job` 与 `/workspace` 等结构化 cwd 都有进程视图，workspace 内仍保持 shell 与 file API 同名；
 - direct/room 即使暂时使用宿主真实路径执行 `cd`，file API、cwd 等北向显式路径仍必须先映射到同一个 `bed_home`；
 - `capabilities.workspace_mount` 只表示是否存在 `/workspace` 真实挂载，不表示是否支持 bed-local 路径映射——后者是三档必备能力，不应作为可选 capability。
 
@@ -118,7 +121,7 @@ bedProcessEnv = carrierSoftwareEnv + bedContextEnv + requestEnv
 
 - **mac/CI 可跑**：argv 构造单测——给定 root/bedID，断言遮蔽序列、bind 目标和顺序敏感项（argv 构造放在无 build tag 的 `bwrap_args.go`，exec 侧才是 `bwrap_linux.go`）。
 - **三档共同 env 契约**：同一组测试断言 daemon 的 `HOSTEL_*`/AWS 凭据不进入 bed、allowlist 标准变量可见、`BED_ID` 正确且请求不可伪造、request env 只在本次执行生效。
-- **三档共同契约**：对 dorm/room/suite 跑同一组路径表，断言 `/workspace/a`、`/tmp/workspace/a` 和相对路径都落到对应 `bed_home`，并覆盖 `..` 与 symlink 逃逸；隔离等级只改变跨 bed 访问结果，不改变映射结果。
+- **三档共同契约**：对 dorm/room/suite 跑同一组路径表，断言 `/workspace/a`、`/tmp/workspace/a` 和相对路径都落到对应 `bed_home`，并覆盖 `..` 规范化与宿主路径越界；symlink 逃逸另以 descriptor-relative 文件操作补齐。隔离等级只改变跨 bed 访问结果，不改变映射结果。
 - **Linux 真验证**（devbox）：起两个 bed，A 写文件，断言 B 内 `ls <workspace-root>` 看不到 A 的目录、`cat` A 的宿主路径报不存在；`/workspace` 内读写互通 file API。
 - 回归：direct 模式行为不变（现有 web/bed 测试全绿）。
 
@@ -131,9 +134,9 @@ bedProcessEnv = carrierSoftwareEnv + bedContextEnv + requestEnv
 
 ## 实现状态
 
-已实现：`internal/isolation/` 在 boot 时做 bwrap 全形态 smoke，负责 namespace/遮蔽、carrier 共享 `/usr/local`、`/workspace` bind 与诚实降级；`internal/bed/env.go` 统一负责三档进程环境的 allowlist、bed context 和 request overlay。mac argv 单测覆盖共享挂载顺序，bed/web 单测覆盖命名空间与泄漏边界；**Linux 真机双 bed 验证已通过**（devbox，bwrap 0.8.0 / kernel 5.15：兄弟遮蔽、规范挂载、敏感路径、direct 负面对照全 PASS；共享软件写入尚待随 carrier 镜像联调）。
+已实现：`internal/isolation/` 在 boot 时做 bwrap 全形态 smoke，负责 namespace/遮蔽、carrier 共享 `/usr/local`、BedFS View 与诚实降级；`internal/bed/env.go` 统一负责三档进程环境的 allowlist、bed context 和 request overlay。mac argv 单测覆盖共享挂载顺序，bed/web 单测覆盖命名空间与泄漏边界；**Linux 真机验证已通过**（devbox，bwrap 0.8.0 / kernel 5.15：兄弟遮蔽、规范挂载、敏感路径、direct 负面对照，以及 `cwd=/`、`cwd=/tmp/job`、`cwd=/workspace` 与 file API 同数据均 PASS；共享软件写入尚待随 carrier 镜像联调）。
 
-**共同路径契约的兑现状态**：`fsops.Paths` 已实现 bed_home 模型——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对；进程 env 已给 `HOME`/`TMPDIR` 提供各房型内可用的标准入口。尚未补齐的部分：命令字面量的 bed-local 投影（只有 suite 能靠追加 bind 兑现）、daemon 文件操作的 symlink 防逃逸、suite 下 workspace 外的 cwd 进程视图。这些都不算某一房型的能力差异，应在三档共用层或 bwrap argv 层补齐。
+**共同路径契约的兑现状态**：Bed 持有的 `bedfs.FS` 已把 bed_home、workspace、client/carrier/Executor 三类路径落成一个领域对象——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对；三档的结构化 cwd 统一使用 BedFS View，suite 也可访问 workspace 外的 BedFS cwd。尚未补齐的部分是命令字面量的跨房型统一（不能靠字符串改写）和 daemon 文件操作的完整 symlink 防逃逸；后者继续归 BedFS，而非散落到 handler。
 
 ## 隔离分档模型：青年旅社房型（档 / 机制 / 上限 / 请求）
 
@@ -218,7 +221,7 @@ landlock 依赖内核编译了 `CONFIG_SECURITY_LANDLOCK`，我们两个真实�
 - **uid 段是假设不是保证**：`[200000,300000)` 可能与 `/etc/subuid` 的 userns 映射（第二个默认用户起 231072）或 LDAP/服务账号重叠。撞上真实身份 → bed 能碰那个身份的文件。当前威胁模型（bed 误串门，非对抗性 uid 抢占）下可接受，属部署需核对项。
 - **依赖 `fs.protected_hardlinks=1`**：`chownTree` 已跳过 `Nlink>1` 的普通文件（防 bed 硬链接宿主文件后被 `Prepare` chown 走属主提权），但纵深上仍建议部署侧保持内核默认的 `protected_hardlinks=1`——尤其 uid 档正是面向可能关掉它的老/定制内核。
 
-**workspace 单一属主不变式（已落地）**："写进 bed workspace 的一切归 bed"——workspace 曾有两个写入者（shell 以 bed uid、file API 以 daemon 身份），daemon 落盘的文件 bed 能读却改不了，属主分裂是这类 edge case 的共同根。现在 fsops 构造时读 workspace 目录属主，新建的文件/目录按属主 chown 归位（`fsops.chownNew`，best-effort：无 CAP_CHOWN 时退回旧行为，下次 `Prepare` 兜底）；沿用 `chownTree` 同款硬链接纪律（`Nlink>1` 不 rehome，防属主提权）。
+**workspace 单一属主不变式（已落地）**："写进 bed workspace 的一切归 bed"——workspace 曾有两个写入者（shell 以 bed uid、file API 以 daemon 身份），daemon 落盘的文件 bed 能读却改不了，属主分裂是这类 edge case 的共同根。现在 BedFS 构造时读 workspace 目录属主，新建的文件/目录按属主 chown 归位（`bedfs.FS.chownNew`，best-effort：无 CAP_CHOWN 时退回旧行为，下次 `Prepare` 兜底）；沿用 `chownTree` 同款硬链接纪律（`Nlink>1` 不 rehome，防属主提权）。
 
 环境能力 → 机制矩阵（`New` 的探测顺序 bwrap → landlock → uid → direct）：
 
@@ -227,7 +230,7 @@ landlock 依赖内核编译了 `CONFIG_SECURITY_LANDLOCK`，我们两个真实�
 | userns / `CAP_SYS_ADMIN` | suite / bwrap | 否（userns 免特权） |
 | 内核有 Landlock（≥5.13 且编译） | room / landlock | 否（进程自缚，零 cap） |
 | `CAP_SETUID+SETGID+CHOWN`（root 或 setcap 二进制） | room / uid | 是（非 root 形态另需 `CAP_DAC_READ_SEARCH` 做读回） |
-| 什么都没有 | dorm（fsops API 层 confine 仍在） | —— |
+| 什么都没有 | dorm（BedFS API 层 confine 仍在） | —— |
 
 注意 **landlock 是唯一"daemon 全程零特权"就能立墙的机制**；uid 的定位是"内核太老没 landlock、但能拿到 setuid 能力"这个格子的填充，不是无特权方案。
 
