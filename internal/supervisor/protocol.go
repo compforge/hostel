@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package bedinit implements the process backend for one Executor: a tiny
+// Package supervisor implements the process backend for one Executor: a tiny
 // supervisor-reaper the daemon re-execs for a Bed's current Executor. Bed
-// commands are forked BY bedinit (parentage is decided by who forks), so the
-// bed owns a real process tree: teardown = SIGTERM bedinit → it kills every
+// commands are forked by the supervisor (parentage is decided by who forks),
+// so the Executor owns a real process tree: teardown = SIGTERM supervisor → it kills every
 // descendant (a /proc ppid scan also catches reparented setsid orphans — it is
 // the subreaper) and exits. The daemon talks to it over a unix socket, one
 // RPC per connection, with stdio crossing as SCM_RIGHTS fds on Start.
@@ -24,7 +24,7 @@
 // IPC to the daemon); tini/dumb-init don't fit (pure reapers, no spawn IPC)
 // and a shell doesn't either (in-band stdin protocol — the exact fragility
 // that killed the shared foreground shell).
-package bedinit
+package supervisor
 
 import (
 	"crypto/sha256"
@@ -38,9 +38,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// InitArg is the hidden subcommand hostel re-execs into to become an Executor:
-// `hostel __bedinit --socket <path> --bed <id> --executor <id>`.
-const InitArg = "__bedinit"
+// Arg is the hidden subcommand hostel re-execs into to supervise an Executor:
+// `hostel __supervisor --socket <path> --bed <id> --executor <id>`.
+const Arg = "__supervisor"
 
 const (
 	socketNetwork  = "unixpacket"
@@ -79,7 +79,7 @@ type request struct {
 	Signal     int       `json:"signal,omitempty"`
 }
 
-// ExitStatus is the kernel-level terminal fact observed by bedinit. Keeping
+// ExitStatus is the kernel-level terminal fact observed by the supervisor. Keeping
 // signal separate from exit code avoids the lossy 128+signal convention at
 // the process boundary.
 type ExitStatusKind string
@@ -124,7 +124,7 @@ func writeMsg(conn *net.UnixConn, v any, fds []int) error {
 		return err
 	}
 	if len(payload) > maxMessageSize {
-		return fmt.Errorf("bedinit: message too large: %d bytes", len(payload))
+		return fmt.Errorf("supervisor: message too large: %d bytes", len(payload))
 	}
 	buf := make([]byte, 4+len(payload))
 	binary.BigEndian.PutUint32(buf, uint32(len(payload)))
@@ -141,7 +141,7 @@ func writeMsg(conn *net.UnixConn, v any, fds []int) error {
 		return io.ErrShortWrite
 	}
 	if oobn != len(oob) {
-		return fmt.Errorf("bedinit: short control write: got %d, want %d", oobn, len(oob))
+		return fmt.Errorf("supervisor: short control write: got %d, want %d", oobn, len(oob))
 	}
 	return nil
 }
@@ -165,17 +165,17 @@ func readMsg(conn *net.UnixConn, v any) ([]int, error) {
 		return fail(rightsErr)
 	}
 	if flags&(unix.MSG_TRUNC|unix.MSG_CTRUNC) != 0 {
-		return fail(fmt.Errorf("bedinit: message or control data truncated"))
+		return fail(fmt.Errorf("supervisor: message or control data truncated"))
 	}
 	if n < 4 {
-		return fail(fmt.Errorf("bedinit: short message: %d bytes", n))
+		return fail(fmt.Errorf("supervisor: short message: %d bytes", n))
 	}
 	need := int(binary.BigEndian.Uint32(buf[:4]))
 	if need != n-4 {
-		return fail(fmt.Errorf("bedinit: message length mismatch: header=%d payload=%d", need, n-4))
+		return fail(fmt.Errorf("supervisor: message length mismatch: header=%d payload=%d", need, n-4))
 	}
 	if err := json.Unmarshal(buf[4:n], v); err != nil {
-		return fail(fmt.Errorf("bedinit: decode message: %w", err))
+		return fail(fmt.Errorf("supervisor: decode message: %w", err))
 	}
 	return fds, nil
 }
@@ -186,13 +186,13 @@ func parseRights(oob []byte) ([]int, error) {
 	}
 	msgs, err := syscall.ParseSocketControlMessage(oob)
 	if err != nil {
-		return nil, fmt.Errorf("bedinit: parse control message: %w", err)
+		return nil, fmt.Errorf("supervisor: parse control message: %w", err)
 	}
 	var fds []int
 	for _, m := range msgs {
 		got, err := syscall.ParseUnixRights(&m)
 		if err != nil {
-			return fds, fmt.Errorf("bedinit: parse rights: %w", err)
+			return fds, fmt.Errorf("supervisor: parse rights: %w", err)
 		}
 		fds = append(fds, got...)
 	}

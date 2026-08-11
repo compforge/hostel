@@ -41,6 +41,13 @@ func newTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := mgr.Close(ctx); err != nil {
+			t.Errorf("close manager: %v", err)
+		}
+	})
 	return NewServer(mgr)
 }
 
@@ -53,6 +60,43 @@ func do(t *testing.T, s *Server, method, path string, body io.Reader, hdr map[st
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	return rec
+}
+
+func createBedAndWait(t *testing.T, s *Server, id string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"`+id+`"}`), map[string]string{"Content-Type": "application/json"})
+	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+		t.Fatalf("create bed %s = %d %s", id, rec.Code, rec.Body.String())
+	}
+	return waitBedReady(t, s, id)
+}
+
+func waitBedReady(t *testing.T, s *Server, id string) *httptest.ResponseRecorder {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		rec := do(t, s, http.MethodGet, "/v1/beds/"+id, nil, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get bed %s = %d %s", id, rec.Code, rec.Body.String())
+		}
+		var view struct {
+			Status struct {
+				Readiness struct {
+					Ready bool `json:"status"`
+				} `json:"readiness"`
+			} `json:"status"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
+			t.Fatalf("decode bed %s: %v", id, err)
+		}
+		if view.Status.Readiness.Ready {
+			return rec
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("bed %s did not become ready: %s", id, rec.Body.String())
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func TestPingAndHealthz(t *testing.T) {
@@ -322,7 +366,7 @@ func TestLostExecutorResultDoesNotExposeTransportError(t *testing.T) {
 		ExecutionID:     "exec-test",
 		BedID:           "bed-test",
 		ExecutorID:      "executor-test",
-		ExecutorBackend: "bed_init",
+		ExecutorBackend: "supervisor",
 		Process:         executor.Lost("executor-test", io.EOF),
 		Cause:           bed.CauseExecutorLost,
 	})
@@ -407,10 +451,7 @@ func TestBedIsolationAcrossHeader(t *testing.T) {
 
 func TestBedsCRUD(t *testing.T) {
 	s := newTestServer(t)
-	rec := do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"conv-1"}`), map[string]string{"Content-Type": "application/json"})
-	if rec.Code != 200 {
-		t.Fatalf("create bed = %d %s", rec.Code, rec.Body.String())
-	}
+	rec := createBedAndWait(t, s, "conv-1")
 	rec = do(t, s, "GET", "/v1/beds", nil, nil)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "conv-1") {
 		t.Fatalf("list beds = %d %s", rec.Code, rec.Body.String())
@@ -423,14 +464,14 @@ func TestBedsCRUD(t *testing.T) {
 			Sessions   map[string]int `json:"sessions"`
 		} `json:"activity"`
 		Lifecycle *struct {
-			LastActivation *struct {
+			LastInitialization *struct {
 				Action string `json:"action"`
 				Result string `json:"result"`
 				Source string `json:"source"`
 				Stages []struct {
 					Name string `json:"name"`
 				} `json:"stages"`
-			} `json:"last_activation"`
+			} `json:"last_initialization"`
 			LastPersist *struct {
 				Trigger string `json:"trigger"`
 			} `json:"last_persist"`
@@ -444,12 +485,12 @@ func TestBedsCRUD(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("decode bed detail: %v", err)
 	}
-	if detail.Lifecycle == nil || detail.Lifecycle.LastActivation == nil ||
-		detail.Lifecycle.LastActivation.Action != "activate" ||
-		detail.Lifecycle.LastActivation.Result != "success" ||
-		detail.Lifecycle.LastActivation.Source != "fresh" ||
-		len(detail.Lifecycle.LastActivation.Stages) == 0 {
-		t.Fatalf("bed detail activation = %+v", detail.Lifecycle)
+	if detail.Lifecycle == nil || detail.Lifecycle.LastInitialization == nil ||
+		detail.Lifecycle.LastInitialization.Action != "initialize" ||
+		detail.Lifecycle.LastInitialization.Result != "success" ||
+		detail.Lifecycle.LastInitialization.Source != "fresh" ||
+		len(detail.Lifecycle.LastInitialization.Stages) == 0 {
+		t.Fatalf("bed detail initialization = %+v", detail.Lifecycle)
 	}
 	if detail.Generation != 0 || len(detail.Activity.Operations) != 0 {
 		t.Fatalf("bed detail current state = generation %d activity %+v", detail.Generation, detail.Activity)
@@ -518,7 +559,7 @@ func TestMaxBedsBackpressure(t *testing.T) {
 
 	// First bed fills the only slot.
 	rec := do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"one"}`), map[string]string{"Content-Type": "application/json"})
-	if rec.Code != 200 {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("create one = %d %s", rec.Code, rec.Body.String())
 	}
 	// Second bed → 429 BED_LIMIT_EXCEEDED, whether via management API...
@@ -543,6 +584,7 @@ func TestMaxBedsBackpressure(t *testing.T) {
 	if h["max_beds"] != float64(1) {
 		t.Fatalf("healthz max_beds = %v, want 1", h["max_beds"])
 	}
+	waitBedReady(t, s, "one")
 }
 
 func TestMaxPinnedBedsBackpressure(t *testing.T) {
@@ -559,7 +601,7 @@ func TestMaxPinnedBedsBackpressure(t *testing.T) {
 	_, _ = mgr.Ensure(context.Background(), "two")
 	finish, err := mgr.BeginOperation(one, bed.OpExec, time.Minute)
 	if err != nil {
-		t.Fatalf("activate one: %v", err)
+		t.Fatalf("initialize one: %v", err)
 	}
 	// Capacity pressure never rejects a resident old guest.
 	rec := do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, map[string]string{BedHeader: "one"})
@@ -577,7 +619,7 @@ func TestMaxPinnedBedsBackpressure(t *testing.T) {
 		!pressure.Retryable || pressure.Pressure == nil ||
 		pressure.Pressure.PinnedBeds != 1 || pressure.Pressure.MaxPinnedBeds != 1 ||
 		pressure.Pressure.ResidentBeds != 2 || pressure.Pressure.MaxBeds != 3 {
-		t.Fatalf("activate two = %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("admit two = %d %s", rec.Code, rec.Body.String())
 	}
 	rec = do(t, s, http.MethodPost, "/v1/beds/two/checkpoint", nil, nil)
 	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "INSUFFICIENT_BED") {
@@ -608,7 +650,7 @@ func TestMaxPinnedBedsBackpressure(t *testing.T) {
 	finish()
 	rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, map[string]string{BedHeader: "two"})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("activate two after release = %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("admit two after release = %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -621,10 +663,7 @@ func TestCheckpointEndpointAndPersistenceReporting(t *testing.T) {
 	s := NewServer(mgr)
 
 	// Checkpoint an existing bed (noop backend → trivially succeeds).
-	rec := do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"cp"}`), map[string]string{"Content-Type": "application/json"})
-	if rec.Code != 200 {
-		t.Fatalf("create = %d", rec.Code)
-	}
+	rec := createBedAndWait(t, s, "cp")
 	rec = do(t, s, "POST", "/v1/beds/cp/checkpoint", nil, nil)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"persistence":"noop"`) {
 		t.Fatalf("checkpoint = %d %s", rec.Code, rec.Body.String())
@@ -649,18 +688,9 @@ func TestBedListEndpoint(t *testing.T) {
 	s.mgr.SetBedIdleTTL(time.Minute)
 	s.mgr.SetLuggageLimits(1000, 800)
 
-	rec := do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"inv-live"}`), map[string]string{"Content-Type": "application/json"})
-	if rec.Code != 200 {
-		t.Fatalf("create live = %d", rec.Code)
-	}
-	rec = do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"inv-idle"}`), map[string]string{"Content-Type": "application/json"})
-	if rec.Code != 200 {
-		t.Fatalf("create idle = %d", rec.Code)
-	}
-	rec = do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"inv-cold"}`), map[string]string{"Content-Type": "application/json"})
-	if rec.Code != 200 {
-		t.Fatalf("create cold = %d", rec.Code)
-	}
+	rec := createBedAndWait(t, s, "inv-live")
+	rec = createBedAndWait(t, s, "inv-idle")
+	rec = createBedAndWait(t, s, "inv-cold")
 	if rec = do(t, s, "DELETE", "/v1/beds/inv-cold", nil, nil); rec.Code != 200 {
 		t.Fatalf("evict cold = %d", rec.Code)
 	}
@@ -690,8 +720,11 @@ func TestBedListEndpoint(t *testing.T) {
 			LuggageHighBytes int64          `json:"luggage_high_bytes"`
 		} `json:"instance"`
 		Beds []struct {
-			ID           string    `json:"id"`
-			State        string    `json:"state"`
+			ID     string `json:"id"`
+			Status struct {
+				Phase    string `json:"phase"`
+				Activity string `json:"activity"`
+			} `json:"status"`
 			Pinned       bool      `json:"pinned"`
 			LastActiveAt time.Time `json:"last_active_at"`
 			RetainUntil  time.Time `json:"retained_until"`
@@ -712,9 +745,9 @@ func TestBedListEndpoint(t *testing.T) {
 	if want := live.RetainUntil(); !body.Instance.RetainUntil.Equal(want) {
 		t.Fatalf("instance retained_until = %s, want max bed retention %s", body.Instance.RetainUntil, want)
 	}
-	states := map[string]string{}
+	statuses := map[string]string{}
 	for _, b := range body.Beds {
-		states[b.ID] = b.State
+		statuses[b.ID] = b.Status.Phase + "/" + b.Status.Activity
 		if b.ID == "inv-live" && (b.LastActiveAt.IsZero() || b.RetainUntil.IsZero()) {
 			t.Fatalf("inv-live lifecycle fields = %+v", b)
 		}
@@ -722,8 +755,8 @@ func TestBedListEndpoint(t *testing.T) {
 			t.Fatalf("active inventory bed should be pinned: %+v", b)
 		}
 	}
-	if states["inv-live"] != "active" || states["inv-idle"] != "idle" || states["inv-cold"] != "dormant" {
-		t.Fatalf("bed states = %v, want active / idle / dormant", states)
+	if statuses["inv-live"] != "resident/active" || statuses["inv-idle"] != "resident/idle" || statuses["inv-cold"] != "dormant/" {
+		t.Fatalf("bed statuses = %v, want resident/active, resident/idle, dormant", statuses)
 	}
 
 	// Evict every resident bed under the noop store: the local luggage is the
@@ -751,8 +784,8 @@ func TestBedListEndpoint(t *testing.T) {
 func TestDeleteEvictVsPurge(t *testing.T) {
 	s := newTestServer(t)
 	// Create, then default DELETE = evict (noop store: no snapshot, but 200).
-	rec := do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"lifecycle"}`), map[string]string{"Content-Type": "application/json"})
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"state":"idle"`) {
+	rec := createBedAndWait(t, s, "lifecycle")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"activity":"idle"`) {
 		t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
 	}
 	rec = do(t, s, "DELETE", "/v1/beds/lifecycle", nil, nil)

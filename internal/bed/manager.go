@@ -65,9 +65,13 @@ type Manager struct {
 
 	mu   sync.Mutex
 	beds map[string]*Bed
+	// initializations contains both in-flight work and recently failed status.
+	// It is separate from beds so a partially prepared BedFS can never be
+	// resolved by data-plane requests.
+	initializations map[string]*bedInitialization
 	// residentBeds mirrors len(beds) for lock-free instance health reads.
 	// Map mutations update it under mu; healthz may observe either side of an
-	// in-flight mutation, but never waits behind activation or restore work.
+	// in-flight mutation, but never waits behind initialization or restore work.
 	residentBeds atomic.Int64
 }
 
@@ -101,7 +105,7 @@ func (e *InsufficientBedError) Error() string {
 func (e *InsufficientBedError) Unwrap() error { return ErrInsufficientBed }
 
 // ErrResourcePressure is returned when aggregate carrier CPU or memory usage
-// is already too high to activate another tenant bed.
+// is already too high to initialize another tenant bed.
 var ErrResourcePressure = errors.New("bed: carrier resource admission threshold reached")
 
 // ErrBedUnavailable means the caller holds a stale Bed pointer whose resident
@@ -136,11 +140,12 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		maxBeds:         maxBeds,
 		// Zero max-pinned-beds inherits this value; initialize the effective
 		// default here so direct Manager users get the same semantics as main.
-		maxPinnedBeds: maxBeds,
-		store:         st,
-		storeSync:     make(chan struct{}, 1),
-		processEnv:    processEnv,
-		beds:          make(map[string]*Bed),
+		maxPinnedBeds:   maxBeds,
+		store:           st,
+		storeSync:       make(chan struct{}, 1),
+		processEnv:      processEnv,
+		beds:            make(map[string]*Bed),
+		initializations: make(map[string]*bedInitialization),
 	}, nil
 }
 
@@ -290,6 +295,19 @@ func (m *Manager) tenantResidentBedsLocked() int {
 	return n
 }
 
+// tenantOccupiedBedsLocked includes initializing beds because admission must
+// reserve their eventual resident slot before any slow Store I/O starts.
+// Callers must hold m.mu.
+func (m *Manager) tenantOccupiedBedsLocked() int {
+	n := m.tenantResidentBedsLocked()
+	for id, initialization := range m.initializations {
+		if id != m.defaultBed && initialization.status.Phase == PhaseInitializing {
+			n++
+		}
+	}
+	return n
+}
+
 // StoreName reports the persistence backend for capabilities reporting.
 func (m *Manager) StoreName() string { return m.store.Name() }
 
@@ -300,42 +318,13 @@ func (m *Manager) DefaultBedID() string { return m.defaultBed }
 // deadlines. It is startup configuration and must be called before serving.
 func (m *Manager) SetBedIdleTTL(ttl time.Duration) { m.bedIdleTTL = ttl }
 
-// Ensure returns the bed for id, creating it on first use. An empty id maps to
-// the default bed — so callers that don't know about beds still get one.
-func (m *Manager) Ensure(ctx context.Context, id string) (resolved *Bed, retErr error) {
-	if id == "" {
-		id = m.defaultBed
-	}
-	if err := validBedID(id); err != nil {
-		return nil, err
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if b, ok := m.beds[id]; ok {
-		// Resolution is not admitted work. Touching here would make a synced
-		// idle bed look dirty before BeginOperation can apply pressure.
-		return b, nil
-	}
-	// Admit NEW resident beds here. Existing residents reach their final
-	// admission boundary in BeginOperation: unpinned idle beds may be refused,
-	// while pinned beds retain this carrier. Dormant restore also
-	// passes this boundary because its durable data no longer belongs here.
-	//
-	// The default bed is the single-tenant fallback and
-	// must never be refused (a full instance still serves its primary tenant)
-	// nor counted — max-beds means "N tenant beds", not "N-1 once the default
-	// bed happens to exist".
-	if m.maxBeds > 0 && id != m.defaultBed {
-		if m.tenantResidentBedsLocked() >= m.maxBeds {
-			return nil, ErrBedLimit
-		}
-	}
-	if id != m.defaultBed {
-		if err := m.carrierAdmissionErrorLocked(); err != nil {
-			return nil, err
-		}
-	}
-	trace := beginLifecycle(ctx, id, lifecycleActivate)
+// initializeResidentBed performs the slow, private part of Bed
+// initialization. Admission and single-flight ownership are established by
+// InitializeBed before this function runs; it must not hold m.mu while doing
+// Store or filesystem I/O.
+func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bedInitialization) (resolved *Bed, retErr error) {
+	id := initialization.status.ID
+	trace := beginLifecycle(ctx, id, lifecycleInitialize)
 	defer func() {
 		record := trace.finish(lifecycleResult(retErr), retErr)
 		if resolved != nil {
@@ -344,58 +333,33 @@ func (m *Manager) Ensure(ctx context.Context, id string) (resolved *Bed, retErr 
 	}()
 	bedDir := filepath.Join(m.root, id)
 	dataDir := filepath.Join(bedDir, "data")
-	if err := os.MkdirAll(bedDir, 0o755); err != nil {
-		return nil, fmt.Errorf("bed: create bed dir %s: %w", bedDir, err)
-	}
 	// Resume: prefer the local copy (luggage) when its generation says it is
 	// at least as new as the snapshot — evict→resume on the same instance
 	// then costs no download. A stale local copy (the bed ran elsewhere
-	// meanwhile) is discarded, never merged. A restore failure fails the
-	// ensure — silently starting empty when a snapshot exists would look
-	// like data loss.
-	restored := false
-	var restoreMs int64
-	var snapshot *store.SnapshotInfo
-	if err := trace.stage("stat_snapshot", func() error {
+	// meanwhile) is replaced atomically, never merged. A restore failure leaves
+	// the old luggage untouched and fails initialization rather than silently
+	// starting empty.
+	local, localPresent := loadMeta(bedDir)
+	var staged store.StageInResult
+	if err := trace.stage("stage_in_bedfs", func() error {
 		var err error
-		snapshot, err = m.store.Stat(ctx, id)
+		staged, err = store.StageInBedFS(ctx, m.store, store.StageInRequest{
+			BedID:           id,
+			BedDir:          bedDir,
+			LocalPresent:    localPresent,
+			LocalGeneration: local.Generation,
+			OnStep: func(step store.StageInStep) {
+				m.updateInitializationStageIn(initialization, step)
+			},
+		})
+		trace.source = string(staged.Source)
 		return err
 	}); err != nil {
-		return nil, fmt.Errorf("bed: check snapshot %s: %w", id, err)
-	}
-	_ = trace.stage("select_source", func() error {
-		trace.source = "fresh"
-		if snapshot == nil {
-			return nil
-		}
-		trace.source = "luggage"
-		local, ok := loadMeta(bedDir)
-		if !ok || local.Generation < snapshot.Generation {
-			trace.source = "snapshot"
-		}
-		return nil
-	})
-	if trace.source == "snapshot" {
-		if err := trace.stage("restore", func() error {
-			if err := os.RemoveAll(bedDir); err != nil {
-				return fmt.Errorf("drop stale luggage: %w", err)
-			}
-			if err := os.MkdirAll(bedDir, 0o755); err != nil {
-				return fmt.Errorf("recreate bed dir: %w", err)
-			}
-			t0 := time.Now()
-			if err := m.store.Restore(ctx, id, bedDir); err != nil {
-				return err
-			}
-			restoreMs = time.Since(t0).Milliseconds()
-			restored = true
-			return nil
-		}); err != nil {
-			return nil, fmt.Errorf("bed: restore %s: %w", id, err)
-		}
+		return nil, fmt.Errorf("bed: stage in BedFS %s: %w", id, err)
 	}
 	wsDir := filepath.Join(dataDir, "workspace")
-	if err := trace.stage("prepare_workspace", func() error {
+	m.updateInitialization(initialization, "PreparingBedFS", "preparing BedFS and isolation")
+	if err := trace.stage("prepare_bedfs", func() error {
 		if err := os.MkdirAll(wsDir, 0o755); err != nil {
 			return err
 		}
@@ -411,7 +375,7 @@ func (m *Manager) Ensure(ctx context.Context, id string) (resolved *Bed, retErr 
 	now := time.Now()
 	var meta bedMeta
 	var b *Bed
-	if err := trace.stage("commit_resident", func() error {
+	if err := trace.stage("prepare_resident", func() error {
 		var ok bool
 		meta, ok = loadMeta(bedDir)
 		if !ok {
@@ -423,12 +387,12 @@ func (m *Manager) Ensure(ctx context.Context, id string) (resolved *Bed, retErr 
 		// Dirty-tracking baseline: a just-restored bed is in sync NOW; a dir
 		// that survived a process restart trusts its on-disk timestamp.
 		persistedAt := meta.LastPersistedAt
-		if restored || persistedAt.IsZero() {
+		if staged.Restored || persistedAt.IsZero() {
 			persistedAt = now
 		}
 		usage := meta.Usage
-		if restored {
-			usage.LastRestoreMs = restoreMs
+		if staged.Restored {
+			usage.LastRestoreMs = staged.RestoreDuration.Milliseconds()
 		}
 		retainUntil := time.Time{}
 		if m.bedIdleTTL > 0 {
@@ -447,27 +411,18 @@ func (m *Manager) Ensure(ctx context.Context, id string) (resolved *Bed, retErr 
 			inflightByKind:     make(map[OperationKind]int),
 			filesystem:         bedfs.New(dataDir),
 		}
-		m.beds[id] = b
-		m.residentBeds.Add(1)
-		if id != m.defaultBed && b.pinnedLocked() {
-			m.pinnedBeds.Add(1)
-			m.RequestStoreSync()
-		}
 		resolved = b
-		if snapshot != nil {
-			b.snapshotGeneration = snapshot.Generation
-			b.snapshotBytes = snapshot.Bytes
-			meta.SnapshotGeneration = snapshot.Generation
-			meta.SnapshotBytes = snapshot.Bytes
+		if staged.Snapshot != nil {
+			b.snapshotGeneration = staged.Snapshot.Generation
+			b.snapshotBytes = staged.Snapshot.Bytes
+			meta.SnapshotGeneration = staged.Snapshot.Generation
+			meta.SnapshotBytes = staged.Snapshot.Bytes
 			_ = saveMeta(bedDir, meta)
 		}
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("bed: write meta %s: %w", id, err)
 	}
-	// The one place the full id is logged: everything downstream logs Short(),
-	// so this line is the grep anchor from a control-plane sandbox id.
-	log.Printf("hostel bed resident: bed=%s short=%s restored=%v", id, b.Short(), restored)
 	return b, nil
 }
 
@@ -520,6 +475,9 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 	b, ok := m.beds[id]
 	m.mu.Unlock()
 	if !ok {
+		if m.cancelInitialization(ctx, id) {
+			return true, nil
+		}
 		return false, nil // not resident; nothing to evict
 	}
 	trace := beginLifecycle(ctx, id, lifecycleEvict)
@@ -614,6 +572,15 @@ func (m *Manager) Purge(ctx context.Context, id string) error {
 	if err := validBedID(id); err != nil {
 		return err
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// Purge must join an in-flight initializer before removing the directory;
+	// otherwise a canceled request could return while Restore recreates data
+	// after the identity was declared gone.
+	cancelCtx, cancelInitialization := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
+	m.cancelInitialization(cancelCtx, id)
+	cancelInitialization()
 	m.mu.Lock()
 	b, ok := m.beds[id]
 	if ok {
@@ -634,9 +601,6 @@ func (m *Manager) Purge(ctx context.Context, id string) error {
 		return err
 	}
 	// DORMANT (or never-existed) beds still have a snapshot to remove.
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
 	defer cancel()
 	return m.store.Delete(deleteCtx, id)
@@ -668,6 +632,7 @@ func (m *Manager) Close(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	m.cancelAllInitializations(ctx)
 	var closeErr error
 	for _, b := range m.List() {
 		m.executions.killBed(b.ID, CauseDaemonShutdown)

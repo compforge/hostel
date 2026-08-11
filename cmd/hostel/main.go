@@ -34,12 +34,12 @@ import (
 
 	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bedinit"
 	"github.com/qiankunli/hostel/internal/config"
 	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/resource"
 	"github.com/qiankunli/hostel/internal/store"
+	"github.com/qiankunli/hostel/internal/supervisor"
 	"github.com/qiankunli/hostel/internal/tracing"
 	"github.com/qiankunli/hostel/internal/web"
 )
@@ -57,8 +57,8 @@ func main() {
 			os.Exit(runConfine(os.Args[2:]))
 		case isolation.AsUserArg: // uid: __asuser <uid> <dataDir> -- <cmd>...
 			os.Exit(runAsUser(os.Args[2:]))
-		case bedinit.InitArg: // bed-init Executor: __bedinit --socket S --bed B --executor E
-			os.Exit(bedinit.Run(os.Args[2:]))
+		case supervisor.Arg: // supervised Executor: __supervisor --socket S --bed B --executor E
+			os.Exit(supervisor.Run(os.Args[2:]))
 		}
 	}
 
@@ -172,16 +172,16 @@ func main() {
 	}
 
 	// Select one Executor backend before request admission. Auto is an honest
-	// portability fallback; explicitly requesting bed_init fails closed.
+	// portability fallback; explicitly requesting supervisor fails closed.
 	switch cfg.Executor {
 	case "local":
 		mgr.SetExecutorFactory(executor.NewLocalFactory(resources))
-	case "auto", "bed_init":
+	case "auto", "supervisor":
 		exe, executableErr := os.Executable()
-		var factory *executor.BedInitFactory
+		var factory *executor.SupervisorFactory
 		var factoryErr error
 		if executableErr == nil {
-			factory, factoryErr = executor.NewBedInitFactory(exe, resources)
+			factory, factoryErr = executor.NewSupervisorFactory(exe, resources)
 		}
 		probeCtx, cancelProbe := context.WithTimeout(context.Background(), 5*time.Second)
 		if factoryErr == nil && executableErr == nil {
@@ -192,14 +192,14 @@ func main() {
 			if factory != nil {
 				_ = factory.Close()
 			}
-			if cfg.Executor == "bed_init" {
-				log.Fatalf("hostel: bed-init executor unavailable: executable=%v probe=%v", executableErr, factoryErr)
+			if cfg.Executor == "supervisor" {
+				log.Fatalf("hostel: supervisor executor unavailable: executable=%v probe=%v", executableErr, factoryErr)
 			}
-			log.Printf("hostel: bed-init executor unavailable, using local executor: executable=%v probe=%v", executableErr, factoryErr)
+			log.Printf("hostel: supervisor executor unavailable, using local executor: executable=%v probe=%v", executableErr, factoryErr)
 			mgr.SetExecutorFactory(executor.NewLocalFactory(resources))
 		} else {
 			mgr.SetExecutorFactory(factory)
-			log.Printf("hostel: bed-init executor enabled")
+			log.Printf("hostel: supervisor executor enabled")
 		}
 	default:
 		log.Fatalf("hostel: invalid executor backend %q", cfg.Executor)

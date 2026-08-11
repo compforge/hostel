@@ -16,10 +16,11 @@ OpenSandbox execd 是主要设计参考。
 
 - **bed = 隔离单元 = 对外一个 sandbox**：持有 workspace 数据身份、隔离配置与生命周期；它不等于某个具体进程。
 - **BedFS = bed 的文件系统数据域**：持有 bed_home、workspace 与 client/carrier/Executor 路径语义；Executor 替换只重建 View，不改变数据身份。细节见 `filesystem.md`。
-- **executor = bed 当前的进程承载域**：一个 resident bed 同时至多有一个 current Executor。Executor 是短于 Bed 的可替换身份，负责派生、查询、停止和回收进程；bed-init 与 local 是 backend，不是领域对象。
+- **executor = bed 当前的进程承载域**：一个 resident bed 同时至多有一个 current Executor。Executor 是短于 Bed 的可替换身份，负责派生、查询、停止和回收进程；supervisor 与 local 是 backend，不是领域对象。
 - **execution = 一次运行**：属于一个明确的 bed id 与 executor id，拥有独立 process id、输出和结构化终态。
 - **默认 bed 兜底**：原生请求不带 bed id → 落到 `default` bed。调用方可完全无视 bed 概念（单租户体验）；它不属于 `/v1/isolated/*` 的 session 视图。
 - **bed 路由**：HTTP header `X-Hostel-Bed`（或 query `bed`），缺省 default。
+- **bed 初始化**：`InitializeBed` 接受 desired bed 后立即返回 `initializing`，后台完成 BedFS Stage-in、隔离准备和 resident 发布；`status.phase` 与 `status.readiness` 是控制面观察点。原生数据面的 `Ensure` 复用同一初始化并等待 Ready，不会取得半成品 Bed。
 - 一个 pod 只用 default bed = 独占；多 bed = 共享，每 bed 仍有私有 ns / workspace / shell state。
 - **idle GC**：bed 空闲超时回收（默认 30min，可配；default bed 永不回收）。
 
@@ -56,20 +57,19 @@ tini (pid=1)                      ← pod 级收尸兜底
      ├─ jupyter  (amenity)
      └─ bed A                     ← workspace / sandbox 持久身份，不是 OS 进程
           └─ executor E1          ← 当前 0/1；丢失后可替换为 E2
-               └─ bed-init       ← Linux backend 的具体 supervisor 进程
+               └─ supervisor     ← Linux backend 的具体 supervisor 进程
                     ├─ execution X 的 process
                     └─ session shell
 ```
 
 - **Bed 与 Executor 解耦**：Bed 的 workspace、generation、retention 不随 Executor 消亡；Executor lost 时，其在途 Execution 以 `process.kind=lost`、`termination_cause=executor_lost` 结束，下一次请求为同一 Bed 创建新 Executor id。API 不透传 Unix socket 的裸 EOF，transport detail 只进服务端日志与 Trace。
 - **Executor 契约**：调用方生成 process id；`Start(processID, spec)` 幂等，重复 id + 同 spec 返回同一进程，重复 id + 不同 spec 拒绝；`Get` / `Wait` 可换连接重试；每次请求携带 executor id 做 fencing，旧连接不能误投给替代实例；terminal status 保留到 Executor 结束。
-- **bed-init 是 Linux backend**：hostel re-exec 自己成为小型 supervisor，unixpacket + `SCM_RIGHTS` 传 stdio，负责 fork、subreaper 收尸与整树 Shutdown。信号与 Shutdown RPC 走同一优雅退出状态机，不在 signal goroutine 直接 `os.Exit`。Linux 里父子关系由 fork 方决定，所以单纯让 daemon 设 subreaper 无法替代这一层。
+- **supervisor 是 Linux backend**：hostel re-exec 自己成为每 Executor 一个的小型 supervisor，unixpacket + `SCM_RIGHTS` 传 stdio，负责 fork、subreaper 收尸与整树 Shutdown。信号与 Shutdown RPC 走同一优雅退出状态机，不在 signal goroutine 直接 `os.Exit`。Linux 里父子关系由 fork 方决定，所以单纯让 daemon 设 subreaper 无法替代这一层。
 - **local 是可移植 backend**：命令是 daemon 的直接子进程，以独立 pgid 管理。它保持相同 Executor / Process 接口与结构化终态，但不承诺清理脱离 pgid 的 double-fork 进程。
-- **为什么不直接叫 bed-init**：领域层需要表达“当前承载实例可丢、Bed 数据身份仍在”；bed-init 只是一个实现。未来把持久 namespace、remote worker 或其它 supervisor 接入时，只新增 backend，不改变 Bed / Execution API。
-- **对照 execd**：execd 是 daemon 直接派生的平树；其 pgid 与 zombie 处理对应 local backend。bed-init backend 通过真实父子树解决整域回收问题。
+- **对照 execd**：execd 是 daemon 直接派生的平树；其 pgid 与 zombie 处理对应 local backend。supervisor backend 通过真实父子树解决整域回收问题。
 - **amenity 监督内置于 daemon，不设独立 amenity-manager 进程**：pod 语义下 hostel 是主容器进程，hostel 死 = pod 重启，独立 manager 买不到任何存活性，只多一层 IPC 和"谁重启 manager"。`amenity.Registry` 升级为 supervisor（健康检查 → backoff 重启）；崩溃重启后的租约走**惰性重建**——tenant 标失效，下次 `AcquireTenant` 重建切片（bed 侧感知为一次"新开"），避免主动全量重建的重启风暴。
 - **后续边界**：suite 的持久 namespace + PID 1 可作为新 Executor backend 能力演进；cgroup v2 `cgroup.kill` 只补强“杀”，不替代 supervisor 的收尸与终态所有权。
-- **实现锚点**：抽象与 backend 在 `internal/executor`；bed-init 协议和 supervisor 在 `internal/bedinit`；Bed 只持有 current Executor，Execution 只消费 Process 终态。
+- **实现锚点**：抽象与 backend 在 `internal/executor`；re-exec 协议和 supervisor/reaper 在 `internal/supervisor`；Bed 只持有 current Executor，Execution 只消费 Process 终态。
 
 ## 三、通用 managed-service 框架
 
@@ -107,7 +107,7 @@ type ManagedService interface {
 - `/command`：前台/后台共享同一个 `Execution` 生命周期，只差 initiating request 是否等待；SSE 依次表达 execution_start、stdout/stderr、execution_end，终态区分 exited / signaled / lost，并保留 timeout / cancel / interrupt / teardown cause；后台带 `/command/status/{id}` + `/command/{id}/logs`
 - `/session`：bash 会话 create / run / delete（显式有状态会话，常驻 shell 只存在于此）
 - `/v1/isolated/*`：`session_id` 与非 default bed ID 一一对应；default 只服务原生 API 的缺省路由，不向 session list / attach 暴露。该视图复用 bed 的生命周期、常驻 shell、Execution 与文件/目录能力，不再维护平行状态。当前支持 balanced + 读写 `/workspace` + 共享网络，超出能力边界的参数明确返回 `NOT_SUPPORTED`
-- `/v1/beds`：CRUD + capabilities（hostel 特有，bed 管理）
+- `/v1/beds`：管理与 capabilities（hostel 特有）；POST 接受初始化并返回 `202 initializing`，GET 通过 phase/readiness 观察进度与失败原因
 
 **v1 不做（v1.1+）**：`/code`（委托 Jupyter，AS 用不上，砍）、`/pty` WS。`/v1/isolated/*` 的 diff / commit 路由为兼容性保留并明确报告不支持；持久身份仍由 bed 快照负责，不另造 isolated-session persist。
 
@@ -131,8 +131,8 @@ hostel/
 │   ├── config/      flags + env（HOSTEL_*）
 │   ├── bed/         Bed 生命周期、Execution、shell 与 Store 同步调度
 │   ├── bedfs/       bed_home/workspace、三类路径投影与 Bed 内文件操作
-│   ├── executor/    Executor 抽象与 local / bed-init backend
-│   ├── bedinit/     Linux supervisor/reaper 与可重连 IPC
+│   ├── executor/    Executor 抽象与 local / supervisor backend
+│   ├── supervisor/  Linux supervisor/reaper 与可重连 IPC
 │   ├── isolation/   Isolator 接口 + direct / landlock / uid / bwrap
 │   ├── amenity/     共享设施接口、Registry 与 Chromium
 │   ├── store/       noop / S3 快照、恢复与持久身份

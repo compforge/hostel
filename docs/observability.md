@@ -5,7 +5,7 @@
 hostel 需要从三个层面回答同一组问题：
 
 1. bed 当前能否接收请求、何时可以安全回收；
-2. 最近一次激活、持久化或回收是否成功；
+2. 最近一次初始化、持久化或回收是否成功；
 3. 一次 execution 是否正常退出；若被终止，内核观察和发起原因分别是什么；
 4. 慢或失败具体发生在哪个等待边界。
 
@@ -20,7 +20,9 @@ hostel 需要从三个层面回答同一组问题：
 
 `Status` 是当前状态的唯一事实源：
 
-- `state=active|idle|evicting|dormant` 表示互斥操作态；
+- `phase=initializing|resident|evicting|dormant|failed` 表示 Bed 生命周期位置；
+- `readiness.status/reason/message/updated_at` 表示是否可接收数据面请求及当前等待或失败边界；
+- `activity=active|idle` 表示 resident / evicting Bed 当前有无 operation，由 inflight 派生；
 - `generation` 表示本地数据版本；
 - `retained_until` 表示最早安全回收期限；
 - `inflight` 表示仍在执行的 bed 请求数。
@@ -39,11 +41,11 @@ hostel 需要从三个层面回答同一组问题：
 
 生命周期 action 包含：
 
-- **activate**：为一个非 resident bed 选择 fresh / luggage / snapshot 来源并使其可服务；
+- **initialize**：为一个非 resident bed Stage-in fresh / luggage / snapshot，准备 BedFS 并发布 resident；
 - **persist**：串行生成新 generation、写入 store、提交持久化水位；
 - **evict**：尝试持久化并移除 resident runtime，可能因并发活动而 canceled。
 
-resident bed 只保留最近一次 activation 和 persist。它们是有界诊断摘要，不是历史库；
+resident bed 只保留最近一次 initialization 和 persist。它们是有界诊断摘要，不是历史库；
 evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史由日志与 Trace 承担。
 
 ## 主流程
@@ -63,7 +65,7 @@ bed core
 
 阶段按真实等待边界划分，而不是按函数数量划分：
 
-- activate：`stat_snapshot → select_source → [restore] → prepare_workspace → commit_resident`
+- initialize：`stage_in_bedfs → prepare_bedfs → prepare_resident`；Stage-in 的内部等待边界另投影为 readiness reason（inspect/select/restore）
 - persist：`wait_persist_lock → prepare_snapshot → persist_store → commit_watermark`
 
 阶段集合是诊断契约。新增阶段应表示新的可行动等待边界，不能仅为某次故障增加同义概念。
@@ -96,10 +98,10 @@ Gin 路由模板命名；`/healthz`、`/ping`、`/metrics`、`/metrics/watch` �
 领域 span 保持小而稳定：
 
 - `hostel.execution`：覆盖前台、后台和 session execution 的完整进程生命周期；
-- `hostel.bed.activate` / `hostel.bed.persist` / `hostel.bed.evict`：覆盖一次 bed 管理动作；
+- `hostel.bed.initialize` / `hostel.bed.persist` / `hostel.bed.evict`：覆盖一次 bed 管理动作；
 - lifecycle stage 记录为 `stage.start` / `stage.end` event，不为每个函数制造 child span。
 
-后台 execution 继承发起请求的 trace identity，但不继承请求取消信号，因此 HTTP 响应返回后仍能
+后台 initialization / execution 继承发起请求的 trace identity，但不继承请求取消信号，因此 HTTP 响应返回后仍能
 完整记录命令终态。span 只包含 execution id、bed id、mode、executor id/backend、process outcome、termination
 cause、exit code/signal、action/stage/result/source/trigger 与耗时；禁止写入 command、env、stdout、
 stderr、路径和错误原文以外的用户数据。
@@ -108,21 +110,21 @@ stderr、路径和错误原文以外的用户数据。
 daemon shutdown 属于预期控制动作，不把 trace 标红。启用 Trace 但未配置 endpoint 时保持 no-op；
 两种 endpoint 同时存在时优先 gRPC，与 sandctl 的部署语义一致。
 
-bed-init 的 transport 失败以 `executor.transport.failure` event 和 warning 日志记录 operation、
+supervisor backend 的 transport 失败以 `executor.transport.failure` event 和 warning 日志记录 operation、
 attempt、executor/process identity 与错误原文；重连成功再记录 `executor.transport.recovered`。因此瞬态
 EOF 即使被内部重试吸收也可观测。对外 execution 结果仍只暴露稳定的 `executor_lost`，不泄漏 Unix
 socket 实现细节；`GetFileMetadata` 等业务操作名由调用方 span 负责。
 
 ## 接口
 
-`GET /v1/beds` 是调度 hint：实例容量、state 数量、每个本机 bed（resident + dormant
-luggage）的当前三维事实，不承载 timeline。
+`GET /v1/beds` 是调度 hint：实例容量、phase/activity 数量、每个本机 bed（initializing / failed /
+resident / dormant luggage）的当前事实，不承载 timeline。
 
-`GET /v1/beds/:id` 是单 bed 诊断入口，在基本视图之外返回：
+`GET /v1/beds/:id` 是单 bed 诊断入口。初始化期间先返回 phase/readiness；resident 后在基本视图之外返回：
 
 - 当前 `generation` 和 `activity`（operations / sessions 按 kind 计数）；
 - 当前 `executor`（id / backend / state；尚未创建时省略）；
-- `lifecycle.last_activation`；
+- `lifecycle.last_initialization`；
 - `lifecycle.last_persist`。
 
 每条 record 包含 action 结果、来源或触发原因、起止时间、总耗时、阶段耗时和失败阶段。

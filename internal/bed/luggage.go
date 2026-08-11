@@ -65,8 +65,11 @@ func (m *Manager) ListLuggage() []LuggageEntry {
 		return nil
 	}
 	m.mu.Lock()
-	active := make(map[string]bool, len(m.beds))
+	active := make(map[string]bool, len(m.beds)+len(m.initializations))
 	for id := range m.beds {
+		active[id] = true
+	}
+	for id := range m.initializations {
 		active[id] = true
 	}
 	m.mu.Unlock()
@@ -166,6 +169,10 @@ func (m *Manager) removeLuggage(id string) bool {
 		m.mu.Unlock()
 		return false
 	}
+	if _, ok := m.initializations[id]; ok {
+		m.mu.Unlock()
+		return false
+	}
 	if err := os.Rename(dir, tmp); err != nil {
 		m.mu.Unlock()
 		return false
@@ -189,12 +196,12 @@ func (m *Manager) sweepGCLeftovers() {
 }
 
 // InventoryBed is one row of the scheduler-facing inventory: every bed this
-// instance holds, resident (active/idle/evicting) or as luggage. Generation is
+// instance holds, in any lifecycle phase or as luggage. Generation is
 // the last PERSISTED counter — an active bed's workspace may be ahead of it,
 // which is exactly what "the authoritative copy is here" means.
 type InventoryBed struct {
 	ID                 string    `json:"id"`
-	State              State     `json:"state"` // active | idle | evicting | dormant
+	Status             BedStatus `json:"status"`
 	Generation         int64     `json:"generation"`
 	SnapshotGeneration int64     `json:"snapshot_generation,omitempty"`
 	SnapshotBytes      int64     `json:"snapshot_bytes,omitempty"`
@@ -213,7 +220,7 @@ type InventoryBed struct {
 // Inventory reports all local beds for the upstream scheduler: placement
 // wants "who has a fresh copy" (generation) and "who is loaded" (active
 // count). The result is a stale-tolerant hint — freshness is re-checked at
-// activation (Ensure), so a scheduler routing on outdated data is slow,
+// initialization (Ensure), so a scheduler routing on outdated data is slow,
 // never wrong.
 func (m *Manager) Inventory() []InventoryBed {
 	beds := m.List()
@@ -222,7 +229,7 @@ func (m *Manager) Inventory() []InventoryBed {
 		status := b.Status()
 		entry := InventoryBed{
 			ID:                 b.ID,
-			State:              status.State,
+			Status:             status.BedStatus,
 			Generation:         status.Generation,
 			SnapshotGeneration: status.SnapshotGeneration,
 			SnapshotBytes:      status.SnapshotBytes,
@@ -236,10 +243,20 @@ func (m *Manager) Inventory() []InventoryBed {
 		}
 		out = append(out, entry)
 	}
+	for _, initialization := range m.initializationStatuses() {
+		out = append(out, InventoryBed{
+			ID:           initialization.ID,
+			Status:       initialization.BedStatus,
+			LastActiveAt: initialization.StartedAt,
+		})
+	}
 	for _, l := range m.ListLuggage() {
 		out = append(out, InventoryBed{
-			ID:                 l.BedID,
-			State:              StateDormant,
+			ID: l.BedID,
+			Status: BedStatus{
+				Phase:     PhaseDormant,
+				Readiness: Readiness{Reason: "NotResident", UpdatedAt: l.LastActiveAt},
+			},
 			Generation:         l.Generation,
 			SnapshotGeneration: l.SnapshotGeneration,
 			SnapshotBytes:      l.SnapshotBytes,

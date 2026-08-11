@@ -111,6 +111,16 @@ func (s *Server) getMetrics(c *gin.Context) {
 }
 
 func (s *Server) watchMetrics(c *gin.Context) {
+	// A canceled watch still completes the SSE handshake. Do not start Bed
+	// initialization for a client that has already gone away.
+	if c.Request.Context().Err() != nil {
+		for key, value := range sseHeaders {
+			c.Writer.Header().Set(key, value)
+		}
+		c.Writer.WriteHeader(http.StatusOK)
+		flush(c.Writer)
+		return
+	}
 	b := s.bedOf(c)
 	if b == nil {
 		return

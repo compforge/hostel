@@ -22,26 +22,26 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/bedinit"
 	"github.com/qiankunli/hostel/internal/executor"
+	"github.com/qiankunli/hostel/internal/supervisor"
 )
 
-// TestMain lets this test binary double as the __bedinit re-exec target (the
+// TestMain lets this test binary double as the __supervisor re-exec target (the
 // real hostel binary dispatches the same way in cmd/hostel/main.go), so
-// BedInitFactory exercises the genuine fork path.
+// SupervisorFactory exercises the genuine fork path.
 func TestMain(m *testing.M) {
-	if len(os.Args) >= 2 && os.Args[1] == bedinit.InitArg {
-		os.Exit(bedinit.Run(os.Args[2:]))
+	if len(os.Args) >= 2 && os.Args[1] == supervisor.Arg {
+		os.Exit(supervisor.Run(os.Args[2:]))
 	}
 	os.Exit(m.Run())
 }
 
-func newBedInitManager(t *testing.T) *Manager {
+func newSupervisorManager(t *testing.T) *Manager {
 	t.Helper()
 	m := newTestManager(t)
-	factory, err := executor.NewBedInitFactory(os.Args[0], m.resources)
+	factory, err := executor.NewSupervisorFactory(os.Args[0], m.resources)
 	if err != nil {
-		t.Fatalf("NewBedInitFactory: %v", err)
+		t.Fatalf("NewSupervisorFactory: %v", err)
 	}
 	m.SetExecutorFactory(factory)
 	t.Cleanup(func() {
@@ -52,10 +52,10 @@ func newBedInitManager(t *testing.T) *Manager {
 	return m
 }
 
-// resolveBedInit resolves a bed and guarantees its init (which inherits the
+// resolveSupervisedBed resolves a bed and guarantees its supervisor (which inherits the
 // test binary's stderr) is torn down with the test — Pdeathsig covers crashes,
 // but orderly cleanup keeps `go test` from waiting on the inherited fd.
-func resolveBedInit(t *testing.T, m *Manager, id string) *Bed {
+func resolveSupervisedBed(t *testing.T, m *Manager, id string) *Bed {
 	t.Helper()
 	b, err := m.Ensure(context.Background(), id)
 	if err != nil {
@@ -65,20 +65,20 @@ func resolveBedInit(t *testing.T, m *Manager, id string) *Bed {
 	return b
 }
 
-// TestBedInitForegroundExec runs the full wired path: Manager → Executor →
-// bed-init → command. Exit codes, output streaming, env and set -e isolation
+// TestSupervisorForegroundExec runs the full wired path: Manager → Executor →
+// supervisor → command. Exit codes, output streaming, env and set -e isolation
 // must behave exactly like the local Executor.
-func TestBedInitForegroundExec(t *testing.T) {
-	m := newBedInitManager(t)
-	b := resolveBedInit(t, m, "conv-init")
+func TestSupervisorForegroundExec(t *testing.T) {
+	m := newSupervisorManager(t)
+	b := resolveSupervisedBed(t, m, "conv-supervisor")
 	ctx := context.Background()
 
 	var out strings.Builder
-	result, err := m.RunForeground(ctx, b, "echo via-init; echo v=$BEDINIT_T", "", map[string]string{"BEDINIT_T": "42"}, 0, func(output ExecutionOutput) { out.WriteString(output.Text) })
+	result, err := m.RunForeground(ctx, b, "echo via-supervisor; echo v=$SUPERVISOR_T", "", map[string]string{"SUPERVISOR_T": "42"}, 0, func(output ExecutionOutput) { out.WriteString(output.Text) })
 	if err != nil || result.Process.ExitCode != 0 {
 		t.Fatalf("RunForeground: result=%+v err=%v", result, err)
 	}
-	if !strings.Contains(out.String(), "via-init") || !strings.Contains(out.String(), "v=42") {
+	if !strings.Contains(out.String(), "via-supervisor") || !strings.Contains(out.String(), "v=42") {
 		t.Fatalf("output = %q", out.String())
 	}
 
@@ -92,8 +92,8 @@ func TestBedInitForegroundExec(t *testing.T) {
 }
 
 func TestBedKeepsIdentityWhenExecutorIsReplaced(t *testing.T) {
-	m := newBedInitManager(t)
-	b := resolveBedInit(t, m, "conv-executor-replace")
+	m := newSupervisorManager(t)
+	b := resolveSupervisedBed(t, m, "conv-executor-replace")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -118,12 +118,12 @@ func TestBedKeepsIdentityWhenExecutorIsReplaced(t *testing.T) {
 	}
 }
 
-// TestBedInitTeardownKillsTree is S1's payoff: evicting the bed terminates its
+// TestSupervisorTeardownKillsTree is S1's payoff: evicting the bed terminates its
 // init, which must take down an in-flight command AND a setsid escapee that no
 // pgid sweep could reach.
-func TestBedInitTeardownKillsTree(t *testing.T) {
-	m := newBedInitManager(t)
-	b := resolveBedInit(t, m, "conv-init-kill")
+func TestSupervisorTeardownKillsTree(t *testing.T) {
+	m := newSupervisorManager(t)
+	b := resolveSupervisedBed(t, m, "conv-supervisor-kill")
 
 	pidfile := t.TempDir() + "/escapee.pid"
 	done := make(chan ExecutionResult, 1)
@@ -166,11 +166,11 @@ func TestBedInitTeardownKillsTree(t *testing.T) {
 	})
 }
 
-// TestBedInitSessionShell: the /session persistent shell also lives under the
+// TestSupervisorSessionShell: the /session persistent shell also lives under the
 // bed's init and keeps its stateful semantics.
-func TestBedInitSessionShell(t *testing.T) {
-	m := newBedInitManager(t)
-	b := resolveBedInit(t, m, "conv-init-shell")
+func TestSupervisorSessionShell(t *testing.T) {
+	m := newSupervisorManager(t)
+	b := resolveSupervisedBed(t, m, "conv-supervisor-shell")
 
 	sh, err := m.ForegroundShell(b)
 	if err != nil {

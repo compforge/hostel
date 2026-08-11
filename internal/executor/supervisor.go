@@ -26,17 +26,17 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
-	"github.com/qiankunli/hostel/internal/bedinit"
 	"github.com/qiankunli/hostel/internal/resource"
+	"github.com/qiankunli/hostel/internal/supervisor"
 )
 
-type BedInitFactory struct {
+type SupervisorFactory struct {
 	exe       string
 	socketDir string
 	resources resource.Tracker
 }
 
-func NewBedInitFactory(exe string, resources resource.Tracker) (*BedInitFactory, error) {
+func NewSupervisorFactory(exe string, resources resource.Tracker) (*SupervisorFactory, error) {
 	dir, err := os.MkdirTemp("", "hostel-executor-*")
 	if err != nil {
 		return nil, err
@@ -44,29 +44,29 @@ func NewBedInitFactory(exe string, resources resource.Tracker) (*BedInitFactory,
 	if resources == nil {
 		resources = resource.Noop("resource tracker not configured")
 	}
-	return &BedInitFactory{exe: exe, socketDir: dir, resources: resources}, nil
+	return &SupervisorFactory{exe: exe, socketDir: dir, resources: resources}, nil
 }
 
-func (*BedInitFactory) Backend() string { return "bed_init" }
+func (*SupervisorFactory) Backend() string { return "supervisor" }
 
-func (f *BedInitFactory) Close() error {
+func (f *SupervisorFactory) Close() error {
 	return os.RemoveAll(f.socketDir)
 }
 
-func (f *BedInitFactory) Create(ctx context.Context, bedID string) (Executor, error) {
+func (f *SupervisorFactory) Create(ctx context.Context, bedID string) (Executor, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	executorID := "executor-" + randx.Hex(8)
 	socket := filepath.Join(f.socketDir, executorID+".sock")
-	cmd := exec.Command(f.exe, bedinit.InitArg,
+	cmd := exec.Command(f.exe, supervisor.Arg,
 		"--socket", socket,
 		"--bed", bedID,
 		"--executor", executorID,
 	)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
-	// SIGTERM lets bed-init run its graceful Shutdown path and publish child
+	// SIGTERM lets the supervisor run its graceful Shutdown path and publish child
 	// terminal statuses when Hostel exits unexpectedly.
 	setPdeathsig(cmd, syscall.SIGTERM)
 	releaseGroup, err := bindProcessCgroup(cmd, f.resources, bedID)
@@ -75,15 +75,15 @@ func (f *BedInitFactory) Create(ctx context.Context, bedID string) (Executor, er
 	}
 	defer releaseGroup()
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("executor: start bed-init for bed %s: %w", bedID, err)
+		return nil, fmt.Errorf("executor: start supervisor for bed %s: %w", bedID, err)
 	}
-	e := &bedInitExecutor{
+	e := &supervisedExecutor{
 		id:        executorID,
 		bedID:     bedID,
 		socket:    socket,
 		cmd:       cmd,
 		proc:      cmd.Process,
-		client:    bedinit.NewClient(socket, executorID),
+		client:    supervisor.NewClient(socket, executorID),
 		resources: f.resources,
 		state:     StateStarting,
 		done:      make(chan struct{}),
@@ -101,7 +101,7 @@ func (f *BedInitFactory) Create(ctx context.Context, bedID string) (Executor, er
 		}
 		select {
 		case <-e.done:
-			return nil, fmt.Errorf("executor: bed-init %s exited before serving", executorID)
+			return nil, fmt.Errorf("executor: supervisor %s exited before serving", executorID)
 		case <-ctx.Done():
 			e.forceLoss(ctx.Err())
 			return nil, ctx.Err()
@@ -109,12 +109,12 @@ func (f *BedInitFactory) Create(ctx context.Context, bedID string) (Executor, er
 		}
 	}
 	e.forceLoss(errors.New("executor readiness timeout"))
-	return nil, fmt.Errorf("executor: bed-init %s never became ready", executorID)
+	return nil, fmt.Errorf("executor: supervisor %s never became ready", executorID)
 }
 
 // Probe verifies the complete create/start/wait/shutdown path before the
 // factory is selected for request traffic.
-func (f *BedInitFactory) Probe(ctx context.Context) error {
+func (f *SupervisorFactory) Probe(ctx context.Context) error {
 	const bedID = "executor-probe"
 	executor, err := f.Create(ctx, bedID)
 	if err != nil {
@@ -147,13 +147,13 @@ func (f *BedInitFactory) Probe(ctx context.Context) error {
 	return executor.Shutdown(ctx)
 }
 
-type bedInitExecutor struct {
+type supervisedExecutor struct {
 	id        string
 	bedID     string
 	socket    string
 	cmd       *exec.Cmd
 	proc      *os.Process
-	client    *bedinit.Client
+	client    *supervisor.Client
 	resources resource.Tracker
 
 	mu           sync.Mutex
@@ -167,24 +167,24 @@ type bedInitExecutor struct {
 	cleanupOnce  sync.Once
 }
 
-func (e *bedInitExecutor) ID() string            { return e.id }
-func (e *bedInitExecutor) BedID() string         { return e.bedID }
-func (*bedInitExecutor) Backend() string         { return "bed_init" }
-func (e *bedInitExecutor) Done() <-chan struct{} { return e.done }
+func (e *supervisedExecutor) ID() string            { return e.id }
+func (e *supervisedExecutor) BedID() string         { return e.bedID }
+func (*supervisedExecutor) Backend() string         { return "supervisor" }
+func (e *supervisedExecutor) Done() <-chan struct{} { return e.done }
 
-func (e *bedInitExecutor) State() State {
+func (e *supervisedExecutor) State() State {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.state
 }
 
-func (e *bedInitExecutor) Exit() Exit {
+func (e *supervisedExecutor) Exit() Exit {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.exit
 }
 
-func (e *bedInitExecutor) Start(ctx context.Context, processID string, cmd *exec.Cmd) (Process, error) {
+func (e *supervisedExecutor) Start(ctx context.Context, processID string, cmd *exec.Cmd) (Process, error) {
 	if processID == "" {
 		return nil, errors.New("executor: process id is required")
 	}
@@ -229,9 +229,9 @@ func (e *bedInitExecutor) Start(ctx context.Context, processID string, cmd *exec
 			if attempt > 1 {
 				e.recordTransportRecovered(ctx, "start", processID, attempt)
 			}
-			return &bedInitProcess{id: processID, pid: pid, executor: e}, nil
+			return &supervisedProcess{id: processID, pid: pid, executor: e}, nil
 		}
-		var remoteErr *bedinit.RemoteError
+		var remoteErr *supervisor.RemoteError
 		if errors.As(err, &remoteErr) {
 			return nil, err
 		}
@@ -266,7 +266,7 @@ func commandFile(value any, name string, flag int) (*os.File, func(), error) {
 	return file, func() {}, nil
 }
 
-func (e *bedInitExecutor) Shutdown(ctx context.Context) error {
+func (e *supervisedExecutor) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -294,7 +294,7 @@ func (e *bedInitExecutor) Shutdown(ctx context.Context) error {
 	}
 }
 
-func (e *bedInitExecutor) forceLoss(err error) {
+func (e *supervisedExecutor) forceLoss(err error) {
 	e.mu.Lock()
 	if e.forcedLoss == nil {
 		e.forcedLoss = err
@@ -306,7 +306,7 @@ func (e *bedInitExecutor) forceLoss(err error) {
 	_ = e.proc.Kill()
 }
 
-func (e *bedInitExecutor) watch() {
+func (e *supervisedExecutor) watch() {
 	waitErr := waitCommandBeforeReap(e.cmd, func(barrierErr error) error {
 		if barrierErr != nil {
 			return e.proc.Kill()
@@ -331,29 +331,29 @@ func (e *bedInitExecutor) watch() {
 	e.publishOnce.Do(func() { close(e.done) })
 }
 
-func (e *bedInitExecutor) cleanup() {
+func (e *supervisedExecutor) cleanup() {
 	e.cleanupOnce.Do(func() {
 		_ = os.Remove(e.socket)
 		_ = e.resources.Release(e.bedID)
 	})
 }
 
-type bedInitProcess struct {
+type supervisedProcess struct {
 	id       string
 	pid      int
-	executor *bedInitExecutor
+	executor *supervisedExecutor
 }
 
-func (p *bedInitProcess) ID() string { return p.id }
-func (p *bedInitProcess) PID() int   { return p.pid }
+func (p *supervisedProcess) ID() string { return p.id }
+func (p *supervisedProcess) PID() int   { return p.pid }
 
-func (p *bedInitProcess) Kill() {
+func (p *supervisedProcess) Kill() {
 	if err := p.executor.client.Kill(p.id); err != nil {
 		p.executor.forceLoss(err)
 	}
 }
 
-func (p *bedInitProcess) Wait(ctx context.Context) (ProcessOutcome, error) {
+func (p *supervisedProcess) Wait(ctx context.Context) (ProcessOutcome, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -366,9 +366,9 @@ func (p *bedInitProcess) Wait(ctx context.Context) (ProcessOutcome, error) {
 				p.executor.recordTransportRecovered(ctx, "wait", p.id, attempt)
 			}
 			switch status.Kind {
-			case bedinit.ExitStatusExited:
+			case supervisor.ExitStatusExited:
 				return Exited(status.ExitCode), nil
-			case bedinit.ExitStatusSignaled:
+			case supervisor.ExitStatusSignaled:
 				return Signaled(status.Signal, status.CoreDumped), nil
 			default:
 				return Lost(p.executor.id, fmt.Errorf("unknown exit kind %q", status.Kind)), nil

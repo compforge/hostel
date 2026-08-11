@@ -27,7 +27,7 @@ func TestTransportRetryAddsTraceEvents(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
 	ctx, span := provider.Tracer("test").Start(context.Background(), "execution")
-	executor := &bedInitExecutor{id: "executor-test", bedID: "bed-test"}
+	executor := &supervisedExecutor{id: "executor-test", bedID: "bed-test"}
 
 	executor.recordTransportFailure(ctx, "wait", "process-test", 1, 3, true, errors.New("read: EOF"))
 	executor.recordTransportRecovered(ctx, "wait", "process-test", 2)

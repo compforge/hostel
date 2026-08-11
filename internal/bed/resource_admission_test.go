@@ -42,7 +42,7 @@ func TestResourceAdmissionChecksSyncedIdleAndNewBeds(t *testing.T) {
 
 	finishA, err := m.BeginOperation(a, OpExec, 0)
 	if err != nil {
-		t.Fatalf("activate a: %v", err)
+		t.Fatalf("initialize a: %v", err)
 	}
 	admission.decision = resource.AdmissionDecision{Allowed: false, Reason: "carrier CPU usage 95.0%"}
 	finishA2, err := m.BeginOperation(a, OpFile, 0)
@@ -50,7 +50,7 @@ func TestResourceAdmissionChecksSyncedIdleAndNewBeds(t *testing.T) {
 		t.Fatalf("existing active bed was rejected: %v", err)
 	}
 	if _, err := m.BeginOperation(b, OpExec, 0); !errors.Is(err, ErrResourcePressure) {
-		t.Fatalf("activate synced idle b: want ErrResourcePressure, got %v", err)
+		t.Fatalf("admit synced idle b: want ErrResourcePressure, got %v", err)
 	}
 	if _, err := m.Ensure(context.Background(), "new"); !errors.Is(err, ErrResourcePressure) {
 		t.Fatalf("admit new resident: want ErrResourcePressure, got %v", err)

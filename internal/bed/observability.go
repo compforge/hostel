@@ -27,9 +27,9 @@ import (
 )
 
 const (
-	lifecycleActivate = "activate"
-	lifecyclePersist  = "persist"
-	lifecycleEvict    = "evict"
+	lifecycleInitialize = "initialize"
+	lifecyclePersist    = "persist"
+	lifecycleEvict      = "evict"
 
 	lifecycleSuccess  = "success"
 	lifecycleError    = "error"
@@ -62,16 +62,16 @@ type LifecycleRecord struct {
 // resident bed. It is deliberately separate from Status: Status is the
 // scheduler-facing current state established by BeginOperation.
 type LifecycleObservations struct {
-	LastActivation *LifecycleRecord
-	LastPersist    *LifecycleRecord
+	LastInitialization *LifecycleRecord
+	LastPersist        *LifecycleRecord
 }
 
 func (b *Bed) recordLifecycle(record LifecycleRecord) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	switch record.Action {
-	case lifecycleActivate:
-		b.lastActivation = cloneLifecycleRecord(&record)
+	case lifecycleInitialize:
+		b.lastInitialization = cloneLifecycleRecord(&record)
 	case lifecyclePersist:
 		b.lastPersist = cloneLifecycleRecord(&record)
 	}
@@ -82,8 +82,8 @@ func (b *Bed) Lifecycle() LifecycleObservations {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return LifecycleObservations{
-		LastActivation: cloneLifecycleRecord(b.lastActivation),
-		LastPersist:    cloneLifecycleRecord(b.lastPersist),
+		LastInitialization: cloneLifecycleRecord(b.lastInitialization),
+		LastPersist:        cloneLifecycleRecord(b.lastPersist),
 	}
 }
 

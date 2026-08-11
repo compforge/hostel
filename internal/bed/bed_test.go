@@ -183,11 +183,11 @@ func TestLifecycleObservations(t *testing.T) {
 		t.Fatalf("Resolve: %v", err)
 	}
 	lifecycle := b.Lifecycle()
-	if lifecycle.LastActivation == nil || lifecycle.LastActivation.Result != "success" || lifecycle.LastActivation.Source != "fresh" {
-		t.Fatalf("LastActivation = %+v", lifecycle.LastActivation)
+	if lifecycle.LastInitialization == nil || lifecycle.LastInitialization.Result != "success" || lifecycle.LastInitialization.Source != "fresh" {
+		t.Fatalf("LastInitialization = %+v", lifecycle.LastInitialization)
 	}
-	if got := lifecycleStageNames(lifecycle.LastActivation); got != "stat_snapshot,select_source,prepare_workspace,commit_resident" {
-		t.Fatalf("activation stages = %q", got)
+	if got := lifecycleStageNames(lifecycle.LastInitialization); got != "stage_in_bedfs,prepare_bedfs,prepare_resident" {
+		t.Fatalf("initialization stages = %q", got)
 	}
 
 	if err := m.Checkpoint(context.Background(), b.ID); err != nil {
@@ -213,7 +213,7 @@ func TestLifecycleObservations(t *testing.T) {
 	if ok, err := m.Evict(context.Background(), b.ID); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
-	if !strings.Contains(logs.String(), "action=activate stage=stat_snapshot event=start") ||
+	if !strings.Contains(logs.String(), "action=initialize stage=stage_in_bedfs event=start") ||
 		!strings.Contains(logs.String(), "action=persist result=error") ||
 		!strings.Contains(logs.String(), "action=evict result=success") {
 		t.Fatalf("lifecycle logs missing structured context:\n%s", logs.String())
@@ -442,8 +442,8 @@ func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if got := b.State(); got != StateIdle {
-		t.Fatalf("new bed state = %q, want idle", got)
+	if got := b.Activity(); got != ActivityIdle {
+		t.Fatalf("new bed activity = %q, want idle", got)
 	}
 
 	startedAt := time.Now()
@@ -458,8 +458,8 @@ func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	if got := b.Inflight(); got != 1 {
 		t.Fatalf("active operations = %d, want 1", got)
 	}
-	if got := b.State(); got != StateActive {
-		t.Fatalf("operation state = %q, want active", got)
+	if got := b.Activity(); got != ActivityActive {
+		t.Fatalf("operation activity = %q, want active", got)
 	}
 	finishShortOperation, err := m.BeginOperation(b, OpExec, time.Millisecond)
 	if err != nil {
@@ -478,8 +478,8 @@ func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	if got := b.Inflight(); got != 0 {
 		t.Fatalf("active operations after finish = %d, want 0", got)
 	}
-	if got := b.State(); got != StateIdle {
-		t.Fatalf("finished operation state = %q, want idle", got)
+	if got := b.Activity(); got != ActivityIdle {
+		t.Fatalf("finished operation activity = %q, want idle", got)
 	}
 	if reaped := m.CollectExpired(context.Background(), retainUntil.Add(time.Hour)); len(reaped) != 1 || reaped[0] != b.ID {
 		t.Fatalf("CollectExpired after finish = %v, want [%s]", reaped, b.ID)
@@ -542,7 +542,7 @@ func TestMaxPinnedBedsAdmission(t *testing.T) {
 	// even at pressure because its latest data is still on this carrier.
 	finishOldGuest, err := m.BeginOperation(oldGuest, OpExec, 0)
 	if err != nil {
-		t.Fatalf("activate resident old guest: %v", err)
+		t.Fatalf("initialize resident old guest: %v", err)
 	}
 	finishOldGuest2, err := m.BeginOperation(oldGuest, OpFile, 0)
 	if err != nil {
@@ -568,7 +568,7 @@ func TestMaxPinnedBedsAdmission(t *testing.T) {
 	defaultBed, _ := m.Ensure(context.Background(), "")
 	finishDefault, err := m.BeginOperation(defaultBed, OpExec, 0)
 	if err != nil {
-		t.Fatalf("activate default bed: %v", err)
+		t.Fatalf("initialize default bed: %v", err)
 	}
 	if got := m.PinnedBedCount(); got != 1 {
 		t.Fatalf("default bed changed pinned count to %d", got)
@@ -595,7 +595,7 @@ func TestMaxPinnedBedsAdmission(t *testing.T) {
 	}
 	finishNewGuest, err := m.BeginOperation(newGuest, OpExec, 0)
 	if err != nil {
-		t.Fatalf("activate new guest after admission: %v", err)
+		t.Fatalf("initialize new guest after admission: %v", err)
 	}
 	finishNewGuest()
 }
@@ -797,7 +797,7 @@ func TestPurgePinnedBedReleasesCapacity(t *testing.T) {
 	a, _ := m.Ensure(context.Background(), "a")
 	finish, err := m.BeginOperation(a, OpExec, 0)
 	if err != nil {
-		t.Fatalf("activate a: %v", err)
+		t.Fatalf("initialize a: %v", err)
 	}
 	if err := m.Purge(context.Background(), "a"); err != nil {
 		t.Fatalf("Purge a: %v", err)
@@ -826,6 +826,40 @@ type blockingStore struct {
 	*fakeStore
 	started chan struct{}
 	release chan struct{}
+}
+
+type initializationBlockingStore struct {
+	*fakeStore
+	started   chan struct{}
+	release   chan struct{}
+	statError error
+	mu        sync.Mutex
+	statCalls int
+}
+
+func (s *initializationBlockingStore) Stat(ctx context.Context, id string) (*store.SnapshotInfo, error) {
+	s.mu.Lock()
+	s.statCalls++
+	s.mu.Unlock()
+	select {
+	case s.started <- struct{}{}:
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.release:
+	}
+	if s.statError != nil {
+		return nil, s.statError
+	}
+	return s.fakeStore.Stat(ctx, id)
+}
+
+func (s *initializationBlockingStore) calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.statCalls
 }
 
 func (s *blockingStore) Persist(ctx context.Context, id, dir string, generation int64) error {
@@ -894,6 +928,96 @@ func (f *fakeStore) generation(id string) int64 {
 	return f.gens[id]
 }
 
+func TestInitializeBedRunsStoreWorkAsynchronouslyAndReservesCapacity(t *testing.T) {
+	root := t.TempDir()
+	backend := &initializationBlockingStore{
+		fakeStore: newFakeStore(),
+		started:   make(chan struct{}, 1),
+		release:   make(chan struct{}),
+	}
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	status, err := m.InitializeBed(requestCtx, "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelRequest()
+	if status.Phase != PhaseInitializing || status.Readiness.Ready {
+		t.Fatalf("accepted status = %+v", status)
+	}
+	select {
+	case <-backend.started:
+	case <-time.After(time.Second):
+		t.Fatal("Store.Stat did not start")
+	}
+	if _, ok := m.Get("one"); ok {
+		t.Fatal("initializing bed was published as resident")
+	}
+	secondStatus, err := m.InitializeBed(context.Background(), "one")
+	if err != nil || secondStatus.StartedAt != status.StartedAt {
+		t.Fatalf("same-id initialization = %+v, %v", secondStatus, err)
+	}
+	if _, err := m.InitializeBed(context.Background(), "two"); !errors.Is(err, ErrBedLimit) {
+		t.Fatalf("second bed during initialization = %v, want ErrBedLimit", err)
+	}
+	close(backend.release)
+
+	readyCtx, cancelReady := context.WithTimeout(context.Background(), time.Second)
+	defer cancelReady()
+	resident, err := m.Ensure(readyCtx, "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resident.ID != "one" || backend.calls() != 1 || m.ResidentBedCount() != 1 {
+		t.Fatalf("resident=%s stat_calls=%d resident_count=%d", resident.ID, backend.calls(), m.ResidentBedCount())
+	}
+	if status, ok := m.Initialization("one"); ok {
+		t.Fatalf("completed initialization still visible: %+v", status)
+	}
+}
+
+func TestInitializeBedRetainsFailureReason(t *testing.T) {
+	root := t.TempDir()
+	backend := &initializationBlockingStore{
+		fakeStore: newFakeStore(),
+		started:   make(chan struct{}, 1),
+		release:   make(chan struct{}),
+		statError: errors.New("S3 Stat timeout"),
+	}
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.InitializeBed(context.Background(), "failed"); err != nil {
+		t.Fatal(err)
+	}
+	<-backend.started
+	close(backend.release)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		status, ok := m.Initialization("failed")
+		if ok && status.Phase == PhaseFailed {
+			if status.Readiness.Ready || status.Readiness.Reason != "SnapshotInspectionFailed" ||
+				!strings.Contains(status.Readiness.Message, "S3 Stat timeout") {
+				t.Fatalf("failed readiness = %+v", status.Readiness)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("failed initialization not observable: %+v, %v", status, ok)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if m.ResidentBedCount() != 0 {
+		t.Fatalf("failed initialization published resident count %d", m.ResidentBedCount())
+	}
+}
+
 func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
@@ -931,8 +1055,8 @@ func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 	if got := m.PinnedBedCount(); got != 1 {
 		t.Fatalf("conservatively dirty warm resume is not pinned: %d", got)
 	}
-	if record := b2.Lifecycle().LastActivation; record == nil || record.Source != "luggage" {
-		t.Fatalf("warm activation = %+v, want luggage", record)
+	if record := b2.Lifecycle().LastInitialization; record == nil || record.Source != "luggage" {
+		t.Fatalf("warm initialization = %+v, want luggage", record)
 	}
 	if _, err := os.Stat(filepath.Join(b2.Workspace(), "data.txt")); err != nil {
 		t.Fatalf("warm resume lost workspace data: %v", err)
@@ -1208,15 +1332,15 @@ func TestEvictCanceledByActivity(t *testing.T) {
 
 	// While persist is blocked on the gate, a new operation wins admission.
 	time.Sleep(10 * time.Millisecond) // let Evict reach Persist
-	if b.State() != StateEvicting {
-		t.Fatalf("state during persist = %q, want evicting", b.State())
+	if status := b.Status(); status.Phase != PhaseEvicting || status.Activity != ActivityIdle {
+		t.Fatalf("status during persist = %+v, want evicting/idle", status.BedStatus)
 	}
 	finishOperation, err := m.BeginOperation(b, OpExec, time.Second)
 	if err != nil {
 		t.Fatalf("BeginOperation during eviction: %v", err)
 	}
-	if b.State() != StateActive {
-		t.Fatalf("state after operation admission = %q, want active", b.State())
+	if status := b.Status(); status.Phase != PhaseEvicting || status.Activity != ActivityActive {
+		t.Fatalf("status after operation admission = %+v, want evicting/active", status.BedStatus)
 	}
 	close(ss.gate)
 
@@ -1226,8 +1350,8 @@ func TestEvictCanceledByActivity(t *testing.T) {
 	}
 	finishOperation()
 	// Bed survived, back to idle, still resolvable.
-	if b.State() != StateIdle {
-		t.Fatalf("state after canceled evict = %q", b.State())
+	if status := b.Status(); status.Phase != PhaseResident || status.Activity != ActivityIdle {
+		t.Fatalf("status after canceled evict = %+v", status.BedStatus)
 	}
 	if _, ok := m.Get("conv-race"); !ok {
 		t.Fatal("bed should still be resident after canceled evict")
@@ -1298,6 +1422,34 @@ func TestPurgeCompletesStoreDeleteAfterRequestCancellation(t *testing.T) {
 	}
 	if !deleteDeadline {
 		t.Fatal("store delete context has no cleanup deadline")
+	}
+}
+
+func TestPurgeJoinsCanceledInitializationBeforeDeleting(t *testing.T) {
+	root := t.TempDir()
+	backend := &initializationBlockingStore{
+		fakeStore: newFakeStore(),
+		started:   make(chan struct{}, 1),
+		release:   make(chan struct{}),
+	}
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.InitializeBed(context.Background(), "purged-initialization"); err != nil {
+		t.Fatal(err)
+	}
+	<-backend.started
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := m.Purge(ctx, "purged-initialization"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m.Initialization("purged-initialization"); ok {
+		t.Fatal("purged initialization remains observable")
+	}
+	if _, err := os.Stat(filepath.Join(root, "purged-initialization")); !os.IsNotExist(err) {
+		t.Fatalf("purged initialization recreated its directory: %v", err)
 	}
 }
 
@@ -1431,11 +1583,11 @@ func TestInventory(t *testing.T) {
 	for _, e := range m.Inventory() {
 		byID[e.ID] = e
 	}
-	if e := byID["conv-live"]; e.State != StateIdle || e.Generation != 0 {
+	if e := byID["conv-live"]; e.Status.Phase != PhaseResident || e.Status.Activity != ActivityIdle || e.Generation != 0 {
 		t.Fatalf("conv-live = %+v, want idle gen 0", e)
 	}
 	cold := byID["conv-cold"]
-	if cold.State != "dormant" || cold.Generation != 1 || cold.LocalBytes == 0 || cold.LastActiveAt.IsZero() {
+	if cold.Status.Phase != PhaseDormant || cold.Status.Activity != "" || cold.Generation != 1 || cold.LocalBytes == 0 || cold.LastActiveAt.IsZero() {
 		t.Fatalf("conv-cold = %+v, want dormant gen 1 with bytes and last_active_at", cold)
 	}
 	if cold.SnapshotGeneration != 1 || cold.SnapshotBytes != 1 || cold.RestoreBytes != 0 {
@@ -1544,9 +1696,9 @@ func TestProfileRecordsMigrationCost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
-	if record := b2.Lifecycle().LastActivation; record == nil || record.Source != "snapshot" ||
-		!strings.Contains(lifecycleStageNames(record), "restore") {
-		t.Fatalf("cold activation = %+v, want snapshot restore", record)
+	if record := b2.Lifecycle().LastInitialization; record == nil || record.Source != "snapshot" ||
+		!strings.Contains(lifecycleStageNames(record), "stage_in_bedfs") {
+		t.Fatalf("cold initialization = %+v, want snapshot stage-in", record)
 	}
 	if p := b2.Usage(); p.LastRestoreMs < 10 {
 		t.Fatalf("LastRestoreMs = %d, want >= 10", p.LastRestoreMs)

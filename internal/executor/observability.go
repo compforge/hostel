@@ -22,7 +22,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
-func (e *bedInitExecutor) recordTransportFailure(
+func (e *supervisedExecutor) recordTransportFailure(
 	ctx context.Context,
 	operation, processID string,
 	attempt, maxAttempts int,
@@ -60,7 +60,7 @@ func (e *bedInitExecutor) recordTransportFailure(
 	)
 }
 
-func (e *bedInitExecutor) recordTransportRecovered(ctx context.Context, operation, processID string, attempt int) {
+func (e *supervisedExecutor) recordTransportRecovered(ctx context.Context, operation, processID string, attempt int) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

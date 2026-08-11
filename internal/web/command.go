@@ -41,7 +41,7 @@ type RunCommandRequest struct {
 
 // resolveCwd maps any BedFS client path to the Executor directory the command
 // should cd into, or "" when unset. BedFS owns both path projections. The dir is
-// materialized (EnsureDir, owner-aware) because a fresh bed's workspace starts
+// prepared (EnsureDir, owner-aware) because a fresh bed's workspace starts
 // empty and a cd into a missing dir would fail.
 // Returns false (after writing an error) on an invalid path.
 func (s *Server) resolveCwd(c *gin.Context, fs *bedfs.FS, cwd string) (string, bool) {

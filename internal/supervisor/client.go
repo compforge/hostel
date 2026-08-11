@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bedinit
+package supervisor
 
 import (
 	"fmt"
@@ -22,7 +22,7 @@ import (
 )
 
 // Client addresses one executor instance. Every operation uses a fresh socket;
-// process state lives in bed-init, never in a connection.
+// process state lives in the supervisor, never in a connection.
 type Client struct {
 	socket     string
 	executorID string
@@ -36,7 +36,7 @@ type RemoteError struct {
 }
 
 func (e *RemoteError) Error() string {
-	return fmt.Sprintf("bedinit: %s: %s", e.Operation, e.Message)
+	return fmt.Sprintf("supervisor: %s: %s", e.Operation, e.Message)
 }
 
 func NewClient(socket, executorID string) *Client {
@@ -66,7 +66,7 @@ func (c *Client) Start(processID string, argv []string, dir string, env []string
 		return 0, err
 	}
 	if rep.Pid <= 0 {
-		return 0, fmt.Errorf("bedinit: start %s returned invalid pid %d", processID, rep.Pid)
+		return 0, fmt.Errorf("supervisor: start %s returned invalid pid %d", processID, rep.Pid)
 	}
 	return rep.Pid, nil
 }
@@ -85,7 +85,7 @@ func (c *Client) Wait(processID string) (ExitStatus, error) {
 		return ExitStatus{}, err
 	}
 	if rep.Exit == nil {
-		return ExitStatus{}, fmt.Errorf("bedinit: wait %s returned without terminal status", processID)
+		return ExitStatus{}, fmt.Errorf("supervisor: wait %s returned without terminal status", processID)
 	}
 	return *rep.Exit, nil
 }
@@ -109,18 +109,18 @@ func (c *Client) call(req request, fds []int) (reply, error) {
 	raddr := &net.UnixAddr{Name: c.socket, Net: socketNetwork}
 	conn, err := net.DialUnix(socketNetwork, nil, raddr)
 	if err != nil {
-		return reply{}, fmt.Errorf("bedinit: dial executor %s: %w", c.executorID, err)
+		return reply{}, fmt.Errorf("supervisor: dial executor %s: %w", c.executorID, err)
 	}
 	defer conn.Close()
 	if err := writeMsg(conn, req, fds); err != nil {
-		return reply{}, fmt.Errorf("bedinit: send %s: %w", req.Operation, err)
+		return reply{}, fmt.Errorf("supervisor: send %s: %w", req.Operation, err)
 	}
 	var rep reply
 	if _, err := readMsg(conn, &rep); err != nil {
-		return reply{}, fmt.Errorf("bedinit: read %s: %w", req.Operation, err)
+		return reply{}, fmt.Errorf("supervisor: read %s: %w", req.Operation, err)
 	}
 	if rep.ExecutorID != c.executorID {
-		return reply{}, fmt.Errorf("bedinit: executor mismatch: got %q want %q", rep.ExecutorID, c.executorID)
+		return reply{}, fmt.Errorf("supervisor: executor mismatch: got %q want %q", rep.ExecutorID, c.executorID)
 	}
 	if rep.Error != "" {
 		return reply{}, &RemoteError{Operation: string(req.Operation), Message: rep.Error}
