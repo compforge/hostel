@@ -25,7 +25,7 @@ import (
 	"github.com/qiankunli/go-stdx/shellx"
 
 	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/fsops"
+	"github.com/qiankunli/hostel/internal/bedfs"
 )
 
 func jsonUnmarshal(s string, v any) error { return json.Unmarshal([]byte(s), v) }
@@ -39,29 +39,27 @@ type RunCommandRequest struct {
 	Envs       map[string]string `json:"envs,omitempty"`
 }
 
-// resolveCwd maps a client cwd (virtual /workspace path) to the in-bed
-// directory the command should cd into, or "" when unset. All path-space
-// conversion lives in the bed's Paths — no stitching here. The dir is
+// resolveCwd maps any BedFS client path to the Executor directory the command
+// should cd into, or "" when unset. BedFS owns both path projections. The dir is
 // materialized (EnsureDir, owner-aware) because a fresh bed's workspace starts
 // empty and a cd into a missing dir would fail.
 // Returns false (after writing an error) on an invalid path.
-func (s *Server) resolveCwd(c *gin.Context, b *bed.Bed, ops *fsops.Ops, cwd string) (string, bool) {
+func (s *Server) resolveCwd(c *gin.Context, fs *bedfs.FS, cwd string) (string, bool) {
 	if cwd == "" {
 		return "", true
 	}
-	host, err := b.Paths().FromClient(cwd)
+	host, err := fs.Resolve(cwd)
 	if err != nil {
 		badRequest(c, err.Error())
 		return "", false
 	}
-	if err := ops.EnsureDir(host); err != nil {
-		runtimeError(c, "prepare workdir: "+err.Error())
+	inBed, err := s.mgr.Isolator().View(fs).Path(host)
+	if err != nil {
+		badRequest(c, err.Error())
 		return "", false
 	}
-	inBed, err := b.Paths().InBed(host)
-	if err != nil {
-		// Unreachable after FromClient confinement; refuse rather than guess.
-		badRequest(c, "cwd outside the bed workspace")
+	if err := fs.EnsureDir(host); err != nil {
+		runtimeError(c, "prepare workdir: "+err.Error())
 		return "", false
 	}
 	return inBed, true
@@ -88,7 +86,7 @@ func (s *Server) runCommand(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	cwdInBed, ok := s.resolveCwd(c, b, ops, req.Cwd)
+	cwdInBed, ok := s.resolveCwd(c, ops, req.Cwd)
 	if !ok {
 		return
 	}
@@ -245,7 +243,7 @@ func (s *Server) sessionCreate(c *gin.Context) {
 	defer finishOperation()
 	var req createSessionRequest
 	_ = c.ShouldBindJSON(&req)
-	cwdInBed, ok := s.resolveCwd(c, b, ops, req.Cwd)
+	cwdInBed, ok := s.resolveCwd(c, ops, req.Cwd)
 	if !ok {
 		return
 	}
@@ -278,7 +276,7 @@ func (s *Server) sessionRun(c *gin.Context) {
 		badRequest(c, "missing 'command'")
 		return
 	}
-	cwdInBed, ok := s.resolveCwd(c, b, ops, req.Cwd)
+	cwdInBed, ok := s.resolveCwd(c, ops, req.Cwd)
 	if !ok {
 		return
 	}

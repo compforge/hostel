@@ -92,7 +92,7 @@ func TestResolveDefaultBedAndValidation(t *testing.T) {
 		t.Fatal("Resolve invalid id: want error")
 	}
 	b2, _ := m.Ensure(context.Background(), "conv-123")
-	if b2.ID != "conv-123" || b2.Workspace == b.Workspace {
+	if b2.ID != "conv-123" || b2.Workspace() == b.Workspace() {
 		t.Fatalf("distinct bed expected, got %+v", b2)
 	}
 	if got := m.ResidentBedCount(); got != 2 {
@@ -905,7 +905,7 @@ func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 	// Write data into a bed, evict it → snapshot taken, local dir stays
 	// behind as luggage.
 	b, _ := m.Ensure(context.Background(), "conv-1")
-	if err := os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("payload"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("payload"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := m.Evict(context.Background(), "conv-1"); err != nil || !ok {
@@ -934,10 +934,10 @@ func TestEvictLeavesLuggageAndWarmResume(t *testing.T) {
 	if record := b2.Lifecycle().LastActivation; record == nil || record.Source != "luggage" {
 		t.Fatalf("warm activation = %+v, want luggage", record)
 	}
-	if _, err := os.Stat(filepath.Join(b2.Workspace, "data.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(b2.Workspace(), "data.txt")); err != nil {
 		t.Fatalf("warm resume lost workspace data: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(b2.Workspace, "restored.txt")); err == nil {
+	if _, err := os.Stat(filepath.Join(b2.Workspace(), "restored.txt")); err == nil {
 		t.Fatal("fresh luggage must not be re-restored from the store")
 	}
 	m.PersistDirty(context.Background())
@@ -954,7 +954,7 @@ func TestStaleLuggageDiscardedOnResume(t *testing.T) {
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
 	b, _ := m.Ensure(context.Background(), "conv-s")
-	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("old"), 0o644)
+	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("old"), 0o644)
 	if ok, err := m.Evict(context.Background(), "conv-s"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
@@ -968,10 +968,10 @@ func TestStaleLuggageDiscardedOnResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(b2.Workspace, "restored.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(b2.Workspace(), "restored.txt")); err != nil {
 		t.Fatalf("stale luggage should be replaced by a restore: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(b2.Workspace, "data.txt")); err == nil {
+	if _, err := os.Stat(filepath.Join(b2.Workspace(), "data.txt")); err == nil {
 		t.Fatal("stale luggage content must not survive")
 	}
 }
@@ -984,7 +984,7 @@ func TestColdResumeRestoresFromSnapshot(t *testing.T) {
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
 	b, _ := m.Ensure(context.Background(), "conv-c")
-	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("payload"), 0o644)
+	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("payload"), 0o644)
 	if ok, err := m.Evict(context.Background(), "conv-c"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
@@ -997,7 +997,7 @@ func TestColdResumeRestoresFromSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-Resolve: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(b2.Workspace, "restored.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(b2.Workspace(), "restored.txt")); err != nil {
 		t.Fatalf("cold resume should restore from snapshot: %v", err)
 	}
 }
@@ -1016,7 +1016,7 @@ func TestPersistFailureAbortsDelete(t *testing.T) {
 	if _, ok := m.Get("conv-2"); !ok {
 		t.Fatal("bed should still exist after aborted delete")
 	}
-	if _, err := os.Stat(b.Workspace); err != nil {
+	if _, err := os.Stat(b.Workspace()); err != nil {
 		t.Fatalf("workspace should be intact: %v", err)
 	}
 }
@@ -1027,7 +1027,7 @@ func TestPersistDirty(t *testing.T) {
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
 	b, _ := m.Ensure(context.Background(), "conv-3")
-	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("v1"), 0o644)
+	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("v1"), 0o644)
 
 	// Freshly created bed: persistedAt == created time; touch to mark dirty.
 	time.Sleep(5 * time.Millisecond)
@@ -1240,7 +1240,7 @@ func TestPurgeEndsIdentity(t *testing.T) {
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
 	b, _ := m.Ensure(context.Background(), "conv-p")
-	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("x"), 0o644)
 	if ok, _ := m.Evict(context.Background(), "conv-p"); !ok {
 		t.Fatal("evict failed")
 	}
@@ -1258,10 +1258,10 @@ func TestPurgeEndsIdentity(t *testing.T) {
 		t.Fatal("luggage should be removed after purge")
 	}
 	b2, _ := m.Ensure(context.Background(), "conv-p")
-	if _, err := os.Stat(filepath.Join(b2.Workspace, "restored.txt")); err == nil {
+	if _, err := os.Stat(filepath.Join(b2.Workspace(), "restored.txt")); err == nil {
 		t.Fatal("purged bed must start empty, not restored")
 	}
-	if _, err := os.Stat(filepath.Join(b2.Workspace, "data.txt")); err == nil {
+	if _, err := os.Stat(filepath.Join(b2.Workspace(), "data.txt")); err == nil {
 		t.Fatal("purged bed must not resurrect old luggage data")
 	}
 	// Default bed is not purgeable.
@@ -1354,7 +1354,7 @@ func TestCollectLuggageWatermarks(t *testing.T) {
 	mkLuggage := func(id string, size int) {
 		b, _ := m.Ensure(context.Background(), id)
 		payload := make([]byte, size)
-		if err := os.WriteFile(filepath.Join(b.Workspace, "data.txt"), payload, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), payload, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if ok, err := m.Evict(context.Background(), id); err != nil || !ok {
@@ -1394,7 +1394,7 @@ func TestCollectLuggageStaleFirst(t *testing.T) {
 
 	for _, id := range []string{"conv-a", "conv-b"} {
 		b, _ := m.Ensure(context.Background(), id)
-		_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), make([]byte, 10_000), 0o644)
+		_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), make([]byte, 10_000), 0o644)
 		if ok, err := m.Evict(context.Background(), id); err != nil || !ok {
 			t.Fatalf("evict %s: ok=%v err=%v", id, ok, err)
 		}
@@ -1422,7 +1422,7 @@ func TestInventory(t *testing.T) {
 
 	_, _ = m.Ensure(context.Background(), "conv-live")
 	b, _ := m.Ensure(context.Background(), "conv-cold")
-	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("x"), 0o644)
 	if ok, err := m.Evict(context.Background(), "conv-cold"); err != nil || !ok {
 		t.Fatalf("evict: ok=%v err=%v", ok, err)
 	}
@@ -1477,7 +1477,7 @@ func TestProfileAccumulatesAndSurvivesEvict(t *testing.T) {
 	if p := b.Usage(); p.CmdCount != 2 || p.CmdTotalMs != 2000 {
 		t.Fatalf("profile = %+v, want 2 cmds / 2000ms", p)
 	}
-	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("x"), 0o644)
 	if ok, err := m.Evict(context.Background(), "conv-prof"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
@@ -1527,7 +1527,7 @@ func TestProfileRecordsMigrationCost(t *testing.T) {
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, ss)
 
 	b, _ := m.Ensure(context.Background(), "conv-cost")
-	_ = os.WriteFile(filepath.Join(b.Workspace, "data.txt"), []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("x"), 0o644)
 	if ok, err := m.Evict(context.Background(), "conv-cost"); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
@@ -1560,11 +1560,11 @@ func TestBedDirLayoutAndMetaAcrossRestart(t *testing.T) {
 	b, _ := m.Ensure(context.Background(), "default")
 	// Layout: {root}/default/{meta.json,data/workspace}; Home is the bed_home
 	// root (data), Workspace the real subdir below it.
-	if b.Home != filepath.Join(root, "default", "data") {
-		t.Fatalf("Home = %s", b.Home)
+	if b.Home() != filepath.Join(root, "default", "data") {
+		t.Fatalf("Home = %s", b.Home())
 	}
-	if b.Workspace != filepath.Join(root, "default", "data", "workspace") {
-		t.Fatalf("Workspace = %s", b.Workspace)
+	if b.Workspace() != filepath.Join(root, "default", "data", "workspace") {
+		t.Fatalf("Workspace = %s", b.Workspace())
 	}
 	if _, err := os.Stat(filepath.Join(b.Dir, "meta.json")); err != nil {
 		t.Fatalf("meta.json missing: %v", err)

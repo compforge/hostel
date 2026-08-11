@@ -47,7 +47,7 @@ func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 		State:        status.State,
 		DataSynced:   status.DataSynced,
 		Pinned:       status.Pinned,
-		Workspace:    b.Workspace,
+		Workspace:    b.Workspace(),
 		CreatedAt:    b.CreatedAt,
 		LastActiveAt: status.LastActiveAt,
 		RetainUntil:  status.RetainUntil,
@@ -328,7 +328,7 @@ func (s *Server) capabilities(c *gin.Context) {
 		// True when the bed workspace is mounted at the canonical /workspace
 		// inside the sandbox (bwrap): shell paths == file-API paths. False
 		// under direct, where /workspace is only the file-API virtual prefix.
-		"workspace_mount":  iso.MountPoint() != "",
+		"workspace_mount":  iso.WorkspaceMounted(),
 		"executor_backend": s.mgr.ExecutorBackend(),
 		"max_beds":         s.mgr.MaxBeds(),
 		"max_pinned_beds":  s.mgr.MaxPinnedBeds(),

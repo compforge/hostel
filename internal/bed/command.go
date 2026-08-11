@@ -23,7 +23,6 @@ import (
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/go-stdx/shellx"
 	"github.com/qiankunli/hostel/internal/executor"
-	"github.com/qiankunli/hostel/internal/isolation"
 )
 
 // buildCommand constructs an isolated `bash -c <command>` for the bed. envs are
@@ -41,12 +40,12 @@ func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string
 		command = "cd -- " + shellx.Quote(cwdInBed) + " && { " + command + " ; }"
 	}
 	cmd := exec.Command(m.shellPath, shellCommandArgs(m.shellPath, command)...)
-	if err := m.iso.Wrap(cmd, isolation.Workspace{Home: b.Home, Path: b.Workspace}); err != nil {
+	if err := m.iso.Wrap(cmd, b.BedFS()); err != nil {
 		return nil, err
 	}
 	// The OUTER process cwd must exist on the host; the bed's own workspace
 	// always does (the in-sandbox cwd is handled by the cd above / bwrap --chdir).
-	cmd.Dir = b.Workspace
+	cmd.Dir = b.Workspace()
 	env, err := m.buildBedEnv(b, envs)
 	if err != nil {
 		return nil, err

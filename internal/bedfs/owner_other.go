@@ -12,28 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build unix
+//go:build !unix
 
-package fsops
+package bedfs
 
-import (
-	"os"
-	"syscall"
-)
+import "os"
 
-// ownerOf extracts uid/gid from a stat result.
-func ownerOf(fi os.FileInfo) (uid, gid int, ok bool) {
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return 0, 0, false
-	}
-	return int(st.Uid), int(st.Gid), true
-}
+// Non-unix hosts have no per-bed uid isolation; owner inheritance is a no-op.
+func ownerOf(os.FileInfo) (uid, gid int, ok bool) { return 0, 0, false }
 
-// nlinkOf reports a file's hardlink count (0 when unknown).
-func nlinkOf(fi os.FileInfo) uint64 {
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-		return uint64(st.Nlink)
-	}
-	return 0
-}
+func nlinkOf(os.FileInfo) uint64 { return 0 }

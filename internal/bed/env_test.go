@@ -56,7 +56,7 @@ func TestBedProcessEnvHasExplicitOwnership(t *testing.T) {
 	env := envMap(cmd.Env)
 	for name, want := range map[string]string{
 		"BED_ID":          "alice",
-		"HOME":            b.Workspace,
+		"HOME":            b.Workspace(),
 		"LANG":            "C.UTF-8",
 		"PATH":            "/request/bin",
 		"REQUEST_API_KEY": "explicit-secret",

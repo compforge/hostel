@@ -22,6 +22,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/qiankunli/hostel/internal/bedfs"
 )
 
 // bwrap confines each command under bubblewrap. Mount view per
@@ -52,8 +54,8 @@ func newBwrap(facts HostFacts, workspaceRoot string) Isolator {
 	// the canonical /workspace must exist on the HOST. Create it if we can
 	// (in a pod hostel usually runs as root); if we can't, the full-shape
 	// smoke below fails and we honestly degrade.
-	if err := os.MkdirAll(BwrapMountPoint, 0o755); err != nil {
-		log.Printf("isolation: cannot ensure mount point %s on host: %v", BwrapMountPoint, err)
+	if err := os.MkdirAll(bedfs.WorkspacePath, 0o755); err != nil {
+		log.Printf("isolation: cannot ensure mount point %s on host: %v", bedfs.WorkspacePath, err)
 	}
 	// The workspace root may not exist yet at probe time (the bed manager
 	// creates it later); the smoke test masks it, so it must exist now.
@@ -111,13 +113,17 @@ func resolveMaskPaths(candidates []string) []string {
 // namespaces, masking, and the /workspace bind all get exercised, so whatever
 // passes here works for beds too.
 func bwrapSmoke(path, workspaceRoot string, masks []string) error {
-	probeWs, err := os.MkdirTemp(workspaceRoot, ".probe-*")
+	probeHome, err := os.MkdirTemp(workspaceRoot, ".probe-*")
 	if err != nil {
-		return fmt.Errorf("smoke test: temp workspace: %w", err)
+		return fmt.Errorf("smoke test: temp bed_home: %w", err)
 	}
-	defer os.RemoveAll(probeWs)
+	defer os.RemoveAll(probeHome)
+	probeWorkspace := filepath.Join(probeHome, "workspace")
+	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
+		return fmt.Errorf("smoke test: workspace: %w", err)
+	}
 
-	argv := buildBwrapArgs(workspaceRoot, probeWs, masks)
+	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, masks)
 	cmd := exec.Command(path, append(argv, "true")...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -126,15 +132,18 @@ func bwrapSmoke(path, workspaceRoot string, masks []string) error {
 	return nil
 }
 
-func (b *bwrap) Name() string       { return "bwrap" }
-func (b *bwrap) Level() Level       { return Suite }
-func (b *bwrap) Available() bool    { return true } // only constructed when probe passed
-func (b *bwrap) MountPoint() string { return BwrapMountPoint }
+func (b *bwrap) Name() string           { return "bwrap" }
+func (b *bwrap) Level() Level           { return Suite }
+func (b *bwrap) Available() bool        { return true } // only constructed when probe passed
+func (b *bwrap) WorkspaceMounted() bool { return true }
+func (b *bwrap) View(fs *bedfs.FS) bedfs.View {
+	return bedfs.MountedView(fs, bwrapBedHomeMountPoint, bedfs.WorkspacePath)
+}
 
-func (b *bwrap) Wrap(cmd *exec.Cmd, ws Workspace) error {
+func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS) error {
 	// No silent degradation past this point: this isolator passed the boot
 	// probe, so any failure to build the sandbox is a hard error.
-	argv := buildBwrapArgs(b.root, ws.Path, b.maskPaths)
+	argv := buildBwrapArgs(b.root, fs.Home(), fs.Workspace(), b.maskPaths)
 	userArgs := cmd.Args
 	cmd.Args = make([]string, 0, len(argv)+len(userArgs)+1)
 	cmd.Args = append(cmd.Args, b.path)

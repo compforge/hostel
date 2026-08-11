@@ -30,6 +30,8 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/qiankunli/hostel/internal/bedfs"
 )
 
 // AsUserArg is the hidden subcommand hostel re-execs into to drop to the bed's
@@ -171,24 +173,25 @@ func uidSmoke(self, workspaceRoot string) error {
 	return fmt.Errorf("smoke test: %w (%s)", err, out)
 }
 
-func (u *uidIso) Name() string       { return "uid" }
-func (u *uidIso) Level() Level       { return Room }
-func (u *uidIso) Available() bool    { return true } // only constructed when the smoke passed
-func (u *uidIso) MountPoint() string { return "" }   // no remount; real host paths
+func (u *uidIso) Name() string                 { return "uid" }
+func (u *uidIso) Level() Level                 { return Room }
+func (u *uidIso) Available() bool              { return true } // only constructed when the smoke passed
+func (u *uidIso) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
+func (u *uidIso) WorkspaceMounted() bool       { return false }
 
-func (u *uidIso) Wrap(cmd *exec.Cmd, ws Workspace) error {
+func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS) error {
 	// Prefix `hostel __asuser <uid> <bed_home> --` so the child drops
 	// to the bed uid, then execs the user command. The uid derives from bed_home
 	// (stable per bed dir); cmd.Dir gives the parent its start dir — the
 	// workspace subdir; the child re-chdirs there anyway after dropping.
-	uid := bedUID(ws.Home)
-	prefix := []string{u.self, AsUserArg, strconv.Itoa(uid), ws.Home, "--"}
+	uid := bedUID(fs.Home())
+	prefix := []string{u.self, AsUserArg, strconv.Itoa(uid), fs.Home(), "--"}
 	userArgs := cmd.Args
 	cmd.Args = make([]string, 0, len(prefix)+len(userArgs))
 	cmd.Args = append(cmd.Args, prefix...)
 	cmd.Args = append(cmd.Args, userArgs...)
 	cmd.Path = u.self
-	cmd.Dir = ws.Path
+	cmd.Dir = fs.Workspace()
 	return nil
 }
 
@@ -196,8 +199,8 @@ func (u *uidIso) Wrap(cmd *exec.Cmd, ws Workspace) error {
 // so siblings can't enter, owned recursively by the uid so the bed can read
 // and write its own files. Implements Preparer; the bed manager calls it after
 // the dir is (re)created — including after a restore repopulated the tree.
-func (u *uidIso) Prepare(ws Workspace) error {
-	return prepareUIDDir(ws.Home, bedUID(ws.Home))
+func (u *uidIso) Prepare(fs *bedfs.FS) error {
+	return prepareUIDDir(fs.Home(), bedUID(fs.Home()))
 }
 
 func prepareUIDDir(dir string, uid int) error {

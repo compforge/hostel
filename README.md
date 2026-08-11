@@ -89,23 +89,27 @@ limits are applied. On hosts without delegated cgroup v2, the same response
 falls back to execd-compatible instance metrics; `/healthz` and capabilities
 report the active `resource_accounting` backend.
 
-Path semantics: the bed is picked by the `X-Hostel-Bed` header first; after
-that the bed behaves as if it owned the whole filesystem. The client's `/` is
-the bed_home, so every absolute path lands inside the bed by one
+Path semantics are owned by the Bed's **BedFS**. The bed is picked by the
+`X-Hostel-Bed` header first; after that the bed behaves as if it owned the whole
+filesystem. The client's `/` is the bed_home, so every absolute path lands inside the bed by one
 rule (`/tmp/job` → `<bed_home>/tmp/job`, `/workspace/a` →
 `<bed_home>/workspace/a` — `/workspace` is a real subdir, not an alias), and
 relative paths are workspace-relative per the OpenSandbox SDK contract. The
 mapping is one-to-one: responses echo paths exactly as you sent them. A bed
 never sees the host. One consequence to be aware of:
 
+- Structured fields such as file `path` and command `cwd` always use BedFS;
+  `cwd: "/"` therefore means bed_home on every isolation level.
 - **Command text is not rewritten**: an absolute literal inside a shell command
   (`cat /tmp/job/a.txt`) is resolved by the bed's process view, not by this
   mapping. Use `cwd` + relative paths to address files written via the file API.
 
-Under `bwrap` the workspace is also *really mounted* at `/workspace` inside the
-sandbox, so shell paths and file-API paths are the same string; under `direct`
-(no mount namespace) the shell cwd is the host dir. Probe the `workspace_mount`
-capability to tell the two apart.
+Under `bwrap`, the complete bed_home has a mechanism-private Executor mount and
+the workspace is additionally mounted at the stable `/workspace`, so any BedFS
+cwd is usable while workspace shell paths keep their canonical spelling. Under
+`direct` (no mount namespace) an Executor uses the carrier BedFS paths. Probe
+the `workspace_mount` capability only when command text depends on a literal
+`/workspace`; it is not a BedFS capability flag. See `docs/filesystem.md`.
 
 ## Isolation
 

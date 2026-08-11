@@ -27,8 +27,8 @@ import (
 
 	"github.com/qiankunli/go-stdx/filepathx"
 	"github.com/qiankunli/hostel/internal/amenity"
+	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/executor"
-	"github.com/qiankunli/hostel/internal/fsops"
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/resource"
 	"github.com/qiankunli/hostel/internal/store"
@@ -401,7 +401,7 @@ func (m *Manager) Ensure(ctx context.Context, id string) (resolved *Bed, retErr 
 		}
 		// Prepare after restore repopulates the tree and before the bed serves.
 		if p, ok := m.iso.(isolation.Preparer); ok {
-			return p.Prepare(isolation.Workspace{Home: dataDir, Path: wsDir})
+			return p.Prepare(bedfs.New(dataDir))
 		}
 		return nil
 	}); err != nil {
@@ -435,7 +435,7 @@ func (m *Manager) Ensure(ctx context.Context, id string) (resolved *Bed, retErr 
 			retainUntil = now.Add(m.bedIdleTTL)
 		}
 		b = &Bed{
-			ID: id, Dir: bedDir, Home: dataDir, Workspace: wsDir,
+			ID: id, Dir: bedDir,
 			CreatedAt: meta.CreatedAt, lastActiveAt: now, retainUntil: retainUntil,
 			generation: meta.Generation, persistedAt: persistedAt, usage: usage,
 			snapshotGeneration: meta.SnapshotGeneration,
@@ -445,7 +445,7 @@ func (m *Manager) Ensure(ctx context.Context, id string) (resolved *Bed, retErr 
 			shells:             make(map[string]*Shell),
 			sessions:           make(map[string]*Session),
 			inflightByKind:     make(map[OperationKind]int),
-			paths:              fsops.NewPaths(dataDir, m.iso.MountPoint()),
+			filesystem:         bedfs.New(dataDir),
 		}
 		m.beds[id] = b
 		m.residentBeds.Add(1)

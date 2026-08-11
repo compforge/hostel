@@ -61,7 +61,7 @@ bed 的记账组，CPU 数量和总内存仍表示共享 carrier 容量；当前
 时保留 execd 兼容的实例级 fallback，`/healthz` 和 capabilities 的 `resource_accounting`
 会如实报告实际 backend。
 
-路径语义：客户端用 `/workspace/...` 寻址，hostel rebase 到该 bed 的 workspace 目录；相对路径即 workspace 相对；workspace 之外的绝对路径被拒绝（bed 看不到宿主）。`bwrap` 下 workspace 还会**真实挂载**在沙箱内 `/workspace`——shell 路径与 file API 路径同名同物；`direct` 下（无 mount namespace）shell cwd 是宿主真实目录。以 capabilities 的 `workspace_mount` 区分两种模式。
+路径语义由 Bed 持有的 **BedFS** 统一负责：客户端 `/` 是 `bed_home`，`/workspace/...`、`/tmp/...` 等任意绝对路径都单射 rebase 到该 BedFS，相对路径以 workspace 为基准；file API 的 `path` 和命令 `cwd` 等结构化字段在所有隔离档一致，`cwd: "/"` 即 bed_home。`bwrap` 下完整 bed_home 有内部 Executor 投影，workspace 另以规范路径 `/workspace` 挂载；`direct` 下进程使用宿主 BedFS 路径。`workspace_mount` 只表示命令文本能否使用字面 `/workspace`，不是 BedFS 是否可用。详见 `docs/filesystem.md`。
 
 ## 隔离
 

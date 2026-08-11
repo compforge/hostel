@@ -17,6 +17,8 @@ package isolation
 import (
 	"slices"
 	"testing"
+
+	"github.com/qiankunli/hostel/internal/bedfs"
 )
 
 // indexOfSeq finds the start of a consecutive argument sequence.
@@ -30,18 +32,22 @@ func indexOfSeq(argv []string, seq ...string) int {
 }
 
 func TestBuildBwrapArgsMasksSiblingsBeforeBind(t *testing.T) {
-	argv := buildBwrapArgs("/ws-root", "/ws-root/alice", []string{"/root", "/home"})
+	argv := buildBwrapArgs("/ws-root", "/ws-root/alice/data", "/ws-root/alice/data/workspace", []string{"/root", "/home"})
 
 	maskRoot := indexOfSeq(argv, "--tmpfs", "/ws-root")
-	bindOwn := indexOfSeq(argv, "--bind", "/ws-root/alice", BwrapMountPoint)
+	bindHome := indexOfSeq(argv, "--bind", "/ws-root/alice/data", bwrapBedHomeMountPoint)
+	bindWorkspace := indexOfSeq(argv, "--bind", "/ws-root/alice/data/workspace", bedfs.WorkspacePath)
 	roRoot := indexOfSeq(argv, "--ro-bind", "/", "/")
-	if roRoot < 0 || maskRoot < 0 || bindOwn < 0 {
-		t.Fatalf("missing segments: roRoot=%d maskRoot=%d bindOwn=%d\nargv=%v", roRoot, maskRoot, bindOwn, argv)
+	if roRoot < 0 || maskRoot < 0 || bindHome < 0 || bindWorkspace < 0 {
+		t.Fatalf("missing segments: roRoot=%d maskRoot=%d bindHome=%d bindWorkspace=%d\nargv=%v", roRoot, maskRoot, bindHome, bindWorkspace, argv)
 	}
 	// Order is the security property: RO root first, then the mask swallowing
-	// all sibling beds, then re-binding only our own dir at /workspace.
-	if !(roRoot < maskRoot && maskRoot < bindOwn) {
-		t.Fatalf("mask/bind order wrong: roRoot=%d maskRoot=%d bindOwn=%d", roRoot, maskRoot, bindOwn)
+	// all sibling beds, then re-binding only our BedFS views.
+	if !(roRoot < maskRoot && maskRoot < bindHome && bindHome < bindWorkspace) {
+		t.Fatalf("mask/bind order wrong: roRoot=%d maskRoot=%d bindHome=%d bindWorkspace=%d", roRoot, maskRoot, bindHome, bindWorkspace)
+	}
+	if indexOfSeq(argv, "--dir", "/tmp/.hostel") < 0 || indexOfSeq(argv, "--dir", bwrapBedHomeMountPoint) < 0 {
+		t.Fatalf("private BedFS mount points must be created inside /tmp; argv=%v", argv)
 	}
 
 	for _, p := range []string{"/root", "/home"} {
@@ -49,8 +55,8 @@ func TestBuildBwrapArgsMasksSiblingsBeforeBind(t *testing.T) {
 			t.Errorf("sensitive path %s not masked; argv=%v", p, argv)
 		}
 	}
-	if indexOfSeq(argv, "--chdir", BwrapMountPoint) < 0 {
-		t.Errorf("missing --chdir %s", BwrapMountPoint)
+	if indexOfSeq(argv, "--chdir", bedfs.WorkspacePath) < 0 {
+		t.Errorf("missing --chdir %s", bedfs.WorkspacePath)
 	}
 	if !slices.Contains(argv, "--die-with-parent") {
 		t.Errorf("missing --die-with-parent")
@@ -66,7 +72,7 @@ func TestBuildBwrapArgsMasksSiblingsBeforeBind(t *testing.T) {
 // procfs remount fails under k8s's masked /proc). Regressing either silently
 // drops suite back to a lower tier on every real cluster.
 func TestBuildBwrapArgsK8sReachable(t *testing.T) {
-	argv := buildBwrapArgs("/ws", "/ws/b", nil)
+	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", nil)
 	if !slices.Contains(argv, "--unshare-user") {
 		t.Errorf("missing --unshare-user (suite needs userns in a non-privileged pod); argv=%v", argv)
 	}
@@ -82,7 +88,7 @@ func TestBuildBwrapArgsK8sReachable(t *testing.T) {
 }
 
 func TestBuildBwrapArgsSharesCarrierSoftware(t *testing.T) {
-	argv := buildBwrapArgs("/ws", "/ws/b", nil)
+	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", nil)
 	roRoot := indexOfSeq(argv, "--ro-bind", "/", "/")
 	sharedSoftware := indexOfSeq(argv, "--bind", carrierSoftwareRoot, carrierSoftwareRoot)
 	if roRoot < 0 || sharedSoftware < 0 || roRoot >= sharedSoftware {
@@ -93,18 +99,18 @@ func TestBuildBwrapArgsSharesCarrierSoftware(t *testing.T) {
 // The workspace root may itself be /workspace (default config). The sequence
 // must still be mask-then-bind so the bed's own dir replaces the mount point.
 func TestBuildBwrapArgsRootEqualsMountPoint(t *testing.T) {
-	argv := buildBwrapArgs("/workspace", "/workspace/b1", nil)
+	argv := buildBwrapArgs("/workspace", "/workspace/b1/data", "/workspace/b1/data/workspace", nil)
 	mask := indexOfSeq(argv, "--tmpfs", "/workspace")
-	bind := indexOfSeq(argv, "--bind", "/workspace/b1", "/workspace")
+	bind := indexOfSeq(argv, "--bind", "/workspace/b1/data/workspace", bedfs.WorkspacePath)
 	if mask < 0 || bind < 0 || mask >= bind {
 		t.Fatalf("mask=%d bind=%d argv=%v", mask, bind, argv)
 	}
 }
 
-func TestDirectMountPointEmpty(t *testing.T) {
+func TestDirectUsesCarrierView(t *testing.T) {
 	iso := New("direct", "/anything")
-	if iso.MountPoint() != "" {
-		t.Fatalf("direct MountPoint = %q, want empty", iso.MountPoint())
+	if iso.WorkspaceMounted() {
+		t.Fatal("direct must not report a workspace mount")
 	}
 	if iso.Name() != "direct" || !iso.Available() {
 		t.Fatalf("direct basics: %s/%v", iso.Name(), iso.Available())

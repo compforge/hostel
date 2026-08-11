@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package web is hostel's HTTP layer (gin): a thin adapter that maps
-// OpenSandbox-compatible routes onto the framework-agnostic bed/fsops/shell
+// OpenSandbox-compatible routes onto the framework-agnostic bed/bedfs/shell
 // core. Bed selection is by the X-Hostel-Bed header (or ?bed=), defaulting to
 // the configured default bed so callers can ignore beds entirely.
 package web
@@ -28,7 +28,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/fsops"
+	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/resource"
 )
@@ -250,7 +250,7 @@ func (s *Server) withOp(kind bed.OperationKind, next func(*gin.Context, *bed.Bed
 
 // opsOf returns filesystem ops rooted at the request's bed and holds one
 // operation reference until finish is called.
-func (s *Server) opsOf(c *gin.Context) (*bed.Bed, *fsops.Ops, func()) {
+func (s *Server) opsOf(c *gin.Context) (*bed.Bed, *bedfs.FS, func()) {
 	b := s.bedOf(c)
 	if b == nil {
 		return nil, nil, nil
@@ -260,7 +260,7 @@ func (s *Server) opsOf(c *gin.Context) (*bed.Bed, *fsops.Ops, func()) {
 		respondBedError(c, err)
 		return nil, nil, nil
 	}
-	return b, fsops.New(b.Home), finish
+	return b, b.BedFS(), finish
 }
 
 func (s *Server) healthz(c *gin.Context) {
@@ -271,7 +271,7 @@ func (s *Server) healthz(c *gin.Context) {
 		"ok":               true,
 		"isolator":         iso.Name(),
 		"isolator_ok":      iso.Available(),
-		"workspace_mount":  iso.MountPoint() != "",
+		"workspace_mount":  iso.WorkspaceMounted(),
 		"executor_backend": s.mgr.ExecutorBackend(),
 		"beds":             s.mgr.ResidentBedCount(),
 		"max_beds":         s.mgr.MaxBeds(),

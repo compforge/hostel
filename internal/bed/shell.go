@@ -29,6 +29,7 @@ import (
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/go-stdx/shellx"
 
+	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
 )
@@ -97,10 +98,10 @@ type Shell struct {
 // inherit the daemon env, which lacks the bed identity and endpoints. Stdio is
 // explicit os.Pipe pairs (not StdinPipe/StdoutPipe) so the raw fds can cross a
 // process boundary when bed-init is the Executor backend.
-func startShell(bedExecutor executor.Executor, shellPath string, env []string, iso isolation.Isolator, ws isolation.Workspace, cwdInBed string) (*Shell, error) {
+func startShell(bedExecutor executor.Executor, shellPath string, env []string, iso isolation.Isolator, fs *bedfs.FS, cwdInBed string) (*Shell, error) {
 	cmd := exec.Command(shellPath, shellInteractiveArgs(shellPath)...)
 	cmd.Env = env
-	if err := iso.Wrap(cmd, ws); err != nil {
+	if err := iso.Wrap(cmd, fs); err != nil {
 		return nil, err
 	}
 	inR, inW, err := os.Pipe()
@@ -228,7 +229,7 @@ func (s *Shell) Run(ctx context.Context, command string, onLine func(string)) (*
 
 // CreateShell starts a new stateful shell session in the bed and returns its id.
 // cwdInBed, when non-empty, is the starting directory (already resolved+confined
-// by the caller via fsops).
+// by the caller via BedFS).
 func (m *Manager) CreateShell(b *Bed, cwdInBed string) (string, error) {
 	m.touchBed(b)
 	env, err := m.buildBedEnv(b, nil)
@@ -239,7 +240,7 @@ func (m *Manager) CreateShell(b *Bed, cwdInBed string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sh, err := startShell(bedExecutor, m.shellPath, env, m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, cwdInBed)
+	sh, err := startShell(bedExecutor, m.shellPath, env, m.iso, b.BedFS(), cwdInBed)
 	if err != nil {
 		return "", err
 	}
@@ -298,7 +299,7 @@ func (m *Manager) ForegroundShell(b *Bed) (*Shell, error) {
 	if err != nil {
 		return nil, err
 	}
-	sh, err := startShell(bedExecutor, m.shellPath, env, m.iso, isolation.Workspace{Home: b.Home, Path: b.Workspace}, "")
+	sh, err := startShell(bedExecutor, m.shellPath, env, m.iso, b.BedFS(), "")
 	if err != nil {
 		return nil, err
 	}
