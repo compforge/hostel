@@ -111,7 +111,7 @@ carrier 资源准入在数量限制之外读取容器父 cgroup：近期 CPU 或
 
 ## 容器镜像
 
-`deploy/docker/Dockerfile` 多阶段构建:静态纯 Go 二进制 + `debian-slim` 运行时,内置两个可选设施——**bubblewrap**(`suite` 档)与 **chromium**(浏览器 amenity)。两者都是可选的:hostel 启动时 probe、探不到就诚实降级,受限 pod(无 namespace)照常服务。
+`deploy/docker/Dockerfile` 多阶段构建:静态纯 Go 二进制 + `debian-slim` 运行时,内置两个可选设施——固定版本、非 setuid 的 **bubblewrap**(`suite` 档)与 **chromium**(浏览器 amenity)。两者都是可选的:hostel 启动时 probe、探不到就诚实降级,受限 pod(无 namespace)照常服务。
 
 ```bash
 make image                     # 完整镜像(bwrap + chromium),当前架构
@@ -120,7 +120,7 @@ make image-multiarch IMAGE=repo/hostel:tag   # linux/amd64 + arm64,推到镜像�
 docker run -p 8872:8872 hostel:dev
 ```
 
-镜像多架构(`linux/amd64`、`linux/arm64`):纯 Go,builder 原生交叉编译(不走 QEMU),只有 debian runtime 阶段按目标架构跑、让 apt 拉对应架构的 bwrap/chromium。`make image-multiarch` 需要 `docker buildx` 且直接 push(多平台镜像无法 load 进本地 docker)。
+镜像多架构(`linux/amd64`、`linux/arm64`):Go builder 原生交叉编译，固定版本的 bwrap 源码构建与 Debian runtime 按目标架构运行，使原生依赖与镜像架构一致。`make image-multiarch` 需要 `docker buildx` 且直接 push(多平台镜像无法 load 进本地 docker)。
 
 容器内默认值(均可用 `HOSTEL_*` 覆盖):`--isolation suite`、`--workspace-root /workspace`(声明为 volume)、`--chromium-path /usr/bin/chromium`。`tini` 作 PID 1(回收 shell/chromium 子进程);`HEALTHCHECK` 用 `hostel --health`(自打 `/healthz`,免 curl)。bwrap 是否真隔离取决于 pod 是否给了 user namespace / `CAP_SYS_ADMIN`,没有则日志记录降级、以 `dorm` 运行。镜像默认以 root 运行(bwrap 挂载点准备 + chromium `--no-sandbox`),部署时用收敛 capability 的 `securityContext` 硬化。
 

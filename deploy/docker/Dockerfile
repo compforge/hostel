@@ -14,11 +14,13 @@
 
 # Multi-arch (linux/amd64, linux/arm64). hostel is pure Go, so the builder runs
 # NATIVELY on the build host ($BUILDPLATFORM) and cross-compiles for the target
-# arch ($TARGETARCH) — no QEMU emulation of the Go toolchain. Only the runtime
-# stage runs as $TARGETPLATFORM, where apt resolves the right-arch bwrap/chromium.
+# arch ($TARGETARCH) — no QEMU emulation of the Go toolchain. The bwrap builder
+# and runtime stages run as $TARGETPLATFORM so native dependencies match it.
 ARG BUILDPLATFORM
 ARG TARGETOS
 ARG TARGETARCH
+ARG BWRAP_VERSION=0.11.2
+ARG BWRAP_SHA256=69abc30005d2186baf7737feacd8da35633b93cf5af38838ecff17c5f8e924f6
 
 # --- build stage: static, pure-Go hostel binary --------------------------
 FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
@@ -41,6 +43,29 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/hostel ./cmd/hostel
 
+# --- bubblewrap stage: pinned non-setuid suite backend -------------------
+FROM debian:bookworm-slim AS bwrap-builder
+ARG BWRAP_VERSION
+ARG BWRAP_SHA256
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl libcap-dev meson ninja-build \
+        pkg-config xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src/bubblewrap
+RUN curl -fsSL -o bubblewrap.tar.xz \
+        "https://github.com/containers/bubblewrap/releases/download/v${BWRAP_VERSION}/bubblewrap-${BWRAP_VERSION}.tar.xz" \
+    && echo "${BWRAP_SHA256} *bubblewrap.tar.xz" | sha256sum -c - \
+    && tar -xJf bubblewrap.tar.xz --strip-components=1 \
+    && meson setup _build --prefix=/usr \
+        -Dbash_completion=disabled \
+        -Dman=disabled \
+        -Dselinux=disabled \
+        -Dsupport_setuid=false \
+        -Dtests=false \
+        -Dzsh_completion=disabled \
+    && meson compile -C _build \
+    && meson install -C _build
+
 # --- runtime stage --------------------------------------------------------
 # Debian (not distroless/alpine) because the optional facilities need a real
 # base: bubblewrap for --isolation suite, chromium for the browser amenity.
@@ -54,11 +79,15 @@ FROM debian:bookworm-slim
 ARG WITH_CHROMIUM=true
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bubblewrap ca-certificates tini bash \
+        bash ca-certificates libcap2 tini \
     && if [ "$WITH_CHROMIUM" = "true" ]; then \
         apt-get install -y --no-install-recommends chromium fonts-liberation; \
     fi \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=bwrap-builder /usr/bin/bwrap /usr/bin/bwrap
+COPY --from=bwrap-builder /src/bubblewrap/LICENSE /usr/share/doc/bubblewrap/copyright
+RUN bwrap --version
 
 # /usr/local is the carrier-wide mutable software environment exposed to beds.
 # Keep the daemon itself in the read-only system image so a package install
