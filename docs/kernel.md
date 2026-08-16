@@ -1,6 +1,6 @@
 # hostel 核心架构
 
-> 状态：当前实现及后续演进边界。专题细节以同目录文档为准。
+> 状态：当前实现及演进边界。未交付项见 `backlog.md`，专题细节以同目录文档为准。
 
 ## 一、定位与边界
 
@@ -156,7 +156,7 @@ hostel/
 
 ## 九、v1 交付物
 
-单二进制 `hostel`，`--isolation direct` 本机起、curl 通 `/files` `/directories` `/command`(SSE) `/session` `/v1/beds` `/healthz`；`go build` + `go test` 绿；README 记两层模型（bed = 隔离单元 / spec 原语在 bed 内）+ 决策 + roadmap。
+单二进制 `hostel`，`--isolation direct` 本机起、curl 通 `/files` `/directories` `/command`(SSE) `/session` `/v1/beds` `/healthz`；`go build` + `go test` 绿；README 记两层模型（bed = 隔离单元 / spec 原语在 bed 内）+ 决策。
 
 ## 十、专题设计文档
 
@@ -166,7 +166,3 @@ bed 的三个正交维度各有专门文档，本文只留一句定位：
 - **数据持久化**（本地 workspace 是工作副本，S3 快照是持久身份；生命周期边界同步）：`store.md`
 - **资源治理**（per-bed cgroup v2 记账与 carrier 准入已落地；per-bed 硬限额待实现）：`resource.md`
 - **amenity 共享设施**（Chromium/Jupyter 等重资产进程共享、按 bed 切租、bed 级动作不裸暴露 CDP）：`amenity.md`
-
-## 十一、Roadmap（v1.1+）
-
-持久 namespace Executor + PID 1 · per-bed cgroup 硬限额（`resource.md`）· 与数据隔离正交的 per-bed 网络隔离 / egress policy（覆盖命令与 amenity）· bwrap 安全纵深（seccomp memfd / 真 setuid）· overlay CoW（临时层）· PTY WS · Jupyter amenity 实例 · 交互动作全集 · 上层调度系统对接 · 产品化外壳（API 版本化、独立发布）。

@@ -130,7 +130,8 @@ The environment ceiling is probed at boot; healthz/capabilities report
 `docs/data.md`.
 
 Stronger isolation (real setuid, seccomp, per-bed CPU/memory limits via cgroups,
-copy-on-write overlay workspaces, PTY over WebSocket) is on the roadmap.
+copy-on-write overlay workspaces, PTY over WebSocket) is tracked in
+`docs/backlog.md`.
 
 ## Managed services (Chromium / Jupyter / …, planned)
 
