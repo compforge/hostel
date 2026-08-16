@@ -6,7 +6,7 @@
 
 - **做**：bed 生命周期、exec / file、共享多租服务（Chromium/Jupyter…）管理。
 - **不做**（留给上层调度系统）：实例调度、跨实例路由、计费配额。
-- 参考 OpenSandbox execd（Apache-2.0）净重写，非其 fork；归属见 `NOTICE`。设计与 roadmap 见 `docs/kernel.md`。
+- 参考 OpenSandbox execd（Apache-2.0）净重写，非其 fork；归属见 `NOTICE`。设计见 `docs/kernel.md`，未交付项见 `docs/backlog.md`。
 
 ## 概念与命名约定
 
@@ -107,7 +107,8 @@ internal/
 
 ## References
 
-- 设计文档（定位、bed 模型、managed-service 框架、决策表、v1 范围与 roadmap）：`docs/kernel.md`
+- 设计文档（定位、bed 模型、managed-service 框架、决策表与 v1 范围）：`docs/kernel.md`
+- 待办清单（尚未交付的演进项）：`docs/backlog.md`
 - 生命周期（request / bed / hostel 三粒度、operation 与 session 两类请求、status 推导链）：`docs/lifecycle.md`
 - BedFS（bed_home、workspace、client/carrier/Executor 路径空间与职责边界）：`docs/filesystem.md`
 - 数据治理方案（tmpfs 遮蔽兄弟 bed、`/workspace` 规范挂载统一两套路径语义、降级与测试策略）：`docs/data.md`

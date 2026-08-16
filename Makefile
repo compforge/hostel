@@ -7,6 +7,14 @@ IMAGE     := hostel:dev
 VERSION   := $(shell cat VERSION)
 LDFLAGS   := -X main.version=$(VERSION)
 PLATFORMS := linux/amd64,linux/arm64
+TEST_FILES ?=
+TEST_PACKAGES ?= ./...
+
+# Go compiles tests at package granularity. TEST_FILES is a devloop adapter:
+# turn changed _test.go paths into unique package targets instead of passing files.
+ifneq ($(strip $(TEST_FILES)),)
+TEST_PACKAGES := $(sort $(foreach file,$(TEST_FILES),./$(patsubst %/,%,$(dir $(file)))))
+endif
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -17,7 +25,7 @@ build: ## Build the hostel binary for the current platform
 # -race is non-negotiable here: shells, bed lifecycle and cas uploads are all
 # concurrent; -count=1 keeps the detector from being skipped by the test cache.
 test: ## Run all tests with the race detector
-	go test -race -count=1 ./...
+	go test -race -count=1 $(TEST_PACKAGES)
 
 vet: ## Run go vet
 	go vet ./...
