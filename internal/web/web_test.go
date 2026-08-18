@@ -230,6 +230,40 @@ func TestCommandCwdCanBeBedRoot(t *testing.T) {
 	}
 }
 
+func TestCommandCwdPreservesHeredocTerminatorAtEOF(t *testing.T) {
+	s := newTestServer(t)
+	body, err := json.Marshal(RunCommandRequest{
+		Command: "cat <<'PY'\nheredoc-ok\nPY",
+		Cwd:     "/workspace",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := do(t, s, http.MethodPost, "/command", bytes.NewReader(body),
+		map[string]string{"Content-Type": "application/json"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("command heredoc = %d %s", rec.Code, rec.Body.String())
+	}
+
+	var stdout, stderr string
+	var exitCode *int
+	for _, event := range parseSSE(t, rec.Body.String()) {
+		switch event.Type {
+		case EventStdout:
+			stdout += event.Text
+		case EventStderr:
+			stderr += event.Text
+		case EventExecutionEnd:
+			if event.Result != nil {
+				exitCode = event.Result.Process.ExitCode
+			}
+		}
+	}
+	if stdout != "heredoc-ok\n" || stderr != "" || exitCode == nil || *exitCode != 0 {
+		t.Fatalf("command heredoc stdout=%q stderr=%q exit_code=%v", stdout, stderr, exitCode)
+	}
+}
+
 // parseSSE extracts the JSON event frames from an SSE body.
 func parseSSE(t *testing.T, body string) []StreamEvent {
 	t.Helper()

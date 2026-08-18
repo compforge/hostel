@@ -27,6 +27,8 @@ import (
 
 // buildCommand constructs an isolated `bash -c <command>` for the bed. envs are
 // an invocation-scoped overlay; cwd (host path) overrides the workspace.
+//
+// +rule=`Treat command as opaque bash source: cwd setup may prefix it but must not append tokens that corrupt EOF-sensitive syntax such as heredocs.`
 func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string]string) (*exec.Cmd, error) {
 	m.touchBed(b)
 	// Apply cwd with a `cd` INSIDE the command (same mechanism the session shell
@@ -37,7 +39,10 @@ func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string
 	// command's own view — inside bwrap under suite, directly under direct —
 	// where cwdInBed is valid (web.resolveCwd prepared the dir via EnsureDir).
 	if cwdInBed != "" {
-		command = "cd -- " + shellx.Quote(cwdInBed) + " && { " + command + " ; }"
+		// This is a one-shot shell, so a prefix is enough to scope cwd. Do not add
+		// a suffix: heredoc terminators and other EOF-sensitive syntax must remain
+		// at the end of the caller's script.
+		command = "cd -- " + shellx.Quote(cwdInBed) + " &&\n" + command
 	}
 	cmd := exec.Command(m.shellPath, shellCommandArgs(m.shellPath, command)...)
 	if err := m.iso.Wrap(cmd, b.BedFS()); err != nil {
