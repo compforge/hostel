@@ -128,6 +128,8 @@ shell（`/session`）与 CDP 连接语义逐项相同：客户端显式开闭、
 
 Store Stat/Restore 的延迟和可用性属于数据准备，不属于 HTTP handler 或 Hostel 进程启动。管理接口先记录“希望这个 Bed resident”，初始化控制器再把它推进到 Ready：调用方可区分“请求已接受”和“Bed 已可服务”，S3 冷启动不会占住创建连接，也不会让半恢复目录进入 resident map。readiness reason 保留当前等待边界，失败 message 保留原始错误链，控制面无需从裸 EOF 或 500 文本猜原因。
 
+Ready 是数据面准入门槛，不是“初始化任务已接受”：Store Stage-in/Restore 未完成时 Bed 始终保持 initializing/not ready；只有恢复结果原子发布，且 BedFS/isolation 准备成功后，才进入 resident/ready。这个顺序类似 kubelet 在镜像拉取与容器准备完成前不会把 Pod 标成 Ready；区别是 kubelet 还会汇总容器 readiness、探针和 readiness gates 等更多条件，而 Hostel 的 Bed Ready 只表达自身负责的数据恢复与运行环境已经可服务。
+
 ### 为什么终结权必须在上一层
 
 数据面组件自行了断会破坏调度语义：bed 自杀会让 manager 的 placement 出现幽灵，hostel 自杀会让 sandctl 失去对 carrier 的控制，且 noop store 下自杀就是数据丢失。各层只持有"自己能否被安全终结"的事实并推导成 status 暴露，终结动作留给上一层。
