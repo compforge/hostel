@@ -125,7 +125,8 @@ is a deliberate downgrade.
 - `suite` (fully private): bwrap mount ns — siblings invisible + private `/tmp`
   + canonical `/workspace` mount (needs userns or CAP_SYS_ADMIN).
 
-The environment ceiling is probed at boot; healthz/capabilities report
+The environment ceiling is probed at boot; healthz/capabilities report the
+effective room type as `isolation_tier` and retain resolution detail in
 `isolation.{level,mechanism,requested,effective,ceiling}`. See
 `docs/data.md`.
 

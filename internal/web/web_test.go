@@ -112,7 +112,8 @@ func TestPingAndHealthz(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &h)
 	iso, _ := h["isolation"].(map[string]any)
 	accounting, _ := h["resource_accounting"].(map[string]any)
-	if h["ok"] != true || iso == nil || iso["level"] != "dorm" || iso["mechanism"] != "direct" {
+	if h["ok"] != true || h["isolation_tier"] != "dorm" || iso == nil ||
+		iso["level"] != "dorm" || iso["mechanism"] != "direct" {
 		t.Fatalf("/healthz body = %v", h)
 	}
 	if accounting == nil || accounting["backend"] != "noop" || accounting["available"] != false {
@@ -563,7 +564,7 @@ func TestCapabilities(t *testing.T) {
 	var caps map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &caps)
 	accounting, _ := caps["resource_accounting"].(map[string]any)
-	if caps["command"] != true || caps["pty"] != false ||
+	if caps["command"] != true || caps["pty"] != false || caps["isolation_tier"] != "dorm" ||
 		accounting == nil || accounting["backend"] != "noop" {
 		t.Fatalf("capabilities = %v", caps)
 	}
@@ -746,6 +747,7 @@ func TestBedListEndpoint(t *testing.T) {
 		Instance struct {
 			Status           string         `json:"status"`
 			Store            string         `json:"store"`
+			IsolationTier    string         `json:"isolation_tier"`
 			MaxBeds          int            `json:"max_beds"`
 			PinnedBeds       int            `json:"pinned_beds"`
 			MaxPinnedBeds    int            `json:"max_pinned_beds"`
@@ -771,7 +773,7 @@ func TestBedListEndpoint(t *testing.T) {
 	if body.Instance.Status != "retained" {
 		t.Fatalf("instance status = %s, want retained (a bed is within its retention promise)", body.Instance.Status)
 	}
-	if body.Instance.Store != "noop" || body.Instance.PinnedBeds != 1 ||
+	if body.Instance.Store != "noop" || body.Instance.IsolationTier != "dorm" || body.Instance.PinnedBeds != 1 ||
 		body.Instance.ActivityCounts["active"] != 1 || body.Instance.ActivityCounts["idle"] != 1 ||
 		body.Instance.PhaseCounts["resident"] != 2 || body.Instance.PhaseCounts["evicting"] != 0 ||
 		body.Instance.PhaseCounts["purging"] != 0 || body.Instance.PhaseCounts["dormant"] != 1 ||

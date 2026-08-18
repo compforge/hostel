@@ -239,7 +239,8 @@ func TestIsolatedUnsupportedOptionsAndCapabilities(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &capabilities); err != nil {
 		t.Fatalf("decode capabilities: %v", err)
 	}
-	if capabilities["available"] != true || capabilities["commit_supported"] != false ||
+	if capabilities["available"] != true || capabilities["isolation_tier"] != "dorm" ||
+		capabilities["commit_supported"] != false ||
 		capabilities["diff_supported"] != false {
 		t.Fatalf("isolated capabilities = %v", capabilities)
 	}

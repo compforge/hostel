@@ -211,6 +211,7 @@ func (s *Server) bedList(c *gin.Context) {
 			"status":             statusOfInstance(beds, s.mgr.StoreName(), time.Now()),
 			"store":              s.mgr.StoreName(),
 			"isolation":          s.mgr.Isolator().Level().String(),
+			"isolation_tier":     isolationTier(s.mgr.Isolator()),
 			"max_beds":           s.mgr.MaxBeds(),
 			"pinned_beds":        s.mgr.PinnedBedCount(),
 			"max_pinned_beds":    s.mgr.MaxPinnedBeds(),
@@ -363,8 +364,9 @@ func (s *Server) capabilities(c *gin.Context) {
 		amenities[a.Name()] = a.State()
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"isolator":    iso.Name(),
-		"isolator_ok": iso.Available(),
+		"isolator":       iso.Name(),
+		"isolator_ok":    iso.Available(),
+		"isolation_tier": isolationTier(iso),
 		// True when the bed workspace is mounted at the canonical /workspace
 		// inside the sandbox (bwrap): shell paths == file-API paths. False
 		// under direct, where /workspace is only the file-API virtual prefix.

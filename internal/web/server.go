@@ -275,6 +275,7 @@ func (s *Server) healthz(c *gin.Context) {
 		"ok":               true,
 		"isolator":         iso.Name(),
 		"isolator_ok":      iso.Available(),
+		"isolation_tier":   isolationTier(iso),
 		"workspace_mount":  iso.WorkspaceMounted(),
 		"executor_backend": s.mgr.ExecutorBackend(),
 		"beds":             s.mgr.ResidentBedCount(),
@@ -326,12 +327,19 @@ func resourceAdmissionView(report resource.AdmissionReport) gin.H {
 	return view
 }
 
+// isolationTier is the flat, stable projection of the guarantee that actually
+// took effect. The isolation object keeps the requested/ceiling/mechanism
+// details; callers that only gate placement should not have to reconstruct it.
+func isolationTier(iso isolation.Isolator) string {
+	return iso.Level().String()
+}
+
 // isolationView reports the data-isolation resolution: the effective level, the
 // mechanism realizing it, the requested wish, and the environment ceiling
 // (docs/data.md). Falls back gracefully if the isolator predates the
 // Report interface.
 func isolationView(iso isolation.Isolator) gin.H {
-	v := gin.H{"level": iso.Level().String(), "mechanism": iso.Name()}
+	v := gin.H{"level": isolationTier(iso), "mechanism": iso.Name()}
 	if r, ok := iso.(isolation.Report); ok {
 		v["requested"] = r.Requested().String()
 		v["effective"] = r.Effective().String()

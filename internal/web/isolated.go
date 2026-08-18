@@ -366,6 +366,7 @@ func (s *Server) isolatedCapabilities(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"available":         iso.Available(),
 		"isolator":          iso.Name(),
+		"isolation_tier":    isolationTier(iso),
 		"message":           "Hostel bed adapter: balanced profile with an rw /workspace and shared network",
 		"setpriv_available": false,
 		"userns_available":  false,
