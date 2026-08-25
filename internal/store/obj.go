@@ -52,8 +52,16 @@ func newS3Client(ctx context.Context, cfg Config) (*s3.Client, error) {
 	}), nil
 }
 
-// objAPI is the minimal object-storage surface the cas backend needs. It
-// exists so the cas persist/restore/GC logic — the part with actual room for
+func newS3Obj(ctx context.Context, cfg Config) (objAPI, error) {
+	client, err := newS3Client(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &s3obj{client: client, bucket: cfg.Bucket}, nil
+}
+
+// objAPI is the minimal object-storage surface the S3 backends need. It
+// exists so persist/restore/GC logic — the part with actual room for
 // bugs — is unit-testable against an in-memory fake; s3obj is a thin adapter
 // with nothing to test beyond the SDK.
 type objAPI interface {
@@ -61,8 +69,9 @@ type objAPI interface {
 	head(ctx context.Context, key string) (meta map[string]string, size int64, exists bool, err error)
 	get(ctx context.Context, key string) (io.ReadCloser, error)
 	// PutObject may rewind the body for signing, checksums, and retries. Hostel's
-	// chunks and indexes are already bounded in-memory objects, so require that
-	// invariant here instead of weakening S3 integrity for non-seekable streams.
+	// chunks, packs and indexes are bounded in memory, while full tar snapshots
+	// use a temporary file. Require a seekable body instead of weakening S3
+	// integrity for non-seekable streams.
 	put(ctx context.Context, key string, r io.ReadSeeker, size int64, meta map[string]string) error
 	// del removes keys; missing keys are not an error.
 	del(ctx context.Context, keys []string) error

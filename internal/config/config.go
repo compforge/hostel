@@ -33,6 +33,8 @@ const defaultBedEnvPassthrough = "PATH,LANG,LC_ALL,LC_CTYPE,TZ,TERM,COLORTERM,SS
 
 const defaultAdmissionThresholdPercent = 90
 
+const defaultAutoPackFileThreshold = 100
+
 type Config struct {
 	ShowVersion bool
 	HealthCheck bool
@@ -74,16 +76,21 @@ type Config struct {
 	// back to local; explicit "supervisor" fails startup when unavailable.
 	Executor string
 
-	// Workspace persistence (docs/store.md). Backend "auto" (default)
-	// resolves to "s3" when a bucket is configured and "noop" otherwise.
-	// "s3" stores content-addressed chunks under <prefix>/cas/ and transfers
-	// incrementally, at lifecycle boundaries (evict/checkpoint/interval);
-	// credentials resolve via the standard AWS SDK chain.
+	// Workspace persistence (docs/store.md). Backend "auto" (default) is noop
+	// without a bucket; with a bucket it defaults new beds to pack and detects
+	// existing beds for backward compatibility.
+	// "s3" stores one object per content-addressed chunk; "pack" groups chunks
+	// into larger objects; "tar" uploads one full tar.gz. Credentials resolve
+	// via the standard AWS SDK chain.
 	StoreBackend string
 	S3Bucket     string
 	S3Prefix     string
 	S3Endpoint   string // S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS
 	S3PathStyle  bool   // force path-style bucket addressing (for example MinIO)
+	// AutoPackFileThreshold switches an auto-routed bed from CAS to pack once
+	// its persistable non-directory entry count exceeds this value. Zero
+	// disables automatic switching.
+	AutoPackFileThreshold int
 	// PersistInterval is the periodic snapshot safety net (0 = only at
 	// lifecycle boundaries). Bounds how much work a crash can lose.
 	PersistInterval time.Duration
@@ -133,11 +140,12 @@ func Load(args []string) *Config {
 	fs.IntVar(&c.AdmissionCPUThreshold, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.AdmissionMemoryThreshold, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
 	fs.StringVar(&c.Executor, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
-	fs.StringVar(&c.StoreBackend, "store", osx.EnvStr("HOSTEL_STORE", "auto"), "workspace persistence backend: auto (s3 when --s3-bucket is set, else noop) | noop | s3")
+	fs.StringVar(&c.StoreBackend, "store", osx.EnvStr("HOSTEL_STORE", "auto"), "workspace persistence backend: auto (per-bed detection) | noop | s3 | cas | pack | tar")
 	fs.StringVar(&c.S3Bucket, "s3-bucket", osx.EnvStr("HOSTEL_S3_BUCKET", ""), "S3 bucket for bed snapshots")
 	fs.StringVar(&c.S3Prefix, "s3-prefix", osx.EnvStr("HOSTEL_S3_PREFIX", "hostel"), "key prefix for bed snapshots")
 	fs.StringVar(&c.S3Endpoint, "s3-endpoint", osx.EnvStr("HOSTEL_S3_ENDPOINT", ""), "S3-compatible endpoint (empty = AWS)")
 	fs.BoolVar(&c.S3PathStyle, "s3-path-style", osx.EnvBool("HOSTEL_S3_PATH_STYLE", false), "use path-style S3 bucket addressing (default virtual-hosted style)")
+	fs.IntVar(&c.AutoPackFileThreshold, "store-auto-pack-file-threshold", osx.EnvInt("HOSTEL_STORE_AUTO_PACK_FILE_THRESHOLD", defaultAutoPackFileThreshold), "auto store: switch CAS to pack above this persistable file count, 0=disabled")
 	persist := fs.Duration("persist-interval", osx.EnvDuration("HOSTEL_PERSIST_INTERVAL", 0), "periodic snapshot interval, 0=lifecycle boundaries only")
 	fs.Int64Var(&c.LuggageHighBytes, "luggage-high-bytes", osx.EnvInt64("HOSTEL_LUGGAGE_HIGH_BYTES", 0), "luggage disk high watermark in bytes, 0=no luggage GC")
 	fs.Int64Var(&c.LuggageLowBytes, "luggage-low-bytes", osx.EnvInt64("HOSTEL_LUGGAGE_LOW_BYTES", 0), "luggage GC target in bytes (default 80% of high)")

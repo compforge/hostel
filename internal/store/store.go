@@ -23,7 +23,8 @@ package store
 import (
 	"context"
 	"errors"
-	"fmt"
+	"path/filepath"
+	"strings"
 )
 
 // ErrConflict reports that the backend already holds a snapshot at least as
@@ -49,7 +50,7 @@ type SnapshotInfo struct {
 // treat Persist as atomic per bed (a reader never sees a half-written
 // snapshot) — a single commit-point object per bed gives this on S3.
 type Store interface {
-	// Name reports the backend for capabilities/healthz ("noop", "s3").
+	// Name reports the backend for capabilities/healthz ("noop", "auto", "s3", "pack", "tar").
 	Name() string
 	// Stat describes the bed's snapshot, or nil when none exists. Must be
 	// cheap (S3: HEAD + user metadata, no download) — luggage freshness
@@ -73,52 +74,23 @@ type Store interface {
 
 // Config selects and parameterizes the backend (flags/env in config package).
 type Config struct {
-	Backend   string // "auto" (default) | "noop" | "s3" ("cas" accepted as alias)
+	Backend   string // "auto" (default) | "noop" | "s3" ("cas" alias) | "pack" | "tar"
 	Bucket    string
 	Prefix    string // key prefix inside the bucket, e.g. "hostel/prod"
 	Endpoint  string // non-AWS S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS
 	PathStyle bool   // force path-style bucket addressing; default is virtual-hosted style
+	// AutoPackFileThreshold switches an auto-routed CAS bed to pack when the
+	// persisted tree contains more than this many non-directory entries.
+	// Zero disables the automatic transition.
+	AutoPackFileThreshold int
 }
 
-// New builds the configured backend. "s3" is the one S3-backed layout:
-// content-addressed chunks with incremental transfer (cas.go; "cas" accepted
-// as an alias). Credentials resolve via the standard AWS SDK chain (env,
-// shared config, IRSA...).
-//
-// "auto" (the default) resolves by intent: a configured bucket means the
-// deployment wants persistence; no bucket means noop. This closes the
-// "--s3-bucket set but --store forgotten → silently noop" misconfiguration.
-//
-// History: up to v0.0.1 "s3" named a tarball-per-bed layout, removed once cas
-// proved out (one layout to maintain; cas wins on transfer, no-op persist and
-// verified reads). Pre-v0.0.2 tarball snapshots are not readable by cas —
-// dropped without migration while hostel has no real deployments.
-func New(ctx context.Context, cfg Config) (Store, error) {
-	switch cfg.Backend {
-	case "", "auto":
-		if cfg.Bucket != "" {
-			return newCAS(ctx, cfg)
-		}
-		return Noop{}, nil
-	case "noop":
-		return Noop{}, nil
-	case "s3", "cas":
-		if cfg.Bucket == "" {
-			return nil, fmt.Errorf("store: s3 backend requires a bucket")
-		}
-		return newCAS(ctx, cfg)
-	default:
-		return nil, fmt.Errorf("store: unknown backend %q", cfg.Backend)
+// snapshotPathExcluded is shared by every concrete snapshot format so changing
+// backends cannot accidentally make carrier-private or ephemeral paths durable.
+func snapshotPathExcluded(rel string) bool {
+	rel = strings.Trim(filepath.ToSlash(rel), "/")
+	if rel == "data/tmp" || strings.HasPrefix(rel, "data/tmp/") {
+		return true
 	}
+	return !strings.Contains(rel, "/") && strings.HasSuffix(filepath.Base(rel), ".local")
 }
-
-// Noop is the zero-dependency default: nothing persists, nothing restores.
-// Beds behave exactly like pre-persistence hostel (laptop/dev, or when the
-// upstream platform persists workspaces some other way).
-type Noop struct{}
-
-func (Noop) Name() string                                         { return "noop" }
-func (Noop) Stat(context.Context, string) (*SnapshotInfo, error)  { return nil, nil }
-func (Noop) Restore(context.Context, string, string) error        { return nil }
-func (Noop) Persist(context.Context, string, string, int64) error { return nil }
-func (Noop) Delete(context.Context, string) error                 { return nil }

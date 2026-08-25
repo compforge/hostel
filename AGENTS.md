@@ -81,7 +81,7 @@ internal/
 │   ├── shell.go       常驻 bash：CreateShell/ForegroundShell；单 reader goroutine→lines chan，Run 用 marker 分帧、单消费（状态跨 run 保持）
 │   └── command.go     一次性命令构建与启动；所有终态和观测事实归 execution.go
 ├── bedfs/             BedFS 数据域：bed_home/workspace、client/carrier/Executor 路径投影与文件操作；新建路径按属主 chown
-├── store/             Hostel 直管的 bed 持久化与 Stage-in：Store 接口 + noop/s3(desync 内容寻址增量,只传变更块)，Restore 旁路完成后原子发布；见 docs/store.md
+├── store/             Hostel 直管的 bed 持久化与 Stage-in：router 按配置/bed 布局选 noop/s3(CAS)/pack(聚合增量)/tar(全量单对象)，Restore 旁路完成后原子发布；见 docs/store.md
 ├── resource/          per-bed cgroup v2 记账 + carrier CPU/内存准入；只读准入不要求子树委派
 ├── amenity/           Amenity 接口(生命周期 State)+ Registry；chromium 实例(共享浏览器/每 bed BrowserContext)；见 docs/amenity.md
 └── web/               gin 薄适配层：server(路由+bedOf 解析) / errors / sse / files / command / beds
