@@ -22,22 +22,27 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/folbricht/desync"
 )
 
-// casStore is the s3 backend (docs/store.md §3.3): the bed dir is
+// casStore is the current s3 backend (docs/store.md §3.3): the bed dir is
 // serialized to a catar stream (desync, the casync model), CDC-chunked, and
 // only chunks absent from the bed's previous snapshot are uploaded. The index
 // object is the commit point and carries the generation, so one small PUT
 // makes the whole snapshot visible atomically.
 //
-// The blob space is PER BED (<prefix>/<bedID>/...): no cross-bed dedup,
-// but GC stays a local diff ("chunks not referenced by the committed index")
-// whose correctness needs only the upstream scheduler's single-writer-per-bed
-// guarantee — never a cross-manifest, cross-instance sweep.
+// Its advantage over pack files is the finest-grained incremental transfer:
+// changing a small region uploads only the affected chunks. Its disadvantage
+// is operationally important on MinIO/filesystem-backed S3: every chunk is one
+// object/inode and one request, so small-file-heavy buckets can exhaust inodes
+// long before byte capacity. Keep it selectable as --store cas for workloads
+// that value minimum transferred bytes over object count; pack.go provides the
+// alternative object-count-optimized layout.
+//
+// The blob space is per-bed (<prefix>/<bedID>/...), so GC remains a local diff
+// and does not require a cross-manifest, cross-instance sweep.
 type casStore struct {
 	obj    objAPI
 	prefix string
@@ -67,12 +72,14 @@ var casConverters = desync.Converters{desync.Compressor{}}
 const casMetaBytes = "bytes"
 
 func newCAS(ctx context.Context, cfg Config) (Store, error) {
-	client, err := newS3Client(ctx, cfg)
+	obj, err := newS3Obj(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &casStore{obj: &s3obj{client: client, bucket: cfg.Bucket}, prefix: cfg.Prefix}, nil
+	return newCASStore(obj, cfg.Prefix), nil
 }
+
+func newCASStore(obj objAPI, prefix string) *casStore { return &casStore{obj: obj, prefix: prefix} }
 
 func (s *casStore) Name() string { return "s3" }
 
@@ -365,9 +372,5 @@ func (f *filteredFS) excluded(file *desync.File) bool {
 	if r, err := filepath.Rel(f.root, file.Path); err == nil {
 		rel = r
 	}
-	rel = strings.Trim(filepath.ToSlash(rel), "/")
-	if rel == "data/tmp" || strings.HasPrefix(rel, "data/tmp/") {
-		return true
-	}
-	return !strings.Contains(rel, "/") && strings.HasSuffix(file.Name, ".local")
+	return snapshotPathExcluded(rel)
 }

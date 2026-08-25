@@ -28,7 +28,7 @@ delete / checkpoint       ──→ 回收边界或显式请求直接等待 Pers
 evict 完成                ──→ 本地目录留作 luggage（现场缓存），交磁盘水位 GC 管
 ```
 
-接入点（锚点）：`bed.Manager.InitializeBed`（异步初始化）、`store.StageInBedFS`（数据准备）、`Ensure`（原生 API 等待同一初始化）、Evict / idle GC（persist）、`POST /v1/beds/:id/checkpoint`（显式持久化）；capabilities 报 `persistence: noop|s3`。
+接入点（锚点）：`bed.Manager.InitializeBed`（异步初始化）、`store.StageInBedFS`（数据准备）、`Ensure`（原生 API 等待同一初始化）、Evict / idle GC（persist）、`POST /v1/beds/:id/checkpoint`（显式持久化）；capabilities 报 `persistence: noop|auto|s3|pack|tar`。
 
 ## 三、关键设计
 
@@ -47,7 +47,32 @@ bed 目录旁的 staging 目录，成功后才用 rename 替换 stale luggage；
 luggage。Bed manager 只在 Stage-in、BedFS/isolation 准备全部成功后发布 resident，因此远端数据
 故障既不会得到一个空 Bed，也不会得到一个半恢复目录。
 
-backend：`auto`（默认）· `noop`（laptop 零依赖）· `s3`（内容寻址增量，见 §3；`cas` 为别名）。S3 兼容 API 皆可（AWS / MinIO / 火山 TOS / Ceph），配置：`--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style`（默认 virtual-hosted；只在 endpoint 要求时开启；creds 走 AWS SDK 标准环境链）/ `--persist-interval`。**`auto` 按意图解析**：配了 bucket = 想要持久化 → s3；没配 → noop。这同时封掉"配了 bucket 但忘了 `--store` → 静默不持久化"的误配。
+可选 backend：
+
+- `auto`：默认值，只负责选择和兼容，不实现存储格式。
+- `noop`：laptop 零依赖模式。
+- `s3` / `cas`：CAS 内容寻址增量。
+- `pack`：packfile 增量。
+- `tar`：全量 tar.gz。
+
+AWS、MinIO、火山 TOS、Ceph 等 S3 兼容 API 共用以下配置：
+
+- `--s3-bucket`、`--s3-prefix`、`--s3-endpoint`：对象存储位置。
+- `--s3-path-style`：bucket addressing 默认 virtual-hosted，仅在 endpoint 要求时开启 path style。
+- AWS SDK 标准环境链：提供凭据。
+- `--store-auto-pack-file-threshold`：默认 100，设为 0 关闭既有 CAS 自动切换。
+- `--persist-interval`：控制周期同步兜底。
+
+`auto` 的路由规则：
+
+- 未配置 bucket 时返回 `noop`。
+- 配置 bucket 后，并行 HEAD 三种布局的提交点，选择 generation 最高者；多个布局处在相同最高 generation 时拒绝猜测并报错。
+- 没有远端快照的新 bed 默认使用 pack。
+- 已有 CAS / pack / tar bed 继续使用原布局，以兼容老客户。
+- 当前 CAS bed 的可持久化非目录条目数超过阈值时，下一代快照写成 pack，之后不因文件数下降而回退。
+- CAS → pack 先发布更高 generation 的 pack 提交点，旧 CAS 对象保留到显式 purge，避免后台策略切换隐式删除持久数据。
+- purge 清理该 bed 的全部三种布局。
+- 显式 `s3` / `pack` / `tar` 只操作指定布局，不探测或迁移其它布局。
 
 ### 2. persist 触发：入口表达诉求，Store 掌握节奏
 
@@ -56,13 +81,63 @@ initialization、operation 开闭、session 流量和 carrier pressure 都只向
 退避重试。evict 与显式 checkpoint 是必须得到结果的生命周期边界，仍同步等待 Persist。这样入口可以
 不断表达诉求，而 Store 保留自己的并发、节奏和重试权。
 
-### 3. 粒度：内容寻址增量（cas）
+### 3. 粒度：CAS、packfile 与全量 tar
+
+三种 S3 布局都保持“一张 bed 一个原子提交点”，取舍点是增量粒度与远端对象数量：
+
+| backend | 远端单位 | 优点 | 代价 |
+|---|---|---|---|
+| `s3` / `cas` | 一个 chunk 一个对象 | 小改动只上传受影响 chunk；在线 GC 简单且完整 | chunk 数就是对象数 / MinIO inode 数；请求数也高 |
+| `pack` | 多个压缩 chunk 合成约 32 MiB pack | checkpoint 的对象数和请求数显著下降，更适合 inode 紧张的 MinIO | 小改动至少新增一个 pack；当前无在线 compaction/prune，历史对象追加保留到 purge |
+| `tar` | 一张 bed 固定一个 tar.gz | 永远只有一个远端对象；实现、恢复和 purge 最直接 | 内容是否变化都要全量打包、上传和下载；无增量复用 |
+
+#### CAS 布局
 
 s3 backend 的布局：复用 **desync 库**（casync 的 Go 实现，BSD-3；catar 序列化 + CDC 滚动哈希切块 + 并发装配都是现成的，hostel 只写对象 IO 适配和编排）。bed 目录序列化成 catar 流 → CDC 切块（64K/256K/1M）→ **只上传上代快照没有的块**（上代 index 就是"已在库"清单，未变数据零请求）→ index 对象作为提交点（一次小 PUT 原子发布整份快照，携带 generation）。内容没变时 catar 流稳定 → 块序列相同 → **块上传 no-op**，仍会用一次小 index PUT 推进 generation，保证跨 carrier 的 luggage 新鲜度判定正确。**小文件海**（node_modules，per-object sync 的经典死穴）不是问题：切块作用在 catar 流上，与文件数解耦。
 
-> 历史：v0.0.1 曾有 `tarball` 布局（一 bed 一 tar.gz，全量重传），cas 验证后移除——只维护一种布局，cas 在传输、no-op、读时校验上全面占优。旧 tarball 快照 cas 不读，无迁移（当时无真实部署）。
+```text
+<prefix>/
+└── <bedID>/
+    ├── index.caibx                     # 提交点：chunk 顺序 + generation / bytes metadata
+    └── chunks/
+        ├── <chunkID>                   # 一个 zstd chunk 一个对象
+        └── ...
+```
 
 **cas 的 blob 空间按 bed 隔离**（`<prefix>/<bedID>/`，index 为 `index.caibx`，数据块在 `chunks/`）：不做跨 bed 去重，换来 GC 只是"提交后删掉 index 不引用的块"的本地 diff——其正确性只依赖上层调度的单写者保证，不需要跨 manifest/跨实例的分布式清扫（restic/kopia 都只能靠显式加锁的离线 prune 解这个问题）。跨 bed 重复的大头（模板/基础工作区）留给将来的共享 base 快照，不靠 blob 级全局去重。GC 失败不算 persist 失败（快照已提交，孤儿块由下次 persist 清扫；崩溃的 persist 留下的孤儿块同理）。
+
+#### Packfile 布局
+
+`pack` 仍用 desync 生成稳定 chunk ID，但把本次新出现的压缩 chunk 顺序装入目标约 32 MiB 的 immutable pack；上代 manifest 已引用的 chunk 不重传。对象树不带版本目录：
+
+```text
+<prefix>/
+└── beds/
+    └── <bedID>/
+        ├── head.json                    # 唯一提交点：generation / snapshot / bytes
+        ├── snapshots/
+        │   └── <snapshotID>.json        # immutable：caibx index + chunk → pack/offset/length
+        └── packs/
+            └── <first2>/
+                └── <packID>.pack        # immutable：多个 zstd chunk 的拼接
+```
+
+Persist 顺序固定为 **pack → snapshot manifest → head**，所以读者只会看到完整旧快照或完整新快照；pack 和 manifest 都按内容摘要校验，取出 chunk 后仍由 desync 复核解压内容的 chunk ID。内容完全不变时只 PUT 一次 `head.json` 推进 generation；小改动通常是一个新 pack + manifest + head，而不是数十到数百个 chunk PUT。
+
+当前 pack / manifest 按 bed 隔离并追加保留，只有显式 purge 删除整个 bed 前缀；还没有在线 retention、compaction 或 prune。这把对象增长从“workspace chunk 数”降为“发生内容变化的 checkpoint pack 数”，但高频长寿 bed 仍会积累，后续需要基于保留策略做离线 compaction。也因此当前不宣称零拷贝 fork：Store 还没有一等 Snapshot/ref，若先把 pack 全局共享，purge 会变成有竞态的跨 bed GC。fork 共享应与 Snapshot/ref/lease 模型一起引入。
+
+#### 全量 tar 布局
+
+`tar` 不做 CDC 或跨 checkpoint 复用：每次 Persist 都重新遍历 bed 目录，排除顶层 `*.local` 与 `data/tmp/`，生成完整 tar.gz 到临时文件，然后用一次 PUT 原子替换固定 key。即使内容没有变化，也会完成一次全量打包和上传；相应地，一张 bed 始终只有一个远端对象，不产生历史 manifest、chunk 或 pack。
+
+```text
+<prefix>/
+└── tar/
+    └── <bedID>/
+        └── snapshot.tar.gz             # 提交点：完整快照 + generation metadata
+```
+
+Restore 下载完整对象，在 `os.Root` 约束下解包；绝对路径、`..` 逃逸、越界 symlink、重复路径和特殊文件会直接失败，普通文件 / 目录 / 相对 symlink 的普通权限位与 mtime 按归档恢复，不恢复 owner、setuid 或 setgid。`tar` 适合 workspace 较小、checkpoint 较少，或者对象数比传输字节更敏感的场景；大 workspace 高频同步应使用 CAS 或 pack。
 
 ### 4. 一致性：静默后快照
 
@@ -168,14 +243,16 @@ meta 对 bed 内代码**不可见**（bwrap 只 bind `data/`，root 整体被 tm
 
 已实现（`internal/store/` + `bed.Manager` 生命周期钩子）：
 
-- `Store` 接口 + `noop` / `s3`（aws-sdk-go-v2，`--s3-endpoint` 支持 S3 兼容存储，凭据走 AWS SDK 标准链）；默认 `auto` 按 bucket 有无解析
+- `Store` 接口 + 独立 `noop` / `s3` / `pack` / `tar` 实现；`router.go` 只负责配置选择、按 bed 识别提交点和既有 CAS → pack 单向切换，S3 client 由三种远端布局复用
 - 异步 initialization：`POST /v1/beds` 快速返回 phase/readiness；`Ensure` 加入同一 singleflight 并等待。Stage-in 失败保留原因且拒绝发布 resident——静默空启动等于数据丢失
 - 原子 Stage-in：快照恢复到 sibling staging 目录，完整后才替换 stale luggage；下载失败保留可用现场；**persist 失败中止 Evict**（毁掉唯一副本比留着 bed 重试更糟）、`POST /v1/beds/:id/checkpoint`
 - Store 同步循环：合并 lifecycle/pressure trigger，自主串行、周期兜底与失败退避；只传静默 dirty bed，并以 snapshot activity watermark 提交同步水位
 - **Bed 生命周期**（§四）：`BeginOperation` 统一 Exec/文件/浏览器/checkpoint 活跃度；`phase`、`readiness`、派生的 `activity: active|idle` 与 generation/expiry 正交；`Evict` 不杀 active operation，evicting 期间新 operation 取消驱逐；`Purge`（`DELETE ?purge=true`）终结身份
-- capabilities / healthz 报 `persistence: noop|s3`
+- capabilities / healthz 报 `persistence: noop|auto|s3|pack|tar`
 - **luggage**：evict 留现场 + `LastActiveAt` 盖章、Stage-in 按 generation 判新鲜（warm start / 旁路重拉后替换）、`--luggage-high/low-bytes` 水位 GC（stale 优先 → LRU，rename-under-lock 防与初始化竞态）、`GET /v1/beds` 报容量与全部本机 bed；generation 存 S3 object user metadata（`Stat`=HEAD 免下载）
 - **双活冲突探测**（§三.5）：`Persist` 写前 HEAD 比对 generation，远端更新则 `store.ErrConflict` 拒绝覆盖（first-writer-wins；evict 路径因 persist 失败自然中止，bed 留在本机继续服务）
 - **cas 后端**（§三.3，`internal/store/cas.go`，desync 库）：catar+CDC 流式切块上传（上代 index 做免传清单）、index 提交点带 generation/bytes metadata、块序列相同时零 chunk 上传但推进 index generation、提交后按"LIST − index 引用"做 per-bed GC、restore 经 `UnTarIndex` 并发拉块（块 ID 对解压数据复核，桶内损坏在 restore 报错而不是落进 workspace；desync `LocalFS` 为 `os.Root` 背书，自带 symlink 逃逸防护）；全流程在内存 objAPI fake 上有单测（roundtrip/增量/GC/no-op/冲突/purge）
+- **pack 后端**（§三.3，`internal/store/pack.go`）：32 MiB 目标 pack、immutable manifest、`head.json` 原子提交、上代 chunk 免传、pack/manifest/chunk 三级摘要校验、两 pack LRU restore；内存 objAPI fake 覆盖布局/roundtrip/增量/no-op/冲突/purge。是 auto 的新 bed 默认布局，也是高文件数既有 CAS bed 的单向目标；未实现在线 prune/compaction
+- **tar 后端**（§三.3，`internal/store/tar.go`）：每次生成完整 tar.gz 并原子覆盖单对象；Restore 使用 `os.Root` 限制路径与 symlink 逃逸；内存 objAPI fake 覆盖布局/roundtrip/全量覆盖/冲突/purge/恶意路径。可显式选择，auto 会识别并保持已有 tar bed
 
 与设计的一处偏差：checkpoint **暂不硬静默**（不暂停接单，调用方自选空闲点打快照）。真实 S3 通路未在本地 CI 验证（无 MinIO）；生命周期逻辑、cas 全编排（经内存 objAPI fake）有单测覆盖。

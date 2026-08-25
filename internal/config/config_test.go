@@ -78,6 +78,19 @@ func TestExecutorConfig(t *testing.T) {
 	}
 }
 
+func TestStoreAutoPackThresholdConfig(t *testing.T) {
+	if c := Load(nil); c.StoreBackend != "auto" || c.AutoPackFileThreshold != 100 {
+		t.Fatalf("default store config = %q/%d, want auto/100", c.StoreBackend, c.AutoPackFileThreshold)
+	}
+	t.Setenv("HOSTEL_STORE_AUTO_PACK_FILE_THRESHOLD", "25000")
+	if c := Load(nil); c.AutoPackFileThreshold != 25_000 {
+		t.Fatalf("env auto pack threshold = %d, want 25000", c.AutoPackFileThreshold)
+	}
+	if c := Load([]string{"-store-auto-pack-file-threshold", "0"}); c.AutoPackFileThreshold != 0 {
+		t.Fatalf("flag auto pack threshold = %d, want disabled", c.AutoPackFileThreshold)
+	}
+}
+
 func TestTracingConfig(t *testing.T) {
 	t.Setenv("HOSTEL_ENABLE_TRACING", "true")
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_GRPC_ENDPOINT", "http://collector:4317")

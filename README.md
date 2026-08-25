@@ -201,12 +201,18 @@ and failures are exposed through readiness reason/message. Native data-plane
 requests still create on first use by joining the same initialization and waiting
 for Ready, so they never observe a partial BedFS.
 
-Persistence: setting `--s3-bucket` (any S3-compatible endpoint) turns it on —
-the default `--store auto` resolves to `s3`, an incremental content-addressed
-layout: the workspace is CDC-chunked (via desync) and only chunks new since
-the bed's previous snapshot are uploaded, so an unchanged workspace
-re-persists with zero uploads. Snapshots restore when the bed is created
-again and persist on evict (DELETE / idle reap) or explicit checkpoint. Normal
+Persistence: setting `--s3-bucket` (any S3-compatible endpoint) turns it on.
+
+- The default `--store auto` stores new beds as immutable ~32 MiB pack files.
+- Auto detects existing layouts for backward compatibility:
+  - Existing CAS beds remain readable and can transition to pack.
+  - Existing pack and tar beds keep their current layout.
+- Explicit `s3` / `pack` / `tar` selections never inspect or migrate another
+  layout. Tar always replaces one complete tar.gz and keeps one object per bed.
+- Without a bucket, auto uses the no-op backend.
+
+Snapshots restore when the bed is created again and persist on evict
+(DELETE / idle reap) or explicit checkpoint. Normal
 operations and pressure submit coalesced sync requests; the store loop owns
 serialization, retry/backoff, and the optional `--persist-interval` safety net.
 A bed's durable identity is the

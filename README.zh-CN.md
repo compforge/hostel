@@ -105,7 +105,21 @@ Executor backend：`--executor auto`（默认）优先探测 Linux `supervisor`�
 
 Bed 初始化在管理面异步执行：`POST /v1/beds` 返回 `202` 与 `status.phase=initializing`；调用方通过 `GET /v1/beds/:id` 等待 `status.readiness.status=true`。快照检查、恢复、BedFS 准备和失败原因都投影到 readiness reason/message。原生数据面仍支持首次请求惰性创建，但会加入同一个初始化并等待 Ready，不会看到半成品 BedFS。
 
-持久化：`--store s3` 时每个 bed 快照到 S3 兼容对象存储——同 id 再建时恢复，驱逐（DELETE / idle 回收）或显式 checkpoint 时持久化。普通 operation 与 pressure 只提交可合并的同步诉求，Store 同步循环统一负责串行、失败退避和 `--persist-interval` 周期兜底。bed 的持久身份是快照，本地目录只是工作副本。`DELETE /v1/beds/:id` 是驱逐（身份保留），`?purge=true` 连快照一起删、终结身份；驱逐撞上并发流量返回 `409 BED_BUSY`，不丢在途写入。
+持久化在配置 `--s3-bucket` 后启用：
+
+- 默认 `--store auto` 将新 bed 保存为约 32 MiB 的 immutable pack。
+- auto 按 bed 识别已有提交点，以兼容老客户：
+  - 既有 CAS bed 可继续读取，并可迁移到 pack。
+  - 已有 pack / tar bed 保持原布局。
+- 显式 `--store s3|pack|tar` 不识别或迁移其它布局。
+- `tar` 每次全量覆盖一个 tar.gz，让每张 bed 始终只有一个对象。
+- 未配置 bucket 时，auto 使用 noop。
+
+同 id 再建时恢复，驱逐（DELETE / idle 回收）或显式 checkpoint 时持久化。普通 operation 与 pressure 只提交可合并的同步诉求，Store 同步循环统一负责串行、失败退避和 `--persist-interval` 周期兜底。bed 的持久身份是快照，本地目录只是工作副本。
+
+- `DELETE /v1/beds/:id` 只驱逐，保留持久身份。
+- `?purge=true` 删除该 bed 的全部布局并终结身份。
+- 驱逐撞上并发流量时返回 `409 BED_BUSY`，不丢在途写入。
 
 容量：`--max-beds N` 限制 resident tenant bed 数，`--max-pinned-beds M` 是 pinned 硬上限；有 operation，或 durable store 下最新数据尚未同步，任一成立即 pinned，noop 则只在 operation 期间 pinned。`M=0` 时继承 `N`，仅两者都为 0 时不限，default bed 不参与。pinned 达到 `M` 的 80% 时，`GET /v1/beds` 上报软 `bed_pressure`，供上层提前扩容和避让；达到 `M` 后，新 resident / dormant restore 以及未 pinned 的 idle bed 返回可重试的 `429 INSUFFICIENT_BED`。pinned bed 仍由当前 carrier 承接，`pinned` / `data_synced` 继续上报完整事实。
 

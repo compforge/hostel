@@ -25,7 +25,7 @@ func TestBackendSelection(t *testing.T) {
 	if err != nil || info != nil {
 		t.Fatalf("noop Stat = %v %v", info, err)
 	}
-	for _, backend := range []string{"s3", "cas" /* alias */} {
+	for _, backend := range []string{"s3", "cas" /* alias */, "pack", "tar"} {
 		if _, err := New(t.Context(), Config{Backend: backend}); err == nil {
 			t.Fatalf("%s without bucket should fail", backend)
 		}
@@ -33,11 +33,20 @@ func TestBackendSelection(t *testing.T) {
 	if _, err := New(t.Context(), Config{Backend: "bogus"}); err == nil {
 		t.Fatal("unknown backend should fail")
 	}
-	// auto resolves by intent: bucket set → s3 (cas layout), no bucket → noop.
+	// auto without persistence config is noop; with a bucket it routes per bed.
 	if st, err := New(t.Context(), Config{Backend: "auto"}); err != nil || st.Name() != "noop" {
 		t.Fatalf("auto without bucket = %v, %v; want noop", st, err)
 	}
-	if st, err := New(t.Context(), Config{Backend: "auto", Bucket: "b"}); err != nil || st.Name() != "s3" {
-		t.Fatalf("auto with bucket = %v, %v; want s3", st, err)
+	if st, err := New(t.Context(), Config{Backend: "auto", Bucket: "b"}); err != nil || st.Name() != "auto" {
+		t.Fatalf("auto with bucket = %v, %v; want auto", st, err)
+	}
+	if _, err := New(t.Context(), Config{Backend: "auto", Bucket: "b", AutoPackFileThreshold: -1}); err == nil {
+		t.Fatal("auto with negative file threshold should fail")
+	}
+	if st, err := New(t.Context(), Config{Backend: "pack", Bucket: "b"}); err != nil || st.Name() != "pack" {
+		t.Fatalf("pack with bucket = %v, %v; want pack", st, err)
+	}
+	if st, err := New(t.Context(), Config{Backend: "tar", Bucket: "b"}); err != nil || st.Name() != "tar" {
+		t.Fatalf("tar with bucket = %v, %v; want tar", st, err)
 	}
 }
