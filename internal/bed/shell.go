@@ -193,6 +193,9 @@ type RunResult struct {
 // Run writes command to the shell and streams combined stdout/stderr to onLine
 // until the command completes, detected by a unique end-marker echoing $?.
 // ctx cancels the wait (the shell keeps running; caller may Close to abort).
+//
+// +spec=`Command output is preserved whether or not its final fragment ends with a newline; the framing marker is never exposed as output.`
+// +case:id=session_partial_line_output,desc=`Run printf without a trailing newline in a persistent shell`,expect=`the partial output is returned and the execution reaches its typed terminal result`
 func (s *Shell) Run(ctx context.Context, command string, onLine func(string)) (*RunResult, error) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
@@ -205,7 +208,7 @@ func (s *Shell) Run(ctx context.Context, command string, onLine func(string)) (*
 	if _, err := io.WriteString(s.stdin, full); err != nil {
 		return nil, fmt.Errorf("shell: write command: %w", err)
 	}
-	markerRe := regexp.MustCompile("^" + regexp.QuoteMeta(marker) + ` (\d+)\s*$`)
+	markerRe := regexp.MustCompile(regexp.QuoteMeta(marker) + ` (\d+)\s*$`)
 
 	for {
 		select {
@@ -215,9 +218,12 @@ func (s *Shell) Run(ctx context.Context, command string, onLine func(string)) (*
 			if !ok {
 				return nil, fmt.Errorf("shell: session exited during run")
 			}
-			if m := markerRe.FindStringSubmatch(line); m != nil {
+			if match := markerRe.FindStringSubmatchIndex(line); match != nil {
+				if prefix := line[:match[0]]; prefix != "" && onLine != nil {
+					onLine(prefix)
+				}
 				code := 0
-				fmt.Sscanf(m[1], "%d", &code)
+				fmt.Sscanf(line[match[2]:match[3]], "%d", &code)
 				return &RunResult{ExitCode: code}, nil
 			}
 			if onLine != nil {

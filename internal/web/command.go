@@ -156,6 +156,9 @@ func wrapWithCwd(command, cwdInBed string, envs map[string]string) string {
 }
 
 // DELETE /command?id=... — interrupt a (background) command.
+//
+// +spec=`A background execution remains queryable through status and cursor-based logs until its typed terminal result records the actor that stopped it.`
+// +case:id=background_execution_control,desc=`Start a background command, read its typed logs, interrupt it, then poll status`,expect=`ordered stdout/stderr and termination_cause=interrupted remain observable under one execution id`
 func (s *Server) interruptCommand(c *gin.Context) {
 	id := c.Query("id")
 	if id == "" {
@@ -238,6 +241,9 @@ type runInSessionRequest struct {
 }
 
 // POST /session
+//
+// +spec=`An explicit session owns one persistent shell whose cwd and shell variables survive successful runs until the session is deleted.`
+// +case:id=stateful_session_lifecycle,desc=`Create a session, mutate shell state, reuse it, then delete it`,expect=`state persists between runs and the deleted session returns 404`
 func (s *Server) sessionCreate(c *gin.Context) {
 	b, ops, finishOperation := s.opsOf(c)
 	if ops == nil {

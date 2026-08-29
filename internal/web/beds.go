@@ -334,6 +334,7 @@ func lifecycleRecordToView(record *bed.LifecycleRecord) *lifecycleRecordView {
 //
 // +spec=`Eviction never tears down a bed that became active during the eviction fence; purge removes the bed identity after work is idle.`
 // +case:id=active_bed_evict_busy,desc=`Evict while a background execution is active`,expect=`409 BED_BUSY and the execution remains owned by the bed`
+// +case:id=evict_resume_luggage,desc=`Evict an idle bed and initialize the same id again on the same Hostel`,expect=`the dormant luggage is reused and its workspace data survives`
 // +case:id=purge_removes_bed,desc=`Purge idle beds`,expect=`the beds disappear from inventory`
 func (s *Server) bedDelete(c *gin.Context) {
 	id := c.Param("bedId")

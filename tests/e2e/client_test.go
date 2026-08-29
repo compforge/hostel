@@ -96,6 +96,37 @@ type commandResult struct {
 	Result      *executionView
 }
 
+type executionStatusView struct {
+	ExecutionID string         `json:"execution_id"`
+	BedID       string         `json:"bed_id"`
+	Mode        string         `json:"mode"`
+	Running     bool           `json:"running"`
+	Result      *executionView `json:"result"`
+}
+
+type executionOutputView struct {
+	Sequence int64  `json:"sequence"`
+	Stream   string `json:"stream"`
+	Text     string `json:"text"`
+}
+
+type executionLogsView struct {
+	ExecutionID string                `json:"execution_id"`
+	Output      []executionOutputView `json:"output"`
+	NextCursor  int64                 `json:"next_cursor"`
+	Running     bool                  `json:"running"`
+	Truncated   bool                  `json:"truncated"`
+}
+
+type fileInfoView struct {
+	Path  string `json:"path"`
+	Type  string `json:"type"`
+	Size  int64  `json:"size"`
+	Mode  int    `json:"mode"`
+	Owner string `json:"owner"`
+	Group string `json:"group"`
+}
+
 func newAPIClient(baseURL string) *apiClient {
 	return &apiClient{
 		baseURL: strings.TrimSuffix(baseURL, "/"),
@@ -149,15 +180,20 @@ func (c *apiClient) json(ctx context.Context, method, path, bed string, body, ou
 
 func (c *apiClient) command(t *testing.T, bed string, request map[string]any) (commandResult, httpResult) {
 	t.Helper()
+	return c.stream(t, "/command", bed, request)
+}
+
+func (c *apiClient) stream(t *testing.T, path, bed string, request any) (commandResult, httpResult) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	raw, err := json.Marshal(request)
 	if err != nil {
 		t.Fatalf("marshal command: %v", err)
 	}
-	response, err := c.request(ctx, "POST", "/command", bed, bytes.NewReader(raw), "application/json")
+	response, err := c.request(ctx, "POST", path, bed, bytes.NewReader(raw), "application/json")
 	if err != nil {
-		t.Fatalf("run command for bed %s: %v", bed, err)
+		t.Fatalf("stream %s for bed %s: %v", path, bed, err)
 	}
 	if response.Status < 200 || response.Status >= 300 {
 		return commandResult{}, response
@@ -191,6 +227,23 @@ func (c *apiClient) command(t *testing.T, bed string, request map[string]any) (c
 		t.Fatalf("read command stream: %v", err)
 	}
 	return result, response
+}
+
+func (c *apiClient) waitExecution(t *testing.T, id string, predicate func(executionStatusView) bool, description string) executionStatusView {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	var last executionStatusView
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		result, err := c.json(ctx, "GET", "/command/status/"+url.PathEscape(id), "", nil, &last)
+		cancel()
+		if err == nil && result.Status == http.StatusOK && predicate(last) {
+			return last
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for execution %s to become %s; last=%+v", id, description, last)
+	return executionStatusView{}
 }
 
 func (c *apiClient) createBed(t *testing.T, id string) httpResult {
@@ -252,6 +305,11 @@ func (c *apiClient) waitInventory(t *testing.T, description string, predicate fu
 
 func (c *apiClient) upload(t *testing.T, bed, path string, content []byte) httpResult {
 	t.Helper()
+	return c.uploadAt(t, "/files/upload", bed, path, content)
+}
+
+func (c *apiClient) uploadAt(t *testing.T, endpoint, bed, path string, content []byte) httpResult {
+	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	if err := writer.WriteField("metadata", fmt.Sprintf(`{"path":%q}`, path)); err != nil {
@@ -269,7 +327,7 @@ func (c *apiClient) upload(t *testing.T, bed, path string, content []byte) httpR
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	result, err := c.request(ctx, "POST", "/files/upload", bed, &body, writer.FormDataContentType())
+	result, err := c.request(ctx, "POST", endpoint, bed, &body, writer.FormDataContentType())
 	if err != nil {
 		t.Fatalf("upload %s for bed %s: %v", path, bed, err)
 	}

@@ -229,10 +229,16 @@ type InventoryBed struct {
 // count). The result is a stale-tolerant hint — freshness is re-checked at
 // initialization (Ensure), so a scheduler routing on outdated data is slow,
 // never wrong.
+//
+// +spec=`Scheduler inventory contains tenant beds only; the compatibility default bed never participates in placement or capacity projections.`
+// +case:id=default_bed_inventory,desc=`Use the default bed and then query scheduler inventory`,expect=`the default bed is absent and tenant capacity remains available`
 func (m *Manager) Inventory() []InventoryBed {
 	beds := m.List()
 	out := make([]InventoryBed, 0, len(beds))
 	for _, b := range beds {
+		if b.ID == m.defaultBed {
+			continue
+		}
 		status := b.Status()
 		entry := InventoryBed{
 			ID:                 b.ID,
@@ -251,6 +257,9 @@ func (m *Manager) Inventory() []InventoryBed {
 		out = append(out, entry)
 	}
 	for _, initialization := range m.initializationStatuses() {
+		if initialization.ID == m.defaultBed {
+			continue
+		}
 		out = append(out, InventoryBed{
 			ID:           initialization.ID,
 			Status:       initialization.BedStatus,
