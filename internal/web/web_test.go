@@ -23,6 +23,9 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -161,6 +164,72 @@ func TestUploadInfoDownloadRoundTrip(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Length"); got != strconv.Itoa(len("hello hostel")) {
 		t.Fatalf("download Content-Length = %q", got)
+	}
+}
+
+func TestDormFileAPIsReadCommandAbsolutePathWhenEnabled(t *testing.T) {
+	base := newTestServer(t)
+	s := NewServer(base.mgr, WithDormReadFallbackRoot("/"))
+	rawDir := t.TempDir()
+	rawPath := filepath.Join(rawDir, "artifact.txt")
+	body, err := json.Marshal(RunCommandRequest{
+		Command: "printf 'carrier-first\\nsecond\\n' > " + strconv.Quote(rawPath),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := do(t, s, http.MethodPost, "/command", bytes.NewReader(body), map[string]string{"Content-Type": "application/json"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("command absolute write = %d %s", rec.Code, rec.Body.String())
+	}
+
+	queryPath := url.QueryEscape(filepath.ToSlash(rawPath))
+	rec = do(t, s, http.MethodGet, "/files/info?path="+queryPath, nil, nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"path":"`+filepath.ToSlash(rawPath)+`"`) {
+		t.Fatalf("fallback info = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, s, http.MethodGet, "/files/download?path="+queryPath+"&offset=1&limit=1", nil, nil)
+	if rec.Code != http.StatusOK || rec.Body.String() != "second\n" {
+		t.Fatalf("fallback download = %d %q", rec.Code, rec.Body.String())
+	}
+	rec = do(t, s, http.MethodGet, "/directories/list?path="+url.QueryEscape(filepath.ToSlash(rawDir)), nil, nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), filepath.ToSlash(rawPath)) {
+		t.Fatalf("fallback list = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, s, http.MethodGet, "/files/search?path="+url.QueryEscape(filepath.ToSlash(rawDir))+"&pattern=artifact.txt", nil, nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), filepath.ToSlash(rawPath)) {
+		t.Fatalf("fallback search = %d %s", rec.Code, rec.Body.String())
+	}
+
+	b, ok := s.mgr.Get(s.mgr.DefaultBedID())
+	if !ok {
+		t.Fatal("default bed not found after command")
+	}
+	if err := b.BedFS().Write(filepath.ToSlash(rawPath), []byte("bed-local"), 0); err != nil {
+		t.Fatal(err)
+	}
+	rec = do(t, s, http.MethodGet, "/files/download?path="+queryPath, nil, nil)
+	if rec.Code != http.StatusOK || rec.Body.String() != "bed-local" {
+		t.Fatalf("bed-local path must win = %d %q", rec.Code, rec.Body.String())
+	}
+	rec = do(t, s, http.MethodDelete, "/files?path="+queryPath, nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete bed-local path = %d %s", rec.Code, rec.Body.String())
+	}
+	if raw, err := os.ReadFile(rawPath); err != nil || string(raw) != "carrier-first\nsecond\n" {
+		t.Fatalf("mutation touched fallback path: content=%q err=%v", raw, err)
+	}
+}
+
+func TestDormFileAPIsDoNotReadProcessRootByDefault(t *testing.T) {
+	s := newTestServer(t)
+	rawPath := filepath.Join(t.TempDir(), "carrier-only.txt")
+	if err := os.WriteFile(rawPath, []byte("carrier"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := do(t, s, http.MethodGet, "/files/download?path="+url.QueryEscape(filepath.ToSlash(rawPath)), nil, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("disabled fallback download = %d %s, want 404", rec.Code, rec.Body.String())
 	}
 }
 

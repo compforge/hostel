@@ -165,13 +165,21 @@ reports `amenities: {chromium: idle|running}`.
 ## Configuration
 
 Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` /
-`--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
+`--dorm-read-fallback-root` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
 `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
 `--executor` / `--bed-env-passthrough` / `--store` /
 `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` /
 `--luggage-high-bytes` / `--luggage-low-bytes` /
 `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` /
 `--enable-tracing`.
+
+Dorm commands share the carrier mount namespace, so a command may write a
+literal absolute path outside BedFS. On an exclusive carrier,
+`--dorm-read-fallback-root /` (or `HOSTEL_DORM_READ_FALLBACK_ROOT=/`) lets
+read-only file APIs retry that process path after the BedFS path is absent.
+The option is disabled by default: it exposes the configured root to file API
+reads and is unsafe when a carrier is shared. BedFS always wins when both paths
+exist, and upload/replace/chmod/move/delete never use the fallback.
 
 OpenTelemetry traces use `OTEL_EXPORTER_OTLP_TRACES_GRPC_ENDPOINT` or
 `OTEL_EXPORTER_OTLP_TRACES_HTTP_ENDPOINT`; gRPC wins when both are set. Tracing

@@ -251,7 +251,11 @@ func main() {
 	// retry/backoff. A zero interval disables only the periodic safety net.
 	go mgr.RunStoreSync(ctx, cfg.PersistInterval)
 
-	srv := &http.Server{Addr: cfg.Addr, Handler: web.NewServer(mgr, web.WithTracing(cfg.EnableTracing)).Handler()}
+	srv := &http.Server{Addr: cfg.Addr, Handler: web.NewServer(
+		mgr,
+		web.WithTracing(cfg.EnableTracing),
+		web.WithDormReadFallbackRoot(cfg.DormReadFallbackRoot),
+	).Handler()}
 	go func() {
 		log.Printf("hostel: listening on %s (isolation=%s, workspace-root=%s, default-bed=%s)",
 			cfg.Addr, iso.Name(), cfg.WorkspaceRoot, cfg.DefaultBed)

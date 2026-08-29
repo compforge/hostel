@@ -56,6 +56,12 @@ Executor View：
   direct/room → 使用宿主真实路径；隔离机制负责访问边界
 ```
 
+Bedbox 给 caller 的北向契约始终是一个 Bed 独占整个 Pod；BedFS 三档统一拥有并映射这份路径语义。isolation 只决定内核是否真正兑现独占视图：suite 看不到兄弟路径，room 可见但访问 EACCES，dorm 共享 Carrier 视图且可能操作；不得让房型反向改变 Client → Carrier 主映射。
+
+三档共享 BedFS 数据底座，对外保证单调增强，但实现机制不单调叠加：Dorm 使用共享 mount view；Room 沿用它并增加 Landlock/UID 访问控制；Suite 改走私有 mount view，使其他 Bed 的路径不存在，不再依赖 Room 的权限判断。请求档位不可达时诚实降级，但不能因为权限不足连低档能做的收口也放弃。
+
+独占 Dorm carrier 可显式开启只读 file API 的进程根回退：BedFS 路径不存在且客户端传入绝对路径时，Reader 回读配置的进程根；BedFS 同名路径优先，mutation 不回退。该配置会暴露进程根、共享 carrier 禁止开启，详见 `docs/filesystem.md`。
+
 ## 代码地图与核心模块
 
 ```

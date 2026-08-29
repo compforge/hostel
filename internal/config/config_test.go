@@ -27,6 +27,19 @@ func TestIsolationAndManagedServiceConfigContract(t *testing.T) {
 	}
 }
 
+func TestDormReadFallbackRootIsExplicit(t *testing.T) {
+	if c := Load(nil); c.DormReadFallbackRoot != "" {
+		t.Fatalf("default dorm read fallback root = %q, want disabled", c.DormReadFallbackRoot)
+	}
+	t.Setenv("HOSTEL_DORM_READ_FALLBACK_ROOT", "/")
+	if c := Load(nil); c.DormReadFallbackRoot != "/" {
+		t.Fatalf("env dorm read fallback root = %q, want /", c.DormReadFallbackRoot)
+	}
+	if c := Load([]string{"-dorm-read-fallback-root", "/carrier"}); c.DormReadFallbackRoot != "/carrier" {
+		t.Fatalf("flag dorm read fallback root = %q, want /carrier", c.DormReadFallbackRoot)
+	}
+}
+
 func TestBedEnvPassthroughConfig(t *testing.T) {
 	t.Setenv("HOSTEL_BED_ENV_PASSTHROUGH", "PATH, LANG,PATH,UV_TOOL_DIR")
 	c := Load(nil)

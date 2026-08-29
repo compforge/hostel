@@ -78,16 +78,25 @@ type Server struct {
 	mgr                  *bed.Manager
 	engine               *gin.Engine
 	metricSampleInterval time.Duration
+	dormReadFallbackRoot string
 }
 
 type serverConfig struct {
-	tracing bool
+	tracing              bool
+	dormReadFallbackRoot string
 }
 
 type ServerOption func(*serverConfig)
 
 func WithTracing(enabled bool) ServerOption {
 	return func(cfg *serverConfig) { cfg.tracing = enabled }
+}
+
+// WithDormReadFallbackRoot opts an exclusive dorm carrier into reading
+// process-root absolute paths after a BedFS miss. Shared carriers must leave it
+// empty because dorm provides no cross-bed or host data boundary.
+func WithDormReadFallbackRoot(root string) ServerOption {
+	return func(cfg *serverConfig) { cfg.dormReadFallbackRoot = root }
 }
 
 // NewServer builds the gin engine with all routes registered.
@@ -102,7 +111,12 @@ func NewServer(mgr *bed.Manager, options ...ServerOption) *Server {
 		e.Use(otelgin.Middleware("hostel", otelgin.WithFilter(traceHTTPPath)))
 	}
 	e.Use(gin.Recovery())
-	s := &Server{mgr: mgr, engine: e, metricSampleInterval: time.Second}
+	s := &Server{
+		mgr:                  mgr,
+		engine:               e,
+		metricSampleInterval: time.Second,
+		dormReadFallbackRoot: cfg.dormReadFallbackRoot,
+	}
 	s.routes()
 	return s
 }

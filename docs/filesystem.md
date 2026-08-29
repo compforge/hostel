@@ -16,6 +16,10 @@ BedFS 统一拥有以下语义：
 
 隔离机制不再自行解释客户端路径。它只选择 BedFS 如何投影到 Executor，并负责兑现该视图所需的 bind、Landlock 或 uid 规则。
 
+Bedbox 向 caller 提供的契约是一个 Bed 独占整个 Pod；BedFS 负责让这份路径契约在三档下保持同义。isolation 只决定内核是否真正阻止进程越过该视图：不能把 suite/room/dorm 的可见性或权限差异写进 Client → Carrier 的映射规则。
+
+BedFS 也是三档共同的 best-effort 数据底座：Dorm 没有安全墙，仍须完成逻辑分床、路径映射和持久化；Room 沿用 Dorm 的共享 mount view，并叠加访问控制；Suite 改用私有 mount view，直接让其他 Bed 的路径不可见，不再经过 Room 的权限判断。降级只能减少安全保证，不能降掉 BedFS 的正确性。
+
 ## 二、三个路径空间
 
 | 空间 | 示例 | 所有者 |
@@ -57,7 +61,9 @@ bwrap 先遮蔽 `<workspace-root>`，再投影同一 BedFS：
 
 Hostel 解析 file API 的 `path`、命令的 `cwd` 等结构化字段，因此这些字段在所有房型都遵守 BedFS 语义。Hostel 不改写任意 shell 文本：命令中的字面 `/tmp/x` 仍由实际进程 namespace 解释。
 
-不要给所有操作增加隐式“BedFS 不存在就读 carrier 绝对路径”的回退：读、写、删除与执行的安全含义不同，统一回退会把拼写错误变成越过 Bed 边界。后续若有真实需求，应在 BedFS 中增加显式、按操作分类的解析策略。
+Dorm 与 carrier 共享 mount namespace，命令中的字面绝对路径可能成功写到进程根，而不是 BedFS。独占 carrier 可显式配置 `--dorm-read-fallback-root /`：只读 file API 在 BedFS 主映射不存在时，把客户端绝对路径按该进程根作为第二候选重试；两处都存在时始终以 BedFS 为准。相对路径不回退，因为它本来就以 bed workspace 为执行与 API 基准。
+
+这是一条默认关闭的只读候选策略，不是第二套路径映射或写入语义。上传、替换、改权限、移动和删除始终只操作 BedFS；room / suite 也不启用回退。配置的 root 会暴露给 file API 读取，Dorm 本身又不提供数据访问屏障，因此共享 carrier 不得开启，也不得把它理解为隔离保证。
 
 ## 五、生命周期与边界
 
@@ -65,6 +71,6 @@ Hostel 解析 file API 的 `path`、命令的 `cwd` 等结构化字段，因此�
 - Executor owns process realm：只持有 BedFS View，可丢失和替换；
 - Store consumes BedFS carrier data：快照对象仍是 Bed 目录中的 `data/`；
 - isolation realizes View：不拥有数据命名和持久化规则；
-- web 只做协议适配：不能拼 carrier 路径或 mount point。
+- web 只选择与房型、部署配置匹配的 BedFS 读取策略：不能自行拼 carrier 路径或 mount point。
 
 daemon 文件 API 先做客户端路径规范化，再以 `bed_home` 的目录句柄执行 descriptor-relative 文件操作。路径中的 symlink 只允许解析到该根之内；逃出根目录或与并发 symlink 替换竞态的操作会失败。这条安全边界属于 BedFS，不散落到各 handler。

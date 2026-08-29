@@ -53,6 +53,10 @@ type Config struct {
 	// Levels resolve to mechanisms (direct/landlock/bwrap) in internal/isolation;
 	// effective = min(requested, ceiling), over-asks degrade honestly.
 	IsolationMode string
+	// DormReadFallbackRoot optionally exposes an exclusive dorm Executor's
+	// process root through read-only file APIs after a BedFS miss. Empty is the
+	// safe default for shared carriers; mutation APIs never use this root.
+	DormReadFallbackRoot string
 	// DefaultBed is the bed id used when a request omits one — lets simple
 	// single-tenant callers ignore the bed concept entirely.
 	DefaultBed string
@@ -131,6 +135,7 @@ func Load(args []string) *Config {
 	fs.StringVar(&c.OTLPTracesHTTPEndpoint, "otel-traces-http-endpoint", osx.EnvStr("OTEL_EXPORTER_OTLP_TRACES_HTTP_ENDPOINT", ""), "OTLP HTTP traces endpoint")
 	fs.StringVar(&c.WorkspaceRoot, "workspace-root", osx.EnvStr("HOSTEL_WORKSPACE_ROOT", "/workspace"), "parent dir for per-bed workspaces")
 	fs.StringVar(&c.IsolationMode, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "data-isolation level: dorm | room | suite | auto (auto=env ceiling)")
+	fs.StringVar(&c.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")
 	fs.StringVar(&c.DefaultBed, "default-bed", osx.EnvStr("HOSTEL_DEFAULT_BED", "default"), "bed id used when a request omits one")
 	fs.StringVar(&c.ShellPath, "shell", osx.EnvStr("HOSTEL_SHELL", "/bin/bash"), "shell for bed sessions")
 	bedEnvPassthrough := fs.String("bed-env-passthrough", osx.EnvStr("HOSTEL_BED_ENV_PASSTHROUGH", defaultBedEnvPassthrough), "comma-separated carrier env names exposed to bed processes")
