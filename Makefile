@@ -1,4 +1,4 @@
-.PHONY: help build test vet fmt lint tidy check run run-bwrap linux smoke image image-lean image-multiarch clean
+.PHONY: help build test e2e e2e-image vet fmt lint tidy check run run-bwrap linux smoke image image-lean image-multiarch clean
 
 BIN       := bin/hostel
 ADDR      := :8872
@@ -7,6 +7,7 @@ IMAGE     := hostel:dev
 VERSION   := $(shell cat VERSION)
 LDFLAGS   := -X main.version=$(VERSION)
 PLATFORMS := linux/amd64,linux/arm64
+E2E_IMAGE ?=
 TEST_FILES ?=
 TEST_PACKAGES ?= ./...
 
@@ -14,6 +15,11 @@ TEST_PACKAGES ?= ./...
 # turn changed _test.go paths into unique package targets instead of passing files.
 ifneq ($(strip $(TEST_FILES)),)
 TEST_PACKAGES := $(sort $(foreach file,$(TEST_FILES),./$(patsubst %/,%,$(dir $(file)))))
+endif
+
+TEST_TAGS :=
+ifneq ($(filter ./tests/e2e,$(TEST_PACKAGES)),)
+TEST_TAGS := -tags=e2e
 endif
 
 help: ## List available targets
@@ -25,7 +31,15 @@ build: ## Build the hostel binary for the current platform
 # -race is non-negotiable here: shells, bed lifecycle and cas uploads are all
 # concurrent; -count=1 keeps the detector from being skipped by the test cache.
 test: ## Run all tests with the race detector
-	go test -race -count=1 $(TEST_PACKAGES)
+	go test $(TEST_TAGS) -race -count=1 $(TEST_PACKAGES)
+
+e2e: build ## Run the single-machine runtime contract against a real hostel binary
+	HOSTEL_E2E_BINARY="$(CURDIR)/$(BIN)" go test -tags=e2e -count=1 -v ./tests/e2e
+
+e2e-image: ## Run the full contract, including PyPI/npm/Chromium (set E2E_IMAGE)
+	@test -n "$(E2E_IMAGE)" || { echo "E2E_IMAGE is required"; exit 1; }
+	HOSTEL_E2E_IMAGE="$(E2E_IMAGE)" HOSTEL_E2E_USERLAND=1 \
+		go test -tags=e2e -count=1 -v ./tests/e2e
 
 vet: ## Run go vet
 	go vet ./...

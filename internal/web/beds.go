@@ -164,6 +164,9 @@ func statusOfInstance(beds []bed.InventoryBed, store string, now time.Time) inst
 // stale-tolerant hint — freshness is re-enforced at initialization, so routing on
 // outdated data is slow, never wrong. Callers must treat store "noop" as
 // "beds are pinned here": no snapshot exists elsewhere to migrate from.
+//
+// +spec=`phase_counts and activity_counts are exact projections of the beds returned in the same response.`
+// +case:id=bed_inventory_invariants,desc=`Create, activate, idle, and purge beds`,expect=`instance counters match the returned bed facts after every transition`
 func (s *Server) bedList(c *gin.Context) {
 	beds := s.mgr.Inventory()
 	hasBeds := false
@@ -232,6 +235,9 @@ type createBedRequest struct {
 }
 
 // POST /v1/beds — create (or return existing) a bed. Empty id → server-assigned.
+//
+// +spec=`A new bed reserves capacity before initialization and is published only after readiness succeeds.`
+// +case:id=bed_capacity_limit,desc=`Fill max_beds and create one more bed`,expect=`429 BED_LIMIT_EXCEEDED without exceeding resident capacity`
 func (s *Server) bedCreate(c *gin.Context) {
 	var req createBedRequest
 	_ = c.ShouldBindJSON(&req)
@@ -325,6 +331,10 @@ func lifecycleRecordToView(record *bed.LifecycleRecord) *lifecycleRecordView {
 // the snapshot identity); ?purge=true ends the identity (snapshot deleted
 // too). An evict canceled by concurrent bed activity returns 409 BED_BUSY —
 // stop sending traffic, then retry.
+//
+// +spec=`Eviction never tears down a bed that became active during the eviction fence; purge removes the bed identity after work is idle.`
+// +case:id=active_bed_evict_busy,desc=`Evict while a background execution is active`,expect=`409 BED_BUSY and the execution remains owned by the bed`
+// +case:id=purge_removes_bed,desc=`Purge idle beds`,expect=`the beds disappear from inventory`
 func (s *Server) bedDelete(c *gin.Context) {
 	id := c.Param("bedId")
 	if c.Query("purge") == "true" {

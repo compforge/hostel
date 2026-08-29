@@ -67,6 +67,9 @@ func (s *Server) resolveCwd(c *gin.Context, fs *bedfs.FS, cwd string) (string, b
 
 // POST /command starts one execution. Foreground streams through its terminal
 // event; background returns after execution_start and remains queryable.
+//
+// +spec=`Every execution emits one stable identity and one typed terminal outcome; stdout and stderr remain distinct.`
+// +case:id=command_stream_contract,desc=`Run a non-zero command through the public HTTP stream`,expect=`stdout, stderr, executor identity, and exit code remain observable`
 func (s *Server) runCommand(c *gin.Context) {
 	b, ops, finishRequest := s.opsOf(c)
 	if ops == nil {
