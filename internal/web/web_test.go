@@ -786,6 +786,33 @@ func TestCheckpointEndpointAndPersistenceReporting(t *testing.T) {
 
 // /v1/beds is the scheduler's one-poll picture: instance capacity plus
 // every local bed — in-memory ones and luggage (evicted, dir kept).
+func TestBedListDefaultBedRetainsInstanceWithoutInventoryRow(t *testing.T) {
+	s := newTestServer(t)
+	if _, err := s.mgr.Ensure(context.Background(), ""); err != nil {
+		t.Fatalf("ensure default bed: %v", err)
+	}
+
+	rec := do(t, s, http.MethodGet, "/v1/beds", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bed list = %d %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Instance struct {
+			Status string `json:"status"`
+		} `json:"instance"`
+		Beds []bedView `json:"beds"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Instance.Status != "retained" {
+		t.Fatalf("instance status = %s, want retained while default bed is resident", body.Instance.Status)
+	}
+	if len(body.Beds) != 0 {
+		t.Fatalf("scheduler inventory contains default bed: %+v", body.Beds)
+	}
+}
+
 func TestBedListEndpoint(t *testing.T) {
 	s := newTestServer(t)
 	s.mgr.SetBedIdleTTL(time.Minute)

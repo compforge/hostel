@@ -16,8 +16,12 @@ func TestBedEvictResumeAndPurge(t *testing.T) {
 	defaultRun, response := c.command(t, "", map[string]any{"command": "printf default-ready", "timeout": 30_000})
 	must2xx(t, "run default bed", response)
 	assertCommandExit(t, defaultRun, 0)
-	if hasBed(c.inventory(t), "default") {
+	inventory := c.inventory(t)
+	if hasBed(inventory, "default") {
 		t.Fatal("default bed leaked into scheduler inventory")
+	}
+	if inventory.Instance.Status != "retained" {
+		t.Fatalf("instance status = %s, want retained while default bed is resident", inventory.Instance.Status)
 	}
 
 	created := c.createBed(t, "lifecycle-bed")

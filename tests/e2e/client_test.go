@@ -61,6 +61,7 @@ type bedView struct {
 
 type inventoryView struct {
 	Instance struct {
+		Status        string         `json:"status"`
 		Isolation     string         `json:"isolation"`
 		MaxBeds       int            `json:"max_beds"`
 		PhaseCounts   map[string]int `json:"phase_counts"`

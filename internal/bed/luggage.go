@@ -231,7 +231,7 @@ type InventoryBed struct {
 // never wrong.
 //
 // +spec=`Scheduler inventory contains tenant beds only; the compatibility default bed never participates in placement or capacity projections.`
-// +case:id=default_bed_inventory,desc=`Use the default bed and then query scheduler inventory`,expect=`the default bed is absent and tenant capacity remains available`
+// +case:id=default_bed_inventory,desc=`Use the default bed and then query scheduler inventory`,expect=`the default bed is absent and tenant capacity remains available while the instance remains retained`
 func (m *Manager) Inventory() []InventoryBed {
 	beds := m.List()
 	out := make([]InventoryBed, 0, len(beds))
