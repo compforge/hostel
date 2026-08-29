@@ -113,6 +113,9 @@ func (s *Server) withIsolatedBed(next gin.HandlerFunc) gin.HandlerFunc {
 // POST /v1/isolated/session. The compatibility identity is deliberately
 // one-to-one: an isolated session is a non-default bed, not a second lifecycle
 // object.
+//
+// +spec=`The isolated-session compatibility resource is one non-default Bed identity with a persistent shell and BedFS-backed /workspace.`
+// +case:id=isolated_session_compatibility,desc=`Create, inspect, run, exchange a file with, list, and delete an isolated session`,expect=`all compatibility endpoints address the same Bed and deletion ends that identity`
 func (s *Server) isolatedCreate(c *gin.Context) {
 	if !s.mgr.Isolator().Available() {
 		respondError(c, http.StatusServiceUnavailable, ErrServiceUnavailable, "isolation unavailable")

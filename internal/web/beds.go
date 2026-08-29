@@ -121,10 +121,16 @@ const (
 	instancePinned     instanceStatus = "pinned"     // noop store with local beds: this instance is the only copy
 )
 
-// statusOfInstance folds the inventory rows and the store backend into the
-// hostel-layer status. A zero RetainUntil (no idle TTL configured) counts as
-// retained — releasable must never be concluded from unknown retention.
-func statusOfInstance(beds []bed.InventoryBed, store string, now time.Time) instanceStatus {
+// statusOfInstance folds the scheduler-visible inventory, the compatibility
+// default bed and the store backend into the hostel-layer status. A zero
+// RetainUntil (no idle TTL configured) counts as retained — releasable must
+// never be concluded from unknown retention.
+func statusOfInstance(beds []bed.InventoryBed, defaultBedOccupied bool, store string, now time.Time) instanceStatus {
+	// The default bed never participates in scheduler inventory or idle GC, so
+	// its residency is a separate, unconditional reason to retain this instance.
+	if defaultBedOccupied {
+		return instanceRetained
+	}
 	hasResident, hasDormant, allExpired := false, false, true
 	for _, b := range beds {
 		switch b.Status.Phase {
@@ -211,7 +217,7 @@ func (s *Server) bedList(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"instance": gin.H{
-			"status":             statusOfInstance(beds, s.mgr.StoreName(), time.Now()),
+			"status":             statusOfInstance(beds, s.mgr.DefaultBedOccupied(), s.mgr.StoreName(), time.Now()),
 			"store":              s.mgr.StoreName(),
 			"isolation":          s.mgr.Isolator().Level().String(),
 			"max_beds":           s.mgr.MaxBeds(),
@@ -334,6 +340,7 @@ func lifecycleRecordToView(record *bed.LifecycleRecord) *lifecycleRecordView {
 //
 // +spec=`Eviction never tears down a bed that became active during the eviction fence; purge removes the bed identity after work is idle.`
 // +case:id=active_bed_evict_busy,desc=`Evict while a background execution is active`,expect=`409 BED_BUSY and the execution remains owned by the bed`
+// +case:id=evict_resume_luggage,desc=`Evict an idle bed and initialize the same id again on the same Hostel`,expect=`the dormant luggage is reused and its workspace data survives`
 // +case:id=purge_removes_bed,desc=`Purge idle beds`,expect=`the beds disappear from inventory`
 func (s *Server) bedDelete(c *gin.Context) {
 	id := c.Param("bedId")

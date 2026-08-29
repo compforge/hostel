@@ -69,6 +69,9 @@ type Permission struct {
 
 // FS is one bed's filesystem. It is created with the Bed and survives
 // Executor replacement; all daemon file operations are confined to it.
+//
+// +spec=`File and directory APIs preserve client path spelling while every read and mutation remains confined to one bed_home.`
+// +case:id=filesystem_api_contract,desc=`Create, inspect, replace, chmod, move, search, slice-read, and delete a workspace tree`,expect=`all operations round-trip through the public client path without escaping the BedFS`
 type FS struct {
 	paths paths
 	root  *os.Root

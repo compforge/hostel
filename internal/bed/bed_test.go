@@ -255,6 +255,22 @@ func TestForegroundShellPersistsState(t *testing.T) {
 	}
 }
 
+func TestShellPreservesOutputWithoutTrailingNewline(t *testing.T) {
+	m := newTestManager(t)
+	b, _ := m.Ensure(context.Background(), "default")
+	sh, err := m.ForegroundShell(b)
+	if err != nil {
+		t.Fatalf("ForegroundShell: %v", err)
+	}
+	var out strings.Builder
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := sh.Run(ctx, "printf partial-output", func(line string) { out.WriteString(line) })
+	if err != nil || result.ExitCode != 0 || out.String() != "partial-output" {
+		t.Fatalf("partial output run: result=%+v err=%v output=%q", result, err, out.String())
+	}
+}
+
 // TestBedFileIsolation is a Linux-safe end-to-end check of the bed contract:
 // commands in one bed share a writable filesystem, while another bed cannot
 // observe it (each bed is rooted at its own data directory).
@@ -1703,6 +1719,7 @@ func TestInventory(t *testing.T) {
 	fs := newFakeStore()
 	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, fs)
 
+	_, _ = m.Ensure(context.Background(), "default")
 	_, _ = m.Ensure(context.Background(), "conv-live")
 	b, _ := m.Ensure(context.Background(), "conv-cold")
 	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("x"), 0o644)
@@ -1713,6 +1730,9 @@ func TestInventory(t *testing.T) {
 	byID := map[string]InventoryBed{}
 	for _, e := range m.Inventory() {
 		byID[e.ID] = e
+	}
+	if _, ok := byID["default"]; ok {
+		t.Fatal("default bed must not appear in scheduler inventory")
 	}
 	if e := byID["conv-live"]; e.Status.Phase != PhaseResident || e.Status.Activity != ActivityIdle || e.Generation != 0 {
 		t.Fatalf("conv-live = %+v, want idle gen 0", e)

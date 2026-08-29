@@ -318,6 +318,20 @@ func (m *Manager) StoreName() string { return m.store.Name() }
 // DefaultBedID reports the id used when a request omits a bed.
 func (m *Manager) DefaultBedID() string { return m.defaultBed }
 
+// DefaultBedOccupied reports whether the compatibility bed is resident or
+// initializing. It is intentionally separate from Inventory: the default bed
+// does not participate in scheduler placement or capacity, but its presence
+// still prevents the instance from being safely released.
+func (m *Manager) DefaultBedOccupied() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.beds[m.defaultBed]; ok {
+		return true
+	}
+	initialization, ok := m.initializations[m.defaultBed]
+	return ok && initialization.status.Phase == PhaseInitializing
+}
+
 // SetBedIdleTTL configures the idle retention used for new beds and operation
 // deadlines. It is startup configuration and must be called before serving.
 func (m *Manager) SetBedIdleTTL(ttl time.Duration) { m.bedIdleTTL = ttl }
