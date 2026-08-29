@@ -23,7 +23,16 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/qiankunli/hostel/internal/bedfs"
+	"github.com/qiankunli/hostel/internal/isolation"
 )
+
+func (s *Server) fileReader(ops *bedfs.FS) *bedfs.Reader {
+	fallbackRoot := ""
+	if s.mgr.Isolator().Level() == isolation.Dorm {
+		fallbackRoot = s.dormReadFallbackRoot
+	}
+	return bedfs.NewReader(ops, fallbackRoot)
+}
 
 // GET /files/info?path=...(&path=...) → map[path]FileInfo
 func (s *Server) filesInfo(c *gin.Context) {
@@ -32,6 +41,7 @@ func (s *Server) filesInfo(c *gin.Context) {
 		return
 	}
 	defer finishOperation()
+	reader := s.fileReader(ops)
 	paths := c.QueryArray("path")
 	if len(paths) == 0 {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing query parameter 'path'")
@@ -39,7 +49,7 @@ func (s *Server) filesInfo(c *gin.Context) {
 	}
 	out := make(map[string]bedfs.FileInfo, len(paths))
 	for _, p := range paths {
-		fi, err := ops.Stat(p)
+		fi, err := reader.Stat(p)
 		if err != nil {
 			if os.IsNotExist(err) {
 				respondError(c, http.StatusNotFound, ErrFileNotFound, err.Error())
@@ -121,12 +131,13 @@ func (s *Server) filesSearch(c *gin.Context) {
 		return
 	}
 	defer finishOperation()
+	reader := s.fileReader(ops)
 	p := c.Query("path")
 	if p == "" {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing query parameter 'path'")
 		return
 	}
-	res, err := ops.Search(p, c.Query("pattern"))
+	res, err := reader.Search(p, c.Query("pattern"))
 	if err != nil {
 		runtimeError(c, err.Error())
 		return
@@ -211,6 +222,7 @@ func (s *Server) filesDownload(c *gin.Context) {
 		return
 	}
 	defer finishOperation()
+	reader := s.fileReader(ops)
 	p := c.Query("path")
 	if p == "" {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing query parameter 'path'")
@@ -221,7 +233,7 @@ func (s *Server) filesDownload(c *gin.Context) {
 	if offset != "" || limit != "" {
 		off, _ := strconv.Atoi(offset)
 		lim, _ := strconv.Atoi(limit)
-		content, err := ops.ReadLines(p, off, lim)
+		content, err := reader.ReadLines(p, off, lim)
 		if err != nil {
 			downloadErr(c, err)
 			return
@@ -229,7 +241,7 @@ func (s *Server) filesDownload(c *gin.Context) {
 		c.String(http.StatusOK, content)
 		return
 	}
-	data, err := ops.Read(p)
+	data, err := reader.Read(p)
 	if err != nil {
 		downloadErr(c, err)
 		return
@@ -258,6 +270,7 @@ func (s *Server) dirList(c *gin.Context) {
 		return
 	}
 	defer finishOperation()
+	reader := s.fileReader(ops)
 	p := c.Query("path")
 	if p == "" {
 		respondError(c, http.StatusBadRequest, ErrMissingQuery, "missing query parameter 'path'")
@@ -269,7 +282,7 @@ func (s *Server) dirList(c *gin.Context) {
 			depth = n
 		}
 	}
-	res, err := ops.List(p, depth)
+	res, err := reader.List(p, depth)
 	if err != nil {
 		if os.IsNotExist(err) {
 			respondError(c, http.StatusNotFound, ErrFileNotFound, err.Error())
