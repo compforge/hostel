@@ -67,6 +67,7 @@ Bedbox 给 caller 的北向契约始终是一个 Bed 独占整个 Pod；BedFS �
 ```
 deploy/docker/Dockerfile  多阶段多架构镜像(amd64/arm64,builder 原生交叉编译免 QEMU)：静态 hostel + debian-slim（内置可选 bwrap + chromium）；tini PID1；hostel --health 做 HEALTHCHECK
 cmd/hostel/main.go     组装：config→isolation→amenity registry→store→bed manager→gin server；idle GC/luggage GC/持久兜底；--version/--health/__confine(landlock confiner 自 re-exec) 前置子命令；优雅关停
+tests/e2e/             单机真实进程/镜像 E2E：公开 API、bed runtime/isolation 与可选 carrier userland；不经过 sandctl/K8s
 internal/
 ├── config/            flags + HOSTEL_* env
 ├── tracing/           OpenTelemetry 进程初始化：OTLP exporter、W3C propagation 与日志 trace/span 关联
@@ -107,6 +108,7 @@ internal/
 - **isolation 按「青年旅社房型」分档**（对外保证，非机制名）：`dorm`（通铺，无屏障=direct）/ `room`（单间锁门、厕所公用，数据 EACCES 但兄弟可见、系统路径共享=landlock，自 re-exec `hostel __confine`）/ `suite`（套房全私有，兄弟不可见+私有 mount 视图+`/workspace` 规范挂载=bwrap）/ `auto`（顶格取 env 上限）。`effective=min(requested,ceiling)`，请求超上限诚实降级。进程 env 与隔离机制正交：`HOSTEL_*` 只属 daemon、`BED_*` 只属 bed，三档统一由 `internal/bed/env.go` 显式组装。机制（direct/bwrap/landlock/uid）是内部细节，全走 `Isolator` 接口。详见 `docs/data.md`。
 - **amenity 通则**：重资产、自带多租的共享设施由 hostel 在 bed 外管一份，用应用原生机制切租（Chromium→BrowserContext、Jupyter→kernel），产物落对应 bed 的 workspace。amenity 有自己的生命周期（idle→running 按需启停）。新增实例 = 实现 `Amenity` + 注册，bed evict/purge 已接 `ReleaseAll` 钩子。北向只暴露 bed 级动作，**不透传 CDP/协议 socket**（会跨租户）。见 `docs/amenity.md`。
 - **常驻 shell 的坑**：一个 Shell 只能有**一个** stdout reader（否则 run 间串输出——v1 踩过）；Run 之间串行；`exit` 会杀死 session，非零退出码用子 shell（`sh -c "exit N"`）。**锁纪律**：`runMu` 串行化 Run 且只有 Run 碰；`mu` 只护 `dead` 标志、纳秒级持有——曾因单锁设计让「shell 死亡+未断开客户端」死锁整个 daemon（含 healthz），别往 `mu` 里加阻塞代码（见 shell.go LOCKING 注释）。
+- **E2E owner 边界**：Hostel 的单机 suite 直接验证真实 daemon/image 的 bed runtime、隔离与 carrier userland；上层控制面只保留 placement、跨 carrier 持久化和 lifecycle 编排，不在 K8s E2E 重复证明 Hostel 内部契约。运行说明见 `tests/e2e/README.md`。
 - Go 项目常规：改完 `go build ./...` + `go test ./...` + `go vet ./...` 三件套过再提交（见 `Makefile`）。仓库在 `github.com/qiankunli/hostel`，保护分支 main 走 PR。
 - 根目录 `VERSION` 是二进制和镜像的唯一版本源；每次改动都必须同步递增版本号，默认递增 patch 版本。
 - 通用小工具优先用 [go-stdx](https://github.com/qiankunli/go-stdx)（env 解析、随机 id、shell quote、原子写文件、目录字节数等），不要在仓内再手写它已有的操作；沉淀出的新通用件也应迁去 go-stdx 而非留在 internal。
@@ -122,5 +124,6 @@ internal/
 - 资源治理方案（carrier 采集/汇报/admission + per-bed accounting 已落地，per-bed limits 待实现）：`docs/resource.md`
 - 可观测性设计（统一生命周期事实，并投影到日志、接口和 metric）：`docs/observability.md`
 - 快速上手 / API 一览 / 配置：`README.md`
+- 单机 E2E（binary/image profiles、环境契约与覆盖边界）：`tests/e2e/README.md`
 - 归属（execd 参考的具体设计点）：`NOTICE`
 - API 契约来源：上游 OpenSandbox 仓库的 `specs/execd-api.yaml`（https://github.com/alibaba/opensandbox）

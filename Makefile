@@ -1,4 +1,4 @@
-.PHONY: help build test vet fmt lint tidy check run run-bwrap linux smoke image image-lean image-multiarch clean
+.PHONY: help build test e2e e2e-image vet fmt lint tidy check run run-bwrap linux smoke image image-lean image-multiarch clean
 
 BIN       := bin/hostel
 ADDR      := :8872
@@ -7,6 +7,7 @@ IMAGE     := hostel:dev
 VERSION   := $(shell cat VERSION)
 LDFLAGS   := -X main.version=$(VERSION)
 PLATFORMS := linux/amd64,linux/arm64
+E2E_IMAGE ?=
 TEST_FILES ?=
 TEST_PACKAGES ?= ./...
 
@@ -26,6 +27,14 @@ build: ## Build the hostel binary for the current platform
 # concurrent; -count=1 keeps the detector from being skipped by the test cache.
 test: ## Run all tests with the race detector
 	go test -race -count=1 $(TEST_PACKAGES)
+
+e2e: build ## Run the single-machine runtime contract against a real hostel binary
+	HOSTEL_E2E_BINARY="$(CURDIR)/$(BIN)" go test -tags=e2e -count=1 -v ./tests/e2e
+
+e2e-image: ## Run the full contract, including PyPI/npm/Chromium (set E2E_IMAGE)
+	@test -n "$(E2E_IMAGE)" || { echo "E2E_IMAGE is required"; exit 1; }
+	HOSTEL_E2E_IMAGE="$(E2E_IMAGE)" HOSTEL_E2E_USERLAND=1 \
+		go test -tags=e2e -count=1 -v ./tests/e2e
 
 vet: ## Run go vet
 	go vet ./...

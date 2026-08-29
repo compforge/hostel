@@ -128,6 +128,9 @@ func (s *Server) browserCDP(c *gin.Context) {
 }
 
 // POST /v1/beds/:bedId/browser/goto {url}
+//
+// +spec=`Browser actions are scoped to one bed-owned browser context.`
+// +case:id=chromium_bed_workflow,desc=`Navigate, interact with, and read a page through bed-scoped verbs`,expect=`the same bed observes the resulting page state`
 func (s *Server) browserGoto(c *gin.Context) {
 	b, br, finishOperation := s.browserOf(c)
 	if br == nil {
@@ -150,6 +153,9 @@ func (s *Server) browserGoto(c *gin.Context) {
 }
 
 // POST /v1/beds/:bedId/browser/screenshot {path?}
+//
+// +spec=`A screenshot is written into the bed workspace and returned as a BedFS /workspace path.`
+// +case:id=chromium_screenshot_artifact,desc=`Capture a screenshot and download it through the file API`,expect=`a non-empty PNG is returned from the reported bed path`
 func (s *Server) browserScreenshot(c *gin.Context) {
 	b, br, finishOperation := s.browserOf(c)
 	if br == nil {

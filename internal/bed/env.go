@@ -106,6 +106,9 @@ func validateExternalEnvName(scope, name string) error {
 
 // buildBedEnv composes the only environment shape used to spawn bed code:
 // carrier software + bed-owned context + one invocation's explicit overlay.
+//
+// +spec=`Every execution receives the deployment-selected carrier software paths while HOSTEL_* and credentials remain daemon-only.`
+// +case:id=carrier_software_persists,desc=`Install PyPI and npm packages, then run a new execution`,expect=`both executions resolve the carrier-owned /usr/local installation`
 func (m *Manager) buildBedEnv(b *Bed, requestEnv map[string]string) ([]string, error) {
 	if err := ValidateRequestEnv(requestEnv); err != nil {
 		return nil, err

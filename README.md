@@ -59,6 +59,14 @@ curl -s 'localhost:8872/files/download?path=/workspace/a.txt'
 curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv-1'
 ```
 
+## End-to-end tests
+
+`make e2e` starts a real local Hostel binary and verifies the public runtime,
+bed lifecycle, file/command, and isolation contracts. Image publishers can run
+the PyPI/npm/Chromium userland contract with
+`make e2e-image E2E_IMAGE=<image>`. See [tests/e2e/README.md](tests/e2e/README.md)
+for required host capabilities and release-gate options.
+
 ## API (v1)
 
 | Group | Endpoints |

@@ -138,6 +138,9 @@ func (r *resolved) Prepare(fs *bedfs.FS) error {
 // deliver and returns the chosen mechanism (also implementing Report). The
 // returned value is always usable — worst case it degrades to dorm/direct,
 // which is logged honestly.
+//
+// +spec=`effective isolation is the strongest available level not exceeding the request, and requested/effective/ceiling remain observable.`
+// +case:id=isolation_level_boundaries,desc=`Run the same sibling-path probe under dorm, room, and suite requests`,expect=`dorm shares, room denies, suite hides, and unavailable levels degrade honestly`
 func New(requested, workspaceRoot string) Isolator {
 	req := parseRequest(requested)
 
