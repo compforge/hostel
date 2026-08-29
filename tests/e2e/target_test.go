@@ -44,7 +44,7 @@ func startTarget(t *testing.T, options targetOptions) *target {
 	binary := strings.TrimSpace(os.Getenv(binaryEnv))
 	image := strings.TrimSpace(os.Getenv(imageEnv))
 	if binary == "" && image == "" {
-		t.Fatalf("set %s to a hostel binary or %s to a container image", binaryEnv, imageEnv)
+		t.Skipf("set %s to a hostel binary or %s to a container image", binaryEnv, imageEnv)
 	}
 	if binary != "" && image != "" {
 		t.Fatalf("set only one of %s and %s", binaryEnv, imageEnv)

@@ -17,6 +17,11 @@ ifneq ($(strip $(TEST_FILES)),)
 TEST_PACKAGES := $(sort $(foreach file,$(TEST_FILES),./$(patsubst %/,%,$(dir $(file)))))
 endif
 
+TEST_TAGS :=
+ifneq ($(filter ./tests/e2e,$(TEST_PACKAGES)),)
+TEST_TAGS := -tags=e2e
+endif
+
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
@@ -26,7 +31,7 @@ build: ## Build the hostel binary for the current platform
 # -race is non-negotiable here: shells, bed lifecycle and cas uploads are all
 # concurrent; -count=1 keeps the detector from being skipped by the test cache.
 test: ## Run all tests with the race detector
-	go test -race -count=1 $(TEST_PACKAGES)
+	go test $(TEST_TAGS) -race -count=1 $(TEST_PACKAGES)
 
 e2e: build ## Run the single-machine runtime contract against a real hostel binary
 	HOSTEL_E2E_BINARY="$(CURDIR)/$(BIN)" go test -tags=e2e -count=1 -v ./tests/e2e
