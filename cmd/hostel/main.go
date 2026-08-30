@@ -95,7 +95,7 @@ func main() {
 
 	// New resolves the requested level against the environment ceiling and
 	// logs the outcome; the returned isolator is always usable.
-	iso := isolation.New(cfg.IsolationMode, cfg.WorkspaceRoot)
+	iso := isolation.New(cfg.IsolationMode, cfg.WorkspaceRoot, isolation.WithPathshim(cfg.PathshimPath))
 
 	// Amenity manager: shared facilities light up per deployment. Chromium is
 	// registered when launch (binary) or attach (--chromium-cdp-url) is

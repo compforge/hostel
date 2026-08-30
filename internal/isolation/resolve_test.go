@@ -28,12 +28,12 @@ type fakeMech struct {
 	avail bool
 }
 
-func (m fakeMech) Name() string                    { return m.name }
-func (m fakeMech) Level() Level                    { return m.lvl }
-func (m fakeMech) Available() bool                 { return m.avail }
-func (m fakeMech) View(fs *bedfs.FS) bedfs.View    { return bedfs.HostView(fs) }
-func (m fakeMech) WorkspaceMounted() bool          { return false }
-func (m fakeMech) Wrap(*exec.Cmd, *bedfs.FS) error { return nil }
+func (m fakeMech) Name() string                            { return m.name }
+func (m fakeMech) Level() Level                            { return m.lvl }
+func (m fakeMech) Available() bool                         { return m.avail }
+func (m fakeMech) View(fs *bedfs.FS) bedfs.View            { return bedfs.HostView(fs) }
+func (m fakeMech) WorkspaceMounted() bool                  { return false }
+func (m fakeMech) Wrap(*exec.Cmd, *bedfs.FS, string) error { return nil }
 
 // resolveMechs mirrors New's selection over an injected candidate set, so the
 // "effective = highest achievable ≤ requested" rule is tested without a real

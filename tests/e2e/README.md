@@ -26,6 +26,15 @@ release runner can require levels to be realized instead:
 HOSTEL_E2E_REQUIRE_ISOLATION=dorm,room,suite make e2e
 ```
 
+To exercise the best-effort dorm/room `/workspace` process view, provide a
+Linux pathshim binary. The isolation suite then requires canonical cwd, file
+API interoperability, mapped executable startup, session descendants, and
+terminal signal behavior through pathshim:
+
+```sh
+HOSTEL_E2E_PATHSHIM=/usr/local/bin/pathshim make e2e
+```
+
 ## Run the image/userland contract
 
 ```sh
@@ -53,6 +62,7 @@ than becoming a skip.
 | `HOSTEL_E2E_IMAGE` | Container image started by the fixture. Set by `make e2e-image`. |
 | `HOSTEL_E2E_USERLAND=1` | Enables required PyPI/npm/Chromium cases; image target sets it. |
 | `HOSTEL_E2E_REQUIRE_ISOLATION` | Comma-separated requested levels that must not degrade. |
+| `HOSTEL_E2E_PATHSHIM` | pathshim binary used to verify the dorm/room `/workspace` process view. |
 
 The binary and image variables are mutually exclusive. Image mode is intended
 for a Linux runner with Docker because the target container uses host networking

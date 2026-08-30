@@ -79,6 +79,22 @@ func TestViewPath(t *testing.T) {
 			t.Errorf("Path(%q) = %q,%v want the carrier path back", host, got, err)
 		}
 	})
+
+	t.Run("workspace only view", func(t *testing.T) {
+		view := WorkspaceView(fs)
+		cases := []struct{ host, want string }{
+			{root, root},
+			{filepath.Join(root, "tmp", "x"), filepath.Join(root, "tmp", "x")},
+			{workspace, "/workspace"},
+			{filepath.Join(workspace, "sub"), "/workspace/sub"},
+		}
+		for _, tc := range cases {
+			got, err := view.Path(tc.host)
+			if err != nil || got != tc.want {
+				t.Errorf("Path(%q) = %q,%v want %q", tc.host, got, err, tc.want)
+			}
+		}
+	})
 }
 
 // TestPathsRoundTrip pins FromClient/ToClient as inverses on absolute client

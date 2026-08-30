@@ -460,6 +460,7 @@ func (r *ExecutionRegistry) trackSession(
 	bedID string,
 	shell *Shell,
 	command string,
+	cwdInBed string,
 	timeout time.Duration,
 	onStart func(ExecutionStatus),
 	onOutput func(ExecutionOutput),
@@ -496,7 +497,7 @@ func (r *ExecutionRegistry) trackSession(
 	}
 
 	go func() {
-		result, err := shell.Run(execution.ctx, command, func(text string) {
+		result, err := shell.RunAt(execution.ctx, cwdInBed, command, func(text string) {
 			output := execution.appendOutput(StreamStdout, text)
 			if onOutput != nil {
 				onOutput(output)

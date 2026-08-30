@@ -302,7 +302,7 @@ func (s *Server) isolatedRun(c *gin.Context) {
 	stopSSE := func() {}
 	defer func() { stopSSE() }()
 	startedExecutionID := ""
-	execution, err := s.mgr.StartSessionExecution(ctx, b, sh, isolatedRunScript(req.Code, req.Envs), timeout, func(status bed.ExecutionStatus) {
+	execution, err := s.mgr.StartSessionExecution(ctx, b, sh, isolatedRunScript(req.Code, req.Envs), "", timeout, func(status bed.ExecutionStatus) {
 		startedExecutionID = status.ID
 		stopSSE = sse.start(ctx, status.ID, ssePingInterval)
 	}, func(output bed.ExecutionOutput) {

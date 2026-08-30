@@ -86,22 +86,23 @@ type Shell struct {
 	proc  executor.Process
 	stdin io.WriteCloser
 	lines chan string // every output line; closed on EOF/exit
+	view  bedfs.View  // projects confined carrier paths into this shell's process view
 
 	runMu sync.Mutex // serializes Run; held while waiting for output
 	mu    sync.Mutex // guards dead only; held briefly
 	dead  bool
 }
 
-// startShell launches the shell in the Bed's current Executor. cwdInBed,
-// when set, becomes the starting directory via an initial `cd`. env is the
-// bed-scoped environment (Manager.buildBedEnv) — the session shell would otherwise
+// startShell launches the shell in the Bed's current Executor. cwdInBed, when
+// set, becomes the starting directory through the isolation process view. env
+// is the bed-scoped environment (Manager.buildBedEnv) — the session shell would otherwise
 // inherit the daemon env, which lacks the bed identity and endpoints. Stdio is
 // explicit os.Pipe pairs (not StdinPipe/StdoutPipe) so the raw fds can cross a
 // process boundary when supervisor is the Executor backend.
 func startShell(bedExecutor executor.Executor, shellPath string, env []string, iso isolation.Isolator, fs *bedfs.FS, cwdInBed string) (*Shell, error) {
 	cmd := exec.Command(shellPath, shellInteractiveArgs(shellPath)...)
 	cmd.Env = env
-	if err := iso.Wrap(cmd, fs); err != nil {
+	if err := iso.Wrap(cmd, fs, cwdInBed); err != nil {
 		return nil, err
 	}
 	inR, inW, err := os.Pipe()
@@ -134,10 +135,7 @@ func startShell(bedExecutor executor.Executor, shellPath string, env []string, i
 		proc:            proc,
 		stdin:           inW,
 		lines:           make(chan string, 64),
-	}
-	if cwdInBed != "" {
-		// Best-effort initial cwd; a failure surfaces in the first run's output.
-		_, _ = io.WriteString(inW, "cd -- "+shellx.Quote(cwdInBed)+" || true\n")
+		view:            iso.View(fs),
 	}
 	// Single long-lived reader → lines channel.
 	go func() {
@@ -197,12 +195,33 @@ type RunResult struct {
 // +spec=`Command output is preserved whether or not its final fragment ends with a newline; the framing marker is never exposed as output.`
 // +case:id=session_partial_line_output,desc=`Run printf without a trailing newline in a persistent shell`,expect=`the partial output is returned and the execution reaches its typed terminal result`
 func (s *Shell) Run(ctx context.Context, command string, onLine func(string)) (*RunResult, error) {
+	return s.RunAt(ctx, "", command, onLine)
+}
+
+// RunAt runs command after moving the persistent shell to cwdInBed. The cwd is
+// a confined carrier path; Shell owns its projection because the process view
+// was fixed when this shell started. The control step is framed separately so
+// arbitrary command source (including heredocs) remains byte-for-byte intact.
+func (s *Shell) RunAt(ctx context.Context, cwdInBed, command string, onLine func(string)) (*RunResult, error) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	if s.Dead() {
 		return nil, fmt.Errorf("shell: session is dead")
 	}
+	if cwdInBed != "" {
+		processCwd, err := s.view.Path(cwdInBed)
+		if err != nil {
+			return nil, fmt.Errorf("shell: project cwd %q: %w", cwdInBed, err)
+		}
+		result, err := s.runLocked(ctx, "command cd -- "+shellx.Quote(processCwd), onLine)
+		if err != nil || result.ExitCode != 0 {
+			return result, err
+		}
+	}
+	return s.runLocked(ctx, command, onLine)
+}
 
+func (s *Shell) runLocked(ctx context.Context, command string, onLine func(string)) (*RunResult, error) {
 	marker := fmt.Sprintf("__hostel_end_%d__", time.Now().UnixNano())
 	full := fmt.Sprintf("%s\nprintf '%%s %%d\\n' %s \"$?\"\n", command, marker)
 	if _, err := io.WriteString(s.stdin, full); err != nil {
@@ -264,6 +283,7 @@ func (m *Manager) StartSessionExecution(
 	b *Bed,
 	shell *Shell,
 	command string,
+	cwdInBed string,
 	timeout time.Duration,
 	onStart func(ExecutionStatus),
 	onOutput func(ExecutionOutput),
@@ -272,7 +292,7 @@ func (m *Manager) StartSessionExecution(
 	if err != nil {
 		return nil, err
 	}
-	execution := m.executions.trackSession(ctx, b.ID, shell, command, timeout, onStart, onOutput, func(result ExecutionResult) {
+	execution := m.executions.trackSession(ctx, b.ID, shell, command, cwdInBed, timeout, onStart, onOutput, func(result ExecutionResult) {
 		finishOperation()
 		b.RecordCommand(result.Duration)
 	})

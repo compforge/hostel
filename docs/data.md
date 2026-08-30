@@ -81,12 +81,12 @@ bed 已由 `X-Hostel-Bed` 选定后，所有房型共用同一套客户端路径
 `/workspace` 的规范挂载是 suite 实现这份契约的一种**进程视图机制**，不是路径映射本身：
 
 - suite 把完整 `bed_home` bind 到机制私有入口，并把 `bed_home/workspace` 额外 bind 到 `/workspace`；因此 `/`、`/tmp/job` 与 `/workspace` 等结构化 cwd 都有进程视图，workspace 内仍保持 shell 与 file API 同名；
-- direct/room 即使暂时使用宿主真实路径执行 `cd`，file API、cwd 等北向显式路径仍必须先映射到同一个 `bed_home`；
+- dorm/room 由结构化 cwd 选择 BedFS carrier 路径；pathshim 可用时再把 workspace 子树尽力投影成 `/workspace`，不可用时保持 Carrier 路径；
 - `capabilities.workspace_mount` 只表示是否存在 `/workspace` 真实挂载，不表示是否支持 bed-local 路径映射——后者是三档必备能力，不应作为可选 capability。
 
 路径字段和命令文本要分开处理：hostel 可以直接解析 file API path、cwd 等结构化字段，但不能可靠改写任意 shell command 字符串。如果要求命令里的绝对字面量（如 `cat /tmp/workspace/job/a.txt`）也命中同一 bed-local 文件，就必须由进程文件系统视图提供对应投影或 bind，不能靠字符串替换碰运气。
 
-**一致性的诚实边界**：跨隔离级别的路径一致性（同一个客户端路径，在 file API 与 bed 内进程两个通道、在三档房型之间都指向同一份数据）是我们**追求的方向，不是已兑现的保证**——没有 mount namespace（dorm/room），进程视图里的绝对字面量就落在宿主真实路径上，这条缝隙原理上补不掉。目前的态度是尽量收敛：结构化字段（path/cwd）三档严格一致，约定入口（HOME/TMPDIR 等 env）可注入统一。独占 Dorm carrier 可显式允许只读 file API 在 BedFS 路径不存在时回读进程绝对路径，让调用方取回写偏的产物；它不改变数据落点，也不提供隔离。其余场景不为 `/tmp` 这类易失数据引入重机制。
+**一致性的诚实边界**：跨隔离级别的完整路径一致性仍不是已兑现保证。Suite 通过 mount namespace 真实提供完整进程视图；Dorm/Room 在启动探测通过时使用 pathshim，仅尽力让 `/workspace` 与 Bed workspace 同义，映射外的 `/tmp`、`/abc` 等绝对字面量仍落在 Carrier 进程视图。结构化字段（path/cwd）三档严格一致：新进程由 Isolator 投影，已有 session 由持有 Executor View 的 Shell 投影并以独立控制步骤切换，不改写用户命令文本。独占 Dorm carrier 还可显式允许只读 file API 在 BedFS 路径不存在时回读进程绝对路径，让调用方取回写偏的产物；这两种 best effort 都不改变 isolation level，也不提供安全边界。
 
 ### 3. workspace-root 外部可配
 
@@ -134,9 +134,9 @@ bedProcessEnv = carrierSoftwareEnv + bedContextEnv + requestEnv
 
 ## 实现状态
 
-已实现：`internal/isolation/` 在 boot 时做 bwrap 全形态 smoke，负责 namespace/遮蔽、carrier 共享 `/usr/local`、BedFS View 与诚实降级；`internal/bed/env.go` 统一负责三档进程环境的 allowlist、bed context 和 request overlay。mac argv 单测覆盖共享挂载顺序，bed/web 单测覆盖命名空间与泄漏边界；**Linux 真机验证已通过**（devbox，bwrap 0.8.0 / kernel 5.15：兄弟遮蔽、规范挂载、敏感路径、direct 负面对照，以及 `cwd=/`、`cwd=/tmp/job`、`cwd=/workspace` 与 file API 同数据均 PASS；共享软件写入尚待随 carrier 镜像联调）。
+已实现：`internal/isolation/` 在 boot 时做 bwrap 全形态 smoke，并通过所选隔离机制执行 pathshim probe；负责 namespace/遮蔽、carrier 共享 `/usr/local`、BedFS View 与诚实降级。`internal/bed/env.go` 统一负责三档进程环境。单测覆盖 mount/workspace view、动态 cwd、probe fallback 与包装顺序；**Linux 真机验证已通过**（amd64 与 arm64，kernel 5.15：pathshim bind-view、dorm `/workspace` cwd、file API 互通、映射内 ELF 执行、session/signal，以及 suite bwrap 均 PASS；amd64 镜像构建与镜像核心 E2E PASS）。
 
-**共同路径契约的兑现状态**：Bed 持有的 `bedfs.FS` 已把 bed_home、workspace、client/carrier/Executor 三类路径落成一个领域对象——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对；三档的结构化 cwd 统一使用 BedFS View，suite 也可访问 workspace 外的 BedFS cwd。daemon 的 mutation 以 `bed_home` 目录句柄执行，symlink 解析不能逃出该根；显式开启时，Dorm Reader 是只读例外，在 BedFS 缺失后可回读进程绝对路径。尚未补齐的部分是命令字面量的跨房型统一，不能靠字符串改写。
+**共同路径契约的兑现状态**：Bed 持有的 `bedfs.FS` 已把 bed_home、workspace、client/carrier/Executor 三类路径落成一个领域对象——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对；三档的结构化 cwd 由拥有进程 View 的启动层处理：新进程是 Isolator，常驻 session 是 Shell，二者都不改写用户命令文本，suite 也可访问 workspace 外的 BedFS cwd。daemon mutation 以 `bed_home` 目录句柄执行；pathshim 尽力补齐 dorm/room 的 `/workspace` 字面量，其他命令绝对路径仍不承诺跨房型统一。
 
 ## 隔离分档模型：青年旅社房型（档 / 机制 / 上限 / 请求）
 
@@ -239,6 +239,7 @@ Hostel carrier 本身不调用 Kubernetes API，建议 `automountServiceAccountT
 - `--isolation dorm | room | suite | auto`，**默认 `auto`**（顶格取 ceiling）。取值是**房型（档）**，不是机制名（`direct/bwrap` 旧值迁移，hostel 无真实用户、零成本）。
 - 机制不进配置词汇；真需要强制才加 `--isolation-mechanism`（少用）。
 - capabilities / healthz 报四元组：`requested / effective / ceiling / mechanism`，调用方一目了然。
+- `workspace_mount` 仅表示 suite 的真实 mount；`workspace_view={mode,available,reason}` 独立报告 `mount | pathshim | carrier`，禁止把 pathshim 的路径兼容能力算成更高隔离档。
 
 ### room 档实现（landlock，调研结论）
 
