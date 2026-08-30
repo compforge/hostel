@@ -19,11 +19,13 @@ const (
 	binaryEnv   = "HOSTEL_E2E_BINARY"
 	imageEnv    = "HOSTEL_E2E_IMAGE"
 	userlandEnv = "HOSTEL_E2E_USERLAND"
+	pathshimEnv = "HOSTEL_E2E_PATHSHIM"
 )
 
 type targetOptions struct {
 	isolation string
 	maxBeds   int
+	pathshim  string
 }
 
 type target struct {
@@ -105,6 +107,10 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 		t.Fatalf("create hostel log: %v", err)
 	}
 	workspaceRoot := filepath.Join(t.TempDir(), "beds")
+	pathshim := options.pathshim
+	if pathshim == "" {
+		pathshim = strings.TrimSpace(os.Getenv(pathshimEnv))
+	}
 	cmd := exec.Command(absolute,
 		"--addr", addr,
 		"--workspace-root", workspaceRoot,
@@ -116,6 +122,7 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 		"--admission-cpu-threshold", "0",
 		"--admission-memory-threshold", "0",
 		"--bed-idle-timeout", "0",
+		"--pathshim", pathshim,
 	)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -149,6 +156,10 @@ func startImageTarget(t *testing.T, image, addr string, options targetOptions) {
 	args := []string{
 		"run", "--detach", "--rm", "--name", name, "--network", "host",
 		"-e", "HOSTEL_ADDR=" + addr,
+		// Keep carrier paths outside the guest /workspace bind. Isolation E2E
+		// deliberately addresses a sibling by its carrier path; using the image
+		// default /workspace root would make that probe a pathshim guest path.
+		"-e", "HOSTEL_WORKSPACE_ROOT=/tmp/" + name + "-beds",
 		"-e", "HOSTEL_ISOLATION=" + options.isolation,
 		"-e", "HOSTEL_EXECUTOR=auto",
 		"-e", "HOSTEL_STORE=noop",
@@ -157,8 +168,11 @@ func startImageTarget(t *testing.T, image, addr string, options targetOptions) {
 		"-e", "HOSTEL_ADMISSION_CPU_THRESHOLD=0",
 		"-e", "HOSTEL_ADMISSION_MEMORY_THRESHOLD=0",
 		"-e", "HOSTEL_BED_IDLE_TIMEOUT=0",
-		image,
 	}
+	if options.pathshim != "" {
+		args = append(args, "-e", "HOSTEL_PATHSHIM="+options.pathshim)
+	}
+	args = append(args, image)
 	output, err := exec.Command("docker", args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("start hostel image %s: %v\n%s", image, err, output)

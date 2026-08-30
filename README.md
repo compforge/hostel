@@ -115,9 +115,11 @@ never sees the host. One consequence to be aware of:
 Under `bwrap`, the complete bed_home has a mechanism-private Executor mount and
 the workspace is additionally mounted at the stable `/workspace`, so any BedFS
 cwd is usable while workspace shell paths keep their canonical spelling. Under
-`direct` (no mount namespace) an Executor uses the carrier BedFS paths. Probe
-the `workspace_mount` capability only when command text depends on a literal
-`/workspace`; it is not a BedFS capability flag. See `docs/filesystem.md`.
+dorm/room, Hostel probes pathshim at boot and, when available, gives commands a
+best-effort `/workspace` view without changing their isolation level. Other
+absolute paths retain Carrier semantics. Probe `workspace_view`, rather than
+`workspace_mount`, when command text depends on literal `/workspace`; pathshim
+is a compatibility view, not a security boundary. See `docs/filesystem.md`.
 
 ## Isolation
 
@@ -126,7 +128,8 @@ dorm|room|suite|auto` (default `auto` = the environment ceiling). The effective
 level is `min(requested, ceiling)` — an over-ask degrades honestly, a lower ask
 is a deliberate downgrade.
 
-- `dorm` (bunk): chdir only, no enforced isolation (= direct, all platforms);
+- `dorm` (bunk): no enforced isolation (= direct, all platforms); pathshim may
+  add only a best-effort `/workspace` process view;
 - `room` (private room, shared toilet): Landlock LSM — a bed can't *access*
   other beds' data (EACCES) but siblings stay visible and `/tmp` / system paths
   are shared; **no capability required** (Linux ≥5.13);
@@ -172,7 +175,7 @@ reports `amenities: {chromium: idle|running}`.
 
 ## Configuration
 
-Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` /
+Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` / `--pathshim` /
 `--dorm-read-fallback-root` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
 `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
 `--executor` / `--bed-env-passthrough` / `--store` /

@@ -123,7 +123,7 @@ func bwrapSmoke(path, workspaceRoot string, masks []string) error {
 		return fmt.Errorf("smoke test: workspace: %w", err)
 	}
 
-	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, masks)
+	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, bedfs.WorkspacePath, masks)
 	cmd := exec.Command(path, append(argv, "true")...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -140,15 +140,22 @@ func (b *bwrap) View(fs *bedfs.FS) bedfs.View {
 	return bedfs.MountedView(fs, bwrapBedHomeMountPoint, bedfs.WorkspacePath)
 }
 
-func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS) error {
+func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	// No silent degradation past this point: this isolator passed the boot
 	// probe, so any failure to build the sandbox is a hard error.
-	argv := buildBwrapArgs(b.root, fs.Home(), fs.Workspace(), b.maskPaths)
+	processCwd, err := b.View(fs).Path(commandCwd(fs, cwd))
+	if err != nil {
+		return err
+	}
+	argv := buildBwrapArgs(b.root, fs.Home(), fs.Workspace(), processCwd, b.maskPaths)
 	userArgs := cmd.Args
 	cmd.Args = make([]string, 0, len(argv)+len(userArgs)+1)
 	cmd.Args = append(cmd.Args, b.path)
 	cmd.Args = append(cmd.Args, argv...)
 	cmd.Args = append(cmd.Args, userArgs...)
 	cmd.Path = b.path
+	// The outer bwrap process still needs a carrier-visible cwd. The actual
+	// command cwd is applied by bwrap after the mount view exists.
+	cmd.Dir = fs.Workspace()
 	return nil
 }

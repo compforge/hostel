@@ -120,7 +120,7 @@ func (l *landlock) Available() bool              { return true } // only constru
 func (l *landlock) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
 func (l *landlock) WorkspaceMounted() bool       { return false }
 
-func (l *landlock) Wrap(cmd *exec.Cmd, fs *bedfs.FS) error {
+func (l *landlock) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	// Prefix `hostel __confine <bed_home> --` before the user command,
 	// so the confiner child applies Landlock then execs it. Confine to Root
 	// (not the workspace subdir): client paths like /tmp/x rebase below bed_home
@@ -132,7 +132,7 @@ func (l *landlock) Wrap(cmd *exec.Cmd, fs *bedfs.FS) error {
 	cmd.Args = append(cmd.Args, prefix...)
 	cmd.Args = append(cmd.Args, userArgs...)
 	cmd.Path = l.self
-	cmd.Dir = fs.Workspace()
+	cmd.Dir = commandCwd(fs, cwd)
 	return nil
 }
 

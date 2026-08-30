@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -53,6 +54,13 @@ func TestExecutionLifecycle(t *testing.T) {
 	}, "interrupted with a terminal result")
 	if finished.Result.Cause != "interrupted" || finished.Result.ExecutionID != background.ExecutionID {
 		t.Fatalf("interrupted result=%+v", finished.Result)
+	}
+	// The Linux supervisor owns and waits for the wrapper process, so this is
+	// the integration contract pathshim must preserve exactly. The portable
+	// local backend currently normalizes a killed shell to exit 137.
+	if finished.Result.ExecutorBackend == "supervisor" &&
+		(finished.Result.Process.Kind != "signaled" || finished.Result.Process.Signal == nil || *finished.Result.Process.Signal != int(syscall.SIGKILL)) {
+		t.Fatalf("supervisor interrupted process outcome=%+v", finished.Result.Process)
 	}
 
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)

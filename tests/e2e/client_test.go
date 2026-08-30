@@ -32,8 +32,13 @@ type healthView struct {
 	OK              bool   `json:"ok"`
 	ExecutorBackend string `json:"executor_backend"`
 	WorkspaceMount  bool   `json:"workspace_mount"`
-	MaxBeds         int    `json:"max_beds"`
-	Isolation       struct {
+	WorkspaceView   struct {
+		Mode      string `json:"mode"`
+		Available bool   `json:"available"`
+		Reason    string `json:"reason"`
+	} `json:"workspace_view"`
+	MaxBeds   int `json:"max_beds"`
+	Isolation struct {
 		Level     string `json:"level"`
 		Mechanism string `json:"mechanism"`
 		Requested string `json:"requested"`
@@ -73,6 +78,7 @@ type inventoryView struct {
 type processView struct {
 	Kind     string `json:"kind"`
 	ExitCode *int   `json:"exit_code"`
+	Signal   *int   `json:"signal"`
 }
 
 type executionView struct {

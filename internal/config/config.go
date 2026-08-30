@@ -53,6 +53,10 @@ type Config struct {
 	// Levels resolve to mechanisms (direct/landlock/bwrap) in internal/isolation;
 	// effective = min(requested, ceiling), over-asks degrade honestly.
 	IsolationMode string
+	// PathshimPath optionally adds a best-effort /workspace process view below
+	// suite. The binary is probed through the selected isolation mechanism at
+	// startup; probe failure keeps carrier-path behavior instead of blocking boot.
+	PathshimPath string
 	// DormReadFallbackRoot optionally exposes an exclusive dorm Executor's
 	// process root through read-only file APIs after a BedFS miss. Empty is the
 	// safe default for shared carriers; mutation APIs never use this root.
@@ -135,6 +139,7 @@ func Load(args []string) *Config {
 	fs.StringVar(&c.OTLPTracesHTTPEndpoint, "otel-traces-http-endpoint", osx.EnvStr("OTEL_EXPORTER_OTLP_TRACES_HTTP_ENDPOINT", ""), "OTLP HTTP traces endpoint")
 	fs.StringVar(&c.WorkspaceRoot, "workspace-root", osx.EnvStr("HOSTEL_WORKSPACE_ROOT", "/workspace"), "parent dir for per-bed workspaces")
 	fs.StringVar(&c.IsolationMode, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "data-isolation level: dorm | room | suite | auto (auto=env ceiling)")
+	fs.StringVar(&c.PathshimPath, "pathshim", osx.EnvStr("HOSTEL_PATHSHIM", "pathshim"), "pathshim binary for the best-effort /workspace process view (empty=disabled)")
 	fs.StringVar(&c.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")
 	fs.StringVar(&c.DefaultBed, "default-bed", osx.EnvStr("HOSTEL_DEFAULT_BED", "default"), "bed id used when a request omits one")
 	fs.StringVar(&c.ShellPath, "shell", osx.EnvStr("HOSTEL_SHELL", "/bin/bash"), "shell for bed sessions")

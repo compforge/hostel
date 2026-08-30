@@ -21,6 +21,7 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG BWRAP_VERSION=0.11.2
 ARG BWRAP_SHA256=69abc30005d2186baf7737feacd8da35633b93cf5af38838ecff17c5f8e924f6
+ARG PATHSHIM_REV=7ac72a8e10a324e6dff7e7c24233bc0c9105904a
 
 # --- build stage: static, pure-Go hostel binary --------------------------
 FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
@@ -42,6 +43,24 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/hostel ./cmd/hostel
+
+# --- pathshim stage: pinned best-effort dorm/room workspace view --------
+# This stage runs on the target platform, like bwrap, so its libc and
+# architecture match the runtime image. The revision is pinned because
+# pathshim does not publish release artifacts yet.
+FROM rust:1.82-bookworm AS pathshim-builder
+ARG PATHSHIM_REV
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src/pathshim
+RUN git init \
+    && git remote add origin https://github.com/compforge/pathshim.git \
+    && git fetch --depth 1 origin "${PATHSHIM_REV}" \
+    && git checkout --detach FETCH_HEAD
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/pathshim/target \
+    cargo build --release --locked \
+    && cp target/release/pathshim /tmp/pathshim
 
 # --- bubblewrap stage: pinned non-setuid suite backend -------------------
 FROM debian:bookworm-slim AS bwrap-builder
@@ -89,6 +108,10 @@ COPY --from=bwrap-builder /usr/bin/bwrap /usr/bin/bwrap
 COPY --from=bwrap-builder /src/bubblewrap/LICENSE /usr/share/doc/bubblewrap/copyright
 RUN bwrap --version
 
+COPY --from=pathshim-builder /tmp/pathshim /usr/bin/pathshim
+COPY --from=pathshim-builder /src/pathshim/LICENSE /usr/share/doc/pathshim/copyright
+RUN pathshim --version
+
 # /usr/local is the carrier-wide mutable software environment exposed to beds.
 # Keep the daemon itself in the read-only system image so a package install
 # cannot replace the binary used by future confiner re-execs or restarts.
@@ -109,6 +132,7 @@ ENV PYTHONUSERBASE=/usr/local \
     PATH=/usr/local/bin:${PATH} \
     HOSTEL_WORKSPACE_ROOT=/workspace \
     HOSTEL_ISOLATION=suite \
+    HOSTEL_PATHSHIM=/usr/bin/pathshim \
     HOSTEL_CHROMIUM_PATH=/usr/bin/chromium
 # No VOLUME: it would bake the default path in at build time and silently
 # stop applying when HOSTEL_WORKSPACE_ROOT is overridden. To keep beds across

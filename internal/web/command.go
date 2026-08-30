@@ -39,9 +39,9 @@ type RunCommandRequest struct {
 	Envs       map[string]string `json:"envs,omitempty"`
 }
 
-// resolveCwd maps any BedFS client path to the Executor directory the command
-// should cd into, or "" when unset. BedFS owns both path projections. The dir is
-// prepared (EnsureDir, owner-aware) because a fresh bed's workspace starts
+// resolveCwd maps any BedFS client path to its carrier path, or "" when unset.
+// The selected isolation mechanism projects that path into its process view.
+// The dir is prepared (EnsureDir, owner-aware) because a fresh bed's workspace starts
 // empty and a cd into a missing dir would fail.
 // Returns false (after writing an error) on an invalid path.
 func (s *Server) resolveCwd(c *gin.Context, fs *bedfs.FS, cwd string) (string, bool) {
@@ -53,16 +53,11 @@ func (s *Server) resolveCwd(c *gin.Context, fs *bedfs.FS, cwd string) (string, b
 		badRequest(c, err.Error())
 		return "", false
 	}
-	inBed, err := s.mgr.Isolator().View(fs).Path(host)
-	if err != nil {
-		badRequest(c, err.Error())
-		return "", false
-	}
 	if err := fs.EnsureDir(host); err != nil {
 		runtimeError(c, "prepare workdir: "+err.Error())
 		return "", false
 	}
-	return inBed, true
+	return host, true
 }
 
 // POST /command starts one execution. Foreground streams through its terminal

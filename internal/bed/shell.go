@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
-	"github.com/qiankunli/go-stdx/shellx"
 
 	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/executor"
@@ -92,16 +91,16 @@ type Shell struct {
 	dead  bool
 }
 
-// startShell launches the shell in the Bed's current Executor. cwdInBed,
-// when set, becomes the starting directory via an initial `cd`. env is the
-// bed-scoped environment (Manager.buildBedEnv) — the session shell would otherwise
+// startShell launches the shell in the Bed's current Executor. cwdInBed, when
+// set, becomes the starting directory through the isolation process view. env
+// is the bed-scoped environment (Manager.buildBedEnv) — the session shell would otherwise
 // inherit the daemon env, which lacks the bed identity and endpoints. Stdio is
 // explicit os.Pipe pairs (not StdinPipe/StdoutPipe) so the raw fds can cross a
 // process boundary when supervisor is the Executor backend.
 func startShell(bedExecutor executor.Executor, shellPath string, env []string, iso isolation.Isolator, fs *bedfs.FS, cwdInBed string) (*Shell, error) {
 	cmd := exec.Command(shellPath, shellInteractiveArgs(shellPath)...)
 	cmd.Env = env
-	if err := iso.Wrap(cmd, fs); err != nil {
+	if err := iso.Wrap(cmd, fs, cwdInBed); err != nil {
 		return nil, err
 	}
 	inR, inW, err := os.Pipe()
@@ -134,10 +133,6 @@ func startShell(bedExecutor executor.Executor, shellPath string, env []string, i
 		proc:            proc,
 		stdin:           inW,
 		lines:           make(chan string, 64),
-	}
-	if cwdInBed != "" {
-		// Best-effort initial cwd; a failure surfaces in the first run's output.
-		_, _ = io.WriteString(inW, "cd -- "+shellx.Quote(cwdInBed)+" || true\n")
 	}
 	// Single long-lived reader → lines channel.
 	go func() {

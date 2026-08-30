@@ -179,11 +179,12 @@ func (u *uidIso) Available() bool              { return true } // only construct
 func (u *uidIso) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
 func (u *uidIso) WorkspaceMounted() bool       { return false }
 
-func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS) error {
+func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	// Prefix `hostel __asuser <uid> <bed_home> --` so the child drops
 	// to the bed uid, then execs the user command. The uid derives from bed_home
 	// (stable per bed dir); cmd.Dir gives the parent its start dir — the
-	// workspace subdir; the child re-chdirs there anyway after dropping.
+	// requested BedFS directory. exec.Cmd performs the chdir before the helper
+	// drops privileges, so __asuser must preserve it.
 	uid := bedUID(fs.Home())
 	prefix := []string{u.self, AsUserArg, strconv.Itoa(uid), fs.Home(), "--"}
 	userArgs := cmd.Args
@@ -191,7 +192,7 @@ func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS) error {
 	cmd.Args = append(cmd.Args, prefix...)
 	cmd.Args = append(cmd.Args, userArgs...)
 	cmd.Path = u.self
-	cmd.Dir = fs.Workspace()
+	cmd.Dir = commandCwd(fs, cwd)
 	return nil
 }
 
@@ -243,11 +244,11 @@ func chownTree(root string, uid int) error {
 
 // ApplyAsUser drops the CURRENT process to uid (uid == gid, private group),
 // sets no_new_privs so a setuid-root binary in the image can't re-escalate,
-// then enters the bed data dir — after which it's safe to exec the bed command.
+// then preserves the cwd inherited from exec.Cmd before exec-ing the command.
 // Called by main's __asuser subcommand. Order matters: each privileged step
 // must run before we drop the capability that permits it (groups and gid before
 // uid), and no_new_privs before the exec it must outlive.
-func ApplyAsUser(uid int, dataDir string) error {
+func ApplyAsUser(uid int, _ string) error {
 	if err := syscall.Setgroups([]int{}); err != nil {
 		return fmt.Errorf("setgroups: %w", err)
 	}
@@ -259,9 +260,6 @@ func ApplyAsUser(uid int, dataDir string) error {
 	}
 	if err := syscall.Setuid(uid); err != nil {
 		return fmt.Errorf("setuid: %w", err)
-	}
-	if err := os.Chdir(dataDir); err != nil {
-		return fmt.Errorf("chdir: %w", err)
 	}
 	return nil
 }

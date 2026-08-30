@@ -21,36 +21,20 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
-	"github.com/qiankunli/go-stdx/shellx"
 	"github.com/qiankunli/hostel/internal/executor"
 )
 
 // buildCommand constructs an isolated `bash -c <command>` for the bed. envs are
-// an invocation-scoped overlay; cwd (host path) overrides the workspace.
+// an invocation-scoped overlay; cwd is a carrier BedFS path and an empty value
+// selects the workspace.
 //
-// +rule=`Treat command as opaque bash source: cwd setup may prefix it but must not append tokens that corrupt EOF-sensitive syntax such as heredocs.`
-func (m *Manager) buildCommand(b *Bed, command, cwdInBed string, envs map[string]string) (*exec.Cmd, error) {
+// +rule=`Treat command as opaque bash source; apply cwd through the process view and never rewrite caller text.`
+func (m *Manager) buildCommand(b *Bed, command, cwd string, envs map[string]string) (*exec.Cmd, error) {
 	m.touchBed(b)
-	// Apply cwd with a `cd` INSIDE the command (same mechanism the session shell
-	// uses), NOT via cmd.Dir. Under suite cwdInBed is a sandbox-internal path
-	// (/workspace/…) that doesn't exist on the carrier host, so setting it as
-	// the outer (bwrap) process's Dir makes ForkExec's chdir fail with ENOENT
-	// ("supervisor: spawn: fork: no such file or directory"). The cd runs in the
-	// command's own view — inside bwrap under suite, directly under direct —
-	// where cwdInBed is valid (web.resolveCwd prepared the dir via EnsureDir).
-	if cwdInBed != "" {
-		// This is a one-shot shell, so a prefix is enough to scope cwd. Do not add
-		// a suffix: heredoc terminators and other EOF-sensitive syntax must remain
-		// at the end of the caller's script.
-		command = "cd -- " + shellx.Quote(cwdInBed) + " &&\n" + command
-	}
 	cmd := exec.Command(m.shellPath, shellCommandArgs(m.shellPath, command)...)
-	if err := m.iso.Wrap(cmd, b.BedFS()); err != nil {
+	if err := m.iso.Wrap(cmd, b.BedFS(), cwd); err != nil {
 		return nil, err
 	}
-	// The OUTER process cwd must exist on the host; the bed's own workspace
-	// always does (the in-sandbox cwd is handled by the cd above / bwrap --chdir).
-	cmd.Dir = b.Workspace()
 	env, err := m.buildBedEnv(b, envs)
 	if err != nil {
 		return nil, err

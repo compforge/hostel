@@ -54,11 +54,11 @@ const carrierSoftwareRoot = "/usr/local"
 //     there. This gives every structured BedFS path an Executor-visible name.
 //  7. --bind <bed workspace> /workspace — stable public workspace name
 //     (must come AFTER the workspaceRoot mask so it re-opens only our dir)
-//  8. --chdir /workspace, --die-with-parent, --
+//  8. --chdir <process cwd>, --die-with-parent, --
 //
 // maskPaths are host paths that exist. Environment ownership lives in bed's
 // process-env builder, so isolation mechanisms never inherit or filter it.
-func buildBwrapArgs(workspaceRoot, bedHome, workspace string, maskPaths []string) []string {
+func buildBwrapArgs(workspaceRoot, bedHome, workspace, cwd string, maskPaths []string) []string {
 	argv := []string{
 		// 1.
 		"--unshare-user", "--unshare-uts", "--unshare-ipc",
@@ -88,7 +88,7 @@ func buildBwrapArgs(workspaceRoot, bedHome, workspace string, maskPaths []string
 	argv = append(argv, "--bind", workspace, bedfs.WorkspacePath)
 	// 8.
 	argv = append(argv,
-		"--chdir", bedfs.WorkspacePath,
+		"--chdir", cwd,
 		"--die-with-parent",
 		"--",
 	)

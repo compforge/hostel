@@ -290,6 +290,7 @@ func (s *Server) healthz(c *gin.Context) {
 		"isolator":         iso.Name(),
 		"isolator_ok":      iso.Available(),
 		"workspace_mount":  iso.WorkspaceMounted(),
+		"workspace_view":   workspaceView(iso),
 		"executor_backend": s.mgr.ExecutorBackend(),
 		"beds":             s.mgr.ResidentBedCount(),
 		"max_beds":         s.mgr.MaxBeds(),
@@ -356,4 +357,15 @@ func isolationView(iso isolation.Isolator) gin.H {
 		v["host"] = r.Facts()
 	}
 	return v
+}
+
+func workspaceView(iso isolation.Isolator) isolation.WorkspaceViewReport {
+	if report, ok := iso.(isolation.Report); ok {
+		return report.WorkspaceView()
+	}
+	mode := "carrier"
+	if iso.WorkspaceMounted() {
+		mode = "mount"
+	}
+	return isolation.WorkspaceViewReport{Mode: mode, Available: true}
 }

@@ -37,6 +37,14 @@ type View struct {
 // HostView is used when an Executor shares the carrier mount namespace.
 func HostView(fs *FS) View { return View{fs: fs} }
 
+// WorkspaceView projects only the bed workspace onto its stable process path.
+// Paths elsewhere in bed_home keep their carrier spelling. It is used by
+// best-effort process views such as pathshim, which intentionally emulate only
+// the /workspace bind and do not claim a complete guest root.
+func WorkspaceView(fs *FS) View {
+	return View{fs: fs, workspaceMount: WorkspacePath}
+}
+
 // MountedView is used when the Executor has a private mount namespace. The
 // whole bed_home has an internal mount for complete BedFS reachability, while
 // the workspace keeps its stable public /workspace path.
@@ -50,11 +58,13 @@ func (v View) Path(host string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("bedfs: carrier path %q is outside bed_home %q", host, v.fs.Home())
 	}
+	if workspaceRel, inWorkspace := relativeTo(v.fs.Workspace(), host); inWorkspace {
+		if v.workspaceMount != "" {
+			return joinProcessPath(v.workspaceMount, workspaceRel), nil
+		}
+	}
 	if v.homeMount == "" {
 		return filepath.Clean(host), nil
-	}
-	if workspaceRel, inWorkspace := relativeTo(v.fs.Workspace(), host); inWorkspace {
-		return joinProcessPath(v.workspaceMount, workspaceRel), nil
 	}
 	return joinProcessPath(v.homeMount, homeRel), nil
 }
