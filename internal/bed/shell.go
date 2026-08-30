@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	"github.com/qiankunli/go-stdx/shellx"
 
 	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/executor"
@@ -85,6 +86,7 @@ type Shell struct {
 	proc  executor.Process
 	stdin io.WriteCloser
 	lines chan string // every output line; closed on EOF/exit
+	view  bedfs.View  // projects confined carrier paths into this shell's process view
 
 	runMu sync.Mutex // serializes Run; held while waiting for output
 	mu    sync.Mutex // guards dead only; held briefly
@@ -133,6 +135,7 @@ func startShell(bedExecutor executor.Executor, shellPath string, env []string, i
 		proc:            proc,
 		stdin:           inW,
 		lines:           make(chan string, 64),
+		view:            iso.View(fs),
 	}
 	// Single long-lived reader → lines channel.
 	go func() {
@@ -192,12 +195,33 @@ type RunResult struct {
 // +spec=`Command output is preserved whether or not its final fragment ends with a newline; the framing marker is never exposed as output.`
 // +case:id=session_partial_line_output,desc=`Run printf without a trailing newline in a persistent shell`,expect=`the partial output is returned and the execution reaches its typed terminal result`
 func (s *Shell) Run(ctx context.Context, command string, onLine func(string)) (*RunResult, error) {
+	return s.RunAt(ctx, "", command, onLine)
+}
+
+// RunAt runs command after moving the persistent shell to cwdInBed. The cwd is
+// a confined carrier path; Shell owns its projection because the process view
+// was fixed when this shell started. The control step is framed separately so
+// arbitrary command source (including heredocs) remains byte-for-byte intact.
+func (s *Shell) RunAt(ctx context.Context, cwdInBed, command string, onLine func(string)) (*RunResult, error) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	if s.Dead() {
 		return nil, fmt.Errorf("shell: session is dead")
 	}
+	if cwdInBed != "" {
+		processCwd, err := s.view.Path(cwdInBed)
+		if err != nil {
+			return nil, fmt.Errorf("shell: project cwd %q: %w", cwdInBed, err)
+		}
+		result, err := s.runLocked(ctx, "command cd -- "+shellx.Quote(processCwd), onLine)
+		if err != nil || result.ExitCode != 0 {
+			return result, err
+		}
+	}
+	return s.runLocked(ctx, command, onLine)
+}
 
+func (s *Shell) runLocked(ctx context.Context, command string, onLine func(string)) (*RunResult, error) {
 	marker := fmt.Sprintf("__hostel_end_%d__", time.Now().UnixNano())
 	full := fmt.Sprintf("%s\nprintf '%%s %%d\\n' %s \"$?\"\n", command, marker)
 	if _, err := io.WriteString(s.stdin, full); err != nil {
@@ -259,6 +283,7 @@ func (m *Manager) StartSessionExecution(
 	b *Bed,
 	shell *Shell,
 	command string,
+	cwdInBed string,
 	timeout time.Duration,
 	onStart func(ExecutionStatus),
 	onOutput func(ExecutionOutput),
@@ -267,7 +292,7 @@ func (m *Manager) StartSessionExecution(
 	if err != nil {
 		return nil, err
 	}
-	execution := m.executions.trackSession(ctx, b.ID, shell, command, timeout, onStart, onOutput, func(result ExecutionResult) {
+	execution := m.executions.trackSession(ctx, b.ID, shell, command, cwdInBed, timeout, onStart, onOutput, func(result ExecutionResult) {
 		finishOperation()
 		b.RecordCommand(result.Duration)
 	})

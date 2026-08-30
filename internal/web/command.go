@@ -22,8 +22,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/qiankunli/go-stdx/shellx"
-
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bedfs"
 )
@@ -131,23 +129,6 @@ func (s *Server) runCommand(c *gin.Context) {
 		ExecutionID: result.ExecutionID,
 		Result:      &payload,
 	})
-}
-
-// wrapWithCwd prefixes a subshell cd + env exports so a foreground command runs
-// with the requested cwd/env without permanently mutating the shared shell.
-func wrapWithCwd(command, cwdInBed string, envs map[string]string) string {
-	prefix := ""
-	for k, v := range envs {
-		prefix += "export " + k + "=" + shellx.Quote(v) + "; "
-	}
-	if cwdInBed != "" {
-		prefix += "cd -- " + shellx.Quote(cwdInBed) + " && "
-	}
-	if prefix == "" {
-		return command
-	}
-	// Group so the prefix applies only to this command line.
-	return prefix + "{ " + command + " ; }"
 }
 
 // DELETE /command?id=... — interrupt a (background) command.
@@ -294,7 +275,7 @@ func (s *Server) sessionRun(c *gin.Context) {
 	stopSSE := func() {}
 	defer func() { stopSSE() }()
 	startedExecutionID := ""
-	execution, err := s.mgr.StartSessionExecution(ctx, b, sh, wrapWithCwd(req.Command, cwdInBed, nil), time.Duration(req.Timeout)*time.Millisecond, func(status bed.ExecutionStatus) {
+	execution, err := s.mgr.StartSessionExecution(ctx, b, sh, req.Command, cwdInBed, time.Duration(req.Timeout)*time.Millisecond, func(status bed.ExecutionStatus) {
 		startedExecutionID = status.ID
 		stopSSE = sse.start(ctx, status.ID, ssePingInterval)
 	}, func(output bed.ExecutionOutput) {

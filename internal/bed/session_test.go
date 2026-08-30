@@ -149,7 +149,7 @@ func TestSessionExecutionEnforcesTimeout(t *testing.T) {
 		t.Fatalf("shell %s not found", sessionID)
 	}
 
-	execution, err := m.StartSessionExecution(context.Background(), b, shell, "sleep 30", 30*time.Millisecond, nil, nil)
+	execution, err := m.StartSessionExecution(context.Background(), b, shell, "sleep 30", "", 30*time.Millisecond, nil, nil)
 	if err != nil {
 		t.Fatalf("StartSessionExecution: %v", err)
 	}

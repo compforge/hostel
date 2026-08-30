@@ -271,6 +271,40 @@ func TestShellPreservesOutputWithoutTrailingNewline(t *testing.T) {
 	}
 }
 
+func TestShellRunAtProjectsCwdWithoutRewritingCommand(t *testing.T) {
+	m := newTestManager(t)
+	b, _ := m.Ensure(context.Background(), "default")
+	sh, err := m.ForegroundShell(b)
+	if err != nil {
+		t.Fatalf("ForegroundShell: %v", err)
+	}
+	cwdInBed, err := b.BedFS().Resolve("/workspace/session-subdir")
+	if err != nil {
+		t.Fatalf("Resolve cwd: %v", err)
+	}
+	if err := b.BedFS().EnsureDir(cwdInBed); err != nil {
+		t.Fatalf("EnsureDir cwd: %v", err)
+	}
+
+	var out strings.Builder
+	result, err := sh.RunAt(context.Background(), cwdInBed, "cat > from-session.txt <<'EOF'\nsession\nEOF\npwd", func(line string) {
+		out.WriteString(line)
+	})
+	if err != nil || result.ExitCode != 0 || strings.TrimSpace(out.String()) != cwdInBed {
+		t.Fatalf("RunAt: result=%+v err=%v output=%q want cwd=%q", result, err, out.String(), cwdInBed)
+	}
+	data, err := os.ReadFile(filepath.Join(cwdInBed, "from-session.txt"))
+	if err != nil || string(data) != "session\n" {
+		t.Fatalf("heredoc file: err=%v data=%q", err, data)
+	}
+
+	out.Reset()
+	result, err = sh.Run(context.Background(), "pwd", func(line string) { out.WriteString(line) })
+	if err != nil || result.ExitCode != 0 || strings.TrimSpace(out.String()) != cwdInBed {
+		t.Fatalf("persisted cwd: result=%+v err=%v output=%q want=%q", result, err, out.String(), cwdInBed)
+	}
+}
+
 // TestBedFileIsolation is a Linux-safe end-to-end check of the bed contract:
 // commands in one bed share a writable filesystem, while another bed cannot
 // observe it (each bed is rooted at its own data directory).

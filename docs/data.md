@@ -86,7 +86,7 @@ bed 已由 `X-Hostel-Bed` 选定后，所有房型共用同一套客户端路径
 
 路径字段和命令文本要分开处理：hostel 可以直接解析 file API path、cwd 等结构化字段，但不能可靠改写任意 shell command 字符串。如果要求命令里的绝对字面量（如 `cat /tmp/workspace/job/a.txt`）也命中同一 bed-local 文件，就必须由进程文件系统视图提供对应投影或 bind，不能靠字符串替换碰运气。
 
-**一致性的诚实边界**：跨隔离级别的完整路径一致性仍不是已兑现保证。Suite 通过 mount namespace 真实提供完整进程视图；Dorm/Room 在启动探测通过时使用 pathshim，仅尽力让 `/workspace` 与 Bed workspace 同义，映射外的 `/tmp`、`/abc` 等绝对字面量仍落在 Carrier 进程视图。结构化字段（path/cwd）三档严格一致，cwd 不依赖 shell 文本改写。独占 Dorm carrier 还可显式允许只读 file API 在 BedFS 路径不存在时回读进程绝对路径，让调用方取回写偏的产物；这两种 best effort 都不改变 isolation level，也不提供安全边界。
+**一致性的诚实边界**：跨隔离级别的完整路径一致性仍不是已兑现保证。Suite 通过 mount namespace 真实提供完整进程视图；Dorm/Room 在启动探测通过时使用 pathshim，仅尽力让 `/workspace` 与 Bed workspace 同义，映射外的 `/tmp`、`/abc` 等绝对字面量仍落在 Carrier 进程视图。结构化字段（path/cwd）三档严格一致：新进程由 Isolator 投影，已有 session 由持有 Executor View 的 Shell 投影并以独立控制步骤切换，不改写用户命令文本。独占 Dorm carrier 还可显式允许只读 file API 在 BedFS 路径不存在时回读进程绝对路径，让调用方取回写偏的产物；这两种 best effort 都不改变 isolation level，也不提供安全边界。
 
 ### 3. workspace-root 外部可配
 
@@ -136,7 +136,7 @@ bedProcessEnv = carrierSoftwareEnv + bedContextEnv + requestEnv
 
 已实现：`internal/isolation/` 在 boot 时做 bwrap 全形态 smoke，并通过所选隔离机制执行 pathshim probe；负责 namespace/遮蔽、carrier 共享 `/usr/local`、BedFS View 与诚实降级。`internal/bed/env.go` 统一负责三档进程环境。单测覆盖 mount/workspace view、动态 cwd、probe fallback 与包装顺序；**Linux 真机验证已通过**（amd64 与 arm64，kernel 5.15：pathshim bind-view、dorm `/workspace` cwd、file API 互通、映射内 ELF 执行、session/signal，以及 suite bwrap 均 PASS；amd64 镜像构建与镜像核心 E2E PASS）。
 
-**共同路径契约的兑现状态**：Bed 持有的 `bedfs.FS` 已把 bed_home、workspace、client/carrier/Executor 三类路径落成一个领域对象——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对；三档的结构化 cwd 统一由 Isolator 投影，不改写 shell 文本，suite 也可访问 workspace 外的 BedFS cwd。daemon mutation 以 `bed_home` 目录句柄执行；pathshim 尽力补齐 dorm/room 的 `/workspace` 字面量，其他命令绝对路径仍不承诺跨房型统一。
+**共同路径契约的兑现状态**：Bed 持有的 `bedfs.FS` 已把 bed_home、workspace、client/carrier/Executor 三类路径落成一个领域对象——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对；三档的结构化 cwd 由拥有进程 View 的启动层处理：新进程是 Isolator，常驻 session 是 Shell，二者都不改写用户命令文本，suite 也可访问 workspace 外的 BedFS cwd。daemon mutation 以 `bed_home` 目录句柄执行；pathshim 尽力补齐 dorm/room 的 `/workspace` 字面量，其他命令绝对路径仍不承诺跨房型统一。
 
 ## 隔离分档模型：青年旅社房型（档 / 机制 / 上限 / 请求）
 

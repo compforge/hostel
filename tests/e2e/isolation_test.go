@@ -5,6 +5,7 @@ package e2e_test
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -135,6 +136,49 @@ func assertCanonicalWorkspaceView(t *testing.T, c *apiClient, mode string) {
 	assertCommandExit(t, executable, 0)
 	if strings.TrimSpace(executable.Stdout) != "mapped-exec" {
 		t.Fatalf("%s mapped executable stdout=%q stderr=%q", mode, executable.Stdout, executable.Stderr)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	var created struct {
+		SessionID string `json:"session_id"`
+	}
+	createdResult, err := c.json(ctx, "POST", "/session", bedID, map[string]string{"cwd": "/workspace"}, &created)
+	cancel()
+	if err != nil || createdResult.Status != http.StatusOK || created.SessionID == "" {
+		t.Fatalf("%s create workspace session: status=%d err=%v body=%s", mode, createdResult.Status, err, createdResult.Body)
+	}
+
+	sessionPath := "/session/" + url.PathEscape(created.SessionID)
+	sessionRun, response := c.stream(t, sessionPath+"/run", bedID, map[string]any{
+		"command": "cat > from-session.txt <<'EOF'\nsession\nEOF\npwd",
+		"cwd":     "/workspace/session-subdir",
+		"timeout": 30_000,
+	})
+	must2xx(t, mode+" session explicit cwd", response)
+	assertCommandExit(t, sessionRun, 0)
+	if strings.TrimSpace(sessionRun.Stdout) != "/workspace/session-subdir" {
+		t.Fatalf("%s session cwd=%q, want /workspace/session-subdir", mode, strings.TrimSpace(sessionRun.Stdout))
+	}
+	sessionFile := c.download(t, bedID, "/workspace/session-subdir/from-session.txt")
+	if sessionFile.Status != http.StatusOK || string(sessionFile.Body) != "session\n" {
+		t.Fatalf("%s session/file API mismatch: status=%d body=%q", mode, sessionFile.Status, sessionFile.Body)
+	}
+
+	persisted, response := c.stream(t, sessionPath+"/run", bedID, map[string]any{
+		"command": "pwd",
+		"timeout": 30_000,
+	})
+	must2xx(t, mode+" session persisted cwd", response)
+	assertCommandExit(t, persisted, 0)
+	if strings.TrimSpace(persisted.Stdout) != "/workspace/session-subdir" {
+		t.Fatalf("%s persisted session cwd=%q, want /workspace/session-subdir", mode, strings.TrimSpace(persisted.Stdout))
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	deleted, err := c.json(ctx, "DELETE", sessionPath, bedID, nil, nil)
+	cancel()
+	if err != nil || deleted.Status != http.StatusOK {
+		t.Fatalf("%s delete workspace session: status=%d err=%v body=%s", mode, deleted.Status, err, deleted.Body)
 	}
 }
 

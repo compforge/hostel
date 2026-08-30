@@ -69,7 +69,7 @@ bwrap 先遮蔽 `<workspace-root>`，再投影同一 BedFS：
 
 ## 四、结构化路径与命令文本
 
-Hostel 解析 file API 的 `path`、命令的 `cwd` 等结构化字段，因此这些字段在所有房型都遵守 BedFS 语义。cwd 作为结构化执行参数交给 isolation/process-view 层，不再通过向 shell 文本前置 `cd` 实现。Hostel 不改写任意 shell 文本：命令中的字面 `/tmp/x` 仍由实际进程 namespace 解释。
+Hostel 解析 file API 的 `path`、命令的 `cwd` 等结构化字段，因此这些字段在所有房型都遵守 BedFS 语义。BedFS 先把 cwd 解析为 Carrier path；新进程由 isolation 投影到 Executor View，已启动的常驻 Shell 则持有启动时的 View，在执行用户命令前通过独立、带终态分帧的 shell 控制步骤切换目录。Web 层不构造 Executor path，也不把 `cd` 拼进用户命令；heredoc、多行脚本等命令文本保持原样。命令中的字面 `/tmp/x` 仍由实际进程 namespace 解释。
 
 pathshim 可用时，dorm/room 的命令字面 `/workspace/x` 会尽力指向 Bed workspace；`/tmp/x`、`/abc` 等映射外绝对路径仍由 Carrier 进程视图解释。pathshim 降级时命令仍会启动，Hostel 在启动探测阶段关闭该进程视图并通过能力接口如实上报。
 
@@ -81,6 +81,7 @@ Dorm 与 carrier 共享 mount namespace，命令中的字面绝对路径可能�
 
 - Bed owns BedFS：`bed_home`、workspace、generation 与快照身份随 Bed 存续；
 - Executor owns process realm：只持有 BedFS View，可丢失和替换；
+- Shell owns its Executor View：session run 的结构化 cwd 由 Shell 投影并更新持久 cwd；
 - Store consumes BedFS carrier data：快照对象仍是 Bed 目录中的 `data/`；
 - isolation realizes View：不拥有数据命名和持久化规则；
 - web 只选择与房型、部署配置匹配的 BedFS 读取策略：不能自行拼 carrier 路径或 mount point。
