@@ -1,0 +1,40 @@
+# kube-apiserver Pod Security Admission configuration example (Kubernetes
+# v1.25+). This is not a Kubernetes API object and cannot be installed with
+# `kubectl apply`. Cluster administrators must merge the exemption into their
+# existing AdmissionConfiguration and pass that file to kube-apiserver through
+# `--admission-control-config-file`.
+#
+# The username is the exact authenticated identity used when sandbox-server
+# creates carrier Pods. Replace `<sandbox-server-namespace>` with the namespace
+# used by the customer's deployment. Pod Security Admission does not support
+# username globs, so repeat the entry for every namespace that hosts a
+# sandbox-server ServiceAccount.
+#
+# Caution: an exempt request skips all Pod Security enforce, audit, and warn
+# checks, not only the AppArmor check. Keep the ServiceAccount narrowly scoped
+# and ensure it only creates trusted carrier Pods. The carrier Pod must still
+# explicitly request:
+#
+#   securityContext:
+#     appArmorProfile:
+#       type: Unconfined
+apiVersion: apiserver.config.k8s.io/v1
+kind: AdmissionConfiguration
+plugins:
+  - name: PodSecurity
+    configuration:
+      apiVersion: pod-security.admission.config.k8s.io/v1
+      kind: PodSecurityConfiguration
+      # Preserve the cluster's existing defaults. These values are illustrative.
+      defaults:
+        enforce: baseline
+        enforce-version: latest
+        audit: baseline
+        audit-version: latest
+        warn: restricted
+        warn-version: latest
+      exemptions:
+        usernames:
+          - "system:serviceaccount:<sandbox-server-namespace>:sandbox-server"
+        runtimeClasses: []
+        namespaces: []

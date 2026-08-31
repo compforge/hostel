@@ -215,6 +215,8 @@ securityContext:
     type: Unconfined
 ```
 
+Pod Security Admission 豁免示例见 [`deploy/k8s/pod-security-admission-exemption.yaml`](../deploy/k8s/pod-security-admission-exemption.yaml)；它由集群管理员合入 kube-apiserver 的 `AdmissionConfiguration`，不能通过 `kubectl apply` 安装。
+
 若 `RuntimeDefault` seccomp 仍拦截 bwrap，使用节点预装且只放行所需 syscall 的 `Localhost` seccomp profile；不要直接把 `privileged: true` 当成 suite 的默认解法。AppArmor 也优先选择精确适配 bwrap 的 `Localhost` profile；无法维护该 profile 时才使用 `Unconfined`。Kubernetes 官方说明 1.30 前 AppArmor 通过 annotation 指定，当前 API 支持 `RuntimeDefault`、`Localhost`、`Unconfined`；Pod Security Baseline 只允许前两者。
 
 UID room 的最小 capability 片段：
