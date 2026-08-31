@@ -53,23 +53,25 @@ func TestDormReadFallbackRootIsExplicit(t *testing.T) {
 func TestBedCapacityConfig(t *testing.T) {
 	t.Setenv("HOSTEL_MAX_BEDS", "12")
 	t.Setenv("HOSTEL_MAX_PINNED_BEDS", "4")
+	t.Setenv("HOSTEL_BED_PRESSURE_THRESHOLD_PERCENT", "75")
 	t.Setenv("HOSTEL_ADMISSION_CPU_THRESHOLD", "85")
 	t.Setenv("HOSTEL_ADMISSION_MEMORY_THRESHOLD", "80")
 	c := Load(nil)
-	if c.MaxBeds != 12 || c.MaxPinnedBeds != 4 || c.AdmissionCPUThreshold != 85 || c.AdmissionMemoryThreshold != 80 {
-		t.Fatalf("env capacity = %+v, want beds 12/4 and thresholds 85/80", c)
+	if c.MaxBeds != 12 || c.MaxPinnedBeds != 4 || c.BedPressureThresholdPercent != 75 || c.AdmissionCPUThreshold != 85 || c.AdmissionMemoryThreshold != 80 {
+		t.Fatalf("env capacity = %+v, want beds 12/4 and thresholds 75/85/80", c)
 	}
 
-	c = Load([]string{"-max-beds", "20", "-max-pinned-beds", "7", "-admission-cpu-threshold", "75", "-admission-memory-threshold", "70"})
-	if c.MaxBeds != 20 || c.MaxPinnedBeds != 7 || c.AdmissionCPUThreshold != 75 || c.AdmissionMemoryThreshold != 70 {
-		t.Fatalf("flag capacity = %+v, want beds 20/7 and thresholds 75/70", c)
+	c = Load([]string{"-max-beds", "20", "-max-pinned-beds", "7", "-bed-pressure-threshold-percent", "60", "-admission-cpu-threshold", "75", "-admission-memory-threshold", "70"})
+	if c.MaxBeds != 20 || c.MaxPinnedBeds != 7 || c.BedPressureThresholdPercent != 60 || c.AdmissionCPUThreshold != 75 || c.AdmissionMemoryThreshold != 70 {
+		t.Fatalf("flag capacity = %+v, want beds 20/7 and thresholds 60/75/70", c)
 	}
 }
 
 func TestResourceAdmissionThresholdDefaults(t *testing.T) {
 	c := Load(nil)
-	if c.AdmissionCPUThreshold != 90 || c.AdmissionMemoryThreshold != 90 {
-		t.Fatalf("default resource thresholds = %d/%d, want 90/90", c.AdmissionCPUThreshold, c.AdmissionMemoryThreshold)
+	if c.BedPressureThresholdPercent != 80 || c.AdmissionCPUThreshold != 90 || c.AdmissionMemoryThreshold != 90 {
+		t.Fatalf("default thresholds = bed %d, resources %d/%d; want 80 and 90/90",
+			c.BedPressureThresholdPercent, c.AdmissionCPUThreshold, c.AdmissionMemoryThreshold)
 	}
 }
 

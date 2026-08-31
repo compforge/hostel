@@ -87,7 +87,7 @@ func (m *Manager) OpenSession(b *Bed, kind SessionKind, closeFn func()) (*Sessio
 	}
 	wasPinned := b.pinnedLocked()
 	if !wasPinned && b.ID != m.defaultBed {
-		if err := m.carrierAdmissionErrorLocked(); err != nil {
+		if err := m.resourceAdmissionErrorLocked(); err != nil {
 			b.mu.Unlock()
 			m.mu.Unlock()
 			cancel()

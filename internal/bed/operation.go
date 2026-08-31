@@ -77,7 +77,7 @@ func (m *Manager) BeginOperation(b *Bed, kind OperationKind, timeout time.Durati
 	}
 	wasPinned := b.pinnedLocked()
 	if !wasPinned && b.ID != m.defaultBed {
-		if err := m.carrierAdmissionErrorLocked(); err != nil {
+		if err := m.resourceAdmissionErrorLocked(); err != nil {
 			b.mu.Unlock()
 			m.mu.Unlock()
 			return nil, err

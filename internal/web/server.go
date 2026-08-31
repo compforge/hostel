@@ -33,26 +33,11 @@ import (
 	"github.com/qiankunli/hostel/internal/resource"
 )
 
-// respondBedError maps bed resolution/admission failures: a full instance is
-// 429 backpressure (scheduler should place elsewhere), anything else is a bad id.
+// respondBedError maps bed resolution/admission failures: a full or
+// resource-pressured instance is 429 backpressure, anything else is a bad id.
 func respondBedError(c *gin.Context, err error) {
 	if errors.Is(err, bed.ErrResourcePressure) {
 		respondError(c, http.StatusTooManyRequests, ErrResourcePressure, err.Error())
-		return
-	}
-	var insufficient *bed.InsufficientBedError
-	if errors.As(err, &insufficient) {
-		c.JSON(http.StatusTooManyRequests, ErrorResponse{
-			Code:      ErrInsufficientBed,
-			Message:   err.Error(),
-			Retryable: true,
-			Pressure: &BedPressureDetails{
-				PinnedBeds:    insufficient.PinnedBeds,
-				MaxPinnedBeds: insufficient.MaxPinnedBeds,
-				ResidentBeds:  insufficient.ResidentBeds,
-				MaxBeds:       insufficient.MaxBeds,
-			},
-		})
 		return
 	}
 	if errors.Is(err, bed.ErrBedLimit) {
@@ -286,18 +271,20 @@ func (s *Server) healthz(c *gin.Context) {
 	high, low := s.mgr.LuggageLimits()
 	resources := s.mgr.ResourceReport()
 	c.JSON(http.StatusOK, gin.H{
-		"ok":               true,
-		"isolator":         iso.Name(),
-		"isolator_ok":      iso.Available(),
-		"workspace_mount":  iso.WorkspaceMounted(),
-		"workspace_view":   workspaceView(iso),
-		"executor_backend": s.mgr.ExecutorBackend(),
-		"beds":             s.mgr.ResidentBedCount(),
-		"max_beds":         s.mgr.MaxBeds(),
-		"pinned_beds":      s.mgr.PinnedBedCount(),
-		"max_pinned_beds":  s.mgr.MaxPinnedBeds(),
-		"bed_pressure":     s.mgr.BedPressure(),
-		"persistence":      s.mgr.StoreName(),
+		"ok":                             true,
+		"isolator":                       iso.Name(),
+		"isolator_ok":                    iso.Available(),
+		"workspace_mount":                iso.WorkspaceMounted(),
+		"workspace_view":                 workspaceView(iso),
+		"executor_backend":               s.mgr.ExecutorBackend(),
+		"occupied_beds":                  s.mgr.OccupiedBedCount(),
+		"resident_beds":                  s.mgr.ResidentBedCount(),
+		"max_beds":                       s.mgr.MaxBeds(),
+		"pinned_beds":                    s.mgr.PinnedBedCount(),
+		"max_pinned_beds":                s.mgr.MaxPinnedBeds(),
+		"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
+		"bed_pressure":                   s.mgr.BedPressure(),
+		"persistence":                    s.mgr.StoreName(),
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,
 			"available": resources.Available,

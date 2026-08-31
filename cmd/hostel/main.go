@@ -134,7 +134,10 @@ func main() {
 		log.Fatalf("hostel: init bed manager: %v", err)
 	}
 	if err := mgr.SetMaxPinnedBeds(cfg.MaxPinnedBeds); err != nil {
-		log.Fatalf("hostel: configure pinned bed limit: %v", err)
+		log.Fatalf("hostel: configure pinned bed reference: %v", err)
+	}
+	if err := mgr.SetBedPressureThresholdPercent(cfg.BedPressureThresholdPercent); err != nil {
+		log.Fatalf("hostel: configure bed pressure threshold: %v", err)
 	}
 	if filtered := mgr.SetCarrierEnvironment(os.Environ()); len(filtered) > 0 {
 		log.Printf("hostel: filtered reserved carrier environment from bed processes: keys=%v", filtered)
@@ -230,9 +233,8 @@ func main() {
 		}()
 	}
 
-	// Luggage GC: keep evicted beds' local dirs (warm cache) under the disk
-	// watermarks. Fixed cadence — the watermarks, not the tick rate, decide
-	// how much disk luggage may hold.
+	// Luggage GC bounds orphaned Bed directories left by an unclean shutdown or
+	// older version. Normal eviction removes its local directory immediately.
 	if cfg.LuggageHighBytes > 0 {
 		go func() {
 			t := time.NewTicker(time.Minute)

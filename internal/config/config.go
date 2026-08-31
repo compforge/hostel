@@ -30,6 +30,8 @@ const DefaultAddr = ":8872"
 
 const defaultAdmissionThresholdPercent = 90
 
+const defaultBedPressureThresholdPercent = 80
+
 const defaultAutoPackFileThreshold = 100
 
 type Config struct {
@@ -68,10 +70,13 @@ type Config struct {
 	// NEW bed creation only, never to the default bed; the 429 it produces is
 	// the backpressure/placement signal for an upstream scheduler.
 	MaxBeds int
-	// MaxPinnedBeds caps tenant beds that are running work or whose latest data
-	// has not reached the durable store. Zero inherits MaxBeds (and is unlimited
-	// when MaxBeds is also zero). The default bed is exempt.
+	// MaxPinnedBeds is the reference capacity for tenant beds that are running
+	// work or whose latest data has not reached the durable store. It is not an
+	// admission limit. Zero inherits MaxBeds; the default bed is exempt.
 	MaxPinnedBeds int
+	// BedPressureThresholdPercent is the shared high-watermark percentage for
+	// occupied/max-beds and pinned/max-pinned-beds. Zero disables the signal.
+	BedPressureThresholdPercent int
 	// AdmissionCPUThreshold / AdmissionMemoryThreshold reject an idle tenant
 	// bed's first operation when aggregate carrier usage reaches the configured
 	// percentage. Zero disables that resource dimension.
@@ -103,10 +108,9 @@ type Config struct {
 	// PersistInterval is the periodic snapshot safety net (0 = only at
 	// lifecycle boundaries). Bounds how much work a crash can lose.
 	PersistInterval time.Duration
-	// LuggageHighBytes / LuggageLowBytes are the disk watermarks for luggage
-	// (evicted beds' local dirs kept as warm cache): past high, luggage GC
-	// deletes cold copies until under low. High 0 disables GC (luggage
-	// accumulates — fine when workspace-root is on disposable/ample disk).
+	// LuggageHighBytes / LuggageLowBytes govern orphaned local dirs left by an
+	// unclean shutdown or older Hostel version. Normal evictions do not create
+	// luggage. High 0 disables GC.
 	LuggageHighBytes int64
 	LuggageLowBytes  int64
 
@@ -142,7 +146,8 @@ func Load(args []string) *Config {
 	fs.StringVar(&c.ShellPath, "shell", osx.EnvStr("HOSTEL_SHELL", "/bin/bash"), "shell for bed sessions")
 	idle := fs.Duration("bed-idle-timeout", osx.EnvDuration("HOSTEL_BED_IDLE_TIMEOUT", 30*time.Minute), "reap a bed after this idle duration (0=never)")
 	fs.IntVar(&c.MaxBeds, "max-beds", osx.EnvInt("HOSTEL_MAX_BEDS", 0), "max concurrent beds, 0=unlimited (default bed exempt)")
-	fs.IntVar(&c.MaxPinnedBeds, "max-pinned-beds", osx.EnvInt("HOSTEL_MAX_PINNED_BEDS", 0), "max pinned beds, 0=inherit max-beds (default bed exempt)")
+	fs.IntVar(&c.MaxPinnedBeds, "max-pinned-beds", osx.EnvInt("HOSTEL_MAX_PINNED_BEDS", 0), "pinned-bed pressure reference, 0=inherit max-beds (default bed exempt)")
+	fs.IntVar(&c.BedPressureThresholdPercent, "bed-pressure-threshold-percent", osx.EnvInt("HOSTEL_BED_PRESSURE_THRESHOLD_PERCENT", defaultBedPressureThresholdPercent), "occupied/pinned bed pressure threshold percent, 0=disabled")
 	fs.IntVar(&c.AdmissionCPUThreshold, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.AdmissionMemoryThreshold, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
 	fs.StringVar(&c.Executor, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")

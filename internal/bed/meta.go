@@ -66,8 +66,8 @@ type bedMeta struct {
 	// luggage; initialization always rechecks Store.Stat before trusting freshness.
 	SnapshotGeneration int64 `json:"snapshot_generation,omitempty"`
 	SnapshotBytes      int64 `json:"snapshot_bytes,omitempty"`
-	// LastActiveAt is stamped at evict time so luggage GC can order cold local
-	// copies by recency without any in-memory state.
+	// LastActiveAt lets luggage GC order orphaned local copies by recency. It is
+	// retained for snapshots and directories created by older Hostel versions.
 	LastActiveAt time.Time `json:"last_active_at,omitzero"`
 	// Usage accumulates in memory while the bed is resident and is flushed
 	// here at persist time — the snapshot carries the counters, so they
