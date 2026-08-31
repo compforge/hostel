@@ -1,9 +1,6 @@
 package config
 
-import (
-	"slices"
-	"testing"
-)
+import "testing"
 
 func TestIsolationAndManagedServiceConfigContract(t *testing.T) {
 	// The three north-facing room types are configuration values; resolution to
@@ -50,21 +47,6 @@ func TestDormReadFallbackRootIsExplicit(t *testing.T) {
 	}
 	if c := Load([]string{"-dorm-read-fallback-root", "/carrier"}); c.DormReadFallbackRoot != "/carrier" {
 		t.Fatalf("flag dorm read fallback root = %q, want /carrier", c.DormReadFallbackRoot)
-	}
-}
-
-func TestBedEnvPassthroughConfig(t *testing.T) {
-	t.Setenv("HOSTEL_BED_ENV_PASSTHROUGH", "PATH, LANG,PATH,UV_TOOL_DIR")
-	c := Load(nil)
-	want := []string{"PATH", "LANG", "UV_TOOL_DIR"}
-	if !slices.Equal(c.BedEnvPassthrough, want) {
-		t.Fatalf("BedEnvPassthrough = %v, want %v", c.BedEnvPassthrough, want)
-	}
-
-	c = Load([]string{"-bed-env-passthrough", "PATH,TERM"})
-	want = []string{"PATH", "TERM"}
-	if !slices.Equal(c.BedEnvPassthrough, want) {
-		t.Fatalf("flag BedEnvPassthrough = %v, want %v", c.BedEnvPassthrough, want)
 	}
 }
 
@@ -117,10 +99,23 @@ func TestStoreAutoPackThresholdConfig(t *testing.T) {
 	}
 }
 
+func TestHostelOwnedS3Config(t *testing.T) {
+	t.Setenv("AWS_REGION", "ignored")
+	t.Setenv("HOSTEL_S3_REGION", "cn-beijing")
+	t.Setenv("HOSTEL_S3_ACCESS_KEY_ID", "access-key")
+	t.Setenv("HOSTEL_S3_SECRET_ACCESS_KEY", "secret-key")
+	t.Setenv("HOSTEL_S3_SESSION_TOKEN", "session-token")
+	c := Load(nil)
+	if c.S3Region != "cn-beijing" || c.S3AccessKeyID != "access-key" ||
+		c.S3SecretAccessKey != "secret-key" || c.S3SessionToken != "session-token" {
+		t.Fatalf("Hostel S3 config = %+v", c)
+	}
+}
+
 func TestTracingConfig(t *testing.T) {
 	t.Setenv("HOSTEL_ENABLE_TRACING", "true")
-	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_GRPC_ENDPOINT", "http://collector:4317")
-	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HTTP_ENDPOINT", "http://collector:4318/v1/traces")
+	t.Setenv("HOSTEL_OTEL_TRACES_GRPC_ENDPOINT", "http://collector:4317")
+	t.Setenv("HOSTEL_OTEL_TRACES_HTTP_ENDPOINT", "http://collector:4318/v1/traces")
 	c := Load(nil)
 	if !c.EnableTracing || c.OTLPTracesGRPCEndpoint != "http://collector:4317" ||
 		c.OTLPTracesHTTPEndpoint != "http://collector:4318/v1/traces" {

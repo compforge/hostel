@@ -119,6 +119,10 @@ func main() {
 		Prefix:                cfg.S3Prefix,
 		Endpoint:              cfg.S3Endpoint,
 		PathStyle:             cfg.S3PathStyle,
+		Region:                cfg.S3Region,
+		AccessKeyID:           cfg.S3AccessKeyID,
+		SecretAccessKey:       cfg.S3SecretAccessKey,
+		SessionToken:          cfg.S3SessionToken,
 		AutoPackFileThreshold: cfg.AutoPackFileThreshold,
 	})
 	if err != nil {
@@ -132,10 +136,9 @@ func main() {
 	if err := mgr.SetMaxPinnedBeds(cfg.MaxPinnedBeds); err != nil {
 		log.Fatalf("hostel: configure pinned bed limit: %v", err)
 	}
-	if err := mgr.SetBedEnvPassthrough(os.Environ(), cfg.BedEnvPassthrough); err != nil {
-		log.Fatalf("hostel: configure bed environment: %v", err)
+	if filtered := mgr.SetCarrierEnvironment(os.Environ()); len(filtered) > 0 {
+		log.Printf("hostel: filtered reserved carrier environment from bed processes: keys=%v", filtered)
 	}
-	log.Printf("hostel: bed env passthrough keys=%v", cfg.BedEnvPassthrough)
 	resources := resource.New()
 	mgr.SetResourceTracker(resources)
 	resourceReport := resources.Report()

@@ -17,7 +17,6 @@ package config
 
 import (
 	"flag"
-	"strings"
 	"time"
 
 	"github.com/qiankunli/go-stdx/osx"
@@ -28,8 +27,6 @@ import (
 // meant to run inside a pod, serving one or many beds (isolation units).
 // DefaultAddr is the default HTTP listen address.
 const DefaultAddr = ":8872"
-
-const defaultBedEnvPassthrough = "PATH,LANG,LC_ALL,LC_CTYPE,TZ,TERM,COLORTERM,SSL_CERT_FILE,SSL_CERT_DIR,PYTHONUSERBASE,NPM_CONFIG_PREFIX,UV_TOOL_DIR,UV_TOOL_BIN_DIR"
 
 const defaultAdmissionThresholdPercent = 90
 
@@ -88,13 +85,17 @@ type Config struct {
 	// without a bucket; with a bucket it defaults new beds to pack and detects
 	// existing beds for backward compatibility.
 	// "s3" stores one object per content-addressed chunk; "pack" groups chunks
-	// into larger objects; "tar" uploads one full tar.gz. Credentials resolve
-	// via the standard AWS SDK chain.
-	StoreBackend string
-	S3Bucket     string
-	S3Prefix     string
-	S3Endpoint   string // S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS
-	S3PathStyle  bool   // force path-style bucket addressing (for example MinIO)
+	// into larger objects; "tar" uploads one full tar.gz. S3 credentials are
+	// Hostel-owned configuration and never enter a bed process.
+	StoreBackend      string
+	S3Bucket          string
+	S3Prefix          string
+	S3Endpoint        string // S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS
+	S3PathStyle       bool   // force path-style bucket addressing (for example MinIO)
+	S3Region          string
+	S3AccessKeyID     string
+	S3SecretAccessKey string
+	S3SessionToken    string
 	// AutoPackFileThreshold switches an auto-routed bed from CAS to pack once
 	// its persistable non-directory entry count exceeds this value. Zero
 	// disables automatic switching.
@@ -119,10 +120,6 @@ type Config struct {
 	ChromiumDebugPort int
 	// ShellPath is the shell binary a bed's long-running session runs.
 	ShellPath string
-	// BedEnvPassthrough names standard carrier-software variables selected from
-	// the daemon environment. HOSTEL_* and BED_* are reserved namespaces and
-	// cannot be passed through.
-	BedEnvPassthrough []string
 }
 
 // Load builds Config from flags, with env fallbacks (HOSTEL_*).
@@ -135,15 +132,14 @@ func Load(args []string) *Config {
 	fs.BoolVar(&c.ShowVersion, "version", false, "print version and exit")
 	fs.BoolVar(&c.HealthCheck, "health", false, "GET local /healthz and exit (0=ok)")
 	fs.BoolVar(&c.EnableTracing, "enable-tracing", osx.EnvBool("HOSTEL_ENABLE_TRACING", false), "export OpenTelemetry traces")
-	fs.StringVar(&c.OTLPTracesGRPCEndpoint, "otel-traces-grpc-endpoint", osx.EnvStr("OTEL_EXPORTER_OTLP_TRACES_GRPC_ENDPOINT", ""), "OTLP gRPC traces endpoint")
-	fs.StringVar(&c.OTLPTracesHTTPEndpoint, "otel-traces-http-endpoint", osx.EnvStr("OTEL_EXPORTER_OTLP_TRACES_HTTP_ENDPOINT", ""), "OTLP HTTP traces endpoint")
+	fs.StringVar(&c.OTLPTracesGRPCEndpoint, "otel-traces-grpc-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_GRPC_ENDPOINT", ""), "OTLP gRPC traces endpoint")
+	fs.StringVar(&c.OTLPTracesHTTPEndpoint, "otel-traces-http-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_HTTP_ENDPOINT", ""), "OTLP HTTP traces endpoint")
 	fs.StringVar(&c.WorkspaceRoot, "workspace-root", osx.EnvStr("HOSTEL_WORKSPACE_ROOT", "/workspace"), "parent dir for per-bed workspaces")
 	fs.StringVar(&c.IsolationMode, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "data-isolation level: dorm | room | suite | auto (auto=env ceiling)")
 	fs.StringVar(&c.PathshimPath, "pathshim", osx.EnvStr("HOSTEL_PATHSHIM", "pathshim"), "pathshim binary for the best-effort /workspace process view (empty=disabled)")
 	fs.StringVar(&c.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")
 	fs.StringVar(&c.DefaultBed, "default-bed", osx.EnvStr("HOSTEL_DEFAULT_BED", "default"), "bed id used when a request omits one")
 	fs.StringVar(&c.ShellPath, "shell", osx.EnvStr("HOSTEL_SHELL", "/bin/bash"), "shell for bed sessions")
-	bedEnvPassthrough := fs.String("bed-env-passthrough", osx.EnvStr("HOSTEL_BED_ENV_PASSTHROUGH", defaultBedEnvPassthrough), "comma-separated carrier env names exposed to bed processes")
 	idle := fs.Duration("bed-idle-timeout", osx.EnvDuration("HOSTEL_BED_IDLE_TIMEOUT", 30*time.Minute), "reap a bed after this idle duration (0=never)")
 	fs.IntVar(&c.MaxBeds, "max-beds", osx.EnvInt("HOSTEL_MAX_BEDS", 0), "max concurrent beds, 0=unlimited (default bed exempt)")
 	fs.IntVar(&c.MaxPinnedBeds, "max-pinned-beds", osx.EnvInt("HOSTEL_MAX_PINNED_BEDS", 0), "max pinned beds, 0=inherit max-beds (default bed exempt)")
@@ -155,6 +151,10 @@ func Load(args []string) *Config {
 	fs.StringVar(&c.S3Prefix, "s3-prefix", osx.EnvStr("HOSTEL_S3_PREFIX", "hostel"), "key prefix for bed snapshots")
 	fs.StringVar(&c.S3Endpoint, "s3-endpoint", osx.EnvStr("HOSTEL_S3_ENDPOINT", ""), "S3-compatible endpoint (empty = AWS)")
 	fs.BoolVar(&c.S3PathStyle, "s3-path-style", osx.EnvBool("HOSTEL_S3_PATH_STYLE", false), "use path-style S3 bucket addressing (default virtual-hosted style)")
+	fs.StringVar(&c.S3Region, "s3-region", osx.EnvStr("HOSTEL_S3_REGION", ""), "S3 region")
+	c.S3AccessKeyID = osx.EnvStr("HOSTEL_S3_ACCESS_KEY_ID", "")
+	c.S3SecretAccessKey = osx.EnvStr("HOSTEL_S3_SECRET_ACCESS_KEY", "")
+	c.S3SessionToken = osx.EnvStr("HOSTEL_S3_SESSION_TOKEN", "")
 	fs.IntVar(&c.AutoPackFileThreshold, "store-auto-pack-file-threshold", osx.EnvInt("HOSTEL_STORE_AUTO_PACK_FILE_THRESHOLD", defaultAutoPackFileThreshold), "auto store: switch CAS to pack above this persistable file count, 0=disabled")
 	persist := fs.Duration("persist-interval", osx.EnvDuration("HOSTEL_PERSIST_INTERVAL", 0), "periodic snapshot interval, 0=lifecycle boundaries only")
 	fs.Int64Var(&c.LuggageHighBytes, "luggage-high-bytes", osx.EnvInt64("HOSTEL_LUGGAGE_HIGH_BYTES", 0), "luggage disk high watermark in bytes, 0=no luggage GC")
@@ -168,31 +168,10 @@ func Load(args []string) *Config {
 	c.BedIdleTTL = *idle
 	c.PersistInterval = *persist
 	c.ChromiumIdleStop = *idleStop
-	c.BedEnvPassthrough = splitCommaList(*bedEnvPassthrough)
 	// Low defaults to 80% of high so a bare --luggage-high-bytes works; a low
 	// above high would make GC loop uselessly, so clamp it.
 	if c.LuggageHighBytes > 0 && (c.LuggageLowBytes <= 0 || c.LuggageLowBytes > c.LuggageHighBytes) {
 		c.LuggageLowBytes = c.LuggageHighBytes * 8 / 10
 	}
 	return c
-}
-
-func splitCommaList(value string) []string {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	seen := make(map[string]struct{})
-	items := make([]string, 0, strings.Count(value, ",")+1)
-	for _, raw := range strings.Split(value, ",") {
-		item := strings.TrimSpace(raw)
-		if item == "" {
-			continue
-		}
-		if _, ok := seen[item]; ok {
-			continue
-		}
-		seen[item] = struct{}{}
-		items = append(items, item)
-	}
-	return items
 }

@@ -16,6 +16,13 @@ package store
 
 import "testing"
 
+func testS3Config() Config {
+	return Config{
+		Bucket: "b", Region: "us-east-1",
+		AccessKeyID: "test-access-key", SecretAccessKey: "test-secret-key",
+	}
+}
+
 func TestBackendSelection(t *testing.T) {
 	st, err := New(t.Context(), Config{Backend: "noop"})
 	if err != nil || st.Name() != "noop" {
@@ -37,16 +44,22 @@ func TestBackendSelection(t *testing.T) {
 	if st, err := New(t.Context(), Config{Backend: "auto"}); err != nil || st.Name() != "noop" {
 		t.Fatalf("auto without bucket = %v, %v; want noop", st, err)
 	}
-	if st, err := New(t.Context(), Config{Backend: "auto", Bucket: "b"}); err != nil || st.Name() != "auto" {
+	cfg := testS3Config()
+	cfg.Backend = "auto"
+	if st, err := New(t.Context(), cfg); err != nil || st.Name() != "auto" {
 		t.Fatalf("auto with bucket = %v, %v; want auto", st, err)
 	}
-	if _, err := New(t.Context(), Config{Backend: "auto", Bucket: "b", AutoPackFileThreshold: -1}); err == nil {
+	cfg.AutoPackFileThreshold = -1
+	if _, err := New(t.Context(), cfg); err == nil {
 		t.Fatal("auto with negative file threshold should fail")
 	}
-	if st, err := New(t.Context(), Config{Backend: "pack", Bucket: "b"}); err != nil || st.Name() != "pack" {
+	cfg = testS3Config()
+	cfg.Backend = "pack"
+	if st, err := New(t.Context(), cfg); err != nil || st.Name() != "pack" {
 		t.Fatalf("pack with bucket = %v, %v; want pack", st, err)
 	}
-	if st, err := New(t.Context(), Config{Backend: "tar", Bucket: "b"}); err != nil || st.Name() != "tar" {
+	cfg.Backend = "tar"
+	if st, err := New(t.Context(), cfg); err != nil || st.Name() != "tar" {
 		t.Fatalf("tar with bucket = %v, %v; want tar", st, err)
 	}
 }

@@ -118,10 +118,7 @@ var ErrBedUnavailable = errors.New("bed: no longer resident")
 // NewManager creates the bed manager and ensures the workspace root exists.
 // amenities and st may be nil; maxBeds 0 = unlimited.
 func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Registry, maxBeds int, st store.Store) (*Manager, error) {
-	processEnv, err := newProcessEnv(os.Environ(), []string{"PATH"})
-	if err != nil {
-		return nil, err
-	}
+	processEnv, _ := newProcessEnv(os.Environ())
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("bed: create workspace root %s: %w", root, err)
 	}

@@ -20,17 +20,29 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
+func TestNewS3ClientDoesNotUseStandardAWSCredentials(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "standard-access-key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "standard-secret-key")
+	_, err := newS3Client(context.Background(), Config{Region: "us-east-1"})
+	if err == nil || !strings.Contains(err.Error(), "HOSTEL_S3_ACCESS_KEY_ID") {
+		t.Fatalf("newS3Client error = %v, want Hostel-owned credential error", err)
+	}
+}
+
 func TestNewS3ClientAddressingStyle(t *testing.T) {
-	t.Setenv("AWS_REGION", "us-east-1")
 	const endpoint = "https://tos-s3-cn-beijing.volces.com"
 
 	for _, pathStyle := range []bool{false, true} {
 		client, err := newS3Client(context.Background(), Config{
-			Endpoint:  endpoint,
-			PathStyle: pathStyle,
+			Endpoint:        endpoint,
+			PathStyle:       pathStyle,
+			Region:          "us-east-1",
+			AccessKeyID:     "test-access-key",
+			SecretAccessKey: "test-secret-key",
 		})
 		if err != nil {
 			t.Fatalf("newS3Client(pathStyle=%v): %v", pathStyle, err)
@@ -46,10 +58,6 @@ func TestNewS3ClientAddressingStyle(t *testing.T) {
 }
 
 func TestS3ObjPutOverHTTP(t *testing.T) {
-	t.Setenv("AWS_REGION", "us-east-1")
-	t.Setenv("AWS_ACCESS_KEY_ID", "test-access-key")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
-
 	want := []byte("hostel snapshot index")
 	var got []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +73,10 @@ func TestS3ObjPutOverHTTP(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := newS3Client(context.Background(), Config{Endpoint: server.URL, PathStyle: true})
+	client, err := newS3Client(context.Background(), Config{
+		Endpoint: server.URL, PathStyle: true, Region: "us-east-1",
+		AccessKeyID: "test-access-key", SecretAccessKey: "test-secret-key",
+	})
 	if err != nil {
 		t.Fatalf("newS3Client: %v", err)
 	}

@@ -83,7 +83,7 @@ internal/
 │   ├── store_sync.go  Store 同步调度：合并 lifecycle/pressure trigger，自主串行、周期与失败退避
 │   ├── operation.go   operation（无状态请求，kind=exec/file/browser/checkpoint/control）：BeginOperation + timeout 截断
 │   ├── session.go     session（可撤销有状态持有，cdp 类）：OpenSession/Touch/Close；revokeSessions 供 evict 在 persist 前吊销（shell 走 shell.go 自备机制，revoke 时一并 Close）
-│   ├── env.go         bed 进程环境唯一组装点：carrier allowlist + BED_* context + request overlay
+│   ├── env.go         bed 进程环境唯一组装点：过滤 Hostel 保留命名空间 + Carrier env + BED_* context + request overlay
 │   ├── observability.go Bed 生命周期记录：initialize/persist/evict 的结构化 stage 日志与最近摘要
 │   ├── execution.go   Execution：前台/后台/session 统一身份、输出、进程终态、stop cause 与有界 registry
 │   ├── luggage.go     luggage（evict 留下的现场缓存）：磁盘水位 GC（stale 优先→LRU）、Inventory（调度器视图）

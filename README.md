@@ -178,8 +178,8 @@ reports `amenities: {chromium: idle|running}`.
 Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` / `--pathshim` /
 `--dorm-read-fallback-root` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
 `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
-`--executor` / `--bed-env-passthrough` / `--store` /
-`--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` /
+`--executor` / `--store` /
+`--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--s3-region` / `--persist-interval` /
 `--luggage-high-bytes` / `--luggage-low-bytes` /
 `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` /
 `--enable-tracing`.
@@ -192,18 +192,23 @@ The option is disabled by default: it exposes the configured root to file API
 reads and is unsafe when a carrier is shared. BedFS always wins when both paths
 exist, and upload/replace/chmod/move/delete never use the fallback.
 
-OpenTelemetry traces use `OTEL_EXPORTER_OTLP_TRACES_GRPC_ENDPOINT` or
-`OTEL_EXPORTER_OTLP_TRACES_HTTP_ENDPOINT`; gRPC wins when both are set. Tracing
+OpenTelemetry traces use `HOSTEL_OTEL_TRACES_GRPC_ENDPOINT` or
+`HOSTEL_OTEL_TRACES_HTTP_ENDPOINT`; gRPC wins when both are set. Tracing
 is disabled by default and enabled with `HOSTEL_ENABLE_TRACING=true` (or
 `--enable-tracing`).
 
 Environment namespaces follow ownership: `HOSTEL_*` configures the daemon and
-is never inherited wholesale by bed processes; bed identity/capabilities use
-`BED_*` (`BED_ID` is always present); ecosystem variables keep their standard
-names. `--bed-env-passthrough` selects carrier software variables such as
-`PATH`, locale, certificate, Python, npm and uv settings. Request `envs` are an
-invocation-scoped overlay. Callers cannot claim the reserved `HOSTEL_*` or
-`BED_*` namespaces.
+is filtered from bed processes; externally supplied `BED_*` and the managed CDP
+endpoint are filtered as well, then Hostel injects the actual bed context.
+Every other Carrier variable is inherited by default, including ecosystem and
+deployment-specific variables. The deployment owner is responsible for the
+safety of those inherited values. Request `envs` are an invocation-scoped
+overlay and cannot claim the reserved `HOSTEL_*` or `BED_*` namespaces.
+
+S3 configuration is Hostel-owned and uses `HOSTEL_S3_REGION`,
+`HOSTEL_S3_ACCESS_KEY_ID`, `HOSTEL_S3_SECRET_ACCESS_KEY`, and optionally
+`HOSTEL_S3_SESSION_TOKEN`; credentials are environment-only and have no CLI
+flags.
 
 Executor backend: `--executor auto` (default) probes the Linux `supervisor` backend
 and otherwise uses `local`. Explicit `supervisor` fails startup when the backend cannot

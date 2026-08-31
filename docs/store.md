@@ -59,7 +59,7 @@ AWS、MinIO、火山 TOS、Ceph 等 S3 兼容 API 共用以下配置：
 
 - `--s3-bucket`、`--s3-prefix`、`--s3-endpoint`：对象存储位置。
 - `--s3-path-style`：bucket addressing 默认 virtual-hosted，仅在 endpoint 要求时开启 path style。
-- AWS SDK 标准环境链：提供凭据。
+- `HOSTEL_S3_REGION`、`HOSTEL_S3_ACCESS_KEY_ID`、`HOSTEL_S3_SECRET_ACCESS_KEY`：Hostel 专属的 region 与静态凭据；临时凭据可额外设置 `HOSTEL_S3_SESSION_TOKEN`。这些值不会进入 bed 环境。
 - `--store-auto-pack-file-threshold`：默认 100，设为 0 关闭既有 CAS 自动切换。
 - `--persist-interval`：控制周期同步兜底。
 

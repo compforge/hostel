@@ -27,7 +27,7 @@ import (
 	"github.com/qiankunli/hostel/internal/resource"
 )
 
-func TestBedProcessEnvHasExplicitOwnership(t *testing.T) {
+func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 	root := t.TempDir()
 	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, nil)
 	if err != nil {
@@ -37,10 +37,14 @@ func TestBedProcessEnvHasExplicitOwnership(t *testing.T) {
 		"PATH=/carrier/bin",
 		"LANG=C.UTF-8",
 		"HOSTEL_STORE=s3",
+		"BED_FAKE=carrier-owned",
+		"PLAYWRIGHT_MCP_CDP_ENDPOINT=ws://carrier",
 		"AWS_SECRET_ACCESS_KEY=carrier-secret",
 	}
-	if err := m.SetBedEnvPassthrough(host, []string{"PATH", "LANG"}); err != nil {
-		t.Fatalf("SetBedEnvPassthrough: %v", err)
+	filtered := m.SetCarrierEnvironment(host)
+	wantFiltered := []string{"BED_FAKE", "HOSTEL_STORE", "PLAYWRIGHT_MCP_CDP_ENDPOINT"}
+	if !slices.Equal(filtered, wantFiltered) {
+		t.Fatalf("filtered = %v, want %v", filtered, wantFiltered)
 	}
 	b, err := m.Ensure(context.Background(), "alice")
 	if err != nil {
@@ -55,18 +59,19 @@ func TestBedProcessEnvHasExplicitOwnership(t *testing.T) {
 	}
 	env := envMap(cmd.Env)
 	for name, want := range map[string]string{
-		"BED_ID":          "alice",
-		"HOME":            b.Workspace(),
-		"LANG":            "C.UTF-8",
-		"PATH":            "/request/bin",
-		"REQUEST_API_KEY": "explicit-secret",
-		"TMPDIR":          "/tmp",
+		"BED_ID":                "alice",
+		"HOME":                  b.Workspace(),
+		"LANG":                  "C.UTF-8",
+		"PATH":                  "/request/bin",
+		"REQUEST_API_KEY":       "explicit-secret",
+		"AWS_SECRET_ACCESS_KEY": "carrier-secret",
+		"TMPDIR":                "/tmp",
 	} {
 		if got := env[name]; got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
 	}
-	for _, name := range []string{"HOSTEL_STORE", "HOSTEL_BED_ID", "AWS_SECRET_ACCESS_KEY"} {
+	for _, name := range []string{"HOSTEL_STORE", "HOSTEL_BED_ID", "BED_FAKE", "PLAYWRIGHT_MCP_CDP_ENDPOINT"} {
 		if _, ok := env[name]; ok {
 			t.Errorf("daemon variable %s leaked into bed env", name)
 		}
@@ -98,10 +103,17 @@ func TestBedEnvNamespacesAreReserved(t *testing.T) {
 		t.Fatalf("NUL value error = %v", err)
 	}
 
-	for _, name := range []string{"HOSTEL_ADDR", "BED_ID", "bad-name"} {
-		if _, err := newProcessEnv([]string{name + "=x"}, []string{name}); !errors.Is(err, ErrInvalidEnvironment) {
-			t.Errorf("passthrough variable %q error = %v", name, err)
-		}
+	env, filtered := newProcessEnv([]string{
+		"HOSTEL_ADDR=:8872",
+		"BED_ID=carrier",
+		"PLAYWRIGHT_MCP_CDP_ENDPOINT=ws://carrier",
+		"bad-name=kept",
+	})
+	if !slices.Equal(filtered, []string{"BED_ID", "HOSTEL_ADDR", "PLAYWRIGHT_MCP_CDP_ENDPOINT"}) {
+		t.Fatalf("filtered carrier variables = %v", filtered)
+	}
+	if got := env.carrier["bad-name"]; got != "kept" {
+		t.Fatalf("non-reserved carrier variable = %q, want kept", got)
 	}
 }
 
