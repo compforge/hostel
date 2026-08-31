@@ -21,7 +21,7 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG BWRAP_VERSION=0.11.2
 ARG BWRAP_SHA256=69abc30005d2186baf7737feacd8da35633b93cf5af38838ecff17c5f8e924f6
-ARG PATHSHIM_REV=7ac72a8e10a324e6dff7e7c24233bc0c9105904a
+ARG PATHSHIM_REV=8bcc34ef0aeda6514acc3fd8c4563522745b2e7c
 
 # --- build stage: static, pure-Go hostel binary --------------------------
 FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
