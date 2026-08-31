@@ -22,6 +22,7 @@ import (
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -37,7 +38,15 @@ const generationMetaKey = "generation"
 
 // newS3Client builds the shared S3-compatible client.
 func newS3Client(ctx context.Context, cfg Config) (*s3.Client, error) {
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
+	if cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
+		return nil, errors.New("store: HOSTEL_S3_ACCESS_KEY_ID and HOSTEL_S3_SECRET_ACCESS_KEY are required")
+	}
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion(cfg.Region),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			cfg.AccessKeyID, cfg.SecretAccessKey, cfg.SessionToken,
+		)),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("store: aws config: %w", err)
 	}

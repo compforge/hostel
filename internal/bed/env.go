@@ -31,44 +31,48 @@ var ErrInvalidEnvironment = errors.New("bed: invalid environment")
 
 var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// processEnv is the immutable carrier-software environment shared by every bed.
-// It deliberately contains only deployment-selected standard variables: the
-// hostel daemon's own HOSTEL_*/credential environment is never a child default.
+// processEnv is the immutable carrier environment shared by every bed. Hostel
+// keeps only its own namespaces private; deployment owners are responsible for
+// the safety of every other variable they put in the Carrier environment.
 type processEnv struct {
 	carrier map[string]string
 }
 
-func newProcessEnv(hostEnv, passthrough []string) (processEnv, error) {
-	wanted := make(map[string]struct{}, len(passthrough))
-	for _, name := range passthrough {
-		if err := validateExternalEnvName("passthrough", name); err != nil {
-			return processEnv{}, err
-		}
-		wanted[name] = struct{}{}
-	}
-
-	carrier := make(map[string]string, len(wanted))
+func newProcessEnv(hostEnv []string) (processEnv, []string) {
+	carrier := make(map[string]string, len(hostEnv))
+	filteredSet := make(map[string]struct{})
 	for _, entry := range hostEnv {
 		name, value, ok := strings.Cut(entry, "=")
 		if !ok {
 			continue
 		}
-		if _, ok := wanted[name]; ok {
-			carrier[name] = value
+		if isReservedCarrierEnv(name) {
+			filteredSet[name] = struct{}{}
+			continue
 		}
+		carrier[name] = value
 	}
-	return processEnv{carrier: carrier}, nil
+	filtered := make([]string, 0, len(filteredSet))
+	for name := range filteredSet {
+		filtered = append(filtered, name)
+	}
+	slices.Sort(filtered)
+	return processEnv{carrier: carrier}, filtered
 }
 
-// SetBedEnvPassthrough selects the carrier-software variables inherited by bed
-// processes. It is startup configuration and must be called before serving.
-func (m *Manager) SetBedEnvPassthrough(hostEnv, keys []string) error {
-	env, err := newProcessEnv(hostEnv, keys)
-	if err != nil {
-		return err
-	}
+func isReservedCarrierEnv(name string) bool {
+	return strings.HasPrefix(name, "HOSTEL_") ||
+		strings.HasPrefix(name, "BED_") ||
+		name == "PLAYWRIGHT_MCP_CDP_ENDPOINT"
+}
+
+// SetCarrierEnvironment snapshots the Carrier environment inherited by every
+// bed and returns the reserved variable names that were filtered. It is startup
+// configuration and must be called before serving.
+func (m *Manager) SetCarrierEnvironment(hostEnv []string) []string {
+	env, filtered := newProcessEnv(hostEnv)
 	m.processEnv = env
-	return nil
+	return filtered
 }
 
 // ValidateRequestEnv enforces the public env namespace contract before a web
@@ -107,7 +111,7 @@ func validateExternalEnvName(scope, name string) error {
 // buildBedEnv composes the only environment shape used to spawn bed code:
 // carrier software + bed-owned context + one invocation's explicit overlay.
 //
-// +spec=`Every execution receives the deployment-selected carrier software paths while HOSTEL_* and credentials remain daemon-only.`
+// +spec=`Every execution inherits the Carrier environment except Hostel-reserved variables; deployment owners are responsible for all other inherited values.`
 // +case:id=carrier_software_persists,desc=`Install PyPI and npm packages, then run a new execution`,expect=`both executions resolve the carrier-owned /usr/local installation`
 func (m *Manager) buildBedEnv(b *Bed, requestEnv map[string]string) ([]string, error) {
 	if err := ValidateRequestEnv(requestEnv); err != nil {

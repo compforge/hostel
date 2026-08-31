@@ -123,8 +123,8 @@ COPY --from=builder /out/hostel /usr/bin/hostel
 # a dropped-capability securityContext, or build a non-root variant once your
 # pod grants bwrap the specific caps it needs.
 
-# Carrier software uses ecosystem-standard env names; Hostel selects these for
-# beds through its default allowlist instead of passing the whole daemon env.
+# Carrier software uses ecosystem-standard env names and reaches beds through
+# default inheritance; Hostel filters only its reserved namespaces.
 ENV PYTHONUSERBASE=/usr/local \
     NPM_CONFIG_PREFIX=/usr/local \
     UV_TOOL_DIR=/usr/local/share/uv/tools \

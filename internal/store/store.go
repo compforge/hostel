@@ -74,11 +74,15 @@ type Store interface {
 
 // Config selects and parameterizes the backend (flags/env in config package).
 type Config struct {
-	Backend   string // "auto" (default) | "noop" | "s3" ("cas" alias) | "pack" | "tar"
-	Bucket    string
-	Prefix    string // key prefix inside the bucket, e.g. "hostel/prod"
-	Endpoint  string // non-AWS S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS
-	PathStyle bool   // force path-style bucket addressing; default is virtual-hosted style
+	Backend         string // "auto" (default) | "noop" | "s3" ("cas" alias) | "pack" | "tar"
+	Bucket          string
+	Prefix          string // key prefix inside the bucket, e.g. "hostel/prod"
+	Endpoint        string // non-AWS S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS
+	PathStyle       bool   // force path-style bucket addressing; default is virtual-hosted style
+	Region          string
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
 	// AutoPackFileThreshold switches an auto-routed CAS bed to pack when the
 	// persisted tree contains more than this many non-directory entries.
 	// Zero disables the automatic transition.

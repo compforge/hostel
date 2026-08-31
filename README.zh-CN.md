@@ -95,11 +95,11 @@ POST /v1/beds/:id/browser/close
 
 ## 配置
 
-Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isolation` / `--pathshim` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` / `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` / `--executor` / `--bed-env-passthrough` / `--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--persist-interval` / `--luggage-high-bytes` / `--luggage-low-bytes` / `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` / `--enable-tracing`。
+Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isolation` / `--pathshim` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` / `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` / `--executor` / `--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--s3-region` / `--persist-interval` / `--luggage-high-bytes` / `--luggage-low-bytes` / `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` / `--enable-tracing`。
 
-OpenTelemetry Trace 默认关闭，通过 `HOSTEL_ENABLE_TRACING=true`（或 `--enable-tracing`）启用；出口使用 `OTEL_EXPORTER_OTLP_TRACES_GRPC_ENDPOINT` 或 `OTEL_EXPORTER_OTLP_TRACES_HTTP_ENDPOINT`，两者同时配置时优先 gRPC。
+OpenTelemetry Trace 默认关闭，通过 `HOSTEL_ENABLE_TRACING=true`（或 `--enable-tracing`）启用；出口使用 `HOSTEL_OTEL_TRACES_GRPC_ENDPOINT` 或 `HOSTEL_OTEL_TRACES_HTTP_ENDPOINT`，两者同时配置时优先 gRPC。
 
-环境变量按 owner 分命名空间：`HOSTEL_*` 只配置 daemon，不会整份继承进 bed；bed 身份/能力使用 `BED_*`（始终注入 `BED_ID`）；生态变量继续使用 PATH、HOME 等标准名称。`--bed-env-passthrough` 显式选择 carrier 的 PATH、locale、证书和 Python/npm/uv 等软件环境，request `envs` 只覆盖本次执行；调用方不能占用保留的 `HOSTEL_*` / `BED_*` 命名空间。
+环境变量按 owner 分命名空间：`HOSTEL_*` 只配置 daemon，外部 `BED_*` 与 Hostel 管理的 CDP endpoint 也会被过滤；Hostel 随后注入真实 bed context。其余 Carrier 环境默认传给 bed，安全性由部署方负责。request `envs` 只覆盖本次执行，且不能占用保留的 `HOSTEL_*` / `BED_*` 命名空间。S3 使用 `HOSTEL_S3_REGION`、`HOSTEL_S3_ACCESS_KEY_ID`、`HOSTEL_S3_SECRET_ACCESS_KEY` 与可选的 `HOSTEL_S3_SESSION_TOKEN`，凭据只支持环境变量、不提供 CLI flag。
 
 Executor backend：`--executor auto`（默认）优先探测 Linux `supervisor`，失败时使用 `local`；显式 `supervisor` 时探测失败会终止启动，显式 `local` 时命令由 hostel 直接派生。supervisor 拥有整个 Executor 进程树，IPC 可重连，`Start` 按 process id 幂等；Executor 丢失对外返回稳定的 `executor_lost`，不会泄漏裸 EOF。
 
