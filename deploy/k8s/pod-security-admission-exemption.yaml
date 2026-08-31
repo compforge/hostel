@@ -5,9 +5,10 @@
 # `--admission-control-config-file`.
 #
 # The username is the exact authenticated identity used when sandbox-server
-# creates carrier Pods. Replace `sandbox-system` with its namespace. Pod
-# Security Admission does not support username globs, so repeat the entry for
-# every namespace that hosts a sandbox-server ServiceAccount.
+# creates carrier Pods. Replace `<sandbox-server-namespace>` with the namespace
+# used by the customer's deployment. Pod Security Admission does not support
+# username globs, so repeat the entry for every namespace that hosts a
+# sandbox-server ServiceAccount.
 #
 # Caution: an exempt request skips all Pod Security enforce, audit, and warn
 # checks, not only the AppArmor check. Keep the ServiceAccount narrowly scoped
@@ -34,6 +35,6 @@ plugins:
         warn-version: latest
       exemptions:
         usernames:
-          - system:serviceaccount:sandbox-system:sandbox-server
+          - "system:serviceaccount:<sandbox-server-namespace>:sandbox-server"
         runtimeClasses: []
         namespaces: []
