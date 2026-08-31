@@ -45,8 +45,9 @@ type Manager struct {
 	executorFactory executor.Factory   // creates each Bed's replaceable process realm
 	resources       resource.Tracker   // per-bed cgroup accounting; noop when unavailable
 	admission       resource.Admitter  // cached carrier-pressure verdict; never performs request-path I/O
-	maxBeds         int                // cap on resident tenant beds; 0 = unlimited
-	maxPinnedBeds   int                // new-resident admission threshold by pinned count; 0 = unlimited
+	maxBeds         int                // cap on occupied tenant beds; 0 = unlimited
+	maxPinnedBeds   int                // pinned-count pressure reference; 0 = pressure disabled
+	pressurePercent int                // shared occupied/pinned high-watermark percentage
 	pinnedBeds      atomic.Int64       // tenant beds running work or holding data not yet durable
 	store           store.Store        // workspace persistence (Noop when disabled)
 	storeSync       chan struct{}      // coalesced requests; the store loop owns execution cadence
@@ -72,40 +73,17 @@ type Manager struct {
 	// purges fence a bed identity from initialization acceptance until both its
 	// local and durable data have been deleted.
 	purges map[string]*bedPurge
-	// residentBeds mirrors len(beds) for lock-free instance health reads.
-	// Map mutations update it under mu; healthz may observe either side of an
-	// in-flight mutation, but never waits behind initialization or restore work.
+	// residentBeds tracks resident/evicting tenant beds for lock-free instance
+	// health reads. The compatibility default bed is deliberately excluded.
 	residentBeds atomic.Int64
 }
+
+const defaultBedPressureThresholdPercent = 80
 
 // ErrBedLimit is returned when creating a new bed would exceed the configured
 // cap. Callers should surface it as backpressure (HTTP 429): the upstream
 // scheduler is expected to place the sandbox on another instance.
 var ErrBedLimit = errors.New("bed: max bed count reached")
-
-// ErrInsufficientBed is returned when admitting another unpinned tenant bed
-// would exceed the configured pinned-bed cap. BED_PRESSURE is only the early
-// scheduling signal; this error is the hard admission boundary.
-var ErrInsufficientBed = errors.New("bed: insufficient pinned capacity")
-
-// InsufficientBedError freezes the carrier capacity observed at the admission
-// boundary. Counts are diagnostic context for the scheduler; the 429 signal
-// remains authoritative because inventory reads are deliberately stale-tolerant.
-type InsufficientBedError struct {
-	PinnedBeds    int64
-	MaxPinnedBeds int
-	ResidentBeds  int
-	MaxBeds       int
-}
-
-func (e *InsufficientBedError) Error() string {
-	return fmt.Sprintf(
-		"%s: pinned_beds=%d max_pinned_beds=%d resident_beds=%d max_beds=%d",
-		ErrInsufficientBed, e.PinnedBeds, e.MaxPinnedBeds, e.ResidentBeds, e.MaxBeds,
-	)
-}
-
-func (e *InsufficientBedError) Unwrap() error { return ErrInsufficientBed }
 
 // ErrResourcePressure is returned when aggregate carrier CPU or memory usage
 // is already too high to initialize another tenant bed.
@@ -141,6 +119,7 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		// Zero max-pinned-beds inherits this value; initialize the effective
 		// default here so direct Manager users get the same semantics as main.
 		maxPinnedBeds:   maxBeds,
+		pressurePercent: defaultBedPressureThresholdPercent,
 		store:           st,
 		storeSync:       make(chan struct{}, 1),
 		processEnv:      processEnv,
@@ -207,58 +186,69 @@ func (m *Manager) ExecutorBackend() string { return m.executorFactory.Backend() 
 // MaxBeds reports the configured cap (0 = unlimited) for capacity reporting.
 func (m *Manager) MaxBeds() int { return m.maxBeds }
 
-// SetMaxPinnedBeds configures new-resident admission. It is startup
+// SetMaxPinnedBeds configures the pinned-count pressure reference. It is startup
 // configuration and must be called before serving requests.
 func (m *Manager) SetMaxPinnedBeds(max int) error {
 	if max < 0 {
 		return fmt.Errorf("bed: max pinned beds must be non-negative: %d", max)
 	}
-	if max == 0 || (m.maxBeds > 0 && max > m.maxBeds) {
+	if max == 0 {
 		max = m.maxBeds
 	}
 	m.maxPinnedBeds = max
 	return nil
 }
 
-// MaxPinnedBeds reports the pinned-count threshold that stops new resident
-// admission (0 = unlimited). Existing residents may run above it.
+// MaxPinnedBeds reports the reference used to derive bed pressure (0 disables
+// pinned-count pressure). It is not an admission limit.
 func (m *Manager) MaxPinnedBeds() int { return m.maxPinnedBeds }
+
+// SetBedPressureThresholdPercent configures the common occupied/pinned
+// high-watermark percentage. Zero disables the bed pressure signal.
+func (m *Manager) SetBedPressureThresholdPercent(percent int) error {
+	if percent < 0 || percent > 100 {
+		return fmt.Errorf("bed: pressure threshold percent must be between 0 and 100: %d", percent)
+	}
+	m.pressurePercent = percent
+	return nil
+}
+
+// BedPressureThresholdPercent reports the configured high-watermark percent.
+func (m *Manager) BedPressureThresholdPercent() int { return m.pressurePercent }
 
 // PinnedBedCount reports tenant beds that are running an operation or whose
 // latest data has not reached the durable store. The default bed is exempt.
 func (m *Manager) PinnedBedCount() int64 { return m.pinnedBeds.Load() }
 
-// BedPressure is an early scheduling signal. It becomes true at 80% of the
-// pinned-bed cap so the upstream can warm another carrier before hard admission
-// is exhausted. The remaining capacity is reserved for source-carrier fallback.
+// BedPressure is a scheduling signal. It becomes true when either occupied
+// capacity or pinned capacity reaches the configured high-watermark percentage,
+// so the upstream can avoid new placement on this carrier. It never rejects
+// local work; maxBeds remains the only bed-count hard limit.
+//
+// +spec=`bed_pressure is true when occupied_beds/max_beds or pinned_beds/max_pinned_beds reaches the configured watermark; pressure never rejects Bed work.`
 func (m *Manager) BedPressure() bool {
-	threshold := bedPressureThreshold(m.maxPinnedBeds)
-	return threshold > 0 && m.pinnedBeds.Load() >= threshold
+	if m.pressurePercent <= 0 {
+		return false
+	}
+	pinnedThreshold := bedPressureThreshold(m.maxPinnedBeds, m.pressurePercent)
+	if pinnedThreshold > 0 && m.pinnedBeds.Load() >= pinnedThreshold {
+		return true
+	}
+	occupiedThreshold := bedPressureThreshold(m.maxBeds, m.pressurePercent)
+	return occupiedThreshold > 0 && int64(m.OccupiedBedCount()) >= occupiedThreshold
 }
 
-const bedPressurePercent = 80
-
-func bedPressureThreshold(maxPinnedBeds int) int64 {
-	if maxPinnedBeds <= 0 {
+func bedPressureThreshold(limit, percent int) int64 {
+	if limit <= 0 || percent <= 0 {
 		return 0
 	}
-	return (int64(maxPinnedBeds)*bedPressurePercent + 99) / 100
+	return (int64(limit)*int64(percent) + 99) / 100
 }
 
-// carrierAdmissionErrorLocked applies pressure only where this carrier is
-// taking ownership: a new resident, a dormant restore, or an unpinned idle
-// cache becoming active again. Callers hold m.mu so the count snapshot is coherent
-// with resident admission.
-func (m *Manager) carrierAdmissionErrorLocked() error {
-	if m.maxPinnedBeds > 0 && m.pinnedBeds.Load() >= int64(m.maxPinnedBeds) {
-		m.RequestStoreSync()
-		return &InsufficientBedError{
-			PinnedBeds:    m.pinnedBeds.Load(),
-			MaxPinnedBeds: m.maxPinnedBeds,
-			ResidentBeds:  m.tenantResidentBedsLocked(),
-			MaxBeds:       m.maxBeds,
-		}
-	}
+// resourceAdmissionErrorLocked applies aggregate CPU/memory admission only
+// where this carrier is taking ownership. Pinned count is deliberately absent:
+// it is a scheduling hint, while maxBeds is the bed-count admission boundary.
+func (m *Manager) resourceAdmissionErrorLocked() error {
 	if decision := m.admission.Check(); !decision.Allowed {
 		m.RequestStoreSync()
 		return fmt.Errorf("%w: %s", ErrResourcePressure, decision.Reason)
@@ -281,9 +271,17 @@ func (m *Manager) adjustPinnedLocked(b *Bed, wasPinned bool) {
 	}
 }
 
-// ResidentBedCount reports the current in-memory bed count without taking the
-// manager lock. It is an instance-health fact, not an admission decision.
+// ResidentBedCount reports current resident/evicting tenant beds without
+// taking the manager lock. The default bed and initializing beds are excluded.
 func (m *Manager) ResidentBedCount() int64 { return m.residentBeds.Load() }
+
+// OccupiedBedCount reports tenant beds that currently consume maxBeds
+// admission capacity: initializing plus resident/evicting beds.
+func (m *Manager) OccupiedBedCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.tenantOccupiedBedsLocked()
+}
 
 // tenantResidentBedsLocked returns the count governed by maxBeds. The default
 // compatibility bed is resident but deliberately exempt from tenant capacity.
@@ -348,12 +346,11 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 	}()
 	bedDir := filepath.Join(m.root, id)
 	dataDir := filepath.Join(bedDir, "data")
-	// Resume: prefer the local copy (luggage) when its generation says it is
-	// at least as new as the snapshot — evict→resume on the same instance
-	// then costs no download. A stale local copy (the bed ran elsewhere
-	// meanwhile) is replaced atomically, never merged. A restore failure leaves
-	// the old luggage untouched and fails initialization rather than silently
-	// starting empty.
+	// Recovery: an orphaned local directory from an unclean shutdown or older
+	// version may be reused when its generation is at least as new as the
+	// snapshot. A stale copy is replaced atomically, never merged. A restore
+	// failure leaves the orphan untouched and fails initialization rather than
+	// silently starting empty.
 	local, localPresent := loadMeta(bedDir)
 	var staged store.StageInResult
 	if err := trace.stage("stage_in_bedfs", func() error {
@@ -473,11 +470,10 @@ func (m *Manager) List() []*Bed {
 	return out
 }
 
-// Evict releases a bed's compute while keeping its identity (IDLE →
-// EVICTING → LUGGAGE, docs/store.md §4): persist, then tear down and
-// free the max-beds slot. The local dir stays behind as luggage — a warm
-// cache of the DORMANT bed, so a same-instance resume skips the snapshot
-// download; luggage GC reclaims disk separately. Returns evicted=false
+// Evict releases a bed's compute: run the configured Store persist step, tear
+// down, delete the local Bed directory, and free the max-beds slot. Durable
+// stores can restore the identity later; noop persists nothing, so a later
+// initialization starts fresh. Returns evicted=false
 // without error when the eviction was CANCELED because the bed saw new
 // activity during the persist window — serving beats reclaiming, and
 // removing runtime state after a mid-persist write would silently drop that
@@ -530,7 +526,6 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 	}
 	b.evicting = true
 	activitySeq := b.activitySeq
-	watermark := b.lastActiveAt
 	b.mu.Unlock()
 
 	// Revoke BEFORE persist (docs/lifecycle.md): stateful sessions cannot be
@@ -565,16 +560,14 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 		return false, nil
 	}
 	delete(m.beds, id)
-	m.residentBeds.Add(-1)
+	if id != m.defaultBed {
+		m.residentBeds.Add(-1)
+	}
 	b.mu.Unlock()
 	m.mu.Unlock()
 	m.teardown(b)
-	// Stamp the luggage with its last activity so luggage GC can order cold
-	// copies by recency with no in-memory state. Best-effort — a missing
-	// stamp only weakens GC ordering, never correctness.
-	if meta, ok := loadMeta(b.Dir); ok {
-		meta.LastActiveAt = watermark
-		_ = saveMeta(b.Dir, meta)
+	if err := os.RemoveAll(b.Dir); err != nil {
+		return true, fmt.Errorf("bed: remove local copy %s: %w", id, err)
 	}
 	b.mu.Lock()
 	b.evicting = false

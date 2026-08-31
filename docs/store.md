@@ -17,15 +17,14 @@ snapshot 作为跨进程 / pod 的持久身份。上层调度系统只消费 Hos
 ```
 InitializeBed(bedID)       ──→ 立即返回 initializing，后台 StageInBedFS
 StageInBedFS               ──→ store.Stat(bedID)?
-                                ├─ 有快照 → 本地 luggage 的 generation ≥ 快照的？
-                                │            ├─ 是 → warm start（免下载，直接用现场）
-                                │            └─ 否 → 旁路目录 Restore，完整后原子替换现场
+                                ├─ 有快照 → Restore 到旁路目录，完整后原子发布
                                 └─ 无快照 → 空 workspace（或 noop 下的遗留现场）
 prepare + publish          ──→ readiness=true，Bed 进入 resident map
 bed 活着                  ──→ 本地读写，零网络往返；operation/pressure 只提交同步 trigger
 Store 同步循环            ──→ 合并 trigger + 自有周期/重试 → 静默 bed → Persist 到 S3
 delete / checkpoint       ──→ 回收边界或显式请求直接等待 Persist
-evict 完成                ──→ 本地目录留作 luggage（现场缓存），交磁盘水位 GC 管
+evict 完成                ──→ 删除本地 Bed 目录（所有 Store backend 一致）
+                                └→ durable 下保留快照；noop 下不保留数据
 ```
 
 接入点（锚点）：`bed.Manager.InitializeBed`（异步初始化）、`store.StageInBedFS`（数据准备）、`Ensure`（原生 API 等待同一初始化）、Evict / idle GC（persist）、`POST /v1/beds/:id/checkpoint`（显式持久化）；capabilities 报 `persistence: noop|auto|s3|pack|tar`。
@@ -185,20 +184,25 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 
 | 动作 | 语义 | API |
 |---|---|---|
-| **evict**（驱逐） | 释放计算、保留身份：persist → 出 map → 名额释放 | idle GC 自动；`DELETE /v1/beds/:id`（默认） |
+| **evict**（驱逐） | persist → 出 map → 删本地目录 → 名额释放；durable 保留快照身份，noop 不保留 | idle GC 自动；`DELETE /v1/beds/:id`（默认） |
 | **purge**（清除） | 身份终结：驱逐 + 删除 S3 快照 | `DELETE /v1/beds/:id?purge=true` |
 | **checkpoint** | 作为 operation 打快照，完成后回到 IDLE | `POST /v1/beds/:id/checkpoint` |
 | **initialize** | ABSENT/DORMANT/LUGGAGE → INITIALIZING → RESIDENT | `POST /v1/beds`；原生数据面 `Ensure` 会加入并等待 |
 
-`GET /v1/beds` 给出调度器要的本机全图：实例容量 + 全部本机 Bed（ACTIVE/IDLE/EVICTING resident + DORMANT luggage）；DORMANT 集合的权威仍是对象存储和上层调度系统。
+`GET /v1/beds` 给出调度器要的当前 Node 事实：实例容量、initializing 与 resident/evicting Bed，以及异常退出/旧版遗留的 DORMANT luggage。durable store 中的非本地 Bed 不属于该 Node inventory。
 
-### luggage：现场缓存与 generation
+### luggage：异常遗留目录
 
-**共享 store 模式下，快照是唯一事实，其余一切都是缓存。** evict 不再删本地目录——它留下来成为 **luggage**（寄存行李）：DORMANT bed 的本机热副本。同机 resume 时若现场足够新就直接用（warm start，免下载）；判"够新"用 **generation**——meta.json 里单调递增的 persist 计数，随快照进对象元数据（`Stat` 一次 HEAD 就能比对）。现场落后于快照（bed 期间在别的实例跑过）则整目录丢弃后重新 Restore，**只换不合**。为什么不用时间戳判序：bed 跨机迁移时钟有偏差，序会反转；时间戳只做观测（`last_persisted_at` / `last_active_at`），判序只认 generation。
+Store backend 不改变 Bed 生命周期。成功 evict 都会删除本地 Bed 目录：durable store 在此之前真正 Persist，下次 placement 从快照 cold Restore；noop 的 Persist 不做任何事，下次 placement 从 fresh Bed 开始。
 
-共享 store 模式下 luggage 是纯缓存，删错只会多付一次 Restore，所以磁盘上限走独立水位而不占 max-beds：超过 `--luggage-high-bytes` 时按"generation 过期优先（纯垃圾）→ LRU"的顺序删到 `--luggage-low-bytes` 以下。这个排序是 cost-aware 驱逐的演化缝，v1 只认新旧。
+`luggage` 不再是正常 evict 的目标状态，只表达两类异常遗留目录：
 
-`GET /v1/beds` 把容量、`phase_counts`、`activity_counts` 和每个本机 Bed 的 `status/generation/retained_until` 一次给上层调度器。上游据此优先命中 resident Bed，其次选择最高 generation 的 luggage；回收 carrier 前则确认不存在 resident Bed。inventory 是一次事实快照，不代替上游的单写者约束：同 bedID 双活仍由调度器归属 + store 侧 generation 冲突探测兜底。
+- Hostel 异常退出时未走完 evict 的本地工作目录。
+- 滚动升级期间由旧版 Hostel 留下的目录。
+
+initialization 遇到遗留目录时仍会用 generation 与远端快照比对，落后时整目录替换，不合并。`--luggage-high-bytes` / `--luggage-low-bytes` 继续治理这些遗留目录。
+
+`GET /v1/beds` 把 `occupied_beds`、`resident_beds`、`pinned_beds`、`phase_counts`、`activity_counts` 和本地 Bed 概要一次给上层调度器。inventory 是一次事实快照，不代替上游的单写者约束：同 bedID 双活仍由调度器归属 + store 侧 generation 冲突探测兜底。
 
 ### 恢复成本与后续增量 Restore
 
@@ -206,7 +210,7 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 相差多少。Hostel 因此在 inventory 中同时上报本地 generation、最近观测到的 durable generation、
 快照大小、本地目录大小和预计 Restore 字节数；resident 目录大小与 durable snapshot 事实由
 initialization / Store 同步循环在自己的节奏里刷新，`GET /v1/beds` 不为它们扫描 resident 目录或访问
-S3。dormant luggage 仍沿用 inventory 的本地目录扫描，后续可随 luggage 索引一起缓存。
+S3。异常退出/旧版 dormant luggage 仍沿用 inventory 的本地目录扫描。
 
 当前 Restore 仍是完整快照恢复：本地副本与 durable generation 一致时预计恢复量为 0；缺少本地副本
 或本地副本过期时，预计恢复量就是完整 `snapshot_bytes`。generation 只判断相等与新旧，不能作为版本
@@ -218,12 +222,12 @@ create / update / delete / keep。只有完成这套文件粒度对账后，才�
 
 ### noop store 下的退化语义
 
-没有快照，luggage 就是唯一副本：evict 后同机 resume 仍然有效（比 v1 的"evict 即销毁"更好），但 luggage GC 删掉它 = 数据销毁，且 bed 不可跨实例迁移（inventory 的 `store: "noop"` 明示这一点）。部署要么接受 bed 数据只活在本机，要么开 s3。healthz 的 `persistence` 字段让调用方能区分这两种世界。
+noop 只是 `Persist/Restore/Stat/Delete` 的空实现，不改变 lifecycle：Bed resident 时使用本地目录，evict 时删除目录，再次初始化同 id 时从空 Bed 开始。因此 noop 不提供 evict 后的数据保留或跨实例迁移。healthz 的 `persistence` 字段让调用方能区分这两种世界。
 
 ### bed 目录分层（配套）
 
 ```
-{workspace-root}/{bedID}/        ← 快照打包的根（meta + data 一起上 S3）；evict 后整体留作 luggage
+{workspace-root}/{bedID}/        ← 快照打包的根（meta + data 一起上 S3）；所有 backend 在 evict 后删除
   meta.json   # hostel 私有：created_at、last_persisted_at、generation、last_active_at（将来：manifest、lease）
   *.local     # 约定：本机私有元数据，不进快照（当前无，留位）
   data/       # bed_home：默认进快照
@@ -249,7 +253,7 @@ meta 对 bed 内代码**不可见**（bwrap 只 bind `data/`，root 整体被 tm
 - Store 同步循环：合并 lifecycle/pressure trigger，自主串行、周期兜底与失败退避；只传静默 dirty bed，并以 snapshot activity watermark 提交同步水位
 - **Bed 生命周期**（§四）：`BeginOperation` 统一 Exec/文件/浏览器/checkpoint 活跃度；`phase`、`readiness`、派生的 `activity: active|idle` 与 generation/expiry 正交；`Evict` 不杀 active operation，evicting 期间新 operation 取消驱逐；`Purge`（`DELETE ?purge=true`）终结身份
 - capabilities / healthz 报 `persistence: noop|auto|s3|pack|tar`
-- **luggage**：evict 留现场 + `LastActiveAt` 盖章、Stage-in 按 generation 判新鲜（warm start / 旁路重拉后替换）、`--luggage-high/low-bytes` 水位 GC（stale 优先 → LRU，rename-under-lock 防与初始化竞态）、`GET /v1/beds` 报容量与全部本机 bed；generation 存 S3 object user metadata（`Stat`=HEAD 免下载）
+- **统一 evict + luggage 兼容**：成功 evict 在所有 Store backend 下都删除本地目录；durable 可恢复，noop 从 fresh Bed 开始；异常/旧版 luggage 仍按 generation 判新鲜，并由 `--luggage-high/low-bytes` 水位 GC（stale 优先 → LRU）
 - **双活冲突探测**（§三.5）：`Persist` 写前 HEAD 比对 generation，远端更新则 `store.ErrConflict` 拒绝覆盖（first-writer-wins；evict 路径因 persist 失败自然中止，bed 留在本机继续服务）
 - **cas 后端**（§三.3，`internal/store/cas.go`，desync 库）：catar+CDC 流式切块上传（上代 index 做免传清单）、index 提交点带 generation/bytes metadata、块序列相同时零 chunk 上传但推进 index generation、提交后按"LIST − index 引用"做 per-bed GC、restore 经 `UnTarIndex` 并发拉块（块 ID 对解压数据复核，桶内损坏在 restore 报错而不是落进 workspace；desync `LocalFS` 为 `os.Root` 背书，自带 symlink 逃逸防护）；全流程在内存 objAPI fake 上有单测（roundtrip/增量/GC/no-op/冲突/purge）
 - **pack 后端**（§三.3，`internal/store/pack.go`）：32 MiB 目标 pack、immutable manifest、`head.json` 原子提交、上代 chunk 免传、pack/manifest/chunk 三级摘要校验、两 pack LRU restore；内存 objAPI fake 覆盖布局/roundtrip/增量/no-op/冲突/purge。是 auto 的新 bed 默认布局，也是高文件数既有 CAS bed 的单向目标；未实现在线 prune/compaction

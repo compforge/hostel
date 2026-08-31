@@ -179,7 +179,7 @@ func (m *Manager) beginInitialization(
 		return nil, nil, ErrBedLimit
 	}
 	if id != m.defaultBed {
-		if err := m.carrierAdmissionErrorLocked(); err != nil {
+		if err := m.resourceAdmissionErrorLocked(); err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
@@ -250,10 +250,12 @@ func (m *Manager) publishInitializedBed(initialization *bedInitialization, resid
 	}
 	m.beds[resident.ID] = resident
 	delete(m.initializations, resident.ID)
-	m.residentBeds.Add(1)
-	if resident.ID != m.defaultBed && resident.pinnedLocked() {
-		m.pinnedBeds.Add(1)
-		m.RequestStoreSync()
+	if resident.ID != m.defaultBed {
+		m.residentBeds.Add(1)
+		if resident.pinnedLocked() {
+			m.pinnedBeds.Add(1)
+			m.RequestStoreSync()
+		}
 	}
 	return nil
 }

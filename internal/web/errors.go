@@ -34,7 +34,6 @@ const (
 	ErrCommandNotFound    ErrorCode = "COMMAND_NOT_FOUND"
 	ErrBedInvalid         ErrorCode = "BED_INVALID"
 	ErrBedLimitExceeded   ErrorCode = "BED_LIMIT_EXCEEDED"
-	ErrInsufficientBed    ErrorCode = "INSUFFICIENT_BED"
 	ErrResourcePressure   ErrorCode = "RESOURCE_PRESSURE"
 	ErrBedBusy            ErrorCode = "BED_BUSY"
 	ErrServiceUnavailable ErrorCode = "SERVICE_UNAVAILABLE"
@@ -43,20 +42,9 @@ const (
 // ErrorResponse keeps execd's required code/message envelope and adds optional
 // hostel scheduler hints that existing OpenSandbox SDKs can ignore.
 type ErrorResponse struct {
-	Code      ErrorCode           `json:"code,omitempty"`
-	Message   string              `json:"message,omitempty"`
-	Retryable bool                `json:"retryable,omitempty"`
-	Pressure  *BedPressureDetails `json:"pressure,omitempty"`
-}
-
-// BedPressureDetails is a hostel extension to the OpenSandbox error envelope.
-// Existing SDKs continue to read code/message; schedulers can use the frozen
-// capacity snapshot without an extra inventory round trip.
-type BedPressureDetails struct {
-	PinnedBeds    int64 `json:"pinned_beds"`
-	MaxPinnedBeds int   `json:"max_pinned_beds"`
-	ResidentBeds  int   `json:"resident_beds"`
-	MaxBeds       int   `json:"max_beds"`
+	Code      ErrorCode `json:"code,omitempty"`
+	Message   string    `json:"message,omitempty"`
+	Retryable bool      `json:"retryable,omitempty"`
 }
 
 func respondError(c *gin.Context, status int, code ErrorCode, msg string) {

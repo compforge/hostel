@@ -177,7 +177,7 @@ reports `amenities: {chromium: idle|running}`.
 
 Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` / `--pathshim` /
 `--dorm-read-fallback-root` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
-`--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
+`--max-pinned-beds` / `--bed-pressure-threshold-percent` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
 `--executor` / `--store` /
 `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--s3-region` / `--persist-interval` /
 `--luggage-high-bytes` / `--luggage-low-bytes` /
@@ -241,36 +241,38 @@ operations and pressure submit coalesced sync requests; the store loop owns
 serialization, retry/backoff, and the optional `--persist-interval` safety net.
 A bed's durable identity is the
 snapshot; the local dir is just its working copy.
-`DELETE /v1/beds/:id` evicts (identity kept); add `?purge=true` to also delete
-the snapshot and end the identity. An evict raced by live traffic returns
+`DELETE /v1/beds/:id` evicts (a durable snapshot keeps the identity; noop keeps
+nothing); add `?purge=true` to also delete any snapshot and end the identity.
+An evict raced by live traffic returns
 `409 BED_BUSY` instead of dropping mid-flight writes.
 Bucket addressing defaults to virtual-hosted style (required by TOS); set
 `--s3-path-style` only for endpoints such as MinIO that require path-style.
 
-Luggage: an evicted bed leaves its local dir behind as a warm cache — resuming
-on the same instance skips the snapshot download (a monotonic generation
-counter, carried in bed meta and snapshot metadata, decides freshness; a copy
-that fell behind is discarded and re-restored). `--luggage-high-bytes` caps the
-disk luggage may hold: past it, cold copies are deleted — stale generation
-first, then least recently used — until under `--luggage-low-bytes` (default
-80% of high). With the `noop` store luggage is the only copy, so luggage GC
-there destroys data — same honesty rule as everywhere: `/healthz` tells you
-which world you're in.
+Successful idle eviction removes the local Bed directory for every Store
+backend. A durable Store persists first and the next placement restores the
+snapshot; noop performs no persistence and the next placement starts fresh.
+Luggage scanning only covers orphaned directories left by an unclean shutdown
+or older Hostel version.
 
-Capacity: `--max-beds N` caps resident tenant beds; `--max-pinned-beds M` is the
-hard pinned-count limit. A bed is
-pinned while an operation is in flight or its latest data has not reached the
-durable store. With the noop store, only in-flight operations pin. `M=0` inherits `N`; both are
-unlimited only when `N=0` too. The default bed is exempt from both. An explicit
-`M` above a finite `N` is clamped to `N`: resident capacity is always the hard
-ceiling for pinned capacity.
-A pinned bed keeps its carrier commitment. At 80% of `M`, `GET /v1/beds`
-reports soft `bed_pressure` so the upstream can warm capacity and avoid new
-placements while retaining the final 20% for source-carrier fallback. At the
-hard limit, new/dormant placement and unpinned-idle admission return retryable
-`429 INSUFFICIENT_BED`; resident count exhaustion remains `429
-BED_LIMIT_EXCEEDED`. `pinned` and `data_synced` are reported per bed, and the
-capacity error includes the pinned/resident count and limit snapshot.
+Capacity has three named aggregate counts:
+
+- `occupied_beds`: initializing plus resident/evicting tenant Beds; this is the
+  count governed by the hard `--max-beds N` limit.
+- `resident_beds`: resident/evicting tenant Beds prepared on this node.
+- `pinned_beds`: the resident subset that is running work or whose latest data
+  has not reached the durable store.
+
+With the noop store, only in-flight operations pin. `--max-pinned-beds M` is a
+pressure reference, not an admission limit. `M=0` inherits `N`; both references
+are disabled only when `N=0` too. The default bed is exempt from all three counts.
+A pinned Bed keeps its carrier commitment.
+
+`--bed-pressure-threshold-percent` configures a shared high watermark (default
+80, 0 disables). `GET /v1/beds` reports `bed_pressure=true` when either
+`occupied_beds / max_beds` or `pinned_beds / max_pinned_beds` reaches that
+watermark. Pressure only guides upstream placement; it never rejects Bed work,
+and `pinned_beds` may exceed `max_pinned_beds`. Only a full `occupied_beds`
+capacity returns `429 BED_LIMIT_EXCEEDED` for a new Bed.
 
 Carrier resource admission complements those count limits. Hostel samples its
 container cgroup and refuses new ownership or an unpinned idle bed's first operation with `429

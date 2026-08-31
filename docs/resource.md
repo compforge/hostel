@@ -78,29 +78,37 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 ### 3. 当前准入策略
 
 ```text
-新 resident / dormant restore，或未 pinned 的 idle bed 准备进入 active
-  → pinned 接近 max-pinned-beds → inventory 上报 BED_PRESSURE
-  → max-pinned-beds 硬上限检查
-      └─ 数量已满 → 429 INSUFFICIENT_BED（携带容量快照）
+容量事实更新
+  → occupied_beds / max_beds 达到高水位
+    或 pinned_beds / max_pinned_beds 达到高水位
+      └─ inventory 上报 bed_pressure=true（调度提示，不拒绝工作）
+新 Bed 初始化
+  → occupied_beds 已达 max_beds
+      └─ 数量已满 → 429 BED_LIMIT_EXCEEDED
   → 读取缓存的 carrier resource verdict
       ├─ CPU 或内存达到配置水位 → 429 RESOURCE_PRESSURE
       ├─ 未达到                    → 接纳
       └─ 不可测                    → fail-open，由数量上限兜底
 ```
 
-`pinned` 是复合容量事实，不是新的 bed state：`inflight > 0`，或 durable store 下
-`data_synced=false`，任一成立即 pinned；noop 表示调用方不要求数据完整性，因此 operation 结束即可解除 pinned。
-数量限制简单可预测，资源水位更接近真实成本；两者都是“停止接新归属”的信号，不是已归属 bed 的硬执行上限。两者组合后：
+容量计数是互斥具体状态的命名聚合，具体定义和状态图见 `lifecycle.md`：
+
+- `occupied_beds`：初始化中或已 resident/evicting，正占用 `max_beds` 名额。
+- `resident_beds`：已在当前 Node 准备好的 resident/evicting Bed。
+- `pinned_beds`：resident 中 `inflight > 0` 或 durable store 下 `data_synced=false` 的子集。
+
+`--bed-pressure-threshold-percent` 是两组容量比率共用的高水位，默认 80，0 表示关闭该信号。任一比率到达水位即上报 `bed_pressure`。`max_pinned_beds` 只是 pinned 比率的参考容量，可以被超过，不产生 429；`max_beds` 才是 Bed 数量的硬上限。
+
+组合后的语义：
 
 - durable store 下，operation 结束只触发同步诉求；数据到达 store 后才释放 pinned 名额。同步节奏由 Store 控制，不由请求路径直接上传。
 - noop 下没有待完成的远端同步步骤，瞬时 operation 结束即释放 pinned 名额。
-- pinned bed 的后续 operation 在承诺范围内，不做资源准入；未 pinned 的 idle bed 可重新调度。
-- `BED_PRESSURE` 是提前扩容和调度避让的软信号；剩余 pinned 容量保留给已有 source carrier
-  的兜底承接。达到硬上限后，`INSUFFICIENT_BED` 才表示本次承接无法准入。
+- `bed_pressure` 是提前扩容和新 placement 避让的软信号；已有 Bed 继续由当前 carrier 承接。
+- 新 Bed 在任何 Store I/O 前预占 `occupied_beds`，防止并发 initialization 穿透 `max_beds`。
 - 已接纳的 bed 不会因采样越线被暂停或杀死；default bed 也不参与资源准入。
 - 采集失败、无有限 limit 或非 Linux 环境均诚实上报 unavailable，并 fail-open 到数量策略。
 
-`--admission-cpu-threshold` 与 `--admission-memory-threshold` 只表达策略水位；具体默认值和当前字段
+`--bed-pressure-threshold-percent`、`--admission-cpu-threshold` 与 `--admission-memory-threshold` 只表达策略水位；具体默认值和当前字段
 shape 以配置代码及 README 为准，避免设计文档随调参漂移。
 
 ## 三、关键设计与后续边界

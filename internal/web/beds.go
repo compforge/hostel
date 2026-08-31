@@ -111,27 +111,26 @@ type bedDetailView struct {
 
 // instanceStatus is the hostel-layer status (docs/lifecycle.md): the only way
 // a hostel says "you may release me". The verdict is computed here so upstream
-// reads a conclusion instead of reassembling phase/activity counts, store and luggage.
+// reads a conclusion instead of reassembling phase/activity counts and luggage.
 type instanceStatus string
 
 const (
 	instanceRetained   instanceStatus = "retained"   // a resident bed is within its retention promise
 	instanceDraining   instanceStatus = "draining"   // resident beds all expired, eviction in progress
 	instanceReleasable instanceStatus = "releasable" // nothing resident; snapshots (if any) are remote
-	instancePinned     instanceStatus = "pinned"     // noop store with local beds: this instance is the only copy
 )
 
 // statusOfInstance folds the scheduler-visible inventory, the compatibility
-// default bed and the store backend into the hostel-layer status. A zero
+// default bed into the hostel-layer status. A zero
 // RetainUntil (no idle TTL configured) counts as retained — releasable must
 // never be concluded from unknown retention.
-func statusOfInstance(beds []bed.InventoryBed, defaultBedOccupied bool, store string, now time.Time) instanceStatus {
+func statusOfInstance(beds []bed.InventoryBed, defaultBedOccupied bool, now time.Time) instanceStatus {
 	// The default bed never participates in scheduler inventory or idle GC, so
 	// its residency is a separate, unconditional reason to retain this instance.
 	if defaultBedOccupied {
 		return instanceRetained
 	}
-	hasResident, hasDormant, allExpired := false, false, true
+	hasResident, allExpired := false, true
 	for _, b := range beds {
 		switch b.Status.Phase {
 		case bed.PhaseInitializing:
@@ -144,7 +143,6 @@ func statusOfInstance(beds []bed.InventoryBed, defaultBedOccupied bool, store st
 		case bed.PhaseFailed:
 			continue
 		case bed.PhaseDormant:
-			hasDormant = true
 			continue
 		}
 		hasResident = true
@@ -157,8 +155,6 @@ func statusOfInstance(beds []bed.InventoryBed, defaultBedOccupied bool, store st
 		return instanceRetained
 	case hasResident:
 		return instanceDraining
-	case store == "noop" && hasDormant:
-		return instancePinned
 	default:
 		return instanceReleasable
 	}
@@ -168,8 +164,9 @@ func statusOfInstance(beds []bed.InventoryBed, defaultBedOccupied bool, store st
 // every bed this instance holds (resident/evicting plus activity, dormant as
 // luggage on disk) with its last persisted generation. Everything here is a
 // stale-tolerant hint — freshness is re-enforced at initialization, so routing on
-// outdated data is slow, never wrong. Callers must treat store "noop" as
-// "beds are pinned here": no snapshot exists elsewhere to migrate from.
+// outdated data is slow, never wrong. Normal eviction removes the local Bed
+// directory for every Store backend; dormant rows only describe orphaned
+// directories discovered after an unclean shutdown or upgrade.
 //
 // +spec=`phase_counts and activity_counts are exact projections of the beds returned in the same response.`
 // +case:id=bed_inventory_invariants,desc=`Create, activate, idle, and purge beds`,expect=`instance counters match the returned bed facts after every transition`
@@ -217,20 +214,23 @@ func (s *Server) bedList(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"instance": gin.H{
-			"status":             statusOfInstance(beds, s.mgr.DefaultBedOccupied(), s.mgr.StoreName(), time.Now()),
-			"store":              s.mgr.StoreName(),
-			"isolation":          s.mgr.Isolator().Level().String(),
-			"max_beds":           s.mgr.MaxBeds(),
-			"pinned_beds":        s.mgr.PinnedBedCount(),
-			"max_pinned_beds":    s.mgr.MaxPinnedBeds(),
-			"bed_pressure":       s.mgr.BedPressure(),
-			"phase_counts":       phaseCounts,
-			"activity_counts":    activityCounts,
-			"retained_until":     instanceRetainUntil,
-			"luggage_bytes":      luggageBytes,
-			"luggage_high_bytes": high,
-			"luggage_low_bytes":  low,
-			"resource_admission": resourceAdmissionView(s.mgr.ResourceAdmissionReport()),
+			"status":                         statusOfInstance(beds, s.mgr.DefaultBedOccupied(), time.Now()),
+			"store":                          s.mgr.StoreName(),
+			"isolation":                      s.mgr.Isolator().Level().String(),
+			"occupied_beds":                  s.mgr.OccupiedBedCount(),
+			"resident_beds":                  s.mgr.ResidentBedCount(),
+			"max_beds":                       s.mgr.MaxBeds(),
+			"pinned_beds":                    s.mgr.PinnedBedCount(),
+			"max_pinned_beds":                s.mgr.MaxPinnedBeds(),
+			"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
+			"bed_pressure":                   s.mgr.BedPressure(),
+			"phase_counts":                   phaseCounts,
+			"activity_counts":                activityCounts,
+			"retained_until":                 instanceRetainUntil,
+			"luggage_bytes":                  luggageBytes,
+			"luggage_high_bytes":             high,
+			"luggage_low_bytes":              low,
+			"resource_admission":             resourceAdmissionView(s.mgr.ResourceAdmissionReport()),
 		},
 		"beds": beds,
 	})
@@ -340,7 +340,7 @@ func lifecycleRecordToView(record *bed.LifecycleRecord) *lifecycleRecordView {
 //
 // +spec=`Eviction never tears down a bed that became active during the eviction fence; purge removes the bed identity after work is idle.`
 // +case:id=active_bed_evict_busy,desc=`Evict while a background execution is active`,expect=`409 BED_BUSY and the execution remains owned by the bed`
-// +case:id=evict_resume_luggage,desc=`Evict an idle bed and initialize the same id again on the same Hostel`,expect=`the dormant luggage is reused and its workspace data survives`
+// +case:id=evict_resume_store_semantics,desc=`Evict an idle bed and initialize the same id again`,expect=`durable stores restore the snapshot while noop starts fresh; neither retains the normal local directory`
 // +case:id=purge_removes_bed,desc=`Purge idle beds`,expect=`the beds disappear from inventory`
 func (s *Server) bedDelete(c *gin.Context) {
 	id := c.Param("bedId")
@@ -385,12 +385,13 @@ func (s *Server) capabilities(c *gin.Context) {
 		// True when the bed workspace is mounted at the canonical /workspace
 		// inside the sandbox (bwrap): shell paths == file-API paths. False
 		// under direct, where /workspace is only the file-API virtual prefix.
-		"workspace_mount":  iso.WorkspaceMounted(),
-		"workspace_view":   workspaceView(iso),
-		"executor_backend": s.mgr.ExecutorBackend(),
-		"max_beds":         s.mgr.MaxBeds(),
-		"max_pinned_beds":  s.mgr.MaxPinnedBeds(),
-		"persistence":      s.mgr.StoreName(),
+		"workspace_mount":                iso.WorkspaceMounted(),
+		"workspace_view":                 workspaceView(iso),
+		"executor_backend":               s.mgr.ExecutorBackend(),
+		"max_beds":                       s.mgr.MaxBeds(),
+		"max_pinned_beds":                s.mgr.MaxPinnedBeds(),
+		"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
+		"persistence":                    s.mgr.StoreName(),
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,
 			"available": resources.Available,
@@ -415,7 +416,7 @@ func (s *Server) capabilities(c *gin.Context) {
 func (s *Server) bedCheckpoint(c *gin.Context) {
 	id := c.Param("bedId")
 	if err := s.mgr.Checkpoint(c.Request.Context(), id); err != nil {
-		if errors.Is(err, bed.ErrInsufficientBed) {
+		if errors.Is(err, bed.ErrResourcePressure) {
 			respondBedError(c, err)
 			return
 		}

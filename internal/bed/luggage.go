@@ -25,12 +25,9 @@ import (
 	"github.com/qiankunli/go-stdx/filepathx"
 )
 
-// Luggage is a DORMANT bed's local dir left behind by Evict: a warm cache of
-// the snapshot, so a same-instance resume skips the download. It is never the
-// authoritative copy (the snapshot is — docs/store.md); deleting
-// luggage costs at most one extra Restore. The exception is the noop store,
-// where nothing else exists: there luggage GC is destruction, the price of
-// the "nothing persists" world.
+// Luggage is an orphaned DORMANT Bed directory left by an unclean shutdown or
+// older Hostel version. Normal eviction removes the directory for every Store
+// backend. Generation checks keep an orphan safe to resume or replace.
 
 // gcTmpPrefix marks a luggage dir claimed by GC: renamed under the manager
 // lock (atomic — a concurrent Ensure either sees the bed dir or doesn't,
@@ -49,16 +46,16 @@ type LuggageEntry struct {
 	// Snapshot* is the last durable Stat result cached in meta.json.
 	SnapshotGeneration int64
 	SnapshotBytes      int64
-	// LastActiveAt orders LRU eviction: the evict-time stamp, falling back to
-	// LastPersistedAt and then dir mtime for copies predating the stamp.
+	// LastActiveAt orders LRU cleanup when an older directory carries the
+	// historical stamp, falling back to LastPersistedAt and then dir mtime.
 	LastActiveAt time.Time
 	// Usage is the activity picture the bed left behind (from its meta).
 	Usage Usage
 }
 
-// ListLuggage scans the workspace root for bed dirs that are not resident —
-// the local copies of DORMANT beds. The default bed is never luggage (its
-// dir is permanent by contract).
+// ListLuggage scans the workspace root for orphaned Bed dirs that are not
+// resident. The default bed is never luggage (its dir is permanent by
+// contract).
 func (m *Manager) ListLuggage() []LuggageEntry {
 	entries, err := os.ReadDir(m.root)
 	if err != nil {
@@ -117,7 +114,7 @@ func (m *Manager) LuggageLimits() (high, low int64) {
 }
 
 // CollectLuggage enforces the luggage disk watermarks: when the total exceeds
-// the high watermark, delete cold copies until under the low one. Returns
+// the high watermark, delete orphaned copies until under the low one. Returns
 // reaped ids. Deletion order is the cost-aware eviction seam (v1: score =
 // recency): stale-generation copies first — the snapshot is newer, so they
 // are pure garbage — then least recently used.

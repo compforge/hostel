@@ -117,7 +117,9 @@ func (m *Manager) purgeOwned(ctx context.Context, id string) error {
 		b.mu.Lock()
 		b.purging = true
 		delete(m.beds, id)
-		m.residentBeds.Add(-1)
+		if id != m.defaultBed {
+			m.residentBeds.Add(-1)
+		}
 		if b.pinnedLocked() {
 			m.pinnedBeds.Add(-1)
 		}

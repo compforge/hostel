@@ -31,18 +31,38 @@ hostel 里有三个粒度的生命周期，层层驱动、层层推导：
 operation ──持有关系──▶ bed.status.activity   ──聚合──▶ hostel.status
                          active  inflight>0       retained    有 Bed 在保留期或初始化中
                          idle    inflight==0      draining    全部过期、回收进行中
-                                                releasable  无 resident、快照在远端
-                                                pinned      store=noop（本地是唯一副本）
+                                                releasable  无 resident；快照在远端或 noop 无快照
 
-bed.status.phase：initializing → resident → evicting → dormant；Purge 期间为 purging；初始化失败为 failed
+bed.status.phase：initializing → resident → evicting → 已移除；Purge 期间为 purging；初始化失败为 failed；dormant 仅表达异常退出或旧版遗留目录
 bed.status.readiness：status + reason + message + updated_at
 ```
 
 关键语义：**session 不抬升 bed.status.activity**——只有一条 CDP 连接挂着且没有 operation 的 bed 仍是 idle，可以过期回收。这正是"长连接不应阻塞回收"在模型层的表达。
 
-`pinned` 也不是 lifecycle phase 或 activity，而是容量准入使用的复合事实：有 operation，或 durable store 下
-`data_synced=false`，都表示 bed 暂时只能由当前 carrier 承接。noop 表示用户不要求远端数据完整性，
-因此只在 operation 进行期间 pinned。`GET /v1/beds` 直接上报这一推导结果。
+### 互斥具体状态与命名聚合
+
+一个 Bed 在某一时刻只落在一个具体状态。代码中的 `phase`、`activity`、`readiness` 和
+`data_synced` 是正交事实；讨论容量时，把它们组合成互斥的叶子状态，再投影到三个有名集合：
+
+| 具体状态 | `occupied` | `resident` | `pinned` |
+|---|---:|---:|---:|
+| `initializing` | 是 | 否 | 否 |
+| `resident_active` | 是 | 是 | 是 |
+| `resident_idle_dirty` | 是 | 是 | 是 |
+| `resident_idle_synced` | 是 | 是 | 否 |
+| `evicting_dirty` | 是 | 是 | 是 |
+| `evicting_synced` | 是 | 是 | 否 |
+| `dormant` / `failed` / `purging` / 已移除 | 否 | 否 | 否 |
+
+三个聚合的包含关系为 `pinned_beds ⊆ resident_beds ⊆ occupied_beds`：
+
+- `occupied_beds`：正在占用 `max_beds` 名额的 tenant Bed，包含 initializing、resident 和 evicting。
+- `resident_beds`：已在当前 Node 准备好 BedFS/运行境的 tenant Bed，包含 resident 和 evicting，不包含 initializing。
+- `pinned_beds`：其中有 operation，或 durable store 下 `data_synced=false` 的 Bed；它们暂时只能由当前 carrier 承接。noop 只在 operation 进行期间 pinned。
+
+`phase_counts.initializing` 仍表达生命周期，`activity_counts.active|idle` 仍只表达已 resident Bed 的操作态；不为了“凑总数”把 initializing 塞进 activity。兼容 default Bed 不参与上述三项 tenant 容量计数。
+
+![Bed 状态变化与 Node 容量计数](assets/bed-state-counts.svg)
 
 ## 流程
 
@@ -55,9 +75,9 @@ session：  客户端打开（POST /session、CDP ws 升级）→ 持有（流�
            → 客户端关闭，或 evict revoke
 ```
 
-准入即承诺：新 resident / dormant restore，以及未 pinned 的 idle bed 再次进入 active 时，
-hostel 才检查 carrier 数量与资源 pressure。pinned bed 仍由当前 carrier
-承担，不因 pressure 拒绝。被准入的 operation 会把 `retained_until` 预留到
+准入即承诺：新 Bed 在 Store I/O 前预占 `occupied_beds` 名额；只有 `occupied_beds`
+已达 `max_beds` 才以 `BED_LIMIT_EXCEEDED` 拒绝新 Bed。`bed_pressure` 只是上游调度信号，
+不拒绝已有 Bed 或新 Bed 的工作。被准入的 operation 会把 `retained_until` 预留到
 `timeout + idleTTL`；未同步状态由 `last_active_at > persisted_at` 推导，noop store 按无待同步步骤处理。
 hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。已接纳的工作不会被 idle reaper 杀死；timeout 有默认值和硬上限，任何 operation 的阻塞时间
 有上界——evict 的"拒绝-重试"必然最终成功，死锁在模型上被消除。default bed 不参与数量准入。
@@ -68,9 +88,9 @@ hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。�
 （不存在 / dormant）─InitializeBed→ initializing ─Ready→ resident（active ⇄ idle）
                                   └失败→ failed（保留原因；下一次 InitializeBed 可重试）
    resident ─过 retained_until 且 inflight==0→ evicting
-   evicting ─revoke session → persist → 原子复核→ dormant（luggage 留在本机）
-   dormant  ─同机 resume 且 generation 新鲜→ initializing → resident
-   dormant  ─磁盘水位 GC→ 删除（快照仍在 store）
+   evicting ─revoke session → persist → 原子复核→ 删除本地 Bed 目录
+   已移除  ─再次 placement→ initializing → durable: Restore / noop: fresh → resident
+   dormant  ─磁盘水位 GC→ 删除（只来自异常退出/旧版遗留目录）
    任意态   ─Purge（显式销毁）→ purging ─等待同 id 初始化退出→ 身份终结（删目录 + 删快照）
 ```
 
@@ -90,7 +110,7 @@ hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。�
 → SIGTERM 优雅关停
 ```
 
-hostel 不自杀，也没有 drain 接口。它表达"可以释放我"的唯一方式是 `GET /v1/beds` 里的 `instance.status`（retained / draining / releasable / pinned）——判据收敛在 hostel 内，上游只读结论，不再自己拼 phase/activity counts、store 和 luggage。
+hostel 不自杀，也没有 drain 接口。它表达"可以释放我"的唯一方式是 `GET /v1/beds` 里的 `instance.status`（retained / draining / releasable）——判据收敛在 hostel 内，上游只读结论，不再自己拼 phase/activity counts、store 和 luggage。
 
 容量准入与这里的生命周期状态正交：`instance.status` 回答“能否安全释放这个 Hostel”，未来的
 `admission.accepting_new_beds` 回答“资源余量是否还能承接新的未 pinned bed”。短期数量安全阀与长期

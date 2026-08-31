@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestBedEvictResumeAndPurge(t *testing.T) {
+func TestBedEvictStartsFreshWithNoopStoreAndPurge(t *testing.T) {
 	target := startTarget(t, targetOptions{isolation: "dorm", maxBeds: 1})
 	c := target.client
 
@@ -40,8 +40,8 @@ func TestBedEvictResumeAndPurge(t *testing.T) {
 	if err != nil || evicted.Status != http.StatusOK {
 		t.Fatalf("evict lifecycle bed: status=%d err=%v body=%s", evicted.Status, err, evicted.Body)
 	}
-	c.waitInventory(t, "dormant luggage", func(got inventoryView) bool {
-		return bedMatches(got, "lifecycle-bed", "dormant", "")
+	c.waitInventory(t, "evicted Bed removed", func(got inventoryView) bool {
+		return !hasBed(got, "lifecycle-bed")
 	})
 
 	resumed := c.createBed(t, "lifecycle-bed")
@@ -52,8 +52,8 @@ func TestBedEvictResumeAndPurge(t *testing.T) {
 		return b.Status.Phase == "resident" && b.Status.Readiness.Ready
 	}, "resumed and ready")
 	artifact := c.download(t, "lifecycle-bed", "/workspace/resume.txt")
-	if artifact.Status != http.StatusOK || string(artifact.Body) != "survives-eviction" {
-		t.Fatalf("resumed luggage artifact: status=%d body=%q", artifact.Status, artifact.Body)
+	if artifact.Status != http.StatusNotFound {
+		t.Fatalf("noop resume retained evicted data: status=%d body=%q", artifact.Status, artifact.Body)
 	}
 
 	ctx, cancel = context.WithTimeout(context.Background(), 15*time.Second)

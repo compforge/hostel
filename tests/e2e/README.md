@@ -16,7 +16,7 @@ The core profile covers health and capability reporting, asynchronous bed
 creation, inventory invariants, capacity, foreground/background execution,
 status/log/interrupt control, stateful and isolated sessions, the complete
 file/directory mutation round trip, file/command interoperability, cross-bed
-access, active-bed eviction safety, dormant luggage resume, purge, and the
+access, active-bed eviction safety, noop eviction starting fresh, purge, and the
 dorm/room/suite isolation resolution available on the host.
 
 By default, a host may honestly degrade an unavailable isolation request. A

@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="760" viewBox="0 0 1440 760" role="img" aria-labelledby="title desc">
+  <title id="title">Bed lifecycle and per-node occupied, resident, and pinned counters</title>
+  <desc id="desc">For a tenant Bed backed by S3, initializing counts toward occupied_beds. Ready Bed states also count toward resident_beds. Active or dirty Bed states are the pinned_beds subset. Store sync removes pinned membership, and idle expiry removes the Bed from the node.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#475569"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .title { font: 700 30px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .subtitle { font: 400 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .state-title { font: 700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #0f172a; }
+      .state-text { font: 400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #334155; }
+      .counter { font: 700 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .arrow-label { font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #334155; }
+      .note { font: 400 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .arrow { stroke: #475569; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1440" height="760" fill="#f8fafc"/>
+  <text x="60" y="58" class="title">Bed 状态变化与 Node 计数（S3 Store）</text>
+  <text x="60" y="88" class="subtitle">pinned_beds ⊆ resident_beds ⊆ occupied_beds；三项计数分别表达数据归属、Node 驻留和 max_beds 占位。</text>
+
+  <g transform="translate(785,35)">
+    <rect x="0" y="0" width="180" height="30" rx="15" fill="#e2e8f0" stroke="#64748b"/>
+    <text x="90" y="20" text-anchor="middle" class="counter" fill="#475569">occupied_beds</text>
+    <rect x="195" y="0" width="180" height="30" rx="15" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="285" y="20" text-anchor="middle" class="counter" fill="#1d4ed8">resident_beds</text>
+    <rect x="390" y="0" width="170" height="30" rx="15" fill="#ffedd5" stroke="#f97316"/>
+    <text x="475" y="20" text-anchor="middle" class="counter" fill="#c2410c">pinned_beds</text>
+  </g>
+
+  <!-- Row 1 -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="150" width="220" height="180" rx="16" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+    <text x="170" y="188" text-anchor="middle" class="state-title">不在当前 Node</text>
+    <text x="170" y="220" text-anchor="middle" class="state-text">不存在 / 已迁出</text>
+    <text x="170" y="250" text-anchor="middle" class="counter" fill="#64748b">occupied_beds +0</text>
+    <text x="170" y="276" text-anchor="middle" class="counter" fill="#64748b">resident_beds +0</text>
+    <text x="170" y="302" text-anchor="middle" class="counter" fill="#64748b">pinned_beds +0</text>
+  </g>
+
+  <path d="M280 240 H350" class="arrow"/>
+  <text x="315" y="225" text-anchor="middle" class="arrow-label">placement</text>
+
+  <g filter="url(#shadow)">
+    <rect x="360" y="150" width="240" height="180" rx="16" fill="#ffffff" stroke="#94a3b8" stroke-width="2" stroke-dasharray="7 5"/>
+    <text x="480" y="188" text-anchor="middle" class="state-title">initializing</text>
+    <text x="480" y="220" text-anchor="middle" class="state-text">Restore + BedFS 准备</text>
+    <rect x="390" y="238" width="180" height="28" rx="14" fill="#e2e8f0"/>
+    <text x="480" y="257" text-anchor="middle" class="counter" fill="#475569">occupied_beds +1</text>
+    <text x="480" y="284" text-anchor="middle" class="counter" fill="#64748b">resident_beds +0</text>
+    <text x="480" y="310" text-anchor="middle" class="counter" fill="#64748b">pinned_beds +0</text>
+  </g>
+
+  <path d="M600 240 H670" class="arrow"/>
+  <text x="635" y="225" text-anchor="middle" class="arrow-label">Ready</text>
+
+  <g filter="url(#shadow)">
+    <rect x="680" y="150" width="250" height="180" rx="16" fill="#dbeafe" stroke="#2563eb" stroke-width="3"/>
+    <text x="805" y="188" text-anchor="middle" class="state-title">resident · idle · clean</text>
+    <text x="805" y="220" text-anchor="middle" class="state-text">Ready，数据已在 S3</text>
+    <text x="805" y="250" text-anchor="middle" class="counter" fill="#475569">occupied_beds +1</text>
+    <text x="805" y="276" text-anchor="middle" class="counter" fill="#1d4ed8">resident_beds +1</text>
+    <text x="805" y="302" text-anchor="middle" class="counter" fill="#64748b">pinned_beds +0</text>
+  </g>
+
+  <path d="M930 240 H1000" class="arrow"/>
+  <text x="965" y="225" text-anchor="middle" class="arrow-label">start</text>
+
+  <g filter="url(#shadow)">
+    <rect x="1010" y="150" width="300" height="180" rx="16" fill="#dbeafe" stroke="#2563eb" stroke-width="3"/>
+    <rect x="1030" y="205" width="260" height="115" rx="12" fill="#ffedd5" stroke="#f97316" stroke-width="3"/>
+    <text x="1160" y="188" text-anchor="middle" class="state-title">resident · active</text>
+    <text x="1160" y="232" text-anchor="middle" class="state-text">operation inflight &gt; 0</text>
+    <text x="1160" y="258" text-anchor="middle" class="counter" fill="#475569">occupied_beds +1</text>
+    <text x="1160" y="282" text-anchor="middle" class="counter" fill="#1d4ed8">resident_beds +1</text>
+    <text x="1160" y="306" text-anchor="middle" class="counter" fill="#c2410c">pinned_beds +1</text>
+  </g>
+
+  <!-- Row transition -->
+  <path d="M1160 330 V405 H1040" class="arrow"/>
+  <text x="1195" y="375" class="arrow-label">operation finish</text>
+  <text x="1195" y="397" class="note">activity→idle，数据仍未同步</text>
+
+  <!-- Row 2 -->
+  <g filter="url(#shadow)">
+    <rect x="740" y="430" width="300" height="180" rx="16" fill="#dbeafe" stroke="#2563eb" stroke-width="3"/>
+    <rect x="760" y="485" width="260" height="112" rx="12" fill="#ffedd5" stroke="#f97316" stroke-width="3"/>
+    <text x="890" y="468" text-anchor="middle" class="state-title">resident · idle · dirty</text>
+    <text x="890" y="518" text-anchor="middle" class="state-text">inflight = 0，data_synced = false</text>
+    <text x="890" y="540" text-anchor="middle" class="counter" fill="#475569">occupied_beds +1</text>
+    <text x="890" y="563" text-anchor="middle" class="counter" fill="#1d4ed8">resident_beds +1</text>
+    <text x="890" y="586" text-anchor="middle" class="counter" fill="#c2410c">pinned_beds +1</text>
+  </g>
+
+  <path d="M740 520 H660" class="arrow"/>
+  <text x="700" y="495" text-anchor="middle" class="arrow-label">Store sync</text>
+  <text x="700" y="512" text-anchor="middle" class="arrow-label">success</text>
+
+  <g filter="url(#shadow)">
+    <rect x="390" y="430" width="270" height="180" rx="16" fill="#dbeafe" stroke="#2563eb" stroke-width="3"/>
+    <text x="525" y="468" text-anchor="middle" class="state-title">resident · idle · synced</text>
+    <text x="525" y="500" text-anchor="middle" class="state-text">data_synced = true</text>
+    <text x="525" y="530" text-anchor="middle" class="counter" fill="#475569">occupied_beds +1</text>
+    <text x="525" y="554" text-anchor="middle" class="counter" fill="#1d4ed8">resident_beds +1</text>
+    <text x="525" y="578" text-anchor="middle" class="counter" fill="#64748b">pinned_beds +0</text>
+  </g>
+
+  <path d="M390 520 H290" class="arrow"/>
+  <text x="340" y="488" text-anchor="middle" class="arrow-label">idle grace 到期</text>
+
+  <g filter="url(#shadow)">
+    <rect x="60" y="430" width="230" height="180" rx="16" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+    <text x="175" y="468" text-anchor="middle" class="state-title">已从 Node 移除</text>
+    <text x="175" y="500" text-anchor="middle" class="state-text">下次从 S3 Restore</text>
+    <text x="175" y="532" text-anchor="middle" class="counter" fill="#64748b">occupied_beds +0</text>
+    <text x="175" y="558" text-anchor="middle" class="counter" fill="#64748b">resident_beds +0</text>
+    <text x="175" y="584" text-anchor="middle" class="counter" fill="#64748b">pinned_beds +0</text>
+  </g>
+
+  <rect x="60" y="660" width="1320" height="62" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="82" y="687" class="note">occupied_beds = initializing + resident/evicting tenant Bed；resident_beds = resident/evicting；pinned_beds = 其中 inflight &gt; 0 或 data_synced = false。</text>
+  <text x="82" y="709" class="note">default Bed 不参与三项计数。occupied/max_beds 或 pinned/max_pinned_beds 达配置水位（默认 80%）即 bed_pressure。</text>
+</svg>

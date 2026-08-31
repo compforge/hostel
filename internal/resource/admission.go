@@ -59,9 +59,9 @@ type AdmissionReport struct {
 	SampledAt              time.Time
 }
 
-// Admitter answers whether carrier pressure allows another idle tenant bed to
-// become active. It deliberately does not count beds; Manager composes this
-// signal with max-pinned-beds under its lifecycle lock.
+// Admitter answers whether carrier pressure allows a new tenant Bed or an
+// unpinned resident to take work. It deliberately does not count Beds;
+// Manager owns the separate occupied/pinned capacity projections.
 type Admitter interface {
 	Check() AdmissionDecision
 	Report() AdmissionReport
