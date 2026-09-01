@@ -14,3 +14,7 @@ HTTP API surface — and is expected to diverge over time.
 Per Apache-2.0 §4, any file that incorporates OpenSandbox source verbatim
 retains the Apache-2.0 header together with OpenSandbox's copyright and
 attribution notices.
+
+The Hostel runtime image also aggregates Termux PRoot v5.1.107.92 as a
+separate GPL-2.0 program. Its license, Hostel modification notice, and complete
+corresponding modified source are installed under /usr/share/doc/proot/.

@@ -14,14 +14,16 @@
 
 # Multi-arch (linux/amd64, linux/arm64). hostel is pure Go, so the builder runs
 # NATIVELY on the build host ($BUILDPLATFORM) and cross-compiles for the target
-# arch ($TARGETARCH) — no QEMU emulation of the Go toolchain. The bwrap builder
-# and runtime stages run as $TARGETPLATFORM so native dependencies match it.
+# arch ($TARGETARCH) — no QEMU emulation of the Go toolchain. Native helper
+# builder and runtime stages run as $TARGETPLATFORM so dependencies match it.
 ARG BUILDPLATFORM
 ARG TARGETOS
 ARG TARGETARCH
 ARG BWRAP_VERSION=0.11.2
 ARG BWRAP_SHA256=69abc30005d2186baf7737feacd8da35633b93cf5af38838ecff17c5f8e924f6
 ARG PATHSHIM_REV=8bcc34ef0aeda6514acc3fd8c4563522745b2e7c
+ARG PROOT_VERSION=5.1.107.92
+ARG PROOT_REV=7266fb3e8516535682f5a9c8f3a7e70f6506eddb
 
 # --- build stage: static, pure-Go hostel binary --------------------------
 FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
@@ -62,6 +64,26 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --locked \
     && cp target/release/pathshim /tmp/pathshim
 
+# --- PRoot stage: preferred ptrace workspace view for older kernels -----
+FROM debian:bookworm-slim AS proot-builder
+ARG PROOT_VERSION
+ARG PROOT_REV
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates git libtalloc-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src/proot
+RUN git init \
+    && git remote add origin https://github.com/termux/proot.git \
+    && git fetch --depth 1 origin "refs/tags/v${PROOT_VERSION}:refs/tags/v${PROOT_VERSION}" \
+    && git checkout --detach "v${PROOT_VERSION}" \
+    && test "$(git rev-parse HEAD)" = "${PROOT_REV}"
+COPY deploy/docker/proot-64bit-only.patch /tmp/proot-64bit-only.patch
+COPY deploy/docker/proot-HOSTEL-MODIFICATIONS HOSTEL-MODIFICATIONS
+RUN git apply /tmp/proot-64bit-only.patch \
+    && tar --exclude=.git -czf /tmp/proot-source.tar.gz . \
+    && make -C src -j"$(nproc)" \
+    && install -Dm755 src/proot /tmp/proot
+
 # --- bubblewrap stage: pinned non-setuid suite backend -------------------
 FROM debian:bookworm-slim AS bwrap-builder
 ARG BWRAP_VERSION
@@ -98,7 +120,7 @@ FROM debian:bookworm-slim
 ARG WITH_CHROMIUM=true
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bash ca-certificates libcap2 tini \
+        bash ca-certificates libcap2 libtalloc2 tini unzip \
     && if [ "$WITH_CHROMIUM" = "true" ]; then \
         apt-get install -y --no-install-recommends chromium fonts-liberation; \
     fi \
@@ -111,6 +133,12 @@ RUN bwrap --version
 COPY --from=pathshim-builder /tmp/pathshim /usr/bin/pathshim
 COPY --from=pathshim-builder /src/pathshim/LICENSE /usr/share/doc/pathshim/copyright
 RUN pathshim --version
+
+COPY --from=proot-builder /tmp/proot /usr/bin/proot
+COPY --from=proot-builder /src/proot/COPYING /usr/share/doc/proot/copyright
+COPY --from=proot-builder /tmp/proot-source.tar.gz /usr/share/doc/proot/source.tar.gz
+COPY --from=proot-builder /src/proot/HOSTEL-MODIFICATIONS /usr/share/doc/proot/HOSTEL-MODIFICATIONS
+RUN proot --version
 
 # /usr/local is the carrier-wide mutable software environment exposed to beds.
 # Keep the daemon itself in the read-only system image so a package install
@@ -133,6 +161,7 @@ ENV PYTHONUSERBASE=/usr/local \
     HOSTEL_WORKSPACE_ROOT=/workspace \
     HOSTEL_ISOLATION=suite \
     HOSTEL_PATHSHIM=/usr/bin/pathshim \
+    HOSTEL_PROOT=/usr/bin/proot \
     HOSTEL_CHROMIUM_PATH=/usr/bin/chromium
 # No VOLUME: it would bake the default path in at build time and silently
 # stop applying when HOSTEL_WORKSPACE_ROOT is overridden. To keep beds across

@@ -19,6 +19,6 @@ package isolation
 // newBwrap on non-Linux falls back to direct: bubblewrap is Linux-only, and
 // hostel's dev target (macOS) has no namespaces. Keeps `--isolation suite`
 // from failing to boot during local development.
-func newBwrap(facts HostFacts, _ string) (Isolator, ProbeReport) {
+func newBwrap(facts HostFacts, _ string) (Boundary, ProbeReport) {
 	return direct{}, ProbeReport{ConfiguredPath: "bwrap", ResolvedPath: facts.BwrapPath, Error: facts.bwrapLookupError}
 }

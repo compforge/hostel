@@ -5,7 +5,7 @@
 ## 一、理念
 
 1. **信任模型**：hostel 面向可信 / 半可信代码，多 bed 挤一个进程/容器。在这个模型里，**可读即泄漏**——bed A 读到 bed B 的 workspace，和写坏它一样是隔离失败。数据隔离是多租户成立的底线，比 syscall 加固更优先。
-2. **bed 的全部数据 = 一个目录**：`bed_home = <workspace-root>/<bedID>/data` 是 bed 的统一数据家目录——客户端视角的 `/`，bed 表现得像独占了整个 pod 文件系统。OpenSandbox workspace 是它下面的真实子目录 `bed_home/workspace`，不是 `bed_home` 的别名。隔离方案只需回答一个问题：**如何让 bed 的文件视图按当前房型兑现访问边界**。持久化（S3 快照/恢复）建立在同一个目录之上，见 `store.md`。
+2. **bed 的全部持久数据 = 一个目录**：`bed_home = <workspace-root>/<bedID>/data` 是 BedFS 的统一数据家目录——file API 客户端视角的 `/`。OpenSandbox workspace 是它下面的真实子目录 `bed_home/workspace`，不是 `bed_home` 的别名；进程侧当前只承诺每个 Bed 独占 Pod 的 `/workspace`，不承诺虚拟化整个根。持久化（S3 快照/恢复）建立在同一个目录之上，见 `store.md`。
 3. **路径映射是三档共同的基础契约，不是高档房型的附加能力**：请求先由 `X-Hostel-Bed` 确定 bed，再把 file API、cwd 等显式路径映射到该 bed 的 `bed_home`；hostel 不靠路径判断请求属于哪个 bed。`dorm / room / suite` 只决定映射后的数据能否被兄弟 bed 看见、访问，不得改变同一个客户端路径落到哪个 bed-local 位置。
 4. **两套进程路径语义应当收敛**：客户端的任意绝对路径都按同一条规则 rebase 到 `bed_home` 下（`/workspace/x` 也不例外——它落到真实子目录 `bed_home/workspace/x`），映射是**单射**，回显因此天然对称。底层可以按房型使用宿主真实路径、Landlock/UID 或 mount namespace，但对调用方暴露的路径结果必须一致；不能因为 room/direct 没有 `/workspace` bind，就拒绝本可安全映射到 `bed_home` 的路径。
 5. **软件环境默认归 carrier 共享，隔离由真实问题驱动**：hostel 的首要目标是用一份运行时承载多个 bed，不为尚未出现的版本冲突预建 per-bed 软件目录、环境引用、manifest 或 GC。系统软件、可执行文件以及全局安装的 Python/Node 包在模型上都属于 carrier；当 carrier 提供全局安装能力时，安装结果对其中所有 bed 可见。确有版本冲突时，再由对应 bed 在自己的 `bed_home` 内使用 venv、conda、本地 `node_modules` 等生态原生方案局部隔离；需要独占完整系统环境时交给 pod 等强档 runtime。这个取舍只放宽共享软件环境，不改变 workspace、用户文件和程序产物仍须按 bed 隔离的底线。
@@ -81,12 +81,12 @@ bed 已由 `X-Hostel-Bed` 选定后，所有房型共用同一套客户端路径
 `/workspace` 的规范挂载是 suite 实现这份契约的一种**进程视图机制**，不是路径映射本身：
 
 - suite 把完整 `bed_home` bind 到机制私有入口，并把 `bed_home/workspace` 额外 bind 到 `/workspace`；因此 `/`、`/tmp/job` 与 `/workspace` 等结构化 cwd 都有进程视图，workspace 内仍保持 shell 与 file API 同名；
-- dorm/room 由结构化 cwd 选择 BedFS carrier 路径；pathshim 可用时再把 workspace 子树尽力投影成 `/workspace`，不可用时保持 Carrier 路径；
+- dorm/room 由结构化 cwd 选择 BedFS carrier 路径；启动时独立探测满足运行前提的 PRoot/pathshim，再按 PRoot → pathshim → Carrier 选择 workspace 视图；
 - `capabilities.workspace_mount` 只表示是否存在 `/workspace` 真实挂载，不表示是否支持 bed-local 路径映射——后者是三档必备能力，不应作为可选 capability。
 
 路径字段和命令文本要分开处理：hostel 可以直接解析 file API path、cwd 等结构化字段，但不能可靠改写任意 shell command 字符串。如果要求命令里的绝对字面量（如 `cat /tmp/workspace/job/a.txt`）也命中同一 bed-local 文件，就必须由进程文件系统视图提供对应投影或 bind，不能靠字符串替换碰运气。
 
-**一致性的诚实边界**：跨隔离级别的完整路径一致性仍不是已兑现保证。Suite 通过 mount namespace 真实提供完整进程视图；Dorm/Room 在启动探测通过时使用 pathshim，仅尽力让 `/workspace` 与 Bed workspace 同义，映射外的 `/tmp`、`/abc` 等绝对字面量仍落在 Carrier 进程视图。结构化字段（path/cwd）三档严格一致：新进程由 Isolator 投影，已有 session 由持有 Executor View 的 Shell 投影并以独立控制步骤切换，不改写用户命令文本。独占 Dorm carrier 还可显式允许只读 file API 在 BedFS 路径不存在时回读进程绝对路径，让调用方取回写偏的产物；这两种 best effort 都不改变 isolation level，也不提供安全边界。
+**一致性的诚实边界**：跨隔离级别的完整路径一致性仍不是已兑现保证。Suite 通过 mount namespace 真实提供完整进程视图；Dorm/Room 优先使用探测通过、路径覆盖更完整的 PRoot，ptrace 不可用时使用 pathshim，仅尽力让 `/workspace` 与 Bed workspace 同义，映射外的 `/tmp`、`/abc` 等绝对字面量仍落在 Carrier 进程视图。结构化字段（path/cwd）三档严格一致：新进程由 Isolator 投影，已有 session 由持有 Executor View 的 Shell 投影并以独立控制步骤切换，不改写用户命令文本。独占 Dorm carrier 还可显式允许只读 file API 在 BedFS 路径不存在时回读进程绝对路径，让调用方取回写偏的产物；这些 best effort 都不改变 isolation level，也不提供安全边界。
 
 ### 3. workspace-root 外部可配
 
@@ -134,9 +134,9 @@ Hostel 自身自动配置的 S3、OTEL 等设施变量也全部使用 `HOSTEL_*`
 
 ## 实现状态
 
-已实现：`internal/isolation/` 在 boot 时做 bwrap 全形态 smoke，并通过所选隔离机制执行 pathshim probe；负责 namespace/遮蔽、carrier 共享 `/usr/local`、BedFS View 与诚实降级。`internal/bed/env.go` 统一负责三档进程环境。单测覆盖 mount/workspace view、动态 cwd、probe fallback 与包装顺序；**Linux 真机验证已通过**（amd64 与 arm64，kernel 5.15：pathshim bind-view、dorm `/workspace` cwd、file API 互通、映射内 ELF 执行、session/signal，以及 suite bwrap 均 PASS；amd64 镜像构建与镜像核心 E2E PASS）。
+已实现：`internal/isolation/` 将安全 Boundary 与 workspace backend 分别解析后组合成 Runtime。Boundary 负责 bwrap/landlock/uid/direct 的隔离与诚实降级；workspace backend 通过所选 Boundary 探测满足运行前提的 pathshim / PRoot，再按能力优先级选择进程视图。`internal/bed/env.go` 统一负责三档进程环境。单测覆盖 mount/workspace view、动态 cwd、probe fallback 与固定包装顺序；Linux 真机历史验证结果只覆盖 pathshim 与 bwrap，PRoot 的实际结果以本版本 E2E 记录为准。
 
-**共同路径契约的兑现状态**：Bed 持有的 `bedfs.FS` 已把 bed_home、workspace、client/carrier/Executor 三类路径落成一个领域对象——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对；三档的结构化 cwd 由拥有进程 View 的启动层处理：新进程是 Isolator，常驻 session 是 Shell，二者都不改写用户命令文本，suite 也可访问 workspace 外的 BedFS cwd。daemon mutation 以 `bed_home` 目录句柄执行；pathshim 尽力补齐 dorm/room 的 `/workspace` 字面量，其他命令绝对路径仍不承诺跨房型统一。
+**共同路径契约的兑现状态**：Bed 持有的 `bedfs.FS` 已把 bed_home、workspace、client/carrier/Executor 三类路径落成一个领域对象——任意客户端绝对路径单射落到 `bed_home` 下、回显对称、相对路径 workspace 相对；三档的结构化 cwd 由拥有进程 View 的启动层处理：新进程是 Isolator，常驻 session 是 Shell，二者都不改写用户命令文本，suite 也可访问 workspace 外的 BedFS cwd。daemon mutation 以 `bed_home` 目录句柄执行；pathshim / PRoot 尽力补齐 dorm/room 的 `/workspace` 字面量，其他命令绝对路径仍不承诺跨房型统一。
 
 ## 隔离分档模型：青年旅社房型（档 / 机制 / 上限 / 请求）
 
@@ -169,7 +169,7 @@ effective = min(requested, ceiling)
 
 无论住哪种房型，前台都先按 bed header 把客人的路径送到同一个 `bed_home`；表中的高低只描述兄弟 bed 能否看见、进入或读写该位置。路径映射不是 Level，也不参与 `effective = min(requested, ceiling)` 的降级。
 
-**Bedbox 给 caller 的北向契约始终是“这个 Bed 独占整个 Pod”**：caller 可以把 `/`、`/workspace`、`/tmp` 等路径都理解成自己的机器。BedFS 负责稳定表达并映射这份契约，不能因为 effective isolation 降低就改变同一个 client path 的含义。三档差异只在这份独占感被底层兑现到什么程度：suite 真实兑现，room 以访问控制部分兑现，dorm 只保留逻辑组织与尽力兼容；capabilities/healthz 必须把实际档位如实告诉上层。
+**Bedbox 给 caller 的北向进程契约始终是“这个 Bed 独占 Pod 的 `/workspace`”**：同一 carrier 内每个 Bed 都应把字面 `/workspace` 看成自己的工作区。BedFS 另外负责稳定映射 file API 与 cwd 等结构化路径，不能因为 effective isolation 降低就改变同一个 client path 的含义。`/tmp`、`/abc` 等其他 opaque 命令绝对路径当前不属于该承诺；三档差异只在 `/workspace` 独占感和跨 Bed 访问边界被兑现到什么程度，capabilities/healthz 必须如实上报。
 
 三档共享同一套 BedFS 数据模型，对外保证逐级增强，但底层机制并非逐层叠加。Dorm 是共同的数据底座：先用 BedFS 把每个 Bed 的数据、结构化 path/cwd 和持久化身份组织正确；即使环境不给任何隔离权限，这些能做的收口仍然要做。Room 沿用 Dorm 的共享 mount view，并在其上增加 Landlock/UID 访问控制。Suite 则切换到私有 mount view，是一条不同的实现路径，不再依赖 Room 的权限拦截。
 
@@ -241,7 +241,7 @@ Hostel carrier 本身不调用 Kubernetes API，建议 `automountServiceAccountT
 - `--isolation dorm | room | suite | auto`，**默认 `auto`**（顶格取 ceiling）。取值是**房型（档）**，不是机制名（`direct/bwrap` 旧值迁移，hostel 无真实用户、零成本）。
 - 机制不进配置词汇；真需要强制才加 `--isolation-mechanism`（少用）。
 - capabilities / healthz 报四元组：`requested / effective / ceiling / mechanism`，调用方一目了然。
-- `workspace_mount` 仅表示 suite 的真实 mount；`workspace_view={mode,available,reason}` 独立报告 `mount | pathshim | carrier`，禁止把 pathshim 的路径兼容能力算成更高隔离档。
+- `workspace_mount` 仅表示 suite 的真实 mount；`workspace_view={mode,available,reason}` 独立报告 `mount | pathshim | proot | carrier`。`available` 表示规范 `/workspace` 是否落到当前 Bed，carrier 恒为 false；禁止把 user-space helper 的路径兼容能力算成更高隔离档。
 
 ### room 档实现（landlock，调研结论）
 

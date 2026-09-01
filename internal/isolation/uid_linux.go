@@ -75,7 +75,7 @@ type uidIso struct {
 	self string // hostel binary, re-execed as the uid-dropper
 }
 
-func newUID(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
+func newUID(facts HostFacts, workspaceRoot string) (Boundary, ProbeReport) {
 	report := ProbeReport{}
 	self, err := os.Executable()
 	if err != nil {
@@ -176,11 +176,9 @@ func uidSmoke(self, workspaceRoot string) ProbeReport {
 	return report
 }
 
-func (u *uidIso) Name() string                 { return "uid" }
-func (u *uidIso) Level() Level                 { return Room }
-func (u *uidIso) Available() bool              { return true } // only constructed when the smoke passed
-func (u *uidIso) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
-func (u *uidIso) WorkspaceMounted() bool       { return false }
+func (u *uidIso) Name() string    { return "uid" }
+func (u *uidIso) Level() Level    { return Room }
+func (u *uidIso) Available() bool { return true } // only constructed when the smoke passed
 
 func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	// Prefix `hostel __asuser <uid> <bed_home> --` so the child drops

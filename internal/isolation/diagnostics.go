@@ -148,3 +148,7 @@ func runExecProbe(cmd *exec.Cmd) ProbeReport {
 func (p ProbeReport) failed() bool {
 	return p.Error != "" || (p.ExitCode != nil && *p.ExitCode != 0)
 }
+
+func (p ProbeReport) succeeded() bool {
+	return p.Attempted && p.Error == "" && p.ExitCode != nil && *p.ExitCode == 0
+}

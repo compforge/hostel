@@ -37,6 +37,19 @@ func TestPathshimConfig(t *testing.T) {
 	}
 }
 
+func TestProotConfig(t *testing.T) {
+	if c := Load(nil); c.ProotPath != "proot" {
+		t.Fatalf("default proot = %q, want PATH lookup", c.ProotPath)
+	}
+	t.Setenv("HOSTEL_PROOT", "/opt/hostel/proot")
+	if c := Load(nil); c.ProotPath != "/opt/hostel/proot" {
+		t.Fatalf("env proot = %q", c.ProotPath)
+	}
+	if c := Load([]string{"-proot", ""}); c.ProotPath != "" {
+		t.Fatalf("disabled proot = %q", c.ProotPath)
+	}
+}
+
 func TestDormReadFallbackRootIsExplicit(t *testing.T) {
 	if c := Load(nil); c.DormReadFallbackRoot != "" {
 		t.Fatalf("default dorm read fallback root = %q, want disabled", c.DormReadFallbackRoot)

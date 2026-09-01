@@ -363,7 +363,7 @@ func resourceAdmissionView(report resource.AdmissionReport) gin.H {
 // mechanism realizing it, the requested wish, and the environment ceiling
 // (docs/data.md). Falls back gracefully if the isolator predates the
 // Report interface.
-func isolationView(iso isolation.Isolator) gin.H {
+func isolationView(iso isolation.Runtime) gin.H {
 	v := gin.H{"level": iso.Level().String(), "mechanism": iso.Name()}
 	if r, ok := iso.(isolation.Report); ok {
 		v["requested"] = r.Requested().String()
@@ -377,7 +377,7 @@ func isolationView(iso isolation.Isolator) gin.H {
 	return v
 }
 
-func workspaceView(iso isolation.Isolator) isolation.WorkspaceViewReport {
+func workspaceView(iso isolation.Runtime) isolation.WorkspaceViewReport {
 	if report, ok := iso.(isolation.Report); ok {
 		return report.WorkspaceView()
 	}
@@ -385,5 +385,5 @@ func workspaceView(iso isolation.Isolator) isolation.WorkspaceViewReport {
 	if iso.WorkspaceMounted() {
 		mode = "mount"
 	}
-	return isolation.WorkspaceViewReport{Mode: mode, Available: true}
+	return isolation.WorkspaceViewReport{Mode: mode, Available: mode == "mount"}
 }

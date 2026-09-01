@@ -61,13 +61,13 @@ bed 的记账组，CPU 数量和总内存仍表示共享 carrier 容量；当前
 时保留 execd 兼容的实例级 fallback，`/healthz` 和 capabilities 的 `resource_accounting`
 会如实报告实际 backend。
 
-路径语义由 Bed 持有的 **BedFS** 统一负责：客户端 `/` 是 `bed_home`，`/workspace/...`、`/tmp/...` 等任意绝对路径都单射 rebase 到该 BedFS，相对路径以 workspace 为基准；file API 的 `path` 和命令 `cwd` 等结构化字段在所有隔离档一致，`cwd: "/"` 即 bed_home。`bwrap` 下完整 bed_home 有内部 Executor 投影，workspace 另以规范路径 `/workspace` 挂载；dorm/room 启动时探测 pathshim，可用时尽力提供 `/workspace` 进程视图，其他绝对路径仍保持 Carrier 语义。`workspace_mount` 只表示 suite 的真实挂载，命令依赖字面 `/workspace` 时应检查 `workspace_view`；pathshim 是兼容层，不是安全边界。详见 `docs/filesystem.md`。
+路径语义由 Bed 持有的 **BedFS** 统一负责：客户端 `/` 是 `bed_home`，`/workspace/...`、`/tmp/...` 等任意绝对路径都单射 rebase 到该 BedFS，相对路径以 workspace 为基准；file API 的 `path` 和命令 `cwd` 等结构化字段在所有隔离档一致，`cwd: "/"` 即 bed_home。`bwrap` 下完整 bed_home 有内部 Executor 投影，workspace 另以规范路径 `/workspace` 挂载；dorm/room 启动时独立探测满足运行前提的 helper，再按 PRoot、pathshim、Carrier 选择 `/workspace` 进程视图。PRoot 对 `/workspace` 路径 syscall 的覆盖更完整，pathshim 是无需 ptrace 的次选；两者都不改变隔离档，也不虚拟化其他命令绝对路径。`workspace_mount` 只表示 suite 的真实挂载；`workspace_view.available` 表示规范 `/workspace` 是否落到当前 Bed，因此 Carrier 模式恒为 false，但命令仍可通过 Carrier 路径运行。详见 `docs/filesystem.md`。
 
 ## 隔离
 
 数据隔离按**青年旅社房型**分档，`--isolation dorm|room|suite|auto`（默认 auto=环境顶格），`effective=min(请求, env 上限)`，超上限诚实降级：
 
-- `dorm`（通铺）：无强制隔离（=direct，全平台）；pathshim 只会尽力补 `/workspace` 进程视图；
+- `dorm`（通铺）：无强制隔离（=direct，全平台）；PRoot 或无需 ptrace 的 pathshim 次选只会尽力补 `/workspace` 进程视图；
 - `room`（单间，厕所公用）：landlock 内核强制——兄弟数据不可访问但可见、`/tmp`/系统路径共享，无需任何 capability（Linux ≥5.13）；
 - `suite`（套房，全私有）：bwrap mount ns——兄弟不可见 + 私有 `/tmp` + `/workspace` 规范挂载（需 userns 或 CAP_SYS_ADMIN）。
 
@@ -95,7 +95,7 @@ POST /v1/beds/:id/browser/close
 
 ## 配置
 
-Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isolation` / `--pathshim` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` / `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` / `--executor` / `--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--s3-region` / `--persist-interval` / `--luggage-high-bytes` / `--luggage-low-bytes` / `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` / `--enable-tracing`。
+Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isolation` / `--pathshim` / `--proot` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` / `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` / `--executor` / `--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--s3-region` / `--persist-interval` / `--luggage-high-bytes` / `--luggage-low-bytes` / `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` / `--enable-tracing`。
 
 OpenTelemetry Trace 默认关闭，通过 `HOSTEL_ENABLE_TRACING=true`（或 `--enable-tracing`）启用；出口使用 `HOSTEL_OTEL_TRACES_GRPC_ENDPOINT` 或 `HOSTEL_OTEL_TRACES_HTTP_ENDPOINT`，两者同时配置时优先 gRPC。
 
@@ -127,7 +127,7 @@ carrier 资源准入在数量限制之外读取容器父 cgroup：近期 CPU 或
 
 ## 容器镜像
 
-`deploy/docker/Dockerfile` 多阶段构建：静态纯 Go 二进制 + `debian-slim` 运行时，内置固定 revision 的 **pathshim**（dorm/room `/workspace` 兼容视图）、固定版本且非 setuid 的 **bubblewrap**（suite 档）与可选 **chromium**（浏览器 amenity）。hostel 启动时 probe，能力不可用就诚实降级，受限 Pod 照常服务。
+`deploy/docker/Dockerfile` 多阶段构建：静态纯 Go 二进制 + `debian-slim` 运行时，内置固定版本的 **PRoot**（dorm/room `/workspace` 首选兼容视图）、固定 revision 的 **pathshim**（无需 ptrace 的次选）、固定版本且非 setuid 的 **bubblewrap**（suite 档）与可选 **chromium**（浏览器 amenity）。hostel 启动时 probe，能力不可用就诚实降级，受限 Pod 照常服务。
 
 ```bash
 make image                     # 完整镜像(bwrap + chromium),当前架构
@@ -136,9 +136,9 @@ make image-multiarch IMAGE=repo/hostel:tag   # linux/amd64 + arm64,推到镜像�
 docker run -p 8872:8872 hostel:dev
 ```
 
-镜像多架构（`linux/amd64`、`linux/arm64`）：Go builder 原生交叉编译，固定 revision 的 pathshim、固定版本的 bwrap 与 Debian runtime 按目标架构构建，使原生依赖与镜像架构一致。`make image-multiarch` 需要 `docker buildx` 且直接 push（多平台镜像无法 load 进本地 docker）。
+镜像多架构（`linux/amd64`、`linux/arm64`）：Go builder 原生交叉编译，固定 revision 的 pathshim、PRoot、bwrap 与 Debian runtime 按目标架构构建，使原生依赖与镜像架构一致。`make image-multiarch` 需要 `docker buildx` 且直接 push（多平台镜像无法 load 进本地 docker）。
 
-容器内默认值（均可用 `HOSTEL_*` 覆盖）：`--isolation suite`、`--workspace-root /workspace`、`--pathshim /usr/bin/pathshim`、`--chromium-path /usr/bin/chromium`。`tini` 作 PID 1；`HEALTHCHECK` 用 `hostel --health`。bwrap 是否真隔离取决于 Pod 是否允许 user namespace/mount；不可用时如实降档，pathshim 也只在自身探测通过后启用。镜像默认以 root 运行，部署时用收敛 capability 的 `securityContext` 硬化。
+容器内默认值（均可用 `HOSTEL_*` 覆盖）：`--isolation suite`、`--workspace-root /workspace`、`--pathshim /usr/bin/pathshim`、`--proot /usr/bin/proot`、`--chromium-path /usr/bin/chromium`。`tini` 作 PID 1；`HEALTHCHECK` 用 `hostel --health`。bwrap 是否真隔离取决于 Pod 是否允许 user namespace/mount；不可用时如实降档。Hostel 独立记录 pathshim 与 PRoot 的 probe，在 PRoot 的 ptrace 与 bind-view smoke 都通过时优先选 PRoot，否则选可用的 pathshim。镜像默认以 root 运行，部署时用收敛 capability 的 `securityContext` 硬化。
 
 ## 许可与致谢
 

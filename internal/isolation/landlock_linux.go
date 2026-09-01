@@ -42,7 +42,7 @@ type landlock struct {
 	self string // hostel binary path, re-execed as the confiner
 }
 
-func newLandlock(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
+func newLandlock(facts HostFacts, workspaceRoot string) (Boundary, ProbeReport) {
 	report := ProbeReport{}
 	// Landlock ABI ≥ 1 means the kernel exposes filesystem restrictions (a custom
 	// kernel without CONFIG_SECURITY_LANDLOCK reports 0 — the boot probe already
@@ -117,11 +117,9 @@ func landlockSmoke(self, workspaceRoot string) ProbeReport {
 	return report
 }
 
-func (l *landlock) Name() string                 { return "landlock" }
-func (l *landlock) Level() Level                 { return Room }
-func (l *landlock) Available() bool              { return true } // only constructed when ABI≥1
-func (l *landlock) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
-func (l *landlock) WorkspaceMounted() bool       { return false }
+func (l *landlock) Name() string    { return "landlock" }
+func (l *landlock) Level() Level    { return Room }
+func (l *landlock) Available() bool { return true } // only constructed when ABI≥1
 
 func (l *landlock) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	// Prefix `hostel __confine <bed_home> --` before the user command,

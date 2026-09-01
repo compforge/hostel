@@ -76,7 +76,7 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 	}
 }
 
-func TestDormPathshimProbeFallbackDoesNotEscapeBedFS(t *testing.T) {
+func TestDormPathshimFailureUsesProotWithoutEscapingBedFS(t *testing.T) {
 	if strings.TrimSpace(os.Getenv(imageEnv)) == "" {
 		t.Skip("requires image mode so the test owns the carrier /workspace root")
 	}
@@ -84,6 +84,7 @@ func TestDormPathshimProbeFallbackDoesNotEscapeBedFS(t *testing.T) {
 	target := startTarget(t, targetOptions{
 		isolation:        "dorm",
 		maxBeds:          4,
+		allowPtrace:      true,
 		pathshimHostPath: unavailablePathshim(t),
 		workspaceRoot:    "/workspace",
 	})
@@ -95,11 +96,10 @@ func TestDormPathshimProbeFallbackDoesNotEscapeBedFS(t *testing.T) {
 	if err != nil || result.Status != http.StatusOK {
 		t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
 	}
-	if health.Isolation.Effective != "dorm" || health.WorkspaceView.Mode != "carrier" || health.WorkspaceView.Available ||
-		!strings.Contains(health.WorkspaceView.Reason, "Invalid argument (os error 22)") {
-		t.Fatalf("fault injection did not activate dorm carrier fallback: isolation=%+v workspace_view=%+v", health.Isolation, health.WorkspaceView)
+	if health.Isolation.Effective != "dorm" || health.WorkspaceView.Mode != "proot" || !health.WorkspaceView.Available {
+		t.Fatalf("fault injection did not activate dorm PRoot fallback: isolation=%+v workspace_view=%+v", health.Isolation, health.WorkspaceView)
 	}
-	t.Logf("fault active: workspace_view=%s available=%t reason=%s", health.WorkspaceView.Mode, health.WorkspaceView.Available, health.WorkspaceView.Reason)
+	t.Logf("fault active: workspace_view=%s available=%t", health.WorkspaceView.Mode, health.WorkspaceView.Available)
 
 	type bedCase struct {
 		id       string
@@ -118,22 +118,17 @@ func TestDormPathshimProbeFallbackDoesNotEscapeBedFS(t *testing.T) {
 			return b.Status.Phase == "resident" && b.Status.Readiness.Ready
 		}, "resident and ready")
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		directory, err := c.json(ctx, "POST", "/directories", bedID, map[string]string{"path": "/tmp"}, nil)
-		cancel()
-		if err != nil || directory.Status != http.StatusOK {
-			t.Fatalf("create temp directory for %s: status=%d err=%v body=%s", bedID, directory.Status, err, directory.Body)
-		}
-		must2xx(t, "upload fallback archive", c.upload(t, bedID, "/tmp/resources.zip", concurrentReplaceArchive(t, expected)))
 		beds = append(beds, bedCase{id: bedID, expected: expected})
 	}
 
 	for i := range beds {
-		// The relative source remains Bed-local through cwd resolution. Only the
-		// absolute destination escapes when /workspace is left as a carrier path.
+		must2xx(t, "upload fallback archive", c.upload(t, beds[i].id, "/workspace/.fallback-resources.zip", concurrentReplaceArchive(t, beds[i].expected)))
+
+		// Exercise the customer's replace-heavy workload through PRoot, including
+		// child exec, rename/unlink, repeated overwrite, and concurrent Beds.
 		run, response := c.command(t, beds[i].id, map[string]any{
-			"command":    "mkdir -p /workspace/skills; i=0; while [ \"$i\" -lt 25 ]; do unzip -oq resources.zip -d /workspace/skills; i=$((i + 1)); done",
-			"cwd":        "/tmp",
+			"command":    "mkdir -p /workspace/skills; i=0; while [ \"$i\" -lt 25 ]; do unzip -oq /workspace/.fallback-resources.zip -d /workspace/skills; i=$((i + 1)); done",
+			"cwd":        "/workspace",
 			"background": true,
 			"timeout":    60_000,
 		})
@@ -148,16 +143,18 @@ func TestDormPathshimProbeFallbackDoesNotEscapeBedFS(t *testing.T) {
 		finished := c.waitExecution(t, bed.execID, func(status executionStatusView) bool {
 			return !status.Running && status.Result != nil
 		}, "finish fallback unzip")
-		if finished.Result.Process.Kind == "exited" && finished.Result.Process.ExitCode != nil && *finished.Result.Process.ExitCode == 0 {
-			artifact := c.download(t, bed.id, "/workspace/skills/stock-analysis-router/references/dimension-tools.md")
-			if artifact.Status != http.StatusOK || string(artifact.Body) != bed.expected {
-				t.Errorf("successful fallback command escaped BedFS for %s: status=%d body=%q, want %q", bed.id, artifact.Status, artifact.Body, bed.expected)
-			}
+		if finished.Result.Process.Kind != "exited" || finished.Result.Process.ExitCode == nil || *finished.Result.Process.ExitCode != 0 {
+			t.Errorf("PRoot fallback command failed for %s: %+v", bed.id, finished.Result.Process)
+			continue
+		}
+		artifact := c.download(t, bed.id, "/workspace/skills/stock-analysis-router/references/dimension-tools.md")
+		if artifact.Status != http.StatusOK || string(artifact.Body) != bed.expected {
+			t.Errorf("successful PRoot fallback command escaped BedFS for %s: status=%d body=%q, want %q", bed.id, artifact.Status, artifact.Body, bed.expected)
 		}
 	}
 
 	if inventory := c.inventory(t); hasBed(inventory, "skills") {
-		t.Fatalf("pathshim invocation fallback created carrier-root ghost Bed %q: %+v", "skills", inventory.Beds)
+		t.Fatalf("PRoot fallback created carrier-root ghost Bed %q: %+v", "skills", inventory.Beds)
 	}
 }
 
@@ -195,12 +192,12 @@ func requireSupportedArchiveReplaceView(t *testing.T, c *apiClient, requested st
 		t.Skipf("host capability unavailable: requested isolation %s degraded to %s (ceiling=%s mechanism=%s)", requested, health.Isolation.Effective, health.Isolation.Ceiling, health.Isolation.Mechanism)
 	}
 
-	wantView := "pathshim"
 	if requested == "suite" {
-		wantView = "mount"
-	}
-	if health.WorkspaceView.Mode != wantView || !health.WorkspaceView.Available {
-		t.Fatalf("%s isolation is effective, but workspace implementation = %+v, want available %s", requested, health.WorkspaceView, wantView)
+		if health.WorkspaceView.Mode != "mount" || !health.WorkspaceView.Available {
+			t.Fatalf("%s isolation is effective, but workspace implementation = %+v, want available mount", requested, health.WorkspaceView)
+		}
+	} else if (health.WorkspaceView.Mode != "pathshim" && health.WorkspaceView.Mode != "proot") || !health.WorkspaceView.Available {
+		t.Fatalf("%s isolation is effective, but workspace implementation = %+v, want an available user-space view", requested, health.WorkspaceView)
 	}
 	return health
 }

@@ -76,9 +76,9 @@ func TestPathshimProbeFailureFallsBackToCarrierView(t *testing.T) {
 func TestPathshimRunsInsideSelectedRoomMechanism(t *testing.T) {
 	root := t.TempDir()
 	fs := newTestFS(t, root)
-	view := &pathshimView{base: prefixRoom{}, path: "/usr/bin/pathshim"}
+	runtime := &resolved{boundary: prefixRoom{}, workspace: &pathshimView{path: "/usr/bin/pathshim"}}
 	cmd := exec.Command("/bin/sh", "-c", "true")
-	if err := view.Wrap(cmd, fs, ""); err != nil {
+	if err := runtime.Wrap(cmd, fs, ""); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"/usr/bin/room-helper", "--", "/usr/bin/pathshim", "--quiet"}
@@ -89,11 +89,9 @@ func TestPathshimRunsInsideSelectedRoomMechanism(t *testing.T) {
 
 type prefixRoom struct{}
 
-func (prefixRoom) Name() string                 { return "landlock" }
-func (prefixRoom) Level() Level                 { return Room }
-func (prefixRoom) Available() bool              { return true }
-func (prefixRoom) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
-func (prefixRoom) WorkspaceMounted() bool       { return false }
+func (prefixRoom) Name() string    { return "landlock" }
+func (prefixRoom) Level() Level    { return Room }
+func (prefixRoom) Available() bool { return true }
 func (prefixRoom) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	cmd.Args = append([]string{"/usr/bin/room-helper", "--"}, cmd.Args...)
 	cmd.Path = "/usr/bin/room-helper"

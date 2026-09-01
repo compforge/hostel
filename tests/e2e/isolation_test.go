@@ -35,12 +35,13 @@ func TestIsolationLevels(t *testing.T) {
 				t.Fatalf("workspace_mount=%v for effective isolation %s", health.WorkspaceMount, health.Isolation.Effective)
 			}
 			t.Logf("requested=%s effective=%s ceiling=%s mechanism=%s", requested, health.Isolation.Effective, health.Isolation.Ceiling, health.Isolation.Mechanism)
-			if strings.TrimSpace(os.Getenv(pathshimEnv)) != "" && health.Isolation.Effective != "suite" &&
-				(health.WorkspaceView.Mode != "pathshim" || !health.WorkspaceView.Available) {
-				t.Fatalf("required pathshim workspace view unavailable: %+v", health.WorkspaceView)
+			helperRequired := strings.TrimSpace(os.Getenv(pathshimEnv)) != "" || strings.TrimSpace(os.Getenv(prootEnv)) != ""
+			if helperRequired && health.Isolation.Effective != "suite" &&
+				((health.WorkspaceView.Mode != "pathshim" && health.WorkspaceView.Mode != "proot") || !health.WorkspaceView.Available) {
+				t.Fatalf("required workspace view unavailable: %+v", health.WorkspaceView)
 			}
-			if health.WorkspaceView.Mode == "pathshim" && !health.WorkspaceView.Available {
-				t.Fatalf("pathshim view reported unavailable: %+v", health.WorkspaceView)
+			if (health.WorkspaceView.Mode == "pathshim" || health.WorkspaceView.Mode == "proot") && !health.WorkspaceView.Available {
+				t.Fatalf("selected workspace view reported unavailable: %+v", health.WorkspaceView)
 			}
 
 			write, response := c.command(t, "isolation-a", map[string]any{
@@ -76,7 +77,7 @@ func TestIsolationLevels(t *testing.T) {
 			pwd, response := c.command(t, "isolation-a", map[string]any{"command": "pwd", "timeout": 30_000})
 			must2xx(t, "workspace path probe", response)
 			assertCommandExit(t, pwd, 0)
-			if health.WorkspaceView.Mode == "mount" || health.WorkspaceView.Mode == "pathshim" {
+			if health.WorkspaceView.Mode == "mount" || health.WorkspaceView.Mode == "pathshim" || health.WorkspaceView.Mode == "proot" {
 				if strings.TrimSpace(pwd.Stdout) != "/workspace" {
 					t.Fatalf("%s workspace cwd=%q, want /workspace", health.WorkspaceView.Mode, strings.TrimSpace(pwd.Stdout))
 				}
@@ -90,6 +91,7 @@ func TestPathshimProbeFailureKeepsCommandAPIAvailable(t *testing.T) {
 	target := startTarget(t, targetOptions{
 		isolation: "dorm",
 		pathshim:  "/definitely/missing/pathshim",
+		proot:     "/definitely/missing/proot",
 	})
 	c := target.client
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -108,6 +110,52 @@ func TestPathshimProbeFailureKeepsCommandAPIAvailable(t *testing.T) {
 	if run.Stdout != "available" {
 		t.Fatalf("fallback command stdout=%q stderr=%q", run.Stdout, run.Stderr)
 	}
+}
+
+func TestPathshimProbeFailureFallsBackToProot(t *testing.T) {
+	proot := strings.TrimSpace(os.Getenv(prootEnv))
+	if proot == "" && strings.TrimSpace(os.Getenv(imageEnv)) == "" {
+		t.Skipf("set %s or run image E2E with bundled PRoot", prootEnv)
+	}
+	target := startTarget(t, targetOptions{
+		isolation:        "dorm",
+		allowPtrace:      true,
+		pathshimHostPath: unavailablePathshim(t),
+		proot:            proot,
+	})
+	c := target.client
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var health healthView
+	result, err := c.json(ctx, "GET", "/healthz", "", nil, &health)
+	if err != nil || result.Status != http.StatusOK {
+		t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
+	}
+	if health.WorkspaceView.Mode != "proot" || !health.WorkspaceView.Available {
+		t.Fatalf("proot fallback workspace view = %+v", health.WorkspaceView)
+	}
+	var diagnostics struct {
+		Probes map[string]struct {
+			Attempted bool   `json:"attempted"`
+			ExitCode  *int   `json:"exit_code"`
+			Error     string `json:"error"`
+		} `json:"probes"`
+	}
+	result, err = c.json(ctx, "GET", "/v1/diagnostics", "", nil, &diagnostics)
+	if err != nil || result.Status != http.StatusOK {
+		t.Fatalf("diagnostics: status=%d err=%v body=%s", result.Status, err, result.Body)
+	}
+	for _, name := range []string{"ptrace", "proot"} {
+		probe := diagnostics.Probes[name]
+		if !probe.Attempted || probe.ExitCode == nil || *probe.ExitCode != 0 || probe.Error != "" {
+			t.Fatalf("%s probe = %+v", name, probe)
+		}
+	}
+	pathshimProbe := diagnostics.Probes["pathshim"]
+	if !pathshimProbe.Attempted || pathshimProbe.Error == "" {
+		t.Fatalf("pathshim failure probe = %+v", pathshimProbe)
+	}
+	assertCanonicalWorkspaceView(t, c, "proot")
 }
 
 func assertCanonicalWorkspaceView(t *testing.T, c *apiClient, mode string) {

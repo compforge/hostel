@@ -23,7 +23,7 @@ const AsUserArg = "__asuser"
 
 // newUID: uid isolation relies on Linux setuid/setgid + /proc caps. Report room
 // as unavailable elsewhere.
-func newUID(HostFacts, string) (Isolator, ProbeReport) {
+func newUID(HostFacts, string) (Boundary, ProbeReport) {
 	return unavailable{name: "uid", lvl: Room}, ProbeReport{}
 }
 
