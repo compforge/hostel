@@ -81,6 +81,13 @@ type KernelFeatureFacts struct {
 	ProcSelfStatusReadable bool        `json:"proc_self_status_readable"`
 }
 
+// PtraceFacts retain the kernel policy input needed to assess ptrace-based
+// workspace views such as proot. Capability masks and seccomp remain under
+// ProcessFacts because they affect more than ptrace alone.
+type PtraceFacts struct {
+	YamaScope ObservedInt `json:"yama_scope"`
+}
+
 // SystemFacts are raw, boot-time observations. They deliberately contain no
 // missing-permission classification or remediation advice.
 type SystemFacts struct {
@@ -89,6 +96,7 @@ type SystemFacts struct {
 	SecurityModules SecurityModuleFacts `json:"security_modules"`
 	NamespaceLimits NamespaceLimitFacts `json:"namespace_limits"`
 	KernelFeatures  KernelFeatureFacts  `json:"kernel_features"`
+	Ptrace          PtraceFacts         `json:"ptrace"`
 }
 
 // ProbeReport records one boot probe without interpreting why it passed or

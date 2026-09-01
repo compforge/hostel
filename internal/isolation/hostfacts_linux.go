@@ -75,6 +75,9 @@ func osFacts() HostFacts {
 			CgroupV2:               f.CgroupV2,
 			ProcSelfStatusReadable: process.StatusReadError == "",
 		},
+		Ptrace: PtraceFacts{
+			YamaScope: readObservedInt("/proc/sys/kernel/yama/ptrace_scope"),
+		},
 	}
 	return f
 }

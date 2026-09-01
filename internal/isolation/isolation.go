@@ -202,6 +202,7 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 	probes := map[string]ProbeReport{
 		"bwrap":    bwrapProbe,
 		"landlock": landlockProbe,
+		"ptrace":   runPtraceProbe(),
 		"uid":      uidProbe,
 	}
 	candidates := []Isolator{
