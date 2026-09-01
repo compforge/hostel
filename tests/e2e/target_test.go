@@ -20,13 +20,17 @@ const (
 	imageEnv    = "HOSTEL_E2E_IMAGE"
 	userlandEnv = "HOSTEL_E2E_USERLAND"
 	pathshimEnv = "HOSTEL_E2E_PATHSHIM"
+	prootEnv    = "HOSTEL_E2E_PROOT"
 )
 
 type targetOptions struct {
 	isolation        string
 	maxBeds          int
+	allowPtrace      bool
 	pathshim         string
 	pathshimHostPath string
+	proot            string
+	prootHostPath    string
 	workspaceRoot    string
 }
 
@@ -113,8 +117,18 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 		workspaceRoot = filepath.Join(t.TempDir(), "beds")
 	}
 	pathshim := options.pathshim
+	if options.pathshimHostPath != "" {
+		pathshim = options.pathshimHostPath
+	}
 	if pathshim == "" {
 		pathshim = strings.TrimSpace(os.Getenv(pathshimEnv))
+	}
+	proot := options.proot
+	if options.prootHostPath != "" {
+		proot = options.prootHostPath
+	}
+	if proot == "" {
+		proot = strings.TrimSpace(os.Getenv(prootEnv))
 	}
 	cmd := exec.Command(absolute,
 		"--addr", addr,
@@ -128,6 +142,7 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 		"--admission-memory-threshold", "0",
 		"--bed-idle-timeout", "0",
 		"--pathshim", pathshim,
+		"--proot", proot,
 	)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -177,6 +192,9 @@ func startImageTarget(t *testing.T, image, addr string, options targetOptions) {
 		"-e", "HOSTEL_ADMISSION_MEMORY_THRESHOLD=0",
 		"-e", "HOSTEL_BED_IDLE_TIMEOUT=0",
 	}
+	if options.allowPtrace {
+		args = append(args, "--cap-add", "SYS_PTRACE")
+	}
 	if options.pathshimHostPath != "" {
 		const guestPath = "/tmp/hostel-e2e-pathshim"
 		args = append(args, "--volume", options.pathshimHostPath+":"+guestPath+":ro")
@@ -184,6 +202,14 @@ func startImageTarget(t *testing.T, image, addr string, options targetOptions) {
 	}
 	if options.pathshim != "" {
 		args = append(args, "-e", "HOSTEL_PATHSHIM="+options.pathshim)
+	}
+	if options.prootHostPath != "" {
+		const guestPath = "/tmp/hostel-e2e-proot"
+		args = append(args, "--volume", options.prootHostPath+":"+guestPath+":ro")
+		options.proot = guestPath
+	}
+	if options.proot != "" {
+		args = append(args, "-e", "HOSTEL_PROOT="+options.proot)
 	}
 	args = append(args, image)
 	output, err := exec.Command("docker", args...).CombinedOutput()

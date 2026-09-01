@@ -53,10 +53,10 @@ tini (pid1)                       pod 级收尸兜底
 
 Executor View：
   suite       → 整个 bed_home 内部挂载 + workspace 规范挂载到 /workspace
-  dorm/room   → pathshim 可用时尽力映射 /workspace；否则使用 Carrier 路径；隔离机制独立负责访问边界
+  dorm/room   → 独立探测 PRoot/pathshim，按 PRoot → pathshim → Carrier 选择 /workspace 视图；隔离机制独立负责访问边界
 ```
 
-Bedbox 给 caller 的北向契约始终是一个 Bed 独占整个 Pod；BedFS 三档统一拥有并映射这份路径语义。isolation 只决定内核是否真正兑现独占视图：suite 看不到兄弟路径，room 可见但访问 EACCES，dorm 共享 Carrier 视图且可能操作；不得让房型反向改变 Client → Carrier 主映射。
+Bedbox 给 caller 的北向进程契约是一个 Bed 独占 Pod 的 `/workspace`；BedFS 另外统一映射 file API 与 cwd 等结构化路径。isolation 只决定内核是否真正兑现独占视图：suite 看不到兄弟路径，room 可见但访问 EACCES，dorm 共享 Carrier 视图且可能操作；不得让房型反向改变 Client → Carrier 主映射。`/tmp` 等其他 opaque 命令绝对路径仍是 Carrier 语义，当前不承诺按 Bed 虚拟化。
 
 三档共享 BedFS 数据底座，对外保证单调增强，但实现机制不单调叠加：Dorm 使用共享 mount view；Room 沿用它并增加 Landlock/UID 访问控制；Suite 改走私有 mount view，使其他 Bed 的路径不存在，不再依赖 Room 的权限判断。请求档位不可达时诚实降级，但不能因为权限不足连低档能做的收口也放弃。
 
@@ -73,7 +73,7 @@ tests/e2e/             单机真实进程/镜像 E2E：公开 API、bed runtime/
 internal/
 ├── config/            flags + HOSTEL_* env
 ├── tracing/           OpenTelemetry 进程初始化：OTLP exporter、W3C propagation 与日志 trace/span 关联
-├── isolation/         数据隔离房型档：New 按 env ceiling 路由；direct/landlock/uid/bwrap + dorm/room 可选 pathshim workspace 视图
+├── isolation/         执行环境组装：Boundary 解析 direct/landlock/uid/bwrap 隔离档，workspace backend 独立解析 mount/PRoot/pathshim/carrier 进程视图
 ├── executor/          Executor 抽象与 local / supervisor backend；进程 identity、幂等 Start、终态与整域 Shutdown
 ├── supervisor/        supervisor backend 的可重连 IPC 协议与 Linux supervisor/reaper 实现
 ├── bed/               ★核心。bed=隔离单元=对外一个 sandbox
@@ -118,7 +118,7 @@ internal/
 - **执行层次是 `Bed → Executor → Execution`**：Bed 是 workspace / sandbox 的持久身份；Executor 是当前可替换的进程域；Execution 是一次运行。Executor 丢失只终结归属它的进程，不丢 Bed 数据，下一次请求创建新 Executor。每次前台、后台或 session run 都生成 `Execution`；`execution_start` 先于输出，之后恰有一个 `execution_end`。`ProcessOutcome` 表达 exited / signaled / lost，termination cause 独立表达 timeout / cancel / interrupt / teardown / executor_lost，禁止再用裸 EOF、`-1` 或错误字符串承载多种语义。
 - **Trace 是生命周期事实的投影**：HTTP 使用路由模板 span，bed initialize/persist/evict 与 execution 使用稳定领域 span，stage 只记 event；不得把 command、env、stdout/stderr 写入 span。后台 initialization / execution 继承 trace identity 但不继承 HTTP cancel。详见 `docs/observability.md`。
 - **isolation 按「青年旅社房型」分档**（对外保证，非机制名）：`dorm`（通铺，无屏障=direct）/ `room`（单间锁门、厕所公用，数据 EACCES 但兄弟可见、系统路径共享=landlock，自 re-exec `hostel __confine`）/ `suite`（套房全私有，兄弟不可见+私有 mount 视图+`/workspace` 规范挂载=bwrap）/ `auto`（顶格取 env 上限）。`effective=min(requested,ceiling)`，请求超上限诚实降级。进程 env 与隔离机制正交：`HOSTEL_*` 只属 daemon、`BED_*` 只属 bed，三档统一由 `internal/bed/env.go` 显式组装。机制（direct/bwrap/landlock/uid）是内部细节，全走 `Isolator` 接口。详见 `docs/data.md`。
-  - pathshim 只在 dorm/room 下尽力把 Bed workspace 投影为 `/workspace`，不改变 isolation requested/effective/ceiling/mechanism，也不把 `workspace_mount` 置真；启动探测失败退回 Carrier 视图，见 `workspace_view`。
+  - 最终执行环境由安全 `Boundary` 与 workspace backend 组合；dorm/room 先独立探测满足运行前提的 helper，再按 PRoot → pathshim → Carrier 选择。PRoot 对 `/workspace` 路径 syscall 的覆盖更完整但需要 ptrace，pathshim 是无需 ptrace 的次选；helper 不改变 isolation requested/effective/ceiling/mechanism，也不把 `workspace_mount` 置真，见 `workspace_view`。
 - **amenity 通则**：重资产、自带多租的共享设施由 hostel 在 bed 外管一份，用应用原生机制切租（Chromium→BrowserContext、Jupyter→kernel），产物落对应 bed 的 workspace。amenity 有自己的生命周期（idle→running 按需启停）。新增实例 = 实现 `Amenity` + 注册，bed evict/purge 已接 `ReleaseAll` 钩子。北向只暴露 bed 级动作，**不透传 CDP/协议 socket**（会跨租户）。见 `docs/amenity.md`。
 - **常驻 shell 的坑**：一个 Shell 只能有**一个** stdout reader（否则 run 间串输出——v1 踩过）；Run 之间串行；Shell 持有启动时的 Executor View，session run 的 cwd 必须经 `RunAt` 投影并作为独立控制步骤执行，禁止 Web 拼接 `cd` 或 Executor path；`exit` 会杀死 session，非零退出码用子 shell（`sh -c "exit N"`）。**锁纪律**：`runMu` 串行化 Run 且只有 Run 碰；`mu` 只护 `dead` 标志、纳秒级持有——曾因单锁设计让「shell 死亡+未断开客户端」死锁整个 daemon（含 healthz），别往 `mu` 里加阻塞代码（见 shell.go LOCKING 注释）。
 - **E2E owner 边界**：Hostel 的单机 suite 直接验证真实 daemon/image 的 bed runtime、隔离与 carrier userland；上层控制面只保留 placement、跨 carrier 持久化和 lifecycle 编排，不在 K8s E2E 重复证明 Hostel 内部契约。运行说明见 `tests/e2e/README.md`。

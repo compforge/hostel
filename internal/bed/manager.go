@@ -38,7 +38,7 @@ import (
 type Manager struct {
 	root            string
 	defaultBed      string
-	iso             isolation.Isolator
+	iso             isolation.Runtime
 	shellPath       string
 	amenities       *amenity.Registry  // nil-safe; ReleaseAll on bed teardown
 	executions      *ExecutionRegistry // one-shot executions, daemon-global ids
@@ -95,7 +95,7 @@ var ErrBedUnavailable = errors.New("bed: no longer resident")
 
 // NewManager creates the bed manager and ensures the workspace root exists.
 // amenities and st may be nil; maxBeds 0 = unlimited.
-func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Registry, maxBeds int, st store.Store) (*Manager, error) {
+func NewManager(root, defaultBed, shellPath string, iso isolation.Runtime, amenities *amenity.Registry, maxBeds int, st store.Store) (*Manager, error) {
 	processEnv, _ := newProcessEnv(os.Environ())
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("bed: create workspace root %s: %w", root, err)
@@ -171,7 +171,7 @@ func (m *Manager) ResourceAdmissionReport() resource.AdmissionReport {
 }
 
 // Isolator exposes the configured isolator (for /healthz + capabilities).
-func (m *Manager) Isolator() isolation.Isolator { return m.iso }
+func (m *Manager) Isolator() isolation.Runtime { return m.iso }
 
 // Amenities exposes the amenity manager (for capabilities + web adapters).
 func (m *Manager) Amenities() *amenity.Registry { return m.amenities }

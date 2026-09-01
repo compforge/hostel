@@ -26,63 +26,65 @@ import (
 	"github.com/qiankunli/hostel/internal/bedfs"
 )
 
-type pathshimView struct {
+type prootView struct {
 	path string
 }
 
-func (p *pathshimView) Mode() string                 { return "pathshim" }
-func (p *pathshimView) View(fs *bedfs.FS) bedfs.View { return bedfs.WorkspaceView(fs) }
-func (p *pathshimView) Mounted() bool                { return false }
+func (p *prootView) Mode() string                 { return "proot" }
+func (p *prootView) View(fs *bedfs.FS) bedfs.View { return bedfs.WorkspaceView(fs) }
+func (p *prootView) Mounted() bool                { return false }
 
-func (p *pathshimView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
+func (p *prootView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	guestCwd, err := p.View(fs).Path(commandCwd(fs, cwd))
 	if err != nil {
 		return err
 	}
 	userArgs := cmd.Args
 	cmd.Args = make([]string, 0, len(userArgs)+8)
-	cmd.Args = append(cmd.Args, p.path, "--quiet", "--bind", fs.Workspace()+":"+bedfs.WorkspacePath, "--cwd", guestCwd, "--")
+	cmd.Args = append(cmd.Args,
+		p.path,
+		"-v", "-1",
+		"-b", fs.Workspace()+":"+bedfs.WorkspacePath+"!",
+		"-w", guestCwd,
+	)
 	cmd.Args = append(cmd.Args, userArgs...)
 	cmd.Path = p.path
 	return nil
 }
 
-// +spec=`A pathshim workspace view improves /workspace compatibility without changing isolation level or mount capability.`
-// +case:id=pathshim_workspace_view,desc=`Probe and run one command through the selected dorm or room mechanism`,expect=`/workspace maps to Bed workspace, command semantics survive, and probe failure returns an unavailable candidate to the workspace-view resolver`
-func newPathshimView(base Boundary, workspaceRoot, path string) (workspaceBackend, WorkspaceViewReport, ProbeReport) {
+func newProotView(base Boundary, workspaceRoot, path string) (workspaceBackend, WorkspaceViewReport, ProbeReport) {
 	probe := ProbeReport{ConfiguredPath: path}
 	resolvedPath, err := exec.LookPath(path)
 	if err != nil {
 		reason := "find binary: " + err.Error()
 		probe.Error = reason
-		log.Printf("isolation: pathshim workspace view unavailable (%s)", reason)
+		log.Printf("isolation: proot workspace view unavailable (%s)", reason)
 		return nil, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: reason}, probe
 	}
 	resolvedPath, err = filepath.Abs(resolvedPath)
 	if err != nil {
 		reason := "resolve binary: " + err.Error()
 		probe.Error = reason
-		log.Printf("isolation: pathshim workspace view unavailable (%s)", reason)
+		log.Printf("isolation: proot workspace view unavailable (%s)", reason)
 		return nil, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: reason}, probe
 	}
-	probe = probePathshim(base, workspaceRoot, resolvedPath)
+	probe = probeProot(base, workspaceRoot, resolvedPath)
 	probe.ConfiguredPath = path
 	probe.ResolvedPath = resolvedPath
-	reason := probe.Error
-	if reason != "" {
-		log.Printf("isolation: pathshim workspace view unavailable (%s)", reason)
-		return nil, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: reason}, probe
+	if probe.Error != "" {
+		log.Printf("isolation: proot workspace view unavailable (%s)", probe.Error)
+		return nil, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: probe.Error}, probe
 	}
-	log.Printf("isolation: pathshim workspace view probe succeeded path=%s", resolvedPath)
-	workspace := &pathshimView{path: resolvedPath}
+	log.Printf("isolation: proot workspace view probe succeeded path=%s", resolvedPath)
+	workspace := &prootView{path: resolvedPath}
 	return workspace, WorkspaceViewReport{Mode: workspace.Mode(), Available: true}, probe
 }
 
-func probePathshim(base Boundary, workspaceRoot, path string) ProbeReport {
+func probeProot(base Boundary, workspaceRoot, path string) ProbeReport {
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		return ProbeReport{Error: "create workspace root: " + err.Error()}
 	}
-	probeHome, err := os.MkdirTemp(workspaceRoot, ".pathshim-probe-*")
+	probeHome, err := os.MkdirTemp(workspaceRoot, ".proot-probe-*")
 	if err != nil {
 		return ProbeReport{Error: "create probe bed: " + err.Error()}
 	}
@@ -90,6 +92,9 @@ func probePathshim(base Boundary, workspaceRoot, path string) ProbeReport {
 	probeWorkspace := filepath.Join(probeHome, "workspace")
 	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
 		return ProbeReport{Error: "create probe workspace: " + err.Error()}
+	}
+	if err := os.WriteFile(filepath.Join(probeWorkspace, ".hostel-proot-probe"), []byte("proot-view"), 0o644); err != nil {
+		return ProbeReport{Error: "write probe marker: " + err.Error()}
 	}
 	fs, err := bedfs.New(probeHome)
 	if err != nil {
@@ -101,9 +106,15 @@ func probePathshim(base Boundary, workspaceRoot, path string) ProbeReport {
 			return ProbeReport{Error: "prepare probe bed: " + err.Error()}
 		}
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "probe", "--bind", probeWorkspace+":"+bedfs.WorkspacePath)
+	cmd := exec.CommandContext(ctx, path,
+		"-v", "-1",
+		"-b", probeWorkspace+":"+bedfs.WorkspacePath+"!",
+		"-w", bedfs.WorkspacePath,
+		"/bin/sh", "-c", "cat /workspace/.hostel-proot-probe; printf '\\n'; pwd",
+	)
 	if err := base.Wrap(cmd, fs, probeWorkspace); err != nil {
 		return ProbeReport{Error: "wrap probe: " + err.Error()}
 	}
@@ -120,7 +131,7 @@ func probePathshim(base Boundary, workspaceRoot, path string) ProbeReport {
 		report.Error = detail
 		return report
 	}
-	if strings.TrimSpace(report.Stdout) != "bind-view" {
+	if strings.TrimSpace(report.Stdout) != "proot-view\n/workspace" {
 		report.Error = "unexpected probe output: " + strings.TrimSpace(report.Stdout)
 	}
 	return report

@@ -1,0 +1,24 @@
+diff --git a/src/arch.h b/src/arch.h
+index 6e72fc5..25adfdc 100644
+--- a/src/arch.h
++++ b/src/arch.h
+@@ -78,7 +78,8 @@ typedef unsigned char byte_t;
+     #define OFFSETOF_STAT_GID_32 28
+ 
+     #define LOADER_ADDRESS 0x600000000000
+-    #define HAS_LOADER_32BIT true
++    /* Modified by Hostel on 2026-09-01: its image ships no 32-bit userland. */
++    /* #define HAS_LOADER_32BIT true */
+ 
+     #define EXEC_PIC_ADDRESS   0x500000000000
+     #define INTERP_PIC_ADDRESS 0x6f0000000000
+@@ -140,7 +141,8 @@ typedef unsigned char byte_t;
+     #define INTERP_PIC_ADDRESS 0x3f00000000
+     #define HAS_POKEDATA_WORKAROUND true
+ 
+-    #define HAS_LOADER_32BIT true
++    /* Modified by Hostel on 2026-09-01: its image ships no 32-bit userland. */
++    /* #define HAS_LOADER_32BIT true */
+     #define EXEC_PIC_ADDRESS_32   0x0f000000
+     #define INTERP_PIC_ADDRESS_32 0x1f000000
+ 

@@ -115,11 +115,14 @@ never sees the host. One consequence to be aware of:
 Under `bwrap`, the complete bed_home has a mechanism-private Executor mount and
 the workspace is additionally mounted at the stable `/workspace`, so any BedFS
 cwd is usable while workspace shell paths keep their canonical spelling. Under
-dorm/room, Hostel probes pathshim at boot and, when available, gives commands a
-best-effort `/workspace` view without changing their isolation level. Other
-absolute paths retain Carrier semantics. Probe `workspace_view`, rather than
-`workspace_mount`, when command text depends on literal `/workspace`; pathshim
-is a compatibility view, not a security boundary. See `docs/filesystem.md`.
+dorm/room, Hostel independently probes the workspace helpers whose runtime
+prerequisites are satisfied, then selects PRoot, pathshim, or Carrier paths in
+that order. PRoot covers more `/workspace` path syscalls; pathshim remains the
+no-ptrace fallback. Probe `workspace_view`, rather than `workspace_mount`, when
+command text depends on literal `/workspace`; both helpers are compatibility
+views, not security boundaries. `workspace_view.available` means that canonical
+path is backed by the current Bed, so carrier mode reports false even though
+commands remain usable through carrier paths. See `docs/filesystem.md`.
 
 ## Isolation
 
@@ -128,8 +131,9 @@ dorm|room|suite|auto` (default `auto` = the environment ceiling). The effective
 level is `min(requested, ceiling)` — an over-ask degrades honestly, a lower ask
 is a deliberate downgrade.
 
-- `dorm` (bunk): no enforced isolation (= direct, all platforms); pathshim may
-  add only a best-effort `/workspace` process view;
+- `dorm` (bunk): no enforced isolation (= direct, all platforms); PRoot or its
+  no-ptrace pathshim fallback may add only a best-effort `/workspace`
+  process view;
 - `room` (private room, shared toilet): Landlock LSM — a bed can't *access*
   other beds' data (EACCES) but siblings stay visible and `/tmp` / system paths
   are shared; **no capability required** (Linux ≥5.13);
@@ -175,7 +179,7 @@ reports `amenities: {chromium: idle|running}`.
 
 ## Configuration
 
-Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` / `--pathshim` /
+Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` / `--pathshim` / `--proot` /
 `--dorm-read-fallback-root` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
 `--max-pinned-beds` / `--bed-pressure-threshold-percent` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
 `--executor` / `--store` /

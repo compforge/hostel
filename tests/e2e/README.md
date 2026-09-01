@@ -35,6 +35,13 @@ terminal signal behavior through pathshim:
 HOSTEL_E2E_PATHSHIM=/usr/local/bin/pathshim make e2e
 ```
 
+To verify the ptrace-based fallback when pathshim is unavailable, provide a
+Linux PRoot binary. Image mode uses the PRoot bundled in the image:
+
+```sh
+HOSTEL_E2E_PROOT=/usr/local/bin/proot make e2e
+```
+
 ## Run the image/userland contract
 
 ```sh
@@ -63,6 +70,7 @@ than becoming a skip.
 | `HOSTEL_E2E_USERLAND=1` | Enables required PyPI/npm/Chromium cases; image target sets it. |
 | `HOSTEL_E2E_REQUIRE_ISOLATION` | Comma-separated requested levels that must not degrade. |
 | `HOSTEL_E2E_PATHSHIM` | pathshim binary used to verify the dorm/room `/workspace` process view. |
+| `HOSTEL_E2E_PROOT` | PRoot binary used to verify the ptrace-based `/workspace` fallback. |
 
 The binary and image variables are mutually exclusive. Image mode is intended
 for a Linux runner with Docker because the target container uses host networking

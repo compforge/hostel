@@ -22,7 +22,7 @@ import "fmt"
 const ConfineArg = "__confine"
 
 // newLandlock: Landlock is Linux-only. Report room as unavailable elsewhere.
-func newLandlock(HostFacts, string) (Isolator, ProbeReport) {
+func newLandlock(HostFacts, string) (Boundary, ProbeReport) {
 	return unavailable{name: "landlock", lvl: Room}, ProbeReport{}
 }
 

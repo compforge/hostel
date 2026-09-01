@@ -99,7 +99,7 @@ type Shell struct {
 // inherit the daemon env, which lacks the bed identity and endpoints. Stdio is
 // explicit os.Pipe pairs (not StdinPipe/StdoutPipe) so the raw fds can cross a
 // process boundary when supervisor is the Executor backend.
-func startShell(bedExecutor executor.Executor, shellPath string, env []string, iso isolation.Isolator, fs *bedfs.FS, cwdInBed string) (*Shell, error) {
+func startShell(bedExecutor executor.Executor, shellPath string, env []string, iso isolation.Runtime, fs *bedfs.FS, cwdInBed string) (*Shell, error) {
 	cmd := exec.Command(shellPath, shellInteractiveArgs(shellPath)...)
 	cmd.Env = env
 	if err := iso.Wrap(cmd, fs, cwdInBed); err != nil {
