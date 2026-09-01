@@ -155,7 +155,7 @@ func TestDiagnostics(t *testing.T) {
 		securityModules == nil || namespaceLimits == nil || kernelFeatures == nil || ptraceFacts == nil {
 		t.Fatalf("diagnostics system facts = %v", system)
 	}
-	if probes["bwrap"] == nil || probes["landlock"] == nil || probes["uid"] == nil {
+	if probes["bwrap"] == nil || probes["landlock"] == nil || probes["ptrace"] == nil || probes["uid"] == nil {
 		t.Fatalf("diagnostics probes = %v", probes)
 	}
 	usernsClone, _ := namespaceLimits["unprivileged_userns_clone"].(map[string]any)
@@ -172,6 +172,13 @@ func TestDiagnostics(t *testing.T) {
 	}
 	if _, exists := bwrapProbe["exit_code"]; !exists {
 		t.Fatalf("diagnostics bwrap probe missing exit_code: %v", bwrapProbe)
+	}
+	ptraceProbe, _ := probes["ptrace"].(map[string]any)
+	if _, exists := ptraceProbe["attempted"]; !exists {
+		t.Fatalf("diagnostics ptrace probe missing attempted: %v", ptraceProbe)
+	}
+	if _, exists := ptraceProbe["error"]; !exists {
+		t.Fatalf("diagnostics ptrace probe missing error: %v", ptraceProbe)
 	}
 	if isolationFacts["requested"] != "dorm" || isolationFacts["effective"] != "dorm" ||
 		isolationFacts["mechanism"] != "direct" {
