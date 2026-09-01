@@ -20,4 +20,30 @@ package isolation
 // absent off Linux; only collectHostFacts's cross-platform bwrap lookup may set
 // anything. Room/suite mechanisms then report unavailable and the resolver
 // floors to dorm.
-func osFacts() HostFacts { return HostFacts{} }
+func osFacts() HostFacts {
+	unsupportedInt := ObservedInt{ReadError: "unsupported operating system"}
+	unsupportedString := ObservedString{ReadError: "unsupported operating system"}
+	return HostFacts{
+		diagnostics: SystemFacts{
+			Process: ProcessFacts{StatusReadError: "unsupported operating system"},
+			SecurityModules: SecurityModuleFacts{
+				LSMList:         unsupportedString,
+				ProcessLabel:    unsupportedString,
+				AppArmorCurrent: unsupportedString,
+			},
+			NamespaceLimits: NamespaceLimitFacts{
+				User:                    unsupportedInt,
+				Mount:                   unsupportedInt,
+				PID:                     unsupportedInt,
+				IPC:                     unsupportedInt,
+				UTS:                     unsupportedInt,
+				Network:                 unsupportedInt,
+				Cgroup:                  unsupportedInt,
+				UnprivilegedUsernsClone: unsupportedInt,
+			},
+			KernelFeatures: KernelFeatureFacts{
+				LandlockABI: unsupportedInt,
+			},
+		},
+	}
+}

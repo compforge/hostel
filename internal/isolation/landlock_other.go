@@ -22,7 +22,9 @@ import "fmt"
 const ConfineArg = "__confine"
 
 // newLandlock: Landlock is Linux-only. Report room as unavailable elsewhere.
-func newLandlock(HostFacts, string) Isolator { return unavailable{name: "landlock", lvl: Room} }
+func newLandlock(HostFacts, string) (Isolator, ProbeReport) {
+	return unavailable{name: "landlock", lvl: Room}, ProbeReport{}
+}
 
 // ApplyConfine should never run off Linux (no landlock isolator can be chosen).
 func ApplyConfine(string) error { return fmt.Errorf("landlock: unsupported on this platform") }

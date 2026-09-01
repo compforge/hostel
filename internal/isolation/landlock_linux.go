@@ -17,7 +17,6 @@
 package isolation
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -43,28 +42,33 @@ type landlock struct {
 	self string // hostel binary path, re-execed as the confiner
 }
 
-func newLandlock(facts HostFacts, workspaceRoot string) Isolator {
+func newLandlock(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
+	report := ProbeReport{}
 	// Landlock ABI ≥ 1 means the kernel exposes filesystem restrictions (a custom
 	// kernel without CONFIG_SECURITY_LANDLOCK reports 0 — the boot probe already
 	// established this fact, no need to re-syscall here).
 	if facts.LandlockABI < 1 {
-		return unavailable{name: "landlock", lvl: Room}
+		return unavailable{name: "landlock", lvl: Room}, report
 	}
 	self, err := os.Executable()
 	if err != nil {
-		return unavailable{name: "landlock", lvl: Room}
+		report.Error = err.Error()
+		return unavailable{name: "landlock", lvl: Room}, report
 	}
+	report.ResolvedPath = self
 	// The workspace root may not exist yet at probe time (the bed manager
 	// creates it later); the smoke confines a temp dir under it.
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		log.Printf("isolation: cannot create workspace root %s: %v", workspaceRoot, err)
 	}
 	// ABI presence alone doesn't prove ENFORCEMENT — run the full form once.
-	if err := landlockSmoke(self, workspaceRoot); err != nil {
-		log.Printf("isolation: landlock ABI present but unusable (%v)", err)
-		return unavailable{name: "landlock", lvl: Room}
+	report = landlockSmoke(self, workspaceRoot)
+	report.ResolvedPath = self
+	if report.failed() {
+		log.Printf("isolation: landlock ABI present but unusable (%s)", report.Error)
+		return unavailable{name: "landlock", lvl: Room}, report
 	}
-	return &landlock{self: self}
+	return &landlock{self: self}, report
 }
 
 // landlockSmoke proves the restriction actually bites, using the exact
@@ -77,41 +81,40 @@ func newLandlock(facts HostFacts, workspaceRoot string) Isolator {
 // lie, so we honestly report it unavailable.
 // The check execs /bin/sh, not hostel itself: production only ever execs
 // system binaries post-confine, and hostel's own dir isn't in the allowlist.
-func landlockSmoke(self, workspaceRoot string) error {
+func landlockSmoke(self, workspaceRoot string) ProbeReport {
 	base, err := os.MkdirTemp(workspaceRoot, ".probe-*")
 	if err != nil {
-		return fmt.Errorf("smoke test: temp dir: %w", err)
+		return ProbeReport{Error: fmt.Sprintf("smoke test: temp dir: %v", err)}
 	}
 	defer os.RemoveAll(base)
 	own := filepath.Join(base, "own")
 	secret := filepath.Join(base, "sibling", "secret")
 	if err := os.MkdirAll(own, 0o755); err != nil {
-		return fmt.Errorf("smoke test: %w", err)
+		return ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	if err := os.MkdirAll(filepath.Dir(secret), 0o755); err != nil {
-		return fmt.Errorf("smoke test: %w", err)
+		return ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	if err := os.WriteFile(secret, []byte("s"), 0o644); err != nil {
-		return fmt.Errorf("smoke test: %w", err)
+		return ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 
 	script := fmt.Sprintf("echo ok > probe.txt || exit 10; cat %q >/dev/null 2>&1 && exit 11; exit 0", secret)
 	cmd := exec.Command(self, ConfineArg, own, "--", "/bin/sh", "-c", script)
 	cmd.Dir = own
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		return nil
+	report := runExecProbe(cmd)
+	if report.ExitCode == nil || *report.ExitCode == 0 {
+		return report
 	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		switch ee.ExitCode() {
-		case 10:
-			return errors.New("smoke test: own data dir not writable under confinement")
-		case 11:
-			return errors.New("smoke test: sibling data still readable — restriction not enforced (BestEffort no-op, or workspace root inside a shared-RW path like /tmp)")
-		}
+	switch *report.ExitCode {
+	case 10:
+		report.Error = "smoke test: own data dir not writable under confinement"
+	case 11:
+		report.Error = "smoke test: sibling data still readable — restriction not enforced (BestEffort no-op, or workspace root inside a shared-RW path like /tmp)"
+	default:
+		report.Error = "smoke test: " + report.Error
 	}
-	return fmt.Errorf("smoke test: %w (%s)", err, out)
+	return report
 }
 
 func (l *landlock) Name() string                 { return "landlock" }

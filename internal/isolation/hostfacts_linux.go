@@ -17,6 +17,7 @@
 package isolation
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -37,15 +38,105 @@ const (
 // resolver then floors honestly.
 func osFacts() HostFacts {
 	var f HostFacts
+	landlockABI := ObservedInt{}
 	if v, err := lls.LandlockGetABIVersion(); err == nil {
 		f.LandlockABI = int(v)
+		value := int64(v)
+		landlockABI.Value = &value
+	} else {
+		landlockABI.ReadError = err.Error()
 	}
-	f.EffectiveCaps = readEffectiveCaps()
+	process, effectiveCaps := readProcessFacts()
+	f.EffectiveCaps = effectiveCaps
 	f.KernelRelease = kernelRelease()
-	f.UnprivilegedUserns = unprivilegedUserns()
+	unprivilegedUsernsClone := readObservedInt("/proc/sys/kernel/unprivileged_userns_clone")
+	f.UnprivilegedUserns = unprivilegedUsernsClone.Value != nil && *unprivilegedUsernsClone.Value == 1
 	f.CgroupV2 = cgroupV2()
 	f.AppArmorProfile = apparmorProfile()
+	f.diagnostics = SystemFacts{
+		Process: process,
+		SecurityModules: SecurityModuleFacts{
+			LSMList:         readObservedString("/sys/kernel/security/lsm"),
+			ProcessLabel:    readObservedString("/proc/self/attr/current"),
+			AppArmorCurrent: readObservedString("/proc/self/attr/apparmor/current"),
+		},
+		NamespaceLimits: NamespaceLimitFacts{
+			User:                    readObservedInt("/proc/sys/user/max_user_namespaces"),
+			Mount:                   readObservedInt("/proc/sys/user/max_mnt_namespaces"),
+			PID:                     readObservedInt("/proc/sys/user/max_pid_namespaces"),
+			IPC:                     readObservedInt("/proc/sys/user/max_ipc_namespaces"),
+			UTS:                     readObservedInt("/proc/sys/user/max_uts_namespaces"),
+			Network:                 readObservedInt("/proc/sys/user/max_net_namespaces"),
+			Cgroup:                  readObservedInt("/proc/sys/user/max_cgroup_namespaces"),
+			UnprivilegedUsernsClone: unprivilegedUsernsClone,
+		},
+		KernelFeatures: KernelFeatureFacts{
+			LandlockABI:            landlockABI,
+			CgroupV2:               f.CgroupV2,
+			ProcSelfStatusReadable: process.StatusReadError == "",
+		},
+	}
 	return f
+}
+
+func readObservedInt(path string) ObservedInt {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ObservedInt{ReadError: err.Error()}
+	}
+	value, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return ObservedInt{ReadError: fmt.Sprintf("parse %s: %v", path, err)}
+	}
+	return ObservedInt{Value: &value}
+}
+
+func readObservedString(path string) ObservedString {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ObservedString{ReadError: err.Error()}
+	}
+	value := strings.TrimSpace(string(data))
+	return ObservedString{Value: &value}
+}
+
+func readProcessFacts() (ProcessFacts, uint64) {
+	facts := ProcessFacts{}
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		facts.StatusReadError = err.Error()
+		return facts, 0
+	}
+	values := make(map[string]string)
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if ok {
+			values[key] = strings.TrimSpace(value)
+		}
+	}
+	facts.Capabilities = CapabilityFacts{
+		Inheritable: values["CapInh"],
+		Permitted:   values["CapPrm"],
+		Effective:   values["CapEff"],
+		Bounding:    values["CapBnd"],
+		Ambient:     values["CapAmb"],
+	}
+	facts.NoNewPrivs = parseStatusInt(values["NoNewPrivs"])
+	facts.SeccompMode = parseStatusInt(values["Seccomp"])
+	facts.SeccompFilters = parseStatusInt(values["Seccomp_filters"])
+	effective, _ := strconv.ParseUint(values["CapEff"], 16, 64)
+	return facts, effective
+}
+
+func parseStatusInt(raw string) *int64 {
+	if raw == "" {
+		return nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &value
 }
 
 // apparmorProfile reads this process's AppArmor confinement label. "unconfined"
@@ -77,38 +168,12 @@ func normalizeAppArmorLabel(raw string) string {
 	return label
 }
 
-// readEffectiveCaps parses CapEff from /proc/self/status (0 on any error).
-func readEffectiveCaps() uint64 {
-	data, err := os.ReadFile("/proc/self/status")
-	if err != nil {
-		return 0
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if v, ok := strings.CutPrefix(line, "CapEff:"); ok {
-			caps, _ := strconv.ParseUint(strings.TrimSpace(v), 16, 64)
-			return caps
-		}
-	}
-	return 0
-}
-
 func kernelRelease() string {
 	var u unix.Utsname
 	if err := unix.Uname(&u); err != nil {
 		return ""
 	}
 	return unix.ByteSliceToString(u.Release[:])
-}
-
-// unprivilegedUserns reads the Debian/Ubuntu knob. It's only a /healthz hint:
-// kernels without the knob still allow user namespaces, so absence reads as
-// false here while bwrap's boot smoke remains the authoritative suite check.
-func unprivilegedUserns() bool {
-	data, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone")
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(string(data)) == "1"
 }
 
 func cgroupV2() bool {

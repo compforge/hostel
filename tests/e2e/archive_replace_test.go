@@ -8,6 +8,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +74,109 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDormPathshimProbeFallbackDoesNotEscapeBedFS(t *testing.T) {
+	if strings.TrimSpace(os.Getenv(imageEnv)) == "" {
+		t.Skip("requires image mode so the test owns the carrier /workspace root")
+	}
+
+	target := startTarget(t, targetOptions{
+		isolation:        "dorm",
+		maxBeds:          4,
+		pathshimHostPath: unavailablePathshim(t),
+		workspaceRoot:    "/workspace",
+	})
+	c := target.client
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	var health healthView
+	result, err := c.json(ctx, "GET", "/healthz", "", nil, &health)
+	cancel()
+	if err != nil || result.Status != http.StatusOK {
+		t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
+	}
+	if health.Isolation.Effective != "dorm" || health.WorkspaceView.Mode != "carrier" || health.WorkspaceView.Available ||
+		!strings.Contains(health.WorkspaceView.Reason, "Invalid argument (os error 22)") {
+		t.Fatalf("fault injection did not activate dorm carrier fallback: isolation=%+v workspace_view=%+v", health.Isolation, health.WorkspaceView)
+	}
+	t.Logf("fault active: workspace_view=%s available=%t reason=%s", health.WorkspaceView.Mode, health.WorkspaceView.Available, health.WorkspaceView.Reason)
+
+	type bedCase struct {
+		id       string
+		expected string
+		execID   string
+	}
+	beds := make([]bedCase, 0, 4)
+	for i := 0; i < 4; i++ {
+		bedID := fmt.Sprintf("fallback-unzip-%d", i)
+		expected := fmt.Sprintf("content-from-%s", bedID)
+		created := c.createBed(t, bedID)
+		if created.Status != http.StatusAccepted && created.Status != http.StatusOK {
+			t.Fatalf("create %s: status=%d body=%s", bedID, created.Status, created.Body)
+		}
+		c.waitBed(t, bedID, func(b bedView) bool {
+			return b.Status.Phase == "resident" && b.Status.Readiness.Ready
+		}, "resident and ready")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		directory, err := c.json(ctx, "POST", "/directories", bedID, map[string]string{"path": "/tmp"}, nil)
+		cancel()
+		if err != nil || directory.Status != http.StatusOK {
+			t.Fatalf("create temp directory for %s: status=%d err=%v body=%s", bedID, directory.Status, err, directory.Body)
+		}
+		must2xx(t, "upload fallback archive", c.upload(t, bedID, "/tmp/resources.zip", concurrentReplaceArchive(t, expected)))
+		beds = append(beds, bedCase{id: bedID, expected: expected})
+	}
+
+	for i := range beds {
+		// The relative source remains Bed-local through cwd resolution. Only the
+		// absolute destination escapes when /workspace is left as a carrier path.
+		run, response := c.command(t, beds[i].id, map[string]any{
+			"command":    "mkdir -p /workspace/skills; i=0; while [ \"$i\" -lt 25 ]; do unzip -oq resources.zip -d /workspace/skills; i=$((i + 1)); done",
+			"cwd":        "/tmp",
+			"background": true,
+			"timeout":    60_000,
+		})
+		must2xx(t, "start fallback unzip", response)
+		if run.ExecutionID == "" {
+			t.Fatalf("fallback unzip for %s omitted execution id", beds[i].id)
+		}
+		beds[i].execID = run.ExecutionID
+	}
+
+	for _, bed := range beds {
+		finished := c.waitExecution(t, bed.execID, func(status executionStatusView) bool {
+			return !status.Running && status.Result != nil
+		}, "finish fallback unzip")
+		if finished.Result.Process.Kind == "exited" && finished.Result.Process.ExitCode != nil && *finished.Result.Process.ExitCode == 0 {
+			artifact := c.download(t, bed.id, "/workspace/skills/stock-analysis-router/references/dimension-tools.md")
+			if artifact.Status != http.StatusOK || string(artifact.Body) != bed.expected {
+				t.Errorf("successful fallback command escaped BedFS for %s: status=%d body=%q, want %q", bed.id, artifact.Status, artifact.Body, bed.expected)
+			}
+		}
+	}
+
+	if inventory := c.inventory(t); hasBed(inventory, "skills") {
+		t.Fatalf("pathshim invocation fallback created carrier-root ghost Bed %q: %+v", "skills", inventory.Beds)
+	}
+}
+
+func unavailablePathshim(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "pathshim")
+	const script = `#!/bin/sh
+if [ "${1:-}" = "probe" ]; then
+  printf 'passthrough\n'
+  echo 'pathshim: probe mode=passthrough reason=bind-view-unavailable error=Invalid argument (os error 22)' >&2
+  exit 1
+fi
+echo 'pathshim: unexpected command invocation after failed startup probe' >&2
+exit 99
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write unavailable pathshim: %v", err)
+	}
+	return path
 }
 
 func requireSupportedArchiveReplaceView(t *testing.T, c *apiClient, requested string) healthView {

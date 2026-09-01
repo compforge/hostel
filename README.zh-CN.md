@@ -41,7 +41,7 @@ curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv
 
 | 组 | 端点 |
 |---|---|
-| 基础 | `GET /ping`、`GET /healthz` |
+| 基础 | `GET /ping`、`GET /healthz`、`GET /v1/diagnostics` |
 | 指标 | `GET /metrics`、`GET /metrics/watch`（SSE） |
 | 文件 | `GET /files/info`、`DELETE /files`、`POST /files/mv`、`POST /files/permissions`、`GET /files/search`、`POST /files/replace`、`POST /files/upload`、`GET /files/download` |
 | 目录 | `GET /directories/list`、`POST /directories`、`DELETE /directories` |

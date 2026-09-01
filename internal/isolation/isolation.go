@@ -113,6 +113,7 @@ type Report interface {
 	Mechanism() string
 	Facts() HostFacts
 	WorkspaceView() WorkspaceViewReport
+	Diagnostics() DiagnosticsReport
 }
 
 type options struct {
@@ -145,6 +146,7 @@ type resolved struct {
 	req, eff, ceil Level
 	facts          HostFacts
 	workspaceView  WorkspaceViewReport
+	diagnostics    DiagnosticsReport
 }
 
 func (r *resolved) Requested() Level                   { return r.req }
@@ -153,6 +155,13 @@ func (r *resolved) Ceiling() Level                     { return r.ceil }
 func (r *resolved) Mechanism() string                  { return r.Isolator.Name() }
 func (r *resolved) Facts() HostFacts                   { return r.facts }
 func (r *resolved) WorkspaceView() WorkspaceViewReport { return r.workspaceView }
+func (r *resolved) Diagnostics() DiagnosticsReport {
+	probes := make(map[string]ProbeReport, len(r.diagnostics.Probes))
+	for name, probe := range r.diagnostics.Probes {
+		probes[name] = probe
+	}
+	return DiagnosticsReport{System: r.diagnostics.System, Probes: probes}
+}
 
 // Prepare forwards to the chosen mechanism when it needs data-dir preparation
 // (uid), else no-ops — so the bed manager can assert Preparer on the result
@@ -187,11 +196,19 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 	// (dorm) is the always-available floor. Two mechanisms serve room: landlock
 	// (kernel LSM, no privilege — preferred) and uid (Unix DAC, needs setuid
 	// caps — the fallback where Landlock is absent, e.g. old/custom kernels).
+	bwrapCandidate, bwrapProbe := newBwrap(facts, workspaceRoot)
+	landlockCandidate, landlockProbe := newLandlock(facts, workspaceRoot)
+	uidCandidate, uidProbe := newUID(facts, workspaceRoot)
+	probes := map[string]ProbeReport{
+		"bwrap":    bwrapProbe,
+		"landlock": landlockProbe,
+		"uid":      uidProbe,
+	}
 	candidates := []Isolator{
-		newBwrap(facts, workspaceRoot),    // suite
-		newLandlock(facts, workspaceRoot), // room — preferred
-		newUID(facts, workspaceRoot),      // room — fallback
-		direct{},                          // dorm
+		bwrapCandidate,    // suite
+		landlockCandidate, // room — preferred
+		uidCandidate,      // room — fallback
+		direct{},          // dorm
 	}
 
 	ceiling := Dorm
@@ -221,14 +238,30 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 			eff, chosen.Name(), req, ceiling)
 	}
 	workspaceView := WorkspaceViewReport{Mode: "carrier", Available: true}
+	if cfg.pathshim != "" {
+		probes["pathshim"] = ProbeReport{ConfiguredPath: cfg.pathshim}
+	}
 	if chosen.WorkspaceMounted() {
 		workspaceView = WorkspaceViewReport{Mode: "mount", Available: true}
 	} else if cfg.pathshim != "" {
 		var report WorkspaceViewReport
-		chosen, report = newPathshimView(chosen, workspaceRoot, cfg.pathshim)
+		var probe ProbeReport
+		chosen, report, probe = newPathshimView(chosen, workspaceRoot, cfg.pathshim)
 		workspaceView = report
+		probes["pathshim"] = probe
 	}
-	return &resolved{Isolator: chosen, req: req, eff: eff, ceil: ceiling, facts: facts, workspaceView: workspaceView}
+	return &resolved{
+		Isolator:      chosen,
+		req:           req,
+		eff:           eff,
+		ceil:          ceiling,
+		facts:         facts,
+		workspaceView: workspaceView,
+		diagnostics: DiagnosticsReport{
+			System: facts.diagnostics,
+			Probes: probes,
+		},
+	}
 }
 
 // unavailable is a mechanism that probed as not usable on this host. It keeps

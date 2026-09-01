@@ -132,6 +132,53 @@ func TestPingAndHealthz(t *testing.T) {
 	}
 }
 
+func TestDiagnostics(t *testing.T) {
+	s := newTestServer(t)
+	rec := do(t, s, http.MethodGet, "/v1/diagnostics", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/v1/diagnostics = %d %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode diagnostics: %v", err)
+	}
+	system, _ := body["system"].(map[string]any)
+	runtimeFacts, _ := system["runtime"].(map[string]any)
+	process, _ := system["process"].(map[string]any)
+	securityModules, _ := system["security_modules"].(map[string]any)
+	namespaceLimits, _ := system["namespace_limits"].(map[string]any)
+	kernelFeatures, _ := system["kernel_features"].(map[string]any)
+	probes, _ := body["probes"].(map[string]any)
+	isolationFacts, _ := body["isolation"].(map[string]any)
+	if runtimeFacts["os"] == "" || runtimeFacts["arch"] == "" || process == nil ||
+		securityModules == nil || namespaceLimits == nil || kernelFeatures == nil {
+		t.Fatalf("diagnostics system facts = %v", system)
+	}
+	if probes["bwrap"] == nil || probes["landlock"] == nil || probes["uid"] == nil {
+		t.Fatalf("diagnostics probes = %v", probes)
+	}
+	usernsClone, _ := namespaceLimits["unprivileged_userns_clone"].(map[string]any)
+	if _, hasValue := usernsClone["value"]; !hasValue || usernsClone["read_error"] == nil {
+		t.Fatalf("diagnostics userns knob must preserve value and read_error: %v", usernsClone)
+	}
+	bwrapProbe, _ := probes["bwrap"].(map[string]any)
+	if _, exists := bwrapProbe["attempted"]; !exists {
+		t.Fatalf("diagnostics bwrap probe missing attempted: %v", bwrapProbe)
+	}
+	if _, exists := bwrapProbe["exit_code"]; !exists {
+		t.Fatalf("diagnostics bwrap probe missing exit_code: %v", bwrapProbe)
+	}
+	if isolationFacts["requested"] != "dorm" || isolationFacts["effective"] != "dorm" ||
+		isolationFacts["mechanism"] != "direct" {
+		t.Fatalf("diagnostics isolation = %v", isolationFacts)
+	}
+	for _, field := range []string{"ok", "status", "issues", "requirements", "remediation", "recommendations"} {
+		if _, exists := body[field]; exists {
+			t.Fatalf("diagnostics must not infer %q: %v", field, body)
+		}
+	}
+}
+
 func TestUploadInfoDownloadRoundTrip(t *testing.T) {
 	s := newTestServer(t)
 

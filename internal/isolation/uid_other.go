@@ -23,7 +23,9 @@ const AsUserArg = "__asuser"
 
 // newUID: uid isolation relies on Linux setuid/setgid + /proc caps. Report room
 // as unavailable elsewhere.
-func newUID(HostFacts, string) Isolator { return unavailable{name: "uid", lvl: Room} }
+func newUID(HostFacts, string) (Isolator, ProbeReport) {
+	return unavailable{name: "uid", lvl: Room}, ProbeReport{}
+}
 
 // ApplyAsUser should never run off Linux (no uid isolator can be chosen).
 func ApplyAsUser(int, string) error { return fmt.Errorf("uid isolation: unsupported on this platform") }
