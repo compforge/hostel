@@ -44,6 +44,9 @@ func osFacts() HostFacts {
 			KernelFeatures: KernelFeatureFacts{
 				LandlockABI: unsupportedInt,
 			},
+			Ptrace: PtraceFacts{
+				YamaScope: unsupportedInt,
+			},
 		},
 	}
 }

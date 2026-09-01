@@ -148,10 +148,11 @@ func TestDiagnostics(t *testing.T) {
 	securityModules, _ := system["security_modules"].(map[string]any)
 	namespaceLimits, _ := system["namespace_limits"].(map[string]any)
 	kernelFeatures, _ := system["kernel_features"].(map[string]any)
+	ptraceFacts, _ := system["ptrace"].(map[string]any)
 	probes, _ := body["probes"].(map[string]any)
 	isolationFacts, _ := body["isolation"].(map[string]any)
 	if runtimeFacts["os"] == "" || runtimeFacts["arch"] == "" || process == nil ||
-		securityModules == nil || namespaceLimits == nil || kernelFeatures == nil {
+		securityModules == nil || namespaceLimits == nil || kernelFeatures == nil || ptraceFacts == nil {
 		t.Fatalf("diagnostics system facts = %v", system)
 	}
 	if probes["bwrap"] == nil || probes["landlock"] == nil || probes["uid"] == nil {
@@ -160,6 +161,10 @@ func TestDiagnostics(t *testing.T) {
 	usernsClone, _ := namespaceLimits["unprivileged_userns_clone"].(map[string]any)
 	if _, hasValue := usernsClone["value"]; !hasValue || usernsClone["read_error"] == nil {
 		t.Fatalf("diagnostics userns knob must preserve value and read_error: %v", usernsClone)
+	}
+	yamaScope, _ := ptraceFacts["yama_scope"].(map[string]any)
+	if _, hasValue := yamaScope["value"]; !hasValue || yamaScope["read_error"] == nil {
+		t.Fatalf("diagnostics ptrace scope must preserve value and read_error: %v", yamaScope)
 	}
 	bwrapProbe, _ := probes["bwrap"].(map[string]any)
 	if _, exists := bwrapProbe["attempted"]; !exists {
