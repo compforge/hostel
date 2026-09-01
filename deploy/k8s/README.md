@@ -19,19 +19,15 @@ spec:
   containers:
     - name: hostel
       securityContext:
-        privileged: false
-        allowPrivilegeEscalation: false
         capabilities:
-          drop: ["ALL"]
           add: ["SYS_PTRACE"]
-        seccompProfile:
-          type: RuntimeDefault
 ```
 
-Merge `SYS_PTRACE` into the template's existing capability list rather than
-removing capabilities required by another selected isolation mechanism. The
-change applies only to newly created Pods, so recreate existing carrier Pods
-through sandbox-server after updating its template.
+This is an incremental patch: merge `SYS_PTRACE` into the template's existing
+capability list and leave its current `drop`, seccomp, AppArmor, and other
+security settings unchanged. The change applies only to newly created Pods, so
+recreate existing carrier Pods through sandbox-server after updating its
+template.
 
 The Kubernetes [Baseline and Restricted Pod Security
 Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
