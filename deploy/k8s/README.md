@@ -3,6 +3,74 @@
 This directory contains integration examples, not a complete production
 deployment of hostel.
 
+## Enable ptrace for the PRoot workspace view
+
+The standard Hostel image already includes PRoot. When bubblewrap and pathshim
+cannot provide the per-Bed `/workspace` view, Hostel can fall back to it. PRoot
+traces only the processes that it starts, but the container runtime must allow
+`ptrace(2)`.
+
+Apply the permission only to the Hostel container in the carrier Pod template
+created by sandbox-server. Do not change kubelet flags or node-wide sysctls,
+and do not enable `privileged` or `hostPID`:
+
+```yaml
+spec:
+  containers:
+    - name: hostel
+      securityContext:
+        privileged: false
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+          add: ["SYS_PTRACE"]
+        seccompProfile:
+          type: RuntimeDefault
+```
+
+Merge `SYS_PTRACE` into the template's existing capability list rather than
+removing capabilities required by another selected isolation mechanism. The
+change applies only to newly created Pods, so recreate existing carrier Pods
+through sandbox-server after updating its template.
+
+The Kubernetes [Baseline and Restricted Pod Security
+Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+do not permit adding `SYS_PTRACE`. If Pod Security Admission rejects the
+template, exempt the narrow sandbox-server ServiceAccount identity or add an
+equivalent narrowly scoped exception in the cluster's admission policy. The
+exemption example in the next section can be reused; do not relax the whole
+carrier namespace. Other admission controllers may still require their own
+allowlist.
+
+Verify the newly created Pod without interpreting kernel-specific knobs:
+
+```bash
+CARRIER_NAMESPACE="<carrier-namespace>"
+POD="<running-carrier-pod>"
+CONTAINER="<hostel-container-name>"
+
+kubectl exec "${POD}" \
+  --namespace "${CARRIER_NAMESPACE}" \
+  --container "${CONTAINER}" \
+  -- curl --fail --silent --show-error \
+  http://127.0.0.1:8872/v1/diagnostics | \
+  jq '{
+    ptrace: .probes.ptrace,
+    proot: .probes.proot,
+    workspace_view
+  }'
+```
+
+The permission is usable when `ptrace` reports `attempted: true`,
+`exit_code: 0`, and an empty `error`. When a suite mount is unavailable, the
+`proot` probe should report the same result and a selected PRoot view reports
+`{"mode":"proot","available":true}`. If suite is already available, Hostel
+selects its mount view without attempting PRoot. A missing
+`/proc/sys/kernel/yama/ptrace_scope` is only an observed host fact; the probe
+result is authoritative. If the probe still fails, send the complete
+`/v1/diagnostics` response to the Hostel maintainer instead of changing node
+settings one by one.
+
 ## Pod Security Admission exemption for suite
 
 [`pod-security-admission-exemption.yaml`](pod-security-admission-exemption.yaml)
