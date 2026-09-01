@@ -71,7 +71,7 @@ for required host capabilities and release-gate options.
 
 | Group | Endpoints |
 |---|---|
-| Basic | `GET /ping`, `GET /healthz` |
+| Basic | `GET /ping`, `GET /healthz`, `GET /v1/diagnostics` |
 | Metrics | `GET /metrics`, `GET /metrics/watch` (SSE) |
 | Files | `GET /files/info`, `DELETE /files`, `POST /files/mv`, `POST /files/permissions`, `GET /files/search`, `POST /files/replace`, `POST /files/upload`, `GET /files/download` |
 | Directories | `GET /directories/list`, `POST /directories`, `DELETE /directories` |

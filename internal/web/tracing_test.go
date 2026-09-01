@@ -67,4 +67,9 @@ func TestTracingMiddlewareExtractsParentAndSkipsHealth(t *testing.T) {
 	if got := len(recorder.Ended()); got != 1 {
 		t.Fatalf("health check created a span: ended spans = %d", got)
 	}
+	diagnosticsResponse := httptest.NewRecorder()
+	s.Handler().ServeHTTP(diagnosticsResponse, httptest.NewRequest(http.MethodGet, "/v1/diagnostics", nil))
+	if got := len(recorder.Ended()); got != 1 {
+		t.Fatalf("diagnostics created a span: ended spans = %d", got)
+	}
 }

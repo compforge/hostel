@@ -61,70 +61,78 @@ func (p *pathshimView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 
 // +spec=`A pathshim workspace view improves /workspace compatibility without changing isolation level or mount capability.`
 // +case:id=pathshim_workspace_view,desc=`Probe and run one command through the selected dorm or room mechanism`,expect=`/workspace maps to Bed workspace, command semantics survive, and probe failure falls back to carrier paths`
-func newPathshimView(base Isolator, workspaceRoot, path string) (Isolator, WorkspaceViewReport) {
+func newPathshimView(base Isolator, workspaceRoot, path string) (Isolator, WorkspaceViewReport, ProbeReport) {
+	probe := ProbeReport{ConfiguredPath: path}
 	resolvedPath, err := exec.LookPath(path)
 	if err != nil {
 		reason := "find binary: " + err.Error()
+		probe.Error = reason
 		log.Printf("isolation: pathshim workspace view unavailable (%s); using carrier paths", reason)
-		return base, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: reason}
+		return base, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: reason}, probe
 	}
 	resolvedPath, err = filepath.Abs(resolvedPath)
 	if err != nil {
 		reason := "resolve binary: " + err.Error()
+		probe.Error = reason
 		log.Printf("isolation: pathshim workspace view unavailable (%s); using carrier paths", reason)
-		return base, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: reason}
+		return base, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: reason}, probe
 	}
-	reason := probePathshim(base, workspaceRoot, resolvedPath)
+	probe = probePathshim(base, workspaceRoot, resolvedPath)
+	probe.ConfiguredPath = path
+	probe.ResolvedPath = resolvedPath
+	reason := probe.Error
 	if reason != "" {
 		log.Printf("isolation: pathshim workspace view unavailable (%s); using carrier paths", reason)
-		return base, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: reason}
+		return base, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: reason}, probe
 	}
 	log.Printf("isolation: workspace view=pathshim path=%s", resolvedPath)
-	return &pathshimView{base: base, path: resolvedPath}, WorkspaceViewReport{Mode: "pathshim", Available: true}
+	return &pathshimView{base: base, path: resolvedPath}, WorkspaceViewReport{Mode: "pathshim", Available: true}, probe
 }
 
-func probePathshim(base Isolator, workspaceRoot, path string) string {
+func probePathshim(base Isolator, workspaceRoot, path string) ProbeReport {
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
-		return "create workspace root: " + err.Error()
+		return ProbeReport{Error: "create workspace root: " + err.Error()}
 	}
 	probeHome, err := os.MkdirTemp(workspaceRoot, ".pathshim-probe-*")
 	if err != nil {
-		return "create probe bed: " + err.Error()
+		return ProbeReport{Error: "create probe bed: " + err.Error()}
 	}
 	defer os.RemoveAll(probeHome)
 	probeWorkspace := filepath.Join(probeHome, "workspace")
 	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
-		return "create probe workspace: " + err.Error()
+		return ProbeReport{Error: "create probe workspace: " + err.Error()}
 	}
 	fs, err := bedfs.New(probeHome)
 	if err != nil {
-		return err.Error()
+		return ProbeReport{Error: err.Error()}
 	}
 	defer fs.Close()
 	if preparer, ok := base.(Preparer); ok {
 		if err := preparer.Prepare(fs); err != nil {
-			return "prepare probe bed: " + err.Error()
+			return ProbeReport{Error: "prepare probe bed: " + err.Error()}
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "probe", "--bind", probeWorkspace+":"+bedfs.WorkspacePath)
 	if err := base.Wrap(cmd, fs, probeWorkspace); err != nil {
-		return "wrap probe: " + err.Error()
+		return ProbeReport{Error: "wrap probe: " + err.Error()}
 	}
-	out, err := cmd.CombinedOutput()
+	report := runExecProbe(cmd)
 	if ctx.Err() != nil {
-		return "probe timed out"
+		report.Error = "probe timed out"
+		return report
 	}
-	if err != nil {
-		detail := strings.TrimSpace(string(out))
+	if report.failed() {
+		detail := strings.TrimSpace(report.Stdout + report.Stderr)
 		if detail == "" {
-			detail = err.Error()
+			detail = report.Error
 		}
-		return detail
+		report.Error = detail
+		return report
 	}
-	if strings.TrimSpace(string(out)) != "bind-view" {
-		return "unexpected probe output: " + strings.TrimSpace(string(out))
+	if strings.TrimSpace(report.Stdout) != "bind-view" {
+		report.Error = "unexpected probe output: " + strings.TrimSpace(report.Stdout)
 	}
-	return ""
+	return report
 }

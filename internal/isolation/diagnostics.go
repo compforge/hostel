@@ -1,0 +1,142 @@
+// Copyright 2026 Li Qiankun
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package isolation
+
+import (
+	"bytes"
+	"errors"
+	"os/exec"
+	"time"
+)
+
+// ObservedInt preserves both a successfully read integer and a read failure.
+// A missing host knob is not the same fact as a present knob set to zero.
+type ObservedInt struct {
+	Value     *int64 `json:"value"`
+	ReadError string `json:"read_error"`
+}
+
+// ObservedString preserves raw text from a host pseudo-file.
+type ObservedString struct {
+	Value     *string `json:"value"`
+	ReadError string  `json:"read_error"`
+}
+
+type RuntimeFacts struct {
+	OS            string `json:"os"`
+	Arch          string `json:"arch"`
+	KernelRelease string `json:"kernel_release"`
+}
+
+type CapabilityFacts struct {
+	Inheritable string `json:"inheritable"`
+	Permitted   string `json:"permitted"`
+	Effective   string `json:"effective"`
+	Bounding    string `json:"bounding"`
+	Ambient     string `json:"ambient"`
+}
+
+type ProcessFacts struct {
+	EUID            int             `json:"euid"`
+	EGID            int             `json:"egid"`
+	Capabilities    CapabilityFacts `json:"capabilities"`
+	NoNewPrivs      *int64          `json:"no_new_privs"`
+	SeccompMode     *int64          `json:"seccomp_mode"`
+	SeccompFilters  *int64          `json:"seccomp_filters"`
+	StatusReadError string          `json:"status_read_error"`
+}
+
+type SecurityModuleFacts struct {
+	LSMList         ObservedString `json:"lsm_list"`
+	ProcessLabel    ObservedString `json:"process_label"`
+	AppArmorCurrent ObservedString `json:"apparmor_current"`
+}
+
+type NamespaceLimitFacts struct {
+	User                    ObservedInt `json:"max_user_namespaces"`
+	Mount                   ObservedInt `json:"max_mnt_namespaces"`
+	PID                     ObservedInt `json:"max_pid_namespaces"`
+	IPC                     ObservedInt `json:"max_ipc_namespaces"`
+	UTS                     ObservedInt `json:"max_uts_namespaces"`
+	Network                 ObservedInt `json:"max_net_namespaces"`
+	Cgroup                  ObservedInt `json:"max_cgroup_namespaces"`
+	UnprivilegedUsernsClone ObservedInt `json:"unprivileged_userns_clone"`
+}
+
+type KernelFeatureFacts struct {
+	LandlockABI            ObservedInt `json:"landlock_abi"`
+	CgroupV2               bool        `json:"cgroup_v2"`
+	ProcSelfStatusReadable bool        `json:"proc_self_status_readable"`
+}
+
+// SystemFacts are raw, boot-time observations. They deliberately contain no
+// missing-permission classification or remediation advice.
+type SystemFacts struct {
+	Runtime         RuntimeFacts        `json:"runtime"`
+	Process         ProcessFacts        `json:"process"`
+	SecurityModules SecurityModuleFacts `json:"security_modules"`
+	NamespaceLimits NamespaceLimitFacts `json:"namespace_limits"`
+	KernelFeatures  KernelFeatureFacts  `json:"kernel_features"`
+}
+
+// ProbeReport records one boot probe without interpreting why it passed or
+// failed. ExitCode remains null when no child process reached an exit status.
+type ProbeReport struct {
+	ConfiguredPath string `json:"configured_path"`
+	ResolvedPath   string `json:"resolved_path"`
+	Attempted      bool   `json:"attempted"`
+	ExitCode       *int   `json:"exit_code"`
+	Stdout         string `json:"stdout"`
+	Stderr         string `json:"stderr"`
+	Error          string `json:"error"`
+	DurationMS     int64  `json:"duration_ms"`
+}
+
+// DiagnosticsReport is the immutable boot snapshot served by the diagnostics
+// endpoint. Reading it must never rerun a mechanism probe.
+type DiagnosticsReport struct {
+	System SystemFacts            `json:"system"`
+	Probes map[string]ProbeReport `json:"probes"`
+}
+
+func runExecProbe(cmd *exec.Cmd) ProbeReport {
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	started := time.Now()
+	err := cmd.Run()
+	report := ProbeReport{
+		Attempted:  true,
+		Stdout:     stdout.String(),
+		Stderr:     stderr.String(),
+		DurationMS: time.Since(started).Milliseconds(),
+	}
+	if err == nil {
+		code := 0
+		report.ExitCode = &code
+		return report
+	}
+	report.Error = err.Error()
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code := exitErr.ExitCode()
+		report.ExitCode = &code
+	}
+	return report
+}
+
+func (p ProbeReport) failed() bool {
+	return p.Error != "" || (p.ExitCode != nil && *p.ExitCode != 0)
+}

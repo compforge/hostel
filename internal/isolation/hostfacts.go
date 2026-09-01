@@ -17,6 +17,7 @@ package isolation
 import (
 	"os"
 	"os/exec"
+	"runtime"
 )
 
 // HostFacts is the boot-time snapshot of what THIS host offers the isolation
@@ -50,6 +51,11 @@ type HostFacts struct {
 	// nodes may even reject annotated pods), so hostel degrades honestly and
 	// this field tells the operator why.
 	AppArmorProfile string `json:"apparmor_profile"`
+
+	// diagnostics preserves the detailed observations that do not belong in
+	// /healthz's compact host summary.
+	diagnostics      SystemFacts
+	bwrapLookupError string
 }
 
 // HasCap reports whether capability bit (e.g. capSETUID) is in the effective
@@ -66,8 +72,15 @@ func collectHostFacts() HostFacts {
 	f := osFacts()
 	f.EUID = os.Geteuid()
 	f.EGID = os.Getegid()
+	f.diagnostics.Runtime.OS = runtime.GOOS
+	f.diagnostics.Runtime.Arch = runtime.GOARCH
+	f.diagnostics.Runtime.KernelRelease = f.KernelRelease
+	f.diagnostics.Process.EUID = f.EUID
+	f.diagnostics.Process.EGID = f.EGID
 	if p, err := exec.LookPath("bwrap"); err == nil {
 		f.BwrapPath = p
+	} else {
+		f.bwrapLookupError = err.Error()
 	}
 	return f
 }

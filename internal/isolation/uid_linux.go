@@ -17,7 +17,6 @@
 package isolation
 
 import (
-	"errors"
 	"fmt"
 	"hash/fnv"
 	"io/fs"
@@ -76,26 +75,31 @@ type uidIso struct {
 	self string // hostel binary, re-execed as the uid-dropper
 }
 
-func newUID(facts HostFacts, workspaceRoot string) Isolator {
+func newUID(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
+	report := ProbeReport{}
 	self, err := os.Executable()
 	if err != nil {
-		return unavailable{name: "uid", lvl: Room}
+		report.Error = err.Error()
+		return unavailable{name: "uid", lvl: Room}, report
 	}
+	report.ResolvedPath = self
 	// Missing caps isn't an error — many environments simply don't grant them;
 	// the resolver falls through to the next mechanism and logs honestly.
 	if miss := missingUIDCaps(facts); miss != "" {
-		return unavailable{name: "uid", lvl: Room}
+		return unavailable{name: "uid", lvl: Room}, report
 	}
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		log.Printf("isolation: cannot create workspace root %s: %v", workspaceRoot, err)
 	}
 	// Caps present ≠ enforcement works. Prove the whole chain once — chown →
 	// setuid → no_new_privs → EACCES on a sibling — exactly as production runs.
-	if err := uidSmoke(self, workspaceRoot); err != nil {
-		log.Printf("isolation: uid isolation caps present but unusable (%v)", err)
-		return unavailable{name: "uid", lvl: Room}
+	report = uidSmoke(self, workspaceRoot)
+	report.ResolvedPath = self
+	if report.failed() {
+		log.Printf("isolation: uid isolation caps present but unusable (%s)", report.Error)
+		return unavailable{name: "uid", lvl: Room}, report
 	}
-	return &uidIso{self: self}
+	return &uidIso{self: self}, report
 }
 
 // capsForUID: the effective capabilities the daemon needs to run beds under
@@ -124,53 +128,52 @@ func missingUIDCaps(facts HostFacts) string {
 // one and check it can write its own dir but gets EACCES on the sibling's
 // secret. Catches a silently-broken setuid (e.g. no CAP_SETUID) that the cap
 // bits alone wouldn't — same honesty contract as landlockSmoke.
-func uidSmoke(self, workspaceRoot string) error {
+func uidSmoke(self, workspaceRoot string) ProbeReport {
 	base, err := os.MkdirTemp(workspaceRoot, ".uidprobe-*")
 	if err != nil {
-		return fmt.Errorf("smoke test: temp dir: %w", err)
+		return ProbeReport{Error: fmt.Sprintf("smoke test: temp dir: %v", err)}
 	}
 	defer os.RemoveAll(base)
 	// The probe process (a bed uid) must be able to TRAVERSE base to reach the
 	// two dirs under it — MkdirTemp makes it 0700, which would block a non-root
 	// uid at the door.
 	if err := os.Chmod(base, 0o755); err != nil {
-		return fmt.Errorf("smoke test: %w", err)
+		return ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	own := filepath.Join(base, "own")
 	sibling := filepath.Join(base, "sibling")
 	secret := filepath.Join(sibling, "secret")
 	if err := os.MkdirAll(own, 0o755); err != nil {
-		return fmt.Errorf("smoke test: %w", err)
+		return ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	if err := os.MkdirAll(sibling, 0o755); err != nil {
-		return fmt.Errorf("smoke test: %w", err)
+		return ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	if err := os.WriteFile(secret, []byte("s"), 0o600); err != nil {
-		return fmt.Errorf("smoke test: %w", err)
+		return ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	if err := prepareUIDDir(own, bedUID(own)); err != nil {
-		return fmt.Errorf("smoke test: prepare own: %w", err)
+		return ProbeReport{Error: "smoke test: prepare own: " + err.Error()}
 	}
 	if err := prepareUIDDir(sibling, bedUID(sibling)); err != nil {
-		return fmt.Errorf("smoke test: prepare sibling: %w", err)
+		return ProbeReport{Error: "smoke test: prepare sibling: " + err.Error()}
 	}
 
 	script := fmt.Sprintf("echo ok > probe.txt || exit 10; cat %q >/dev/null 2>&1 && exit 11; exit 0", secret)
 	cmd := exec.Command(self, AsUserArg, strconv.Itoa(bedUID(own)), own, "--", "/bin/sh", "-c", script)
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		return nil
+	report := runExecProbe(cmd)
+	if report.ExitCode == nil || *report.ExitCode == 0 {
+		return report
 	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		switch ee.ExitCode() {
-		case 10:
-			return errors.New("smoke test: own data dir not writable under the bed uid")
-		case 11:
-			return errors.New("smoke test: sibling data still readable — uid isolation not enforced")
-		}
+	switch *report.ExitCode {
+	case 10:
+		report.Error = "smoke test: own data dir not writable under the bed uid"
+	case 11:
+		report.Error = "smoke test: sibling data still readable — uid isolation not enforced"
+	default:
+		report.Error = "smoke test: " + report.Error
 	}
-	return fmt.Errorf("smoke test: %w (%s)", err, out)
+	return report
 }
 
 func (u *uidIso) Name() string                 { return "uid" }

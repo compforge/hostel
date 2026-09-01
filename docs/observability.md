@@ -92,8 +92,8 @@ Trace；启动日志和没有上下文的后台日志保持原格式。
 ## Trace
 
 Hostel 接收 W3C Trace Context 与 Baggage，并通过 OTLP gRPC 或 HTTP 导出。入站 HTTP span 使用
-Gin 路由模板命名；`/healthz`、`/ping`、`/metrics`、`/metrics/watch` 不创建 span，避免探针和
-高频采样淹没有效请求。
+Gin 路由模板命名；`/healthz`、`/ping`、`/metrics`、`/metrics/watch`、`/v1/diagnostics`
+不创建 span，避免探针和高频采样淹没有效请求。
 
 领域 span 保持小而稳定：
 
@@ -132,6 +132,12 @@ purging / failed / resident / dormant luggage）的当前事实，不承载 time
 
 实例 health / capabilities 只表达 hostel 实例是否可服务及支持什么能力，不能混入某个
 bed 的一次失败。
+
+`GET /v1/diagnostics` 返回 isolation 启动解析时缓存的系统事实和机制探测原始记录，包括 runtime、
+进程 capability/seccomp、LSM label、namespace sysctl、kernel feature 以及各探测的路径、是否执行、
+退出码、stdout、stderr、错误和耗时。读取接口不重新执行探测；字段只保留观测值和读取错误，不输出
+状态判断、缺失权限分类、部署要求或修复建议。不存在的内核节点以 `value: null` 和 `read_error`
+表达，与节点存在且值为 `0` 严格区分。
 
 所有 execution 进入同一个有界 registry。status 返回结构化终态，logs 返回带 stream 与单调
 sequence 的有界输出；游标落入已淘汰区间时显式返回 truncated。registry 只保留最近完成记录，

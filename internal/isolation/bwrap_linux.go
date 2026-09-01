@@ -44,10 +44,12 @@ type bwrap struct {
 // while every exec failed). On failure it falls back to direct so the daemon
 // still boots and /healthz reports the truth.
 // Probe pattern borrowed from OpenSandbox execd, extended to the real argv.
-func newBwrap(facts HostFacts, workspaceRoot string) Isolator {
+func newBwrap(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
 	path := facts.BwrapPath
+	report := ProbeReport{ConfiguredPath: "bwrap", ResolvedPath: path}
 	if path == "" {
-		return unavailable{name: "bwrap", lvl: Suite}
+		report.Error = facts.bwrapLookupError
+		return unavailable{name: "bwrap", lvl: Suite}, report
 	}
 
 	// bwrap cannot mkdir the mount point inside the read-only root bind, so
@@ -64,8 +66,11 @@ func newBwrap(facts HostFacts, workspaceRoot string) Isolator {
 	}
 
 	masks := resolveMaskPaths(defaultMaskCandidates)
-	if err := bwrapSmoke(path, workspaceRoot, masks); err != nil {
-		log.Printf("isolation: bwrap found but unusable (%v)", err)
+	report = bwrapSmoke(path, workspaceRoot, masks)
+	report.ConfiguredPath = "bwrap"
+	report.ResolvedPath = path
+	if report.failed() {
+		log.Printf("isolation: bwrap found but unusable (%s)", report.Error)
 		// Point the operator at the usual k8s cause: userns is on yet bwrap
 		// dies at mount because containerd's default AppArmor profile denies
 		// mount(2). Surfaced here AND in /healthz (HostFacts.apparmor_profile)
@@ -75,9 +80,9 @@ func newBwrap(facts HostFacts, workspaceRoot string) Isolator {
 			log.Printf("isolation: suite blocked despite unprivileged userns — AppArmor profile %q likely denies mount; "+
 				"grant the pod an AppArmor-unconfined annotation to reach suite (else degrading to a lower tier)", facts.AppArmorProfile)
 		}
-		return unavailable{name: "bwrap", lvl: Suite}
+		return unavailable{name: "bwrap", lvl: Suite}, report
 	}
-	return &bwrap{path: path, root: workspaceRoot, maskPaths: masks}
+	return &bwrap{path: path, root: workspaceRoot, maskPaths: masks}, report
 }
 
 // resolveMaskPaths filters candidates to existing directories and dedupes them
@@ -112,24 +117,24 @@ func resolveMaskPaths(candidates []string) []string {
 // bwrapSmoke runs `true` under the exact argv shape used for real commands —
 // namespaces, masking, and the /workspace bind all get exercised, so whatever
 // passes here works for beds too.
-func bwrapSmoke(path, workspaceRoot string, masks []string) error {
+func bwrapSmoke(path, workspaceRoot string, masks []string) ProbeReport {
 	probeHome, err := os.MkdirTemp(workspaceRoot, ".probe-*")
 	if err != nil {
-		return fmt.Errorf("smoke test: temp bed_home: %w", err)
+		return ProbeReport{Error: fmt.Sprintf("smoke test: temp bed_home: %v", err)}
 	}
 	defer os.RemoveAll(probeHome)
 	probeWorkspace := filepath.Join(probeHome, "workspace")
 	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
-		return fmt.Errorf("smoke test: workspace: %w", err)
+		return ProbeReport{Error: fmt.Sprintf("smoke test: workspace: %v", err)}
 	}
 
 	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, bedfs.WorkspacePath, masks)
 	cmd := exec.Command(path, append(argv, "true")...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("smoke test: %w (%s)", err, out)
+	report := runExecProbe(cmd)
+	if report.Error != "" {
+		report.Error = "smoke test: " + report.Error
 	}
-	return nil
+	return report
 }
 
 func (b *bwrap) Name() string           { return "bwrap" }

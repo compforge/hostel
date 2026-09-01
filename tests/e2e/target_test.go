@@ -23,9 +23,11 @@ const (
 )
 
 type targetOptions struct {
-	isolation string
-	maxBeds   int
-	pathshim  string
+	isolation        string
+	maxBeds          int
+	pathshim         string
+	pathshimHostPath string
+	workspaceRoot    string
 }
 
 type target struct {
@@ -106,7 +108,10 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 	if err != nil {
 		t.Fatalf("create hostel log: %v", err)
 	}
-	workspaceRoot := filepath.Join(t.TempDir(), "beds")
+	workspaceRoot := options.workspaceRoot
+	if workspaceRoot == "" {
+		workspaceRoot = filepath.Join(t.TempDir(), "beds")
+	}
 	pathshim := options.pathshim
 	if pathshim == "" {
 		pathshim = strings.TrimSpace(os.Getenv(pathshimEnv))
@@ -153,13 +158,16 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 func startImageTarget(t *testing.T, image, addr string, options targetOptions) {
 	t.Helper()
 	name := fmt.Sprintf("hostel-e2e-%d-%d", os.Getpid(), time.Now().UnixNano())
+	workspaceRoot := options.workspaceRoot
+	if workspaceRoot == "" {
+		workspaceRoot = "/tmp/" + name + "-beds"
+	}
 	args := []string{
 		"run", "--detach", "--rm", "--name", name, "--network", "host",
 		"-e", "HOSTEL_ADDR=" + addr,
-		// Keep carrier paths outside the guest /workspace bind. Isolation E2E
-		// deliberately addresses a sibling by its carrier path; using the image
-		// default /workspace root would make that probe a pathshim guest path.
-		"-e", "HOSTEL_WORKSPACE_ROOT=/tmp/" + name + "-beds",
+		// Most isolation E2E keeps carrier paths outside the guest /workspace
+		// bind. A test may override this to reproduce a real carrier-root layout.
+		"-e", "HOSTEL_WORKSPACE_ROOT=" + workspaceRoot,
 		"-e", "HOSTEL_ISOLATION=" + options.isolation,
 		"-e", "HOSTEL_EXECUTOR=auto",
 		"-e", "HOSTEL_STORE=noop",
@@ -168,6 +176,11 @@ func startImageTarget(t *testing.T, image, addr string, options targetOptions) {
 		"-e", "HOSTEL_ADMISSION_CPU_THRESHOLD=0",
 		"-e", "HOSTEL_ADMISSION_MEMORY_THRESHOLD=0",
 		"-e", "HOSTEL_BED_IDLE_TIMEOUT=0",
+	}
+	if options.pathshimHostPath != "" {
+		const guestPath = "/tmp/hostel-e2e-pathshim"
+		args = append(args, "--volume", options.pathshimHostPath+":"+guestPath+":ro")
+		options.pathshim = guestPath
 	}
 	if options.pathshim != "" {
 		args = append(args, "-e", "HOSTEL_PATHSHIM="+options.pathshim)

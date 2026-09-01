@@ -107,7 +107,7 @@ func NewServer(mgr *bed.Manager, options ...ServerOption) *Server {
 }
 
 func traceHTTPPath(request *http.Request) bool {
-	return !slices.Contains([]string{"/healthz", "/ping", "/metrics", "/metrics/watch"}, request.URL.Path)
+	return !slices.Contains([]string{"/healthz", "/ping", "/metrics", "/metrics/watch", "/v1/diagnostics"}, request.URL.Path)
 }
 
 // Handler exposes the engine for http.Server / tests.
@@ -117,6 +117,7 @@ func (s *Server) routes() {
 	e := s.engine
 	e.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
 	e.GET("/healthz", s.healthz)
+	e.GET("/v1/diagnostics", s.diagnostics)
 
 	metrics := e.Group("/metrics")
 	{
@@ -297,6 +298,36 @@ func (s *Server) healthz(c *gin.Context) {
 		// /v1/beds for those.
 		"luggage_high_bytes": high,
 		"luggage_low_bytes":  low,
+	})
+}
+
+// GET /v1/diagnostics returns the immutable facts and mechanism probe records
+// captured while isolation was resolved at boot.
+//
+// +spec=`Instance diagnostics expose only cached boot-time facts and raw probe records; reading the endpoint never reruns probes or infers remediation.`
+func (s *Server) diagnostics(c *gin.Context) {
+	iso := s.mgr.Isolator()
+	report, ok := iso.(isolation.Report)
+	if !ok {
+		c.JSON(http.StatusOK, gin.H{
+			"system":         isolation.SystemFacts{},
+			"probes":         map[string]isolation.ProbeReport{},
+			"isolation":      gin.H{"effective": iso.Level().String(), "mechanism": iso.Name()},
+			"workspace_view": workspaceView(iso),
+		})
+		return
+	}
+	diagnostics := report.Diagnostics()
+	c.JSON(http.StatusOK, gin.H{
+		"system": diagnostics.System,
+		"probes": diagnostics.Probes,
+		"isolation": gin.H{
+			"requested": report.Requested().String(),
+			"effective": report.Effective().String(),
+			"ceiling":   report.Ceiling().String(),
+			"mechanism": report.Mechanism(),
+		},
+		"workspace_view": report.WorkspaceView(),
 	})
 }
 
