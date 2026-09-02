@@ -32,7 +32,7 @@ func indexOfSeq(argv []string, seq ...string) int {
 }
 
 func TestBuildBwrapArgsMasksSiblingsBeforeBind(t *testing.T) {
-	argv := buildBwrapArgs("/ws-root", "/ws-root/alice/data", "/ws-root/alice/data/workspace", bedfs.WorkspacePath, []string{"/root", "/home"})
+	argv := buildBwrapArgs("/ws-root", "/ws-root/alice/data", "/ws-root/alice/data/workspace", nil, bedfs.WorkspacePath, []string{"/root", "/home"})
 
 	maskRoot := indexOfSeq(argv, "--tmpfs", "/ws-root")
 	bindHome := indexOfSeq(argv, "--bind", "/ws-root/alice/data", bwrapBedHomeMountPoint)
@@ -72,7 +72,7 @@ func TestBuildBwrapArgsMasksSiblingsBeforeBind(t *testing.T) {
 // procfs remount fails under k8s's masked /proc). Regressing either silently
 // drops suite back to a lower tier on every real cluster.
 func TestBuildBwrapArgsK8sReachable(t *testing.T) {
-	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", bedfs.WorkspacePath, nil)
+	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", nil, bedfs.WorkspacePath, nil)
 	if !slices.Contains(argv, "--unshare-user") {
 		t.Errorf("missing --unshare-user (suite needs userns in a non-privileged pod); argv=%v", argv)
 	}
@@ -88,7 +88,7 @@ func TestBuildBwrapArgsK8sReachable(t *testing.T) {
 }
 
 func TestBuildBwrapArgsSharesCarrierSoftware(t *testing.T) {
-	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", bedfs.WorkspacePath, nil)
+	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", nil, bedfs.WorkspacePath, nil)
 	roRoot := indexOfSeq(argv, "--ro-bind", "/", "/")
 	sharedSoftware := indexOfSeq(argv, "--bind", carrierSoftwareRoot, carrierSoftwareRoot)
 	if roRoot < 0 || sharedSoftware < 0 || roRoot >= sharedSoftware {
@@ -99,7 +99,7 @@ func TestBuildBwrapArgsSharesCarrierSoftware(t *testing.T) {
 // The workspace root may itself be /workspace (default config). The sequence
 // must still be mask-then-bind so the bed's own dir replaces the mount point.
 func TestBuildBwrapArgsRootEqualsMountPoint(t *testing.T) {
-	argv := buildBwrapArgs("/workspace", "/workspace/b1/data", "/workspace/b1/data/workspace", bedfs.WorkspacePath, nil)
+	argv := buildBwrapArgs("/workspace", "/workspace/b1/data", "/workspace/b1/data/workspace", nil, bedfs.WorkspacePath, nil)
 	mask := indexOfSeq(argv, "--tmpfs", "/workspace")
 	bind := indexOfSeq(argv, "--bind", "/workspace/b1/data/workspace", bedfs.WorkspacePath)
 	if mask < 0 || bind < 0 || mask >= bind {
@@ -108,9 +108,25 @@ func TestBuildBwrapArgsRootEqualsMountPoint(t *testing.T) {
 }
 
 func TestBuildBwrapArgsUsesProjectedCwd(t *testing.T) {
-	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", "/tmp/.hostel/bed/tmp/job", nil)
+	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", nil, "/tmp/.hostel/bed/tmp/job", nil)
 	if indexOfSeq(argv, "--chdir", "/tmp/.hostel/bed/tmp/job") < 0 {
 		t.Fatalf("missing projected cwd; argv=%v", argv)
+	}
+}
+
+func TestBuildBwrapArgsAddsConfiguredProjections(t *testing.T) {
+	projection, err := bedfs.NewPathProjection("/memory", "/mnt/memory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := buildBwrapArgs(
+		"/ws", "/ws/b/data", "/ws/b/data/workspace",
+		[]bedfs.PathProjection{projection}, bedfs.WorkspacePath, nil,
+	)
+	workspaceBind := indexOfSeq(argv, "--bind", "/ws/b/data/workspace", bedfs.WorkspacePath)
+	projectionBind := indexOfSeq(argv, "--bind", "/ws/b/data/memory", "/mnt/memory")
+	if workspaceBind < 0 || projectionBind <= workspaceBind {
+		t.Fatalf("projection must be bound after workspace: workspace=%d projection=%d argv=%v", workspaceBind, projectionBind, argv)
 	}
 }
 

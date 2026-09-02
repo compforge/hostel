@@ -46,6 +46,7 @@ import (
 type casStore struct {
 	obj    objAPI
 	prefix string
+	filter snapshotFilter
 }
 
 // Chunk size bounds (min/avg/max) for the CDC chunker. Larger than casync's
@@ -76,10 +77,20 @@ func newCAS(ctx context.Context, cfg Config) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newCASStore(obj, cfg.Prefix), nil
+	filter, err := newSnapshotFilter(cfg.PersistedPaths)
+	if err != nil {
+		return nil, err
+	}
+	return newCASStore(obj, cfg.Prefix, filter), nil
 }
 
-func newCASStore(obj objAPI, prefix string) *casStore { return &casStore{obj: obj, prefix: prefix} }
+func newCASStore(obj objAPI, prefix string, filters ...snapshotFilter) *casStore {
+	filter := defaultSnapshotFilter()
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
+	return &casStore{obj: obj, prefix: prefix, filter: filter}
+}
 
 func (s *casStore) Name() string { return "s3" }
 
@@ -152,7 +163,7 @@ func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation in
 	// memory bounded by chunk max × workers.
 	pr, pw := io.Pipe()
 	go func() {
-		src := &filteredFS{inner: desync.NewLocalFS(dir, desync.LocalFSOptions{}), root: dir}
+		src := &filteredFS{inner: desync.NewLocalFS(dir, desync.LocalFSOptions{}), root: dir, filter: s.filter}
 		pw.CloseWithError(desync.Tar(ctx, pw, src))
 	}()
 	chunker, err := desync.NewChunker(pr, casChunkMin, casChunkAvg, casChunkMax)
@@ -345,12 +356,12 @@ func (s *casObjStore) HasChunk(id desync.ChunkID) (bool, error) {
 func (s *casObjStore) Close() error   { return nil }
 func (s *casObjStore) String() string { return "cas:" + s.prefix }
 
-// filteredFS wraps a FilesystemReader and drops snapshot-private paths:
-// top-level *.local entries belong to the carrier, while bed_home /tmp is
-// explicitly ephemeral and must not follow a bed across carriers.
+// filteredFS wraps a FilesystemReader and retains only portable metadata and
+// the workspace subtree. Other BedFS roots are runtime-local by default.
 type filteredFS struct {
-	inner desync.FilesystemReader
-	root  string
+	inner  desync.FilesystemReader
+	root   string
+	filter snapshotFilter
 }
 
 func (f *filteredFS) Next() (*desync.File, error) {
@@ -369,8 +380,10 @@ func (f *filteredFS) Next() (*desync.File, error) {
 
 func (f *filteredFS) excluded(file *desync.File) bool {
 	rel := file.Path
-	if r, err := filepath.Rel(f.root, file.Path); err == nil {
-		rel = r
+	if filepath.IsAbs(file.Path) {
+		if r, err := filepath.Rel(f.root, file.Path); err == nil {
+			rel = r
+		}
 	}
-	return snapshotPathExcluded(rel)
+	return f.filter.excluded(rel)
 }

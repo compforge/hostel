@@ -65,7 +65,7 @@ func TestPackObjectLayoutAndRoundtrip(t *testing.T) {
 	if err := s.Restore(ctx, "bed1", dst); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	for _, name := range []string{"meta.json", "data/big.bin", "data/src/b/b.go", "data/note.local"} {
+	for _, name := range []string{"meta.json", "data/workspace/big.bin", "data/workspace/src/b/b.go", "data/workspace/note.local"} {
 		want, err := os.ReadFile(filepath.Join(src, filepath.FromSlash(name)))
 		if err != nil {
 			t.Fatal(err)
@@ -75,11 +75,15 @@ func TestPackObjectLayoutAndRoundtrip(t *testing.T) {
 			t.Fatalf("restored %s differs: %v", name, err)
 		}
 	}
-	if _, err := os.Lstat(filepath.Join(dst, "skip.local")); !os.IsNotExist(err) {
-		t.Fatalf("top-level *.local leaked into snapshot: %v", err)
+	for _, name := range []string{"skip.local", "runtime.json"} {
+		if _, err := os.Lstat(filepath.Join(dst, name)); !os.IsNotExist(err) {
+			t.Fatalf("runtime-local top-level %s leaked into snapshot: %v", name, err)
+		}
 	}
-	if _, err := os.Lstat(filepath.Join(dst, "data/tmp")); !os.IsNotExist(err) {
-		t.Fatalf("data/tmp leaked into snapshot: %v", err)
+	for _, name := range []string{"tmp", "memory", "cache"} {
+		if _, err := os.Lstat(filepath.Join(dst, "data", name)); !os.IsNotExist(err) {
+			t.Fatalf("runtime-local data/%s leaked into snapshot: %v", name, err)
+		}
 	}
 }
 
@@ -93,7 +97,7 @@ func TestPackIncrementalAndUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	beforeChange := obj.puts
-	if err := os.WriteFile(filepath.Join(src, "data/src/a.go"), []byte("package a // changed\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "data/workspace/src/a.go"), []byte("package a // changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Persist(ctx, "bed1", src, 2); err != nil {

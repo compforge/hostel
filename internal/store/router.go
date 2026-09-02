@@ -91,6 +91,7 @@ type autoStore struct {
 	pack              *packStore
 	tar               *tarStore
 	packFileThreshold int
+	filter            snapshotFilter
 }
 
 func newAuto(ctx context.Context, cfg Config) (Store, error) {
@@ -98,15 +99,24 @@ func newAuto(ctx context.Context, cfg Config) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newAutoStore(obj, cfg.Prefix, cfg.AutoPackFileThreshold), nil
+	filter, err := newSnapshotFilter(cfg.PersistedPaths)
+	if err != nil {
+		return nil, err
+	}
+	return newAutoStore(obj, cfg.Prefix, cfg.AutoPackFileThreshold, filter), nil
 }
 
-func newAutoStore(obj objAPI, prefix string, packFileThreshold int) *autoStore {
+func newAutoStore(obj objAPI, prefix string, packFileThreshold int, filters ...snapshotFilter) *autoStore {
+	filter := defaultSnapshotFilter()
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
 	return &autoStore{
-		cas:               newCASStore(obj, prefix),
-		pack:              newPackStore(obj, prefix),
-		tar:               newTarStore(obj, prefix),
+		cas:               newCASStore(obj, prefix, filter),
+		pack:              newPackStore(obj, prefix, filter),
+		tar:               newTarStore(obj, prefix, filter),
 		packFileThreshold: packFileThreshold,
+		filter:            filter,
 	}
 }
 
@@ -201,7 +211,7 @@ func (s *autoStore) Persist(ctx context.Context, bedID, dir string, generation i
 		target = state.selected.routedBackend
 	}
 	if state.selected != nil && state.selected.layout == layoutCAS {
-		usePack, err := exceedsSnapshotFileThreshold(dir, s.packFileThreshold)
+		usePack, err := exceedsSnapshotFileThreshold(dir, s.packFileThreshold, s.filter)
 		if err != nil {
 			return fmt.Errorf("store: persist %s: count snapshot files: %w", bedID, err)
 		}
@@ -227,11 +237,15 @@ func (s *autoStore) Delete(ctx context.Context, bedID string) error {
 
 var errFileThresholdExceeded = errors.New("snapshot file threshold exceeded")
 
-func exceedsSnapshotFileThreshold(root string, threshold int) (bool, error) {
+func exceedsSnapshotFileThreshold(root string, threshold int, filters ...snapshotFilter) (bool, error) {
 	if threshold <= 0 {
 		return false, nil
 	}
 	count := 0
+	filter := defaultSnapshotFilter()
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
 	err := filepath.WalkDir(root, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -240,7 +254,7 @@ func exceedsSnapshotFileThreshold(root string, threshold int) (bool, error) {
 		if err != nil || rel == "." {
 			return err
 		}
-		if snapshotPathExcluded(rel) {
+		if filter.excluded(rel) {
 			if entry.IsDir() {
 				return fs.SkipDir
 			}

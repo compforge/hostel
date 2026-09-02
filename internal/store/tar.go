@@ -41,6 +41,7 @@ import (
 type tarStore struct {
 	obj    objAPI
 	prefix string
+	filter snapshotFilter
 }
 
 // A tar object can be much larger than one CAS chunk or pack. Keep its object
@@ -52,10 +53,20 @@ func newTar(ctx context.Context, cfg Config) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newTarStore(obj, cfg.Prefix), nil
+	filter, err := newSnapshotFilter(cfg.PersistedPaths)
+	if err != nil {
+		return nil, err
+	}
+	return newTarStore(obj, cfg.Prefix, filter), nil
 }
 
-func newTarStore(obj objAPI, prefix string) *tarStore { return &tarStore{obj: obj, prefix: prefix} }
+func newTarStore(obj objAPI, prefix string, filters ...snapshotFilter) *tarStore {
+	filter := defaultSnapshotFilter()
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
+	return &tarStore{obj: obj, prefix: prefix, filter: filter}
+}
 
 func (s *tarStore) Name() string { return "tar" }
 
@@ -100,7 +111,7 @@ func (s *tarStore) Persist(ctx context.Context, bedID, dir string, generation in
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
 
-	if err := writeTarGzip(dir, tmp); err != nil {
+	if err := writeTarGzip(dir, tmp, s.filter); err != nil {
 		return fmt.Errorf("store: persist %s: archive: %w", bedID, err)
 	}
 	size, err := tmp.Seek(0, io.SeekEnd)
@@ -144,7 +155,7 @@ func (s *tarStore) Delete(ctx context.Context, bedID string) error {
 	return nil
 }
 
-func writeTarGzip(root string, dst io.Writer) error {
+func writeTarGzip(root string, dst io.Writer, filter snapshotFilter) error {
 	gz := gzip.NewWriter(dst)
 	tw := tar.NewWriter(gz)
 	walkErr := filepath.WalkDir(root, func(name string, entry fs.DirEntry, walkErr error) error {
@@ -158,7 +169,7 @@ func writeTarGzip(root string, dst io.Writer) error {
 		if rel == "." {
 			return nil
 		}
-		if snapshotPathExcluded(rel) {
+		if filter.excluded(rel) {
 			if entry.IsDir() {
 				return fs.SkipDir
 			}

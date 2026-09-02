@@ -127,7 +127,7 @@ Persist 顺序固定为 **pack → snapshot manifest → head**，所以读者�
 
 #### 全量 tar 布局
 
-`tar` 不做 CDC 或跨 checkpoint 复用：每次 Persist 都重新遍历 bed 目录，排除顶层 `*.local` 与 `data/tmp/`，生成完整 tar.gz 到临时文件，然后用一次 PUT 原子替换固定 key。即使内容没有变化，也会完成一次全量打包和上传；相应地，一张 bed 始终只有一个远端对象，不产生历史 manifest、chunk 或 pack。
+`tar` 不做 CDC 或跨 checkpoint 复用：每次 Persist 都重新遍历 bed 目录，只保留 `meta.json` 与 `HOSTEL_PERSISTED_PATHS` 选择的 BedFS 子树，生成完整 tar.gz 到临时文件，然后用一次 PUT 原子替换固定 key。即使内容没有变化，也会完成一次全量打包和上传；相应地，一张 bed 始终只有一个远端对象，不产生历史 manifest、chunk 或 pack。
 
 ```text
 <prefix>/
@@ -227,14 +227,15 @@ noop 只是 `Persist/Restore/Stat/Delete` 的空实现，不改变 lifecycle：B
 ### bed 目录分层（配套）
 
 ```
-{workspace-root}/{bedID}/        ← 快照打包的根（meta + data 一起上 S3）；所有 backend 在 evict 后删除
+{workspace-root}/{bedID}/        ← Store 遍历根；所有 backend 在 evict 后删除
   meta.json   # hostel 私有：created_at、last_persisted_at、generation、last_active_at（将来：manifest、lease）
-  *.local     # 约定：本机私有元数据，不进快照（当前无，留位）
-  data/       # bed_home：默认进快照
-    tmp/      # bed_home 的 /tmp；显式排除，不跨 carrier 恢复
+  *.local     # 本机私有元数据，不进快照
+  data/       # bed_home：不整体进快照
+    workspace/ # 默认唯一持久化数据子树
+    <other>/   # 运行期数据，不跨 carrier 恢复
 ```
 
-**快照内容 = meta（可移植部分）+ bed_home（排除 `/tmp`）**：DORMANT 的唯一存在形式是快照，元数据若只留本地，驱逐即丢、换一台 hostel 复活就残缺。约定"默认可移植"——meta.json 和 `data/` 的其余内容一起打包；`data/tmp/` 是 bed_home 根下唯一内置的临时边界，不进 S3。确属本机私有的状态用 bed 目录顶层 `*.local` 后缀排除在打包之外。
+**默认快照内容 = `meta.json + data/workspace/**`**：`meta.json` 始终保存；BedFS 数据由逗号分隔的 `HOSTEL_PERSISTED_PATHS`（默认 `/workspace`）选择，可在确有需要时加入更多绝对非根路径。新增任意绝对路径或 projection 不会自动扩大耐久性与对象存储同步量。
 
 meta 对 bed 内代码**不可见**（bwrap 只 bind `data/`，root 整体被 tmpfs 遮蔽）——沙箱代码不能篡改 hostel 的记账。`last_persisted_at` 落盘使 dirty 追踪跨进程重启仍正确。
 

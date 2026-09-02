@@ -37,6 +37,49 @@ func TestPathshimConfig(t *testing.T) {
 	}
 }
 
+func TestProjectedPathsConfig(t *testing.T) {
+	if c := Load(nil); c.ProjectedPaths != "" {
+		t.Fatalf("default projected paths = %q", c.ProjectedPaths)
+	}
+	t.Setenv("HOSTEL_PROJECTED_PATHS", "/memory=/mnt/memory,/cache=/mnt/cache")
+	c := Load(nil)
+	projections, err := ParseProjectedPaths(c.ProjectedPaths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projections) != 2 || projections[0].BedPath != "/memory" || projections[1].ProcessPath != "/mnt/cache" {
+		t.Fatalf("projections = %+v", projections)
+	}
+	for _, raw := range []string{
+		"/memory",
+		"/memory=/mnt/memory,/memory/cache=/mnt/cache",
+		"/cache=/workspace/cache",
+	} {
+		if _, err := ParseProjectedPaths(raw); err == nil {
+			t.Errorf("ParseProjectedPaths(%q) succeeded", raw)
+		}
+	}
+}
+
+func TestPersistedPathsConfig(t *testing.T) {
+	if c := Load(nil); c.PersistedPaths != "/workspace" {
+		t.Fatalf("default persisted paths = %q", c.PersistedPaths)
+	}
+	t.Setenv("HOSTEL_PERSISTED_PATHS", "/workspace,/home/agent")
+	paths, err := ParsePersistedPaths(Load(nil).PersistedPaths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[0] != "/workspace" || paths[1] != "/home/agent" {
+		t.Fatalf("persist paths = %v", paths)
+	}
+	for _, raw := range []string{"", "/", "workspace", "/workspace,/workspace/cache"} {
+		if _, err := ParsePersistedPaths(raw); err == nil {
+			t.Errorf("ParsePersistedPaths(%q) succeeded", raw)
+		}
+	}
+}
+
 func TestDormReadFallbackRootIsExplicit(t *testing.T) {
 	if c := Load(nil); c.DormReadFallbackRoot != "" {
 		t.Fatalf("default dorm read fallback root = %q, want disabled", c.DormReadFallbackRoot)
