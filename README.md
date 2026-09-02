@@ -114,16 +114,18 @@ never sees the host. One consequence to be aware of:
 
 Under `bwrap`, the complete bed_home has a mechanism-private Executor mount and
 the workspace is additionally mounted at the stable `/workspace`, so any BedFS
-cwd is usable while workspace shell paths keep their canonical spelling. A
-This is Hostel's built-in projection from BedFS `/workspace`
+cwd is usable while workspace shell paths keep their canonical spelling. This
+is Hostel's built-in projection from BedFS `/workspace`
 (`<bed_home>/workspace`) to Executor `/workspace`. It uses the same projection
 model as configured paths but is intentionally not repeated in
 `HOSTEL_PROJECTED_PATHS`. A deployment can add multiple business-neutral
 projections with
 `HOSTEL_PROJECTED_PATHS`, for example `/memory=/mnt/memory,/cache=/mnt/cache`.
-Under dorm/room, Hostel probes the complete pathshim projection set at boot and
-applies all of it or falls back to Carrier paths; this compatibility view does
-not change the isolation level. See `docs/filesystem.md`.
+Under dorm/room, Hostel discovers `proot` and `pathshim` through `PATH`, then
+smoke-tests their complete projection sets. PRoot is preferred when ptrace and
+its own smoke pass; pathshim is next; otherwise commands use Carrier paths.
+These compatibility views do not change the isolation level. See
+`docs/filesystem.md`.
 
 Store durability is independently controlled by `HOSTEL_PERSISTED_PATHS`, a
 comma-separated BedFS path allowlist whose default is `/workspace`. Adding a
@@ -136,8 +138,8 @@ dorm|room|suite|auto` (default `auto` = the environment ceiling). The effective
 level is `min(requested, ceiling)` — an over-ask degrades honestly, a lower ask
 is a deliberate downgrade.
 
-- `dorm` (bunk): no enforced isolation (= direct, all platforms); pathshim may
-  add a best-effort workspace and configured process view;
+- `dorm` (bunk): no enforced isolation (= direct, all platforms); PRoot or
+  pathshim may add a best-effort workspace and configured process view;
 - `room` (private room, shared toilet): Landlock LSM — a bed can't *access*
   other beds' data (EACCES) but siblings stay visible and `/tmp` / system paths
   are shared; **no capability required** (Linux ≥5.13);
@@ -183,7 +185,7 @@ reports `amenities: {chromium: idle|running}`.
 
 ## Configuration
 
-Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` / `--pathshim` / `--projected-paths` / `--persisted-paths` /
+Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` / `--projected-paths` / `--persisted-paths` /
 `--dorm-read-fallback-root` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
 `--max-pinned-beds` / `--bed-pressure-threshold-percent` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
 `--executor` / `--store` /
@@ -294,22 +296,22 @@ finite cgroup limits, latest usage ratios, thresholds, and `accepting` verdict.
 ## Container image
 
 `deploy/docker/Dockerfile` is a multi-stage build: a static, pure-Go hostel binary on a
-`debian-slim` runtime that bundles the two optional facilities — a pinned,
-non-setuid **bubblewrap**
-(the `suite` level) and **chromium** (the browser amenity). Both stay optional:
-hostel probes them at boot and degrades honestly, so a locked-down pod without
-namespaces still serves.
+`debian-slim` runtime that bundles pinned **bubblewrap**, **PRoot**, and
+**pathshim** isolation helpers plus optional **chromium**. The helpers stay
+optional at runtime: Hostel discovers them through `PATH`, probes the actual
+kernel/runtime behavior, and degrades honestly when a locked-down Pod denies
+the required operation.
 
 ```bash
-make image                     # full image (bwrap + chromium), current arch
-make image-lean                # bwrap only (~150MB); browser via --chromium-cdp-url or absent
+make image                     # full image (helpers + chromium), current arch
+make image-lean                # helpers only; browser via --chromium-cdp-url or absent
 make image-multiarch IMAGE=repo/hostel:tag   # linux/amd64 + arm64, pushed to a registry
 docker run -p 8872:8872 hostel:dev
 ```
 
 The build is multi-arch (`linux/amd64`, `linux/arm64`): the Go builder
-cross-compiles natively, while the pinned bwrap source build and Debian runtime
-run per target so their native dependencies match the image architecture.
+cross-compiles natively, while the pinned helper source builds and Debian
+runtime run per target so their native dependencies match the image architecture.
 `make image-multiarch` needs `docker buildx` and pushes directly (a
 multi-platform image can't load into the local docker).
 
@@ -317,8 +319,9 @@ In-container defaults (all overridable via `HOSTEL_*`): `--isolation suite`,
 `--workspace-root /workspace` (a declared volume), `--chromium-path
 /usr/bin/chromium`. `tini` is PID 1 (reaps shell/chromium children); the
 `HEALTHCHECK` calls `hostel --health` (self-GETs `/healthz`, no curl needed).
-Whether bwrap actually isolates depends on the pod granting user namespaces /
-`CAP_SYS_ADMIN`; without them hostel logs the degrade and runs at `dorm`. The
+Whether bwrap actually isolates depends on usable user namespaces and mount
+policy; PRoot depends on usable ptrace. Without either, Hostel logs the degrade
+and keeps serving through the next supported workspace view. The
 image runs as root by default (bwrap mount setup + chromium `--no-sandbox`);
 harden with a dropped-capability `securityContext` per deployment.
 
@@ -329,3 +332,6 @@ with its origin. It is **based on / derived from OpenSandbox execd**
 (https://github.com/alibaba/opensandbox, Apache-2.0): it began as a
 reimplementation of that project's isolated-execution model and is expected to
 diverge over time. See [`NOTICE`](NOTICE) for attribution details.
+The image aggregates PRoot as a separate GPL-2.0 program and ships its license,
+modification notice, and corresponding modified source under
+`/usr/share/doc/proot/`.

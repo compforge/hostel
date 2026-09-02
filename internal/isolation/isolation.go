@@ -27,7 +27,6 @@ package isolation
 import (
 	"log"
 	"os/exec"
-	"strings"
 
 	"github.com/qiankunli/hostel/internal/bedfs"
 )
@@ -73,8 +72,10 @@ func parseRequest(s string) Level {
 	}
 }
 
-// Isolator confines an exec.Cmd. Each mechanism reports the Level it provides.
-type Isolator interface {
+// Boundary confines an exec.Cmd and reports the isolation guarantee it
+// provides. Filesystem projection is selected independently so a user-space
+// path helper cannot masquerade as a stronger security boundary.
+type Boundary interface {
 	// Name is the mechanism: direct | landlock | bwrap.
 	Name() string
 	// Level is the guarantee this mechanism delivers.
@@ -82,11 +83,6 @@ type Isolator interface {
 	// Available reports whether the mechanism actually works on this host
 	// (probed at construction). direct is always available.
 	Available() bool
-	// View returns how this mechanism projects a BedFS into its Executor.
-	View(*bedfs.FS) bedfs.View
-	// WorkspaceMounted reports whether the stable /workspace process mount is
-	// present. It is exposed as a capability independently of a particular Bed.
-	WorkspaceMounted() bool
 	// Wrap prepares cmd to run confined to fs. A mechanism reported Available
 	// must NOT silently degrade here — failing to build the sandbox is an error.
 	// cwd is a carrier BedFS path. An empty value means the bed workspace.
@@ -95,9 +91,17 @@ type Isolator interface {
 	Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error
 }
 
+// Isolator is the resolved runtime consumed by beds: one security Boundary
+// plus one process-visible BedFS view.
+type Isolator interface {
+	Boundary
+	View(*bedfs.FS) bedfs.View
+	WorkspaceMounted() bool
+}
+
 // WorkspaceViewReport describes what a command sees at the canonical
-// /workspace path. It is separate from the isolation level: pathshim improves
-// path compatibility but does not add a security boundary.
+// /workspace path. It is separate from the isolation level: a user-space view
+// improves path compatibility but does not add a security boundary.
 type WorkspaceViewReport struct {
 	Mode      string `json:"mode"`
 	Available bool   `json:"available"`
@@ -117,27 +121,20 @@ type Report interface {
 }
 
 type options struct {
-	pathshim    string
 	projections []bedfs.PathProjection
 }
 
-// Option configures optional process-view helpers without changing the
-// requested isolation level.
+// Option configures process-view projection without changing the requested
+// isolation level.
 type Option func(*options)
 
-// WithPathshim enables startup probing for the best-effort /workspace view.
-// An empty path disables the helper.
-func WithPathshim(path string) Option {
-	return func(o *options) { o.pathshim = strings.TrimSpace(path) }
-}
-
 // WithPathProjections configures business-neutral BedFS-to-Executor path
-// projections. Callers validate the set before constructing the Isolator.
+// projections. Callers validate the set before constructing the runtime.
 func WithPathProjections(projections []bedfs.PathProjection) Option {
 	return func(o *options) { o.projections = append([]bedfs.PathProjection(nil), projections...) }
 }
 
-// Preparer is an optional Isolator capability: a mechanism that must prepare a
+// Preparer is an optional Boundary capability: a mechanism that must prepare a
 // bed's data dir before its commands run. uid isolation implements it (chown
 // the dir to the bed's dedicated uid); mount- and LSM-based mechanisms need no
 // on-disk prep and don't. The bed manager calls Prepare after (re)creating the
@@ -147,9 +144,11 @@ type Preparer interface {
 	Prepare(fs *bedfs.FS) error
 }
 
-// resolved wraps the chosen mechanism with the resolution facts.
+// resolved composes independently selected security and workspace backends and
+// retains their boot-time resolution facts.
 type resolved struct {
-	Isolator
+	boundary       Boundary
+	workspace      workspaceBackend
 	req, eff, ceil Level
 	facts          HostFacts
 	workspaceView  WorkspaceViewReport
@@ -157,10 +156,15 @@ type resolved struct {
 	projections    []bedfs.PathProjection
 }
 
+func (r *resolved) Name() string                       { return r.boundary.Name() }
+func (r *resolved) Level() Level                       { return r.boundary.Level() }
+func (r *resolved) Available() bool                    { return r.boundary.Available() }
+func (r *resolved) View(fs *bedfs.FS) bedfs.View       { return r.workspace.View(fs) }
+func (r *resolved) WorkspaceMounted() bool             { return r.workspace.Mounted() }
 func (r *resolved) Requested() Level                   { return r.req }
 func (r *resolved) Effective() Level                   { return r.eff }
 func (r *resolved) Ceiling() Level                     { return r.ceil }
-func (r *resolved) Mechanism() string                  { return r.Isolator.Name() }
+func (r *resolved) Mechanism() string                  { return r.boundary.Name() }
 func (r *resolved) Facts() HostFacts                   { return r.facts }
 func (r *resolved) WorkspaceView() WorkspaceViewReport { return r.workspaceView }
 func (r *resolved) Diagnostics() DiagnosticsReport {
@@ -184,15 +188,19 @@ func (r *resolved) Prepare(fs *bedfs.FS) error {
 			return err
 		}
 	}
-	if p, ok := r.Isolator.(Preparer); ok {
+	if p, ok := r.boundary.(Preparer); ok {
 		return p.Prepare(fs)
 	}
 	return nil
 }
 
-// New resolves the requested isolation level against what the environment can
-// deliver and returns the chosen mechanism (also implementing Report). The
-// returned value is always usable — worst case it degrades to dorm/direct,
+func (r *resolved) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
+	return wrapRuntimeCommand(r.boundary, r.workspace, cmd, fs, cwd)
+}
+
+// New resolves the requested isolation level and workspace view against what
+// the environment can deliver. The returned runtime also implements Report and
+// is always usable — worst case it degrades to dorm/direct with carrier paths,
 // which is logged honestly.
 //
 // +spec=`effective isolation is the strongest available level not exceeding the request, and requested/effective/ceiling remain observable.`
@@ -213,16 +221,17 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 	// (dorm) is the always-available floor. Two mechanisms serve room: landlock
 	// (kernel LSM, no privilege — preferred) and uid (Unix DAC, needs setuid
 	// caps — the fallback where Landlock is absent, e.g. old/custom kernels).
+	ptraceProbe := runPtraceProbe()
 	bwrapCandidate, bwrapProbe := newBwrap(facts, workspaceRoot, cfg.projections)
 	landlockCandidate, landlockProbe := newLandlock(facts, workspaceRoot)
 	uidCandidate, uidProbe := newUID(facts, workspaceRoot)
 	probes := map[string]ProbeReport{
 		"bwrap":    bwrapProbe,
 		"landlock": landlockProbe,
-		"ptrace":   runPtraceProbe(),
+		"ptrace":   ptraceProbe,
 		"uid":      uidProbe,
 	}
-	candidates := []Isolator{
+	candidates := []Boundary{
 		bwrapCandidate,    // suite
 		landlockCandidate, // room — preferred
 		uidCandidate,      // room — fallback
@@ -230,7 +239,7 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 	}
 
 	ceiling := Dorm
-	var chosen Isolator = direct{}
+	var chosen Boundary = direct{}
 	eff := Dorm
 	for _, m := range candidates {
 		if !m.Available() {
@@ -255,21 +264,10 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 		log.Printf("isolation: level=%s mechanism=%s (requested=%s, ceiling=%s)",
 			eff, chosen.Name(), req, ceiling)
 	}
-	workspaceView := WorkspaceViewReport{Mode: "carrier", Available: true}
-	if cfg.pathshim != "" {
-		probes["pathshim"] = ProbeReport{ConfiguredPath: cfg.pathshim}
-	}
-	if chosen.WorkspaceMounted() {
-		workspaceView = WorkspaceViewReport{Mode: "mount", Available: true}
-	} else if cfg.pathshim != "" {
-		var report WorkspaceViewReport
-		var probe ProbeReport
-		chosen, report, probe = newPathshimView(chosen, workspaceRoot, cfg.pathshim, cfg.projections)
-		workspaceView = report
-		probes["pathshim"] = probe
-	}
+	workspace, workspaceView := resolveWorkspaceView(chosen, workspaceRoot, cfg.projections, ptraceProbe, probes)
 	return &resolved{
-		Isolator:      chosen,
+		boundary:      chosen,
+		workspace:     workspace,
 		req:           req,
 		eff:           eff,
 		ceil:          ceiling,

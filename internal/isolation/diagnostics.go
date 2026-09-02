@@ -17,7 +17,10 @@ package isolation
 import (
 	"bytes"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -104,12 +107,73 @@ type SystemFacts struct {
 type ProbeReport struct {
 	ConfiguredPath string `json:"configured_path"`
 	ResolvedPath   string `json:"resolved_path"`
+	Exists         bool   `json:"exists"`
+	Executable     bool   `json:"executable"`
 	Attempted      bool   `json:"attempted"`
 	ExitCode       *int   `json:"exit_code"`
 	Stdout         string `json:"stdout"`
 	Stderr         string `json:"stderr"`
 	Error          string `json:"error"`
 	DurationMS     int64  `json:"duration_ms"`
+}
+
+// discoverExecutable records packaging facts before any runtime prerequisite
+// is considered. A helper can therefore be present and executable even when a
+// separate ptrace or namespace probe prevents its smoke test from running.
+func discoverExecutable(configured string) ProbeReport {
+	report := ProbeReport{ConfiguredPath: configured}
+	resolved, err := exec.LookPath(configured)
+	if err != nil {
+		report.Error = "find binary: " + err.Error()
+		resolved = existingCommandPath(configured)
+		if resolved == "" {
+			return report
+		}
+	}
+	abs, absErr := filepath.Abs(resolved)
+	if absErr != nil {
+		report.Error = "resolve binary: " + absErr.Error()
+		return report
+	}
+	report.ResolvedPath = abs
+	info, statErr := os.Stat(abs)
+	if statErr != nil {
+		report.Error = "stat binary: " + statErr.Error()
+		return report
+	}
+	report.Exists = true
+	report.Executable = !info.IsDir() && info.Mode().Perm()&0o111 != 0
+	if !report.Executable && err == nil {
+		report.Error = "binary is not executable"
+	}
+	return report
+}
+
+func existingCommandPath(configured string) string {
+	if strings.ContainsRune(configured, os.PathSeparator) {
+		if _, err := os.Stat(configured); err == nil {
+			return configured
+		}
+		return ""
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := filepath.Join(dir, configured)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func withExecutionProbe(discovery, execution ProbeReport) ProbeReport {
+	execution.ConfiguredPath = discovery.ConfiguredPath
+	execution.ResolvedPath = discovery.ResolvedPath
+	execution.Exists = discovery.Exists
+	execution.Executable = discovery.Executable
+	return execution
 }
 
 // DiagnosticsReport is the immutable boot snapshot served by the diagnostics
@@ -147,4 +211,8 @@ func runExecProbe(cmd *exec.Cmd) ProbeReport {
 
 func (p ProbeReport) failed() bool {
 	return p.Error != "" || (p.ExitCode != nil && *p.ExitCode != 0)
+}
+
+func (p ProbeReport) succeeded() bool {
+	return p.Attempted && p.Error == "" && p.ExitCode != nil && *p.ExitCode == 0
 }

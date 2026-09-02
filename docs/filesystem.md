@@ -44,17 +44,19 @@ BedFS 也是三档共同的 best-effort 数据底座：Dorm 没有安全墙，�
 
 ### dorm / room
 
-Executor 与 daemon 共享 mount namespace。Hostel 启动时会通过选中的隔离机制探测 pathshim；探测集合包含内置 `bed_home/workspace → /workspace` 和 `HOSTEL_PROJECTED_PATHS` 声明的全部投影。前者与配置项是同一种 `BedFS source → Executor target` 投影，只因 `/workspace` 是 Hostel 基础契约而内置，不在 env 中重复声明；配置项只承载额外投影。完整集合通过后整组启用；任一项不可用时整组退回 Carrier 语义，禁止部分生效。Landlock 或 uid 仍独立负责访问边界，pathshim 不参与 isolation level 判定。
+Executor 与 daemon 共享 mount namespace。Hostel 启动时从 `PATH` 发现固定命令名 `proot`、`pathshim`，先记录文件是否存在、可执行及实际解析路径，再探测包含内置 `bed_home/workspace → /workspace` 和 `HOSTEL_PROJECTED_PATHS` 全部条目的进程视图。前者与配置项是同一种 `BedFS source → Executor target` 投影，只因 `/workspace` 是 Hostel 基础契约而内置，不在 env 中重复声明；配置项只承载额外投影。每个候选只有完整集合通过才可用，禁止部分生效；PRoot、pathshim 均失败时退回 Carrier 语义。
+
+PRoot 的路径 syscall 覆盖更完整，但依赖 ptrace；pathshim 不依赖 ptrace，作为次选。两者都可用时选择 PRoot。Landlock 或 uid 始终独立负责访问边界，workspace helper 不参与 isolation level 判定。
 
 进程链保持职责顺序：
 
 ```text
-dorm: pathshim → command
-room: __confine / __asuser → pathshim → command
+dorm: proot / pathshim → command
+room: __confine / __asuser → proot / pathshim → command
 suite: bwrap → command
 ```
 
-pathshim 对每项 projection 使用 replace bind：目标内受支持的文件系统操作只落到对应 BedFS source，不读取 Carrier 原目标；它没有 COW、whiteout 或 invocation 私有状态，因此多个 command/session 共享同一 source 时并发语义就是普通底层文件系统并发。它是 syscall 覆盖不完整的 best effort 兼容层，不是 mount、安全边界或完整 guest root。
+PRoot 与 pathshim 都把每项 projection 指向对应 BedFS source；它们没有 COW、whiteout 或 invocation 私有状态，因此多个 command/session 共享同一 source 时并发语义就是普通底层文件系统并发。二者都是用户态进程视图，不是真实 mount、安全边界或完整 guest root。
 
 配置格式是逗号分隔的 `BED_PATH=PROCESS_PATH`，例如：
 
@@ -75,13 +77,13 @@ bwrap 先遮蔽 `<workspace-root>`，再投影同一 BedFS：
 
 内部挂载点不是北向协议。调用方继续传 Client path；例如 `cwd="/"` 由 BedFS 解析为 bed_home，再投影到当前 Executor。
 
-`capabilities.workspace_mount` 只说明进程里是否存在 suite 的真实 `/workspace` mount，不表示 BedFS 是否可用。`workspace_view.mode` 报告实际进程视图：`mount`、`pathshim` 或 `carrier`；`available=false` 与 `reason` 表示配置了 pathshim 但启动探测没有通过。BedFS 的结构化路径映射是所有房型的基础能力。
+`capabilities.workspace_mount` 只说明进程里是否存在 suite 的真实 `/workspace` mount，不表示 BedFS 是否可用。`workspace_view.mode` 报告实际进程视图：`mount`、`proot`、`pathshim` 或 `carrier`；`available=false` 与 `reason` 表示没有用户态 helper 通过启动探测。BedFS 的结构化路径映射是所有房型的基础能力。
 
 ## 四、结构化路径与命令文本
 
 Hostel 解析 file API 的 `path`、命令的 `cwd` 等结构化字段，因此这些字段在所有房型都遵守 BedFS 语义。BedFS 先把 cwd 解析为 Carrier path；新进程由 isolation 投影到 Executor View，已启动的常驻 Shell 则持有启动时的 View，在执行用户命令前通过独立、带终态分帧的 shell 控制步骤切换目录。Web 层不构造 Executor path，也不把 `cd` 拼进用户命令；heredoc、多行脚本等命令文本保持原样。命令中的字面 `/tmp/x` 仍由实际进程 namespace 解释。
 
-pathshim 可用时，dorm/room 的命令字面 `/workspace/x` 及配置目标会尽力指向对应 BedFS source；映射外绝对路径仍由 Carrier 进程视图解释。pathshim 降级时命令仍会启动，Hostel 在启动探测阶段关闭整组进程视图并通过能力接口如实上报。
+PRoot 或 pathshim 可用时，dorm/room 的命令字面 `/workspace/x` 及配置目标会指向对应 BedFS source；映射外绝对路径仍由 Carrier 进程视图解释。helper 全部失败时命令仍会启动，Hostel 通过能力与 diagnostics 接口如实上报 Carrier 降级和各项原始探测记录。
 
 Dorm 与 carrier 共享 mount namespace，命令中的字面绝对路径可能成功写到进程根，而不是 BedFS。独占 carrier 可显式配置 `--dorm-read-fallback-root /`：只读 file API 在 BedFS 主映射不存在时，把客户端绝对路径按该进程根作为第二候选重试；两处都存在时始终以 BedFS 为准。相对路径不回退，因为它本来就以 bed workspace 为执行与 API 基准。
 

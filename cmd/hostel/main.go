@@ -105,7 +105,6 @@ func main() {
 	// New resolves the requested level against the environment ceiling and
 	// logs the outcome; the returned isolator is always usable.
 	iso := isolation.New(cfg.IsolationMode, cfg.WorkspaceRoot,
-		isolation.WithPathshim(cfg.PathshimPath),
 		isolation.WithPathProjections(pathProjections),
 	)
 

@@ -17,8 +17,7 @@
 package isolation
 
 func runPtraceProbe() ProbeReport {
-	return ProbeReport{
-		ConfiguredPath: "/bin/true",
-		Error:          "unsupported operating system",
-	}
+	report := discoverExecutable("/bin/true")
+	report.Error = "unsupported operating system"
+	return report
 }

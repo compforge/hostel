@@ -1,0 +1,9 @@
+Hostel image modifications to Termux PRoot v5.1.107.92
+Date: 2026-09-01
+
+The Hostel runtime image is 64-bit-only and contains no 32-bit guest userland.
+The accompanying patch disables PRoot's bundled 32-bit loader so the same
+source builds natively for the image's linux/amd64 and linux/arm64 targets.
+
+PRoot remains licensed under GPL-2.0. The complete corresponding modified
+source is installed at /usr/share/doc/proot/source.tar.gz in the image.

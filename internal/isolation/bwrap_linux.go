@@ -47,7 +47,12 @@ type bwrap struct {
 // Probe pattern borrowed from OpenSandbox execd, extended to the real argv.
 func newBwrap(facts HostFacts, workspaceRoot string, projections []bedfs.PathProjection) (Isolator, ProbeReport) {
 	path := facts.BwrapPath
-	report := ProbeReport{ConfiguredPath: "bwrap", ResolvedPath: path}
+	report := ProbeReport{
+		ConfiguredPath: "bwrap",
+		ResolvedPath:   path,
+		Exists:         path != "",
+		Executable:     path != "",
+	}
 	if path == "" {
 		report.Error = facts.bwrapLookupError
 		return unavailable{name: "bwrap", lvl: Suite}, report
@@ -70,6 +75,8 @@ func newBwrap(facts HostFacts, workspaceRoot string, projections []bedfs.PathPro
 	report = bwrapSmoke(path, workspaceRoot, masks, projections)
 	report.ConfiguredPath = "bwrap"
 	report.ResolvedPath = path
+	report.Exists = true
+	report.Executable = true
 	if report.failed() {
 		log.Printf("isolation: bwrap found but unusable (%s)", report.Error)
 		// Point the operator at the usual k8s cause: userns is on yet bwrap

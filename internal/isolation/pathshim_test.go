@@ -29,11 +29,12 @@ import (
 func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 	root := t.TempDir()
 	probe := fakePathshim(t, "bind-view", 0)
+	t.Setenv("PATH", filepath.Dir(probe))
 	projection, err := bedfs.NewPathProjection("/memory", "/mnt/memory")
 	if err != nil {
 		t.Fatal(err)
 	}
-	iso := New("dorm", root, WithPathshim(probe), WithPathProjections([]bedfs.PathProjection{projection}))
+	iso := New("dorm", root, WithPathProjections([]bedfs.PathProjection{projection}))
 	report := iso.(Report).WorkspaceView()
 	if report.Mode != "pathshim" || !report.Available {
 		t.Fatalf("workspace view = %+v", report)
@@ -78,7 +79,9 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 
 func TestPathshimProbeFailureFallsBackToCarrierView(t *testing.T) {
 	root := t.TempDir()
-	iso := New("dorm", root, WithPathshim(fakePathshim(t, "passthrough", 1)))
+	probe := fakePathshim(t, "passthrough", 1)
+	t.Setenv("PATH", filepath.Dir(probe))
+	iso := New("dorm", root)
 	report := iso.(Report).WorkspaceView()
 	if report.Mode != "carrier" || report.Available || !strings.Contains(report.Reason, "passthrough") {
 		t.Fatalf("workspace view = %+v", report)
@@ -91,9 +94,9 @@ func TestPathshimProbeFailureFallsBackToCarrierView(t *testing.T) {
 func TestPathshimRunsInsideSelectedRoomMechanism(t *testing.T) {
 	root := t.TempDir()
 	fs := newTestFS(t, root)
-	view := &pathshimView{base: prefixRoom{}, path: "/usr/bin/pathshim"}
+	runtime := &resolved{boundary: prefixRoom{}, workspace: &pathshimView{path: "/usr/bin/pathshim"}}
 	cmd := exec.Command("/bin/sh", "-c", "true")
-	if err := view.Wrap(cmd, fs, ""); err != nil {
+	if err := runtime.Wrap(cmd, fs, ""); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"/usr/bin/room-helper", "--", "/usr/bin/pathshim", "--quiet"}

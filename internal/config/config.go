@@ -56,10 +56,6 @@ type Config struct {
 	// Levels resolve to mechanisms (direct/landlock/bwrap) in internal/isolation;
 	// effective = min(requested, ceiling), over-asks degrade honestly.
 	IsolationMode string
-	// PathshimPath optionally adds a best-effort workspace + configured process
-	// view below suite. The binary is probed through the selected isolation
-	// mechanism at startup; probe failure keeps carrier-path behavior.
-	PathshimPath string
 	// ProjectedPaths gives additional BedFS subtrees stable Executor paths.
 	// Hostel applies /workspace -> /workspace through the same projection model
 	// as a built-in contract, so it is intentionally absent from this setting.
@@ -153,7 +149,6 @@ func Load(args []string) *Config {
 	fs.StringVar(&c.OTLPTracesHTTPEndpoint, "otel-traces-http-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_HTTP_ENDPOINT", ""), "OTLP HTTP traces endpoint")
 	fs.StringVar(&c.WorkspaceRoot, "workspace-root", osx.EnvStr("HOSTEL_WORKSPACE_ROOT", "/workspace"), "parent dir for per-bed workspaces")
 	fs.StringVar(&c.IsolationMode, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "data-isolation level: dorm | room | suite | auto (auto=env ceiling)")
-	fs.StringVar(&c.PathshimPath, "pathshim", osx.EnvStr("HOSTEL_PATHSHIM", "pathshim"), "pathshim binary for the best-effort workspace and configured process view (empty=disabled)")
 	fs.StringVar(&c.ProjectedPaths, "projected-paths", osx.EnvStr("HOSTEL_PROJECTED_PATHS", ""), "comma-separated additional BedFS-to-process path projections; /workspace=/workspace is built in")
 	fs.StringVar(&c.PersistedPaths, "persisted-paths", osx.EnvStr("HOSTEL_PERSISTED_PATHS", "/workspace"), "comma-separated BedFS paths included in Store snapshots")
 	fs.StringVar(&c.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")

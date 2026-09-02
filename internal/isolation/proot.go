@@ -26,53 +26,55 @@ import (
 	"github.com/qiankunli/hostel/internal/bedfs"
 )
 
-type pathshimView struct {
+type prootView struct {
 	path        string
 	projections []bedfs.PathProjection
 }
 
-func (p *pathshimView) Mode() string  { return "pathshim" }
-func (p *pathshimView) Mounted() bool { return false }
-func (p *pathshimView) View(fs *bedfs.FS) bedfs.View {
+func (p *prootView) Mode() string  { return "proot" }
+func (p *prootView) Mounted() bool { return false }
+func (p *prootView) View(fs *bedfs.FS) bedfs.View {
 	return bedfs.ProjectedView(fs, p.projections)
 }
 
-func (p *pathshimView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
+func (p *prootView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	guestCwd, err := p.View(fs).Path(commandCwd(fs, cwd))
 	if err != nil {
 		return err
 	}
 	userArgs := cmd.Args
-	cmd.Args = make([]string, 0, len(userArgs)+8)
-	cmd.Args = append(cmd.Args, p.path, "--quiet", "--bind", fs.Workspace()+":"+bedfs.WorkspacePath)
-	cmd.Args = appendPathshimProjections(cmd.Args, fs.Home(), p.projections)
-	cmd.Args = append(cmd.Args, "--cwd", guestCwd, "--")
+	cmd.Args = make([]string, 0, len(userArgs)+8+len(p.projections)*2)
+	cmd.Args = append(cmd.Args,
+		p.path,
+		"-v", "-1",
+		"-b", fs.Workspace()+":"+bedfs.WorkspacePath+"!",
+	)
+	cmd.Args = appendProotProjections(cmd.Args, fs.Home(), p.projections)
+	cmd.Args = append(cmd.Args, "-w", guestCwd)
 	cmd.Args = append(cmd.Args, userArgs...)
 	cmd.Path = p.path
 	return nil
 }
 
-// +spec=`A pathshim process view applies the workspace and configured projections atomically without changing isolation level or mount capability.`
-// +case:id=pathshim_process_view,desc=`Probe and run one command through the selected dorm or room mechanism`,expect=`Every configured path maps to its BedFS source, command semantics survive, and probe failure falls back to carrier paths`
-func newPathshimView(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, discovery ProbeReport) (workspaceBackend, WorkspaceViewReport, ProbeReport) {
-	probe := withExecutionProbe(discovery, probePathshim(base, workspaceRoot, discovery.ResolvedPath, projections))
-	reason := probe.Error
-	if reason != "" {
-		log.Printf("isolation: pathshim process view unavailable (%s)", reason)
-		return nil, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: reason}, probe
+func newProotView(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, discovery ProbeReport) (workspaceBackend, WorkspaceViewReport, ProbeReport) {
+	probe := withExecutionProbe(discovery, probeProot(base, workspaceRoot, discovery.ResolvedPath, projections))
+	if probe.Error != "" {
+		log.Printf("isolation: proot process view unavailable (%s)", probe.Error)
+		return nil, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: probe.Error}, probe
 	}
-	log.Printf("isolation: pathshim process view probe succeeded path=%s projections=%d", discovery.ResolvedPath, len(projections))
-	return &pathshimView{
+	log.Printf("isolation: proot process view probe succeeded path=%s projections=%d", discovery.ResolvedPath, len(projections))
+	workspace := &prootView{
 		path:        discovery.ResolvedPath,
 		projections: append([]bedfs.PathProjection(nil), projections...),
-	}, WorkspaceViewReport{Mode: "pathshim", Available: true}, probe
+	}
+	return workspace, WorkspaceViewReport{Mode: workspace.Mode(), Available: true}, probe
 }
 
-func probePathshim(base Boundary, workspaceRoot, executable string, projections []bedfs.PathProjection) ProbeReport {
+func probeProot(base Boundary, workspaceRoot, executable string, projections []bedfs.PathProjection) ProbeReport {
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		return ProbeReport{Error: "create workspace root: " + err.Error()}
 	}
-	probeHome, err := os.MkdirTemp(workspaceRoot, ".pathshim-probe-*")
+	probeHome, err := os.MkdirTemp(workspaceRoot, ".proot-probe-*")
 	if err != nil {
 		return ProbeReport{Error: "create probe bed: " + err.Error()}
 	}
@@ -80,6 +82,9 @@ func probePathshim(base Boundary, workspaceRoot, executable string, projections 
 	probeWorkspace := filepath.Join(probeHome, "workspace")
 	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
 		return ProbeReport{Error: "create probe workspace: " + err.Error()}
+	}
+	if err := os.WriteFile(filepath.Join(probeWorkspace, ".hostel-proot-probe"), []byte("proot-view"), 0o644); err != nil {
+		return ProbeReport{Error: "write probe marker: " + err.Error()}
 	}
 	fs, err := bedfs.New(probeHome)
 	if err != nil {
@@ -100,10 +105,18 @@ func probePathshim(base Boundary, workspaceRoot, executable string, projections 
 			return ProbeReport{Error: "prepare probe bed: " + err.Error()}
 		}
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	args := []string{"probe", "--bind", probeWorkspace + ":" + bedfs.WorkspacePath}
-	args = appendPathshimProjections(args, probeHome, projections)
+	args := []string{
+		"-v", "-1",
+		"-b", probeWorkspace + ":" + bedfs.WorkspacePath + "!",
+	}
+	args = appendProotProjections(args, probeHome, projections)
+	args = append(args,
+		"-w", bedfs.WorkspacePath,
+		"/bin/sh", "-c", "cat /workspace/.hostel-proot-probe; printf '\\n'; pwd",
+	)
 	cmd := exec.CommandContext(ctx, executable, args...)
 	if err := base.Wrap(cmd, fs, probeWorkspace); err != nil {
 		return ProbeReport{Error: "wrap probe: " + err.Error()}
@@ -121,15 +134,17 @@ func probePathshim(base Boundary, workspaceRoot, executable string, projections 
 		report.Error = detail
 		return report
 	}
-	if strings.TrimSpace(report.Stdout) != "bind-view" {
+	if strings.TrimSpace(report.Stdout) != "proot-view\n/workspace" {
 		report.Error = "unexpected probe output: " + strings.TrimSpace(report.Stdout)
 	}
 	return report
 }
 
-func appendPathshimProjections(args []string, bedHome string, projections []bedfs.PathProjection) []string {
+func appendProotProjections(args []string, bedHome string, projections []bedfs.PathProjection) []string {
 	for _, projection := range projections {
-		args = append(args, "--bind", projection.CarrierPath(bedHome)+":"+projection.ProcessPath)
+		args = append(args, "-b", projection.CarrierPath(bedHome)+":"+projection.ProcessPath+"!")
 	}
 	return args
 }
+
+var _ workspaceBackend = (*prootView)(nil)

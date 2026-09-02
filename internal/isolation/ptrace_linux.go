@@ -49,12 +49,10 @@ const prootPtraceOptions = unix.PTRACE_O_TRACESYSGOOD |
 // Keeping this as a real smoke probe captures seccomp, Yama, capability and
 // container-runtime policy together without guessing which policy denied it.
 func runPtraceProbe() (report ProbeReport) {
-	report.ConfiguredPath = ptraceProbeTracee
-	if _, err := os.Stat(ptraceProbeTracee); err != nil {
-		report.Error = fmt.Sprintf("resolve ptrace probe tracee %s: %v", ptraceProbeTracee, err)
+	report = discoverExecutable(ptraceProbeTracee)
+	if report.Error != "" {
 		return report
 	}
-	report.ResolvedPath = ptraceProbeTracee
 	report.Attempted = true
 	started := time.Now()
 	defer func() { report.DurationMS = time.Since(started).Milliseconds() }()

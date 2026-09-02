@@ -155,7 +155,8 @@ func TestDiagnostics(t *testing.T) {
 		securityModules == nil || namespaceLimits == nil || kernelFeatures == nil || ptraceFacts == nil {
 		t.Fatalf("diagnostics system facts = %v", system)
 	}
-	if probes["bwrap"] == nil || probes["landlock"] == nil || probes["ptrace"] == nil || probes["uid"] == nil {
+	if probes["bwrap"] == nil || probes["landlock"] == nil || probes["pathshim"] == nil ||
+		probes["proot"] == nil || probes["ptrace"] == nil || probes["uid"] == nil {
 		t.Fatalf("diagnostics probes = %v", probes)
 	}
 	usernsClone, _ := namespaceLimits["unprivileged_userns_clone"].(map[string]any)
@@ -179,6 +180,17 @@ func TestDiagnostics(t *testing.T) {
 	}
 	if _, exists := ptraceProbe["error"]; !exists {
 		t.Fatalf("diagnostics ptrace probe missing error: %v", ptraceProbe)
+	}
+	for _, name := range []string{"pathshim", "proot"} {
+		helperProbe, _ := probes[name].(map[string]any)
+		if helperProbe["configured_path"] != name {
+			t.Fatalf("diagnostics %s configured path = %v", name, helperProbe)
+		}
+		for _, field := range []string{"resolved_path", "exists", "executable", "attempted", "exit_code", "error"} {
+			if _, exists := helperProbe[field]; !exists {
+				t.Fatalf("diagnostics %s probe missing %s: %v", name, field, helperProbe)
+			}
+		}
 	}
 	if isolationFacts["requested"] != "dorm" || isolationFacts["effective"] != "dorm" ||
 		isolationFacts["mechanism"] != "direct" {
