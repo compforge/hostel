@@ -135,7 +135,7 @@ bed 的一次失败。
 
 `GET /v1/diagnostics` 返回 isolation 启动解析时缓存的系统事实和机制探测原始记录，包括 runtime、
 进程 capability/seccomp、LSM label、namespace sysctl、kernel feature、ptrace Yama scope，以及模拟 PRoot
-启动序列的 `TRACEME → SETOPTIONS → SYSCALL` 探测。各探测保留路径、是否执行、退出码、stdout、stderr、
+启动序列的 `TRACEME → SETOPTIONS → SYSCALL` 探测。二进制 helper 先记录配置命令名、PATH 解析路径、是否存在和是否可执行；各探测再保留是否执行、退出码、stdout、stderr、
 错误和耗时。读取接口不重新执行探测；字段只保留观测值和读取错误，不输出
 状态判断、缺失权限分类、部署要求或修复建议。不存在的内核节点以 `value: null` 和 `read_error`
 表达，与节点存在且值为 `0` 严格区分。

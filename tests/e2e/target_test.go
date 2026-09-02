@@ -20,13 +20,18 @@ const (
 	imageEnv    = "HOSTEL_E2E_IMAGE"
 	userlandEnv = "HOSTEL_E2E_USERLAND"
 	pathshimEnv = "HOSTEL_E2E_PATHSHIM"
+	prootEnv    = "HOSTEL_E2E_PROOT"
 )
 
 type targetOptions struct {
 	isolation        string
 	maxBeds          int
+	allowPtrace      bool
+	helperPath       string
 	pathshim         string
 	pathshimHostPath string
+	proot            string
+	prootHostPath    string
 	workspaceRoot    string
 }
 
@@ -113,8 +118,18 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 		workspaceRoot = filepath.Join(t.TempDir(), "beds")
 	}
 	pathshim := options.pathshim
+	if options.pathshimHostPath != "" {
+		pathshim = options.pathshimHostPath
+	}
 	if pathshim == "" {
 		pathshim = strings.TrimSpace(os.Getenv(pathshimEnv))
+	}
+	proot := options.proot
+	if options.prootHostPath != "" {
+		proot = options.prootHostPath
+	}
+	if proot == "" {
+		proot = strings.TrimSpace(os.Getenv(prootEnv))
 	}
 	cmd := exec.Command(absolute,
 		"--addr", addr,
@@ -127,8 +142,14 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 		"--admission-cpu-threshold", "0",
 		"--admission-memory-threshold", "0",
 		"--bed-idle-timeout", "0",
-		"--pathshim", pathshim,
 	)
+	searchPath := options.helperPath
+	if searchPath == "" {
+		searchPath = prependHelperDirs(os.Getenv("PATH"), pathshim, proot)
+	}
+	if searchPath != "" {
+		cmd.Env = append(os.Environ(), "PATH="+searchPath)
+	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
@@ -177,13 +198,32 @@ func startImageTarget(t *testing.T, image, addr string, options targetOptions) {
 		"-e", "HOSTEL_ADMISSION_MEMORY_THRESHOLD=0",
 		"-e", "HOSTEL_BED_IDLE_TIMEOUT=0",
 	}
+	if options.allowPtrace {
+		args = append(args, "--cap-add", "SYS_PTRACE")
+	}
+	helperPaths := make([]string, 0, 2)
 	if options.pathshimHostPath != "" {
-		const guestPath = "/tmp/hostel-e2e-pathshim"
+		const guestPath = "/tmp/pathshim"
 		args = append(args, "--volume", options.pathshimHostPath+":"+guestPath+":ro")
 		options.pathshim = guestPath
 	}
 	if options.pathshim != "" {
-		args = append(args, "-e", "HOSTEL_PATHSHIM="+options.pathshim)
+		helperPaths = append(helperPaths, options.pathshim)
+	}
+	if options.prootHostPath != "" {
+		const guestPath = "/tmp/proot"
+		args = append(args, "--volume", options.prootHostPath+":"+guestPath+":ro")
+		options.proot = guestPath
+	}
+	if options.proot != "" {
+		helperPaths = append(helperPaths, options.proot)
+	}
+	searchPath := options.helperPath
+	if searchPath == "" && len(helperPaths) > 0 {
+		searchPath = prependHelperDirs("/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", helperPaths...)
+	}
+	if searchPath != "" {
+		args = append(args, "-e", "PATH="+searchPath)
 	}
 	args = append(args, image)
 	output, err := exec.Command("docker", args...).CombinedOutput()
@@ -201,4 +241,23 @@ func startImageTarget(t *testing.T, image, addr string, options targetOptions) {
 			t.Logf("hostel container log:\n%s", logs.String())
 		}
 	})
+}
+
+func prependHelperDirs(base string, helpers ...string) string {
+	paths := make([]string, 0, len(helpers)+1)
+	seen := map[string]bool{}
+	for _, helper := range helpers {
+		if helper = strings.TrimSpace(helper); helper == "" {
+			continue
+		}
+		dir := filepath.Dir(helper)
+		if !seen[dir] {
+			paths = append(paths, dir)
+			seen[dir] = true
+		}
+	}
+	if base != "" {
+		paths = append(paths, base)
+	}
+	return strings.Join(paths, string(os.PathListSeparator))
 }

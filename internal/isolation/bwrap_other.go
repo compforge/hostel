@@ -22,5 +22,11 @@ import "github.com/qiankunli/hostel/internal/bedfs"
 // hostel's dev target (macOS) has no namespaces. Keeps `--isolation suite`
 // from failing to boot during local development.
 func newBwrap(facts HostFacts, _ string, _ []bedfs.PathProjection) (Isolator, ProbeReport) {
-	return direct{}, ProbeReport{ConfiguredPath: "bwrap", ResolvedPath: facts.BwrapPath, Error: facts.bwrapLookupError}
+	return direct{}, ProbeReport{
+		ConfiguredPath: "bwrap",
+		ResolvedPath:   facts.BwrapPath,
+		Exists:         facts.BwrapPath != "",
+		Executable:     facts.BwrapPath != "",
+		Error:          facts.bwrapLookupError,
+	}
 }

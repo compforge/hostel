@@ -24,19 +24,6 @@ func TestIsolationAndManagedServiceConfigContract(t *testing.T) {
 	}
 }
 
-func TestPathshimConfig(t *testing.T) {
-	if c := Load(nil); c.PathshimPath != "pathshim" {
-		t.Fatalf("default pathshim = %q, want PATH lookup", c.PathshimPath)
-	}
-	t.Setenv("HOSTEL_PATHSHIM", "/opt/hostel/pathshim")
-	if c := Load(nil); c.PathshimPath != "/opt/hostel/pathshim" {
-		t.Fatalf("env pathshim = %q", c.PathshimPath)
-	}
-	if c := Load([]string{"-pathshim", ""}); c.PathshimPath != "" {
-		t.Fatalf("disabled pathshim = %q", c.PathshimPath)
-	}
-}
-
 func TestProjectedPathsConfig(t *testing.T) {
 	if c := Load(nil); c.ProjectedPaths != "" {
 		t.Fatalf("default projected paths = %q", c.ProjectedPaths)
