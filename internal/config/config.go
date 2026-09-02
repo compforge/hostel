@@ -60,7 +60,9 @@ type Config struct {
 	// view below suite. The binary is probed through the selected isolation
 	// mechanism at startup; probe failure keeps carrier-path behavior.
 	PathshimPath string
-	// ProjectedPaths gives configured BedFS subtrees stable Executor paths.
+	// ProjectedPaths gives additional BedFS subtrees stable Executor paths.
+	// Hostel applies /workspace -> /workspace through the same projection model
+	// as a built-in contract, so it is intentionally absent from this setting.
 	// Comma-separated BED_PATH=PROCESS_PATH pairs are parsed after Load so an
 	// invalid deployment fails startup instead of silently dropping a mapping.
 	ProjectedPaths string
@@ -152,7 +154,7 @@ func Load(args []string) *Config {
 	fs.StringVar(&c.WorkspaceRoot, "workspace-root", osx.EnvStr("HOSTEL_WORKSPACE_ROOT", "/workspace"), "parent dir for per-bed workspaces")
 	fs.StringVar(&c.IsolationMode, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "data-isolation level: dorm | room | suite | auto (auto=env ceiling)")
 	fs.StringVar(&c.PathshimPath, "pathshim", osx.EnvStr("HOSTEL_PATHSHIM", "pathshim"), "pathshim binary for the best-effort workspace and configured process view (empty=disabled)")
-	fs.StringVar(&c.ProjectedPaths, "projected-paths", osx.EnvStr("HOSTEL_PROJECTED_PATHS", ""), "comma-separated BedFS-to-process path projections (for example /cache=/mnt/cache)")
+	fs.StringVar(&c.ProjectedPaths, "projected-paths", osx.EnvStr("HOSTEL_PROJECTED_PATHS", ""), "comma-separated additional BedFS-to-process path projections; /workspace=/workspace is built in")
 	fs.StringVar(&c.PersistedPaths, "persisted-paths", osx.EnvStr("HOSTEL_PERSISTED_PATHS", "/workspace"), "comma-separated BedFS paths included in Store snapshots")
 	fs.StringVar(&c.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")
 	fs.StringVar(&c.DefaultBed, "default-bed", osx.EnvStr("HOSTEL_DEFAULT_BED", "default"), "bed id used when a request omits one")

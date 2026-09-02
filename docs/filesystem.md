@@ -44,7 +44,7 @@ BedFS 也是三档共同的 best-effort 数据底座：Dorm 没有安全墙，�
 
 ### dorm / room
 
-Executor 与 daemon 共享 mount namespace。Hostel 启动时会通过选中的隔离机制探测 pathshim；探测集合包含内置 `bed_home/workspace → /workspace` 和 `HOSTEL_PROJECTED_PATHS` 声明的全部投影。完整集合通过后整组启用；任一项不可用时整组退回 Carrier 语义，禁止部分生效。Landlock 或 uid 仍独立负责访问边界，pathshim 不参与 isolation level 判定。
+Executor 与 daemon 共享 mount namespace。Hostel 启动时会通过选中的隔离机制探测 pathshim；探测集合包含内置 `bed_home/workspace → /workspace` 和 `HOSTEL_PROJECTED_PATHS` 声明的全部投影。前者与配置项是同一种 `BedFS source → Executor target` 投影，只因 `/workspace` 是 Hostel 基础契约而内置，不在 env 中重复声明；配置项只承载额外投影。完整集合通过后整组启用；任一项不可用时整组退回 Carrier 语义，禁止部分生效。Landlock 或 uid 仍独立负责访问边界，pathshim 不参与 isolation level 判定。
 
 进程链保持职责顺序：
 

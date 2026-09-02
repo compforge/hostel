@@ -115,7 +115,11 @@ never sees the host. One consequence to be aware of:
 Under `bwrap`, the complete bed_home has a mechanism-private Executor mount and
 the workspace is additionally mounted at the stable `/workspace`, so any BedFS
 cwd is usable while workspace shell paths keep their canonical spelling. A
-deployment can add multiple business-neutral projections with
+This is Hostel's built-in projection from BedFS `/workspace`
+(`<bed_home>/workspace`) to Executor `/workspace`. It uses the same projection
+model as configured paths but is intentionally not repeated in
+`HOSTEL_PROJECTED_PATHS`. A deployment can add multiple business-neutral
+projections with
 `HOSTEL_PROJECTED_PATHS`, for example `/memory=/mnt/memory,/cache=/mnt/cache`.
 Under dorm/room, Hostel probes the complete pathshim projection set at boot and
 applies all of it or falls back to Carrier paths; this compatibility view does
