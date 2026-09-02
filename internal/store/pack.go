@@ -49,6 +49,7 @@ type packStore struct {
 	obj         objAPI
 	prefix      string
 	targetBytes int
+	filter      snapshotFilter
 }
 
 const (
@@ -86,11 +87,19 @@ func newPack(ctx context.Context, cfg Config) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newPackStore(obj, cfg.Prefix), nil
+	filter, err := newSnapshotFilter(cfg.PersistedPaths)
+	if err != nil {
+		return nil, err
+	}
+	return newPackStore(obj, cfg.Prefix, filter), nil
 }
 
-func newPackStore(obj objAPI, prefix string) *packStore {
-	return &packStore{obj: obj, prefix: prefix, targetBytes: packTargetBytes}
+func newPackStore(obj objAPI, prefix string, filters ...snapshotFilter) *packStore {
+	filter := defaultSnapshotFilter()
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
+	return &packStore{obj: obj, prefix: prefix, targetBytes: packTargetBytes, filter: filter}
 }
 
 func (s *packStore) Name() string { return "pack" }
@@ -169,7 +178,7 @@ func (s *packStore) Persist(ctx context.Context, bedID, dir string, generation i
 
 	pr, pw := io.Pipe()
 	go func() {
-		src := &filteredFS{inner: desync.NewLocalFS(dir, desync.LocalFSOptions{}), root: dir}
+		src := &filteredFS{inner: desync.NewLocalFS(dir, desync.LocalFSOptions{}), root: dir, filter: s.filter}
 		pw.CloseWithError(desync.Tar(ctx, pw, src))
 	}()
 	chunker, err := desync.NewChunker(pr, casChunkMin, casChunkAvg, casChunkMax)

@@ -23,6 +23,8 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -61,10 +63,9 @@ type Store interface {
 	Restore(ctx context.Context, bedID, dir string) error
 	// Persist snapshots dir as the bed's durable copy, replacing any previous
 	// snapshot. Called on evict, explicit checkpoint, and the periodic safety
-	// net. dir is the bed dir (portable meta + data/); top-level *.local
-	// files are host-private and excluded; data/tmp is the bed_home's ephemeral
-	// /tmp and is excluded recursively. generation is the meta's persist counter,
-	// surfaced back through Stat.
+	// net. dir is the bed dir; only portable meta.json and data/workspace are
+	// durable. Every other BedFS path is runtime-local by default. generation is
+	// the meta's persist counter, surfaced back through Stat.
 	Persist(ctx context.Context, bedID, dir string, generation int64) error
 	// Delete removes the bed's snapshot — the purge path: after this the bed
 	// identity no longer exists anywhere. Deleting a missing snapshot is not
@@ -87,14 +88,61 @@ type Config struct {
 	// persisted tree contains more than this many non-directory entries.
 	// Zero disables the automatic transition.
 	AutoPackFileThreshold int
+	// PersistedPaths is the BedFS durability allowlist. Empty preserves the
+	// default /workspace contract for programmatic callers.
+	PersistedPaths []string
 }
 
-// snapshotPathExcluded is shared by every concrete snapshot format so changing
-// backends cannot accidentally make carrier-private or ephemeral paths durable.
-func snapshotPathExcluded(rel string) bool {
-	rel = strings.Trim(filepath.ToSlash(rel), "/")
-	if rel == "data/tmp" || strings.HasPrefix(rel, "data/tmp/") {
-		return true
+type snapshotFilter struct {
+	roots []string // paths relative to the Bed directory, e.g. data/workspace
+}
+
+func newSnapshotFilter(persistedPaths []string) (snapshotFilter, error) {
+	if len(persistedPaths) == 0 {
+		persistedPaths = []string{"/workspace"}
 	}
-	return !strings.Contains(rel, "/") && strings.HasSuffix(filepath.Base(rel), ".local")
+	filter := snapshotFilter{roots: make([]string, 0, len(persistedPaths))}
+	for _, configured := range persistedPaths {
+		clean := path.Clean(strings.TrimSpace(configured))
+		if !path.IsAbs(clean) || clean == "/" {
+			return snapshotFilter{}, fmt.Errorf("store: persist path %q must be absolute and non-root", configured)
+		}
+		root := filepath.ToSlash(filepath.Join("data", filepath.FromSlash(strings.TrimPrefix(clean, "/"))))
+		for _, previous := range filter.roots {
+			if pathWithin(root, previous) || pathWithin(previous, root) {
+				return snapshotFilter{}, fmt.Errorf("store: persist paths %q and %q overlap", previous, root)
+			}
+		}
+		filter.roots = append(filter.roots, root)
+	}
+	return filter, nil
+}
+
+func defaultSnapshotFilter() snapshotFilter {
+	filter, _ := newSnapshotFilter(nil)
+	return filter
+}
+
+// excluded is shared by every concrete snapshot format. The allowlist is
+// intentional: syncing arbitrary BedFS roots to S3 is both an accidental
+// durability contract and an unbounded data-transfer risk.
+func (f snapshotFilter) excluded(rel string) bool {
+	rel = strings.Trim(filepath.ToSlash(rel), "/")
+	if rel == "." || rel == "meta.json" {
+		return false
+	}
+	roots := f.roots
+	if len(roots) == 0 {
+		roots = []string{"data/workspace"}
+	}
+	for _, root := range roots {
+		if pathWithin(rel, root) || pathWithin(root, rel) {
+			return false
+		}
+	}
+	return true
+}
+
+func pathWithin(candidate, root string) bool {
+	return candidate == root || strings.HasPrefix(candidate, root+"/")
 }

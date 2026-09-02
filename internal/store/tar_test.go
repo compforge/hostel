@@ -55,7 +55,7 @@ func TestTarObjectLayoutAndRoundtrip(t *testing.T) {
 	if err := s.Restore(ctx, "bed1", dst); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	for _, name := range []string{"meta.json", "data/big.bin", "data/src/b/b.go", "data/.hidden", "data/note.local", "data/tmpfile"} {
+	for _, name := range []string{"meta.json", "data/workspace/big.bin", "data/workspace/src/b/b.go", "data/workspace/.hidden", "data/workspace/note.local", "data/workspace/tmpfile"} {
 		want, err := os.ReadFile(filepath.Join(src, filepath.FromSlash(name)))
 		if err != nil {
 			t.Fatal(err)
@@ -65,19 +65,23 @@ func TestTarObjectLayoutAndRoundtrip(t *testing.T) {
 			t.Fatalf("restored %s differs: %v", name, err)
 		}
 	}
-	if _, err := os.Lstat(filepath.Join(dst, "skip.local")); !os.IsNotExist(err) {
-		t.Fatalf("top-level *.local leaked into snapshot: %v", err)
+	for _, name := range []string{"skip.local", "runtime.json"} {
+		if _, err := os.Lstat(filepath.Join(dst, name)); !os.IsNotExist(err) {
+			t.Fatalf("runtime-local top-level %s leaked into snapshot: %v", name, err)
+		}
 	}
-	if _, err := os.Lstat(filepath.Join(dst, "data/tmp")); !os.IsNotExist(err) {
-		t.Fatalf("data/tmp leaked into snapshot: %v", err)
+	for _, name := range []string{"tmp", "memory", "cache"} {
+		if _, err := os.Lstat(filepath.Join(dst, "data", name)); !os.IsNotExist(err) {
+			t.Fatalf("runtime-local data/%s leaked into snapshot: %v", name, err)
+		}
 	}
-	if target, err := os.Readlink(filepath.Join(dst, "data/link")); err != nil || target != "src/a.go" {
+	if target, err := os.Readlink(filepath.Join(dst, "data/workspace/link")); err != nil || target != "src/a.go" {
 		t.Fatalf("symlink = %q, %v; want src/a.go", target, err)
 	}
-	if fi, err := os.Stat(filepath.Join(dst, "data/exec.sh")); err != nil || fi.Mode().Perm()&0o100 == 0 {
+	if fi, err := os.Stat(filepath.Join(dst, "data/workspace/exec.sh")); err != nil || fi.Mode().Perm()&0o100 == 0 {
 		t.Fatalf("exec bit lost: %v, %v", fi, err)
 	}
-	if fi, err := os.Stat(filepath.Join(dst, "data/empty")); err != nil || !fi.IsDir() {
+	if fi, err := os.Stat(filepath.Join(dst, "data/workspace/empty")); err != nil || !fi.IsDir() {
 		t.Fatalf("empty dir not restored: %v", err)
 	}
 }
@@ -103,7 +107,7 @@ func TestTarAlwaysReplacesFullSnapshot(t *testing.T) {
 	}
 
 	want := []byte("package a // changed\n")
-	if err := os.WriteFile(filepath.Join(src, "data/src/a.go"), want, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "data/workspace/src/a.go"), want, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	before = obj.puts
@@ -117,8 +121,32 @@ func TestTarAlwaysReplacesFullSnapshot(t *testing.T) {
 	if err := s.Restore(ctx, "bed1", dst); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := os.ReadFile(filepath.Join(dst, "data/src/a.go")); err != nil || !bytes.Equal(got, want) {
+	if got, err := os.ReadFile(filepath.Join(dst, "data/workspace/src/a.go")); err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("restored a.go = %q, %v", got, err)
+	}
+}
+
+func TestTarPersistsConfiguredBedFSPaths(t *testing.T) {
+	filter, err := newSnapshotFilter([]string{"/workspace", "/memory"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := newMemObj()
+	s := newTarStore(obj, "sandbox", filter)
+	src := t.TempDir()
+	writeTree(t, src)
+	if err := s.Persist(t.Context(), "bed1", src, 1); err != nil {
+		t.Fatal(err)
+	}
+	dst := t.TempDir()
+	if err := s.Restore(t.Context(), "bed1", dst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "data/memory/nested/discard.txt")); err != nil {
+		t.Fatalf("configured /memory was not restored: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "data/cache")); !os.IsNotExist(err) {
+		t.Fatalf("unconfigured /cache leaked into snapshot: %v", err)
 	}
 }
 

@@ -29,7 +29,11 @@ import (
 func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 	root := t.TempDir()
 	probe := fakePathshim(t, "bind-view", 0)
-	iso := New("dorm", root, WithPathshim(probe))
+	projection, err := bedfs.NewPathProjection("/memory", "/mnt/memory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	iso := New("dorm", root, WithPathshim(probe), WithPathProjections([]bedfs.PathProjection{projection}))
 	report := iso.(Report).WorkspaceView()
 	if report.Mode != "pathshim" || !report.Available {
 		t.Fatalf("workspace view = %+v", report)
@@ -48,11 +52,22 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer fs.Close()
+	if err := iso.(Preparer).Prepare(fs); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(filepath.Join(home, "memory")); err != nil || !fi.IsDir() {
+		t.Fatalf("projection source was not prepared: %v, %v", fi, err)
+	}
 	cmd := exec.Command("/bin/sh", "-c", "pwd")
 	if err := iso.Wrap(cmd, fs, filepath.Join(workspace, "sub")); err != nil {
 		t.Fatal(err)
 	}
-	wantPrefix := []string{probe, "--quiet", "--bind", workspace + ":/workspace", "--cwd", "/workspace/sub", "--"}
+	wantPrefix := []string{
+		probe, "--quiet",
+		"--bind", workspace + ":/workspace",
+		"--bind", filepath.Join(home, "memory") + ":/mnt/memory",
+		"--cwd", "/workspace/sub", "--",
+	}
 	if len(cmd.Args) < len(wantPrefix) || !slices.Equal(cmd.Args[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("pathshim argv = %v, want prefix %v", cmd.Args, wantPrefix)
 	}

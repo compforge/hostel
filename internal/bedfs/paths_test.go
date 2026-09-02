@@ -95,6 +95,27 @@ func TestViewPath(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("configured projections", func(t *testing.T) {
+		projection, err := NewPathProjection("/memory", "/mnt/memory")
+		if err != nil {
+			t.Fatal(err)
+		}
+		view := ProjectedView(fs, []PathProjection{projection})
+		memory := filepath.Join(root, "memory")
+		cases := []struct{ host, want string }{
+			{workspace, "/workspace"},
+			{memory, "/mnt/memory"},
+			{filepath.Join(memory, "MEMORY.md"), "/mnt/memory/MEMORY.md"},
+			{filepath.Join(root, "other"), filepath.Join(root, "other")},
+		}
+		for _, tc := range cases {
+			got, err := view.Path(tc.host)
+			if err != nil || got != tc.want {
+				t.Errorf("Path(%q) = %q,%v want %q", tc.host, got, err, tc.want)
+			}
+		}
+	})
 }
 
 // TestPathsRoundTrip pins FromClient/ToClient as inverses on absolute client

@@ -114,12 +114,20 @@ never sees the host. One consequence to be aware of:
 
 Under `bwrap`, the complete bed_home has a mechanism-private Executor mount and
 the workspace is additionally mounted at the stable `/workspace`, so any BedFS
-cwd is usable while workspace shell paths keep their canonical spelling. Under
-dorm/room, Hostel probes pathshim at boot and, when available, gives commands a
-best-effort `/workspace` view without changing their isolation level. Other
-absolute paths retain Carrier semantics. Probe `workspace_view`, rather than
-`workspace_mount`, when command text depends on literal `/workspace`; pathshim
-is a compatibility view, not a security boundary. See `docs/filesystem.md`.
+cwd is usable while workspace shell paths keep their canonical spelling. A
+This is Hostel's built-in projection from BedFS `/workspace`
+(`<bed_home>/workspace`) to Executor `/workspace`. It uses the same projection
+model as configured paths but is intentionally not repeated in
+`HOSTEL_PROJECTED_PATHS`. A deployment can add multiple business-neutral
+projections with
+`HOSTEL_PROJECTED_PATHS`, for example `/memory=/mnt/memory,/cache=/mnt/cache`.
+Under dorm/room, Hostel probes the complete pathshim projection set at boot and
+applies all of it or falls back to Carrier paths; this compatibility view does
+not change the isolation level. See `docs/filesystem.md`.
+
+Store durability is independently controlled by `HOSTEL_PERSISTED_PATHS`, a
+comma-separated BedFS path allowlist whose default is `/workspace`. Adding a
+projection never makes its source durable unless it is explicitly added here.
 
 ## Isolation
 
@@ -129,7 +137,7 @@ level is `min(requested, ceiling)` — an over-ask degrades honestly, a lower as
 is a deliberate downgrade.
 
 - `dorm` (bunk): no enforced isolation (= direct, all platforms); pathshim may
-  add only a best-effort `/workspace` process view;
+  add a best-effort workspace and configured process view;
 - `room` (private room, shared toilet): Landlock LSM — a bed can't *access*
   other beds' data (EACCES) but siblings stay visible and `/tmp` / system paths
   are shared; **no capability required** (Linux ≥5.13);
@@ -175,7 +183,7 @@ reports `amenities: {chromium: idle|running}`.
 
 ## Configuration
 
-Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` / `--pathshim` /
+Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` / `--pathshim` / `--projected-paths` / `--persisted-paths` /
 `--dorm-read-fallback-root` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
 `--max-pinned-beds` / `--bed-pressure-threshold-percent` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
 `--executor` / `--store` /

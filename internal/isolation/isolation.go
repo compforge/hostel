@@ -117,7 +117,8 @@ type Report interface {
 }
 
 type options struct {
-	pathshim string
+	pathshim    string
+	projections []bedfs.PathProjection
 }
 
 // Option configures optional process-view helpers without changing the
@@ -128,6 +129,12 @@ type Option func(*options)
 // An empty path disables the helper.
 func WithPathshim(path string) Option {
 	return func(o *options) { o.pathshim = strings.TrimSpace(path) }
+}
+
+// WithPathProjections configures business-neutral BedFS-to-Executor path
+// projections. Callers validate the set before constructing the Isolator.
+func WithPathProjections(projections []bedfs.PathProjection) Option {
+	return func(o *options) { o.projections = append([]bedfs.PathProjection(nil), projections...) }
 }
 
 // Preparer is an optional Isolator capability: a mechanism that must prepare a
@@ -147,6 +154,7 @@ type resolved struct {
 	facts          HostFacts
 	workspaceView  WorkspaceViewReport
 	diagnostics    DiagnosticsReport
+	projections    []bedfs.PathProjection
 }
 
 func (r *resolved) Requested() Level                   { return r.req }
@@ -167,6 +175,15 @@ func (r *resolved) Diagnostics() DiagnosticsReport {
 // (uid), else no-ops — so the bed manager can assert Preparer on the result
 // unconditionally, without knowing which mechanism won.
 func (r *resolved) Prepare(fs *bedfs.FS) error {
+	for _, projection := range r.projections {
+		hostPath, err := fs.Resolve(projection.BedPath)
+		if err != nil {
+			return err
+		}
+		if err := fs.EnsureDir(hostPath); err != nil {
+			return err
+		}
+	}
 	if p, ok := r.Isolator.(Preparer); ok {
 		return p.Prepare(fs)
 	}
@@ -196,7 +213,7 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 	// (dorm) is the always-available floor. Two mechanisms serve room: landlock
 	// (kernel LSM, no privilege — preferred) and uid (Unix DAC, needs setuid
 	// caps — the fallback where Landlock is absent, e.g. old/custom kernels).
-	bwrapCandidate, bwrapProbe := newBwrap(facts, workspaceRoot)
+	bwrapCandidate, bwrapProbe := newBwrap(facts, workspaceRoot, cfg.projections)
 	landlockCandidate, landlockProbe := newLandlock(facts, workspaceRoot)
 	uidCandidate, uidProbe := newUID(facts, workspaceRoot)
 	probes := map[string]ProbeReport{
@@ -247,7 +264,7 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 	} else if cfg.pathshim != "" {
 		var report WorkspaceViewReport
 		var probe ProbeReport
-		chosen, report, probe = newPathshimView(chosen, workspaceRoot, cfg.pathshim)
+		chosen, report, probe = newPathshimView(chosen, workspaceRoot, cfg.pathshim, cfg.projections)
 		workspaceView = report
 		probes["pathshim"] = probe
 	}
@@ -262,6 +279,7 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 			System: facts.diagnostics,
 			Probes: probes,
 		},
+		projections: append([]bedfs.PathProjection(nil), cfg.projections...),
 	}
 }
 
