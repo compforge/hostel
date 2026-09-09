@@ -111,7 +111,7 @@ func TestBackgroundInterruptHasStructuredCause(t *testing.T) {
 	started := make(chan struct{})
 	var once sync.Once
 
-	execution, err := m.StartExecution(nil, b, ExecutionBackground, "echo ready; sleep 30", "", nil, 0, nil, func(ExecutionOutput) {
+	execution, err := m.StartExecution(nil, b, ExecutionBackground, "echo ready; sleep 30", "", "", nil, 0, nil, func(ExecutionOutput) {
 		once.Do(func() { close(started) })
 	})
 	if err != nil {

@@ -81,6 +81,13 @@ for required host capabilities and release-gate options.
 | Beds | `GET/POST /v1/beds`, `GET/DELETE /v1/beds/:id`, `POST /v1/beds/:id/checkpoint`, `GET /v1/beds/capabilities` |
 | Scheduler | `GET /v1/beds` — instance capacity, state counts + every local bed's (resident + dormant) lifecycle, generation and retention |
 
+`POST /command` accepts an optional `stdin` string in both foreground and
+background mode. It is delivered unchanged to the process, followed by EOF;
+omitting it or sending an empty string supplies immediate EOF. For example,
+`{"command":"cat > result.txt","stdin":"hello\n"}` writes the supplied text
+without embedding it in shell source. A command may exit without consuming all
+input; its exit code still determines the result.
+
 The isolated-session resource model maps one session directly to one non-default
 bed, so it does not introduce a second lifecycle object. Its run stream uses the
 same hostel-native execution events as `/command`. The default bed only serves
