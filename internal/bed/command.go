@@ -45,7 +45,7 @@ func (m *Manager) buildCommand(b *Bed, command, cwd string, envs map[string]stri
 
 // startOneShot builds and launches an isolated one-shot command in the Bed's
 // current Executor. Explicit pipes preserve output across the supervisor IPC seam.
-func (m *Manager) startOneShot(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string) (executor.Process, executor.Executor, *os.File, *os.File, error) {
+func (m *Manager) startOneShot(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, stdin *os.File) (executor.Process, executor.Executor, *os.File, *os.File, error) {
 	cmd, err := m.buildCommand(b, command, cwdInBed, envs)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -59,6 +59,9 @@ func (m *Manager) startOneShot(ctx context.Context, b *Bed, command, cwdInBed st
 		stdoutR.Close()
 		stdoutW.Close()
 		return nil, nil, nil, nil, err
+	}
+	if stdin != nil {
+		cmd.Stdin = stdin
 	}
 	cmd.Stdout = stdoutW
 	cmd.Stderr = stderrW
@@ -83,11 +86,12 @@ func (m *Manager) startOneShot(ctx context.Context, b *Bed, command, cwdInBed st
 
 // StartExecution launches and registers one command. Foreground and background
 // share the same lifecycle; callers only choose whether to wait for Result.
+// Stdin is finite input followed by EOF; empty input supplies immediate EOF.
 func (m *Manager) StartExecution(
 	ctx context.Context,
 	b *Bed,
 	mode ExecutionMode,
-	command, cwdInBed string,
+	command, cwdInBed, stdin string,
 	envs map[string]string,
 	timeout time.Duration,
 	onStart func(ExecutionStatus),
@@ -97,12 +101,22 @@ func (m *Manager) StartExecution(
 	if err != nil {
 		return nil, err
 	}
-	proc, bedExecutor, stdout, stderr, err := m.startOneShot(ctx, b, command, cwdInBed, envs)
+	input, err := newCommandInput(stdin)
 	if err != nil {
 		finishOperation()
 		return nil, err
 	}
+	proc, bedExecutor, stdout, stderr, err := m.startOneShot(ctx, b, command, cwdInBed, envs, input.file())
+	// The child owns its inherited descriptor after Start; retaining our read
+	// end would prevent a writer from observing an early child-side close.
+	input.closeReader()
+	if err != nil {
+		input.close()
+		finishOperation()
+		return nil, err
+	}
 	execution := m.executions.track(ctx, b.ID, mode, bedExecutor.ID(), bedExecutor.Backend(), proc, stdout, stderr, timeout, onStart, onOutput, func(result ExecutionResult) {
+		input.close()
 		finishOperation()
 		b.RecordCommand(result.Duration)
 	})
@@ -112,7 +126,7 @@ func (m *Manager) StartExecution(
 // RunForeground executes a one-shot command as a fresh, isolated `bash -c`
 // process, streams typed output, and waits for its structured terminal result.
 func (m *Manager) RunForeground(ctx context.Context, b *Bed, command, cwdInBed string, envs map[string]string, timeout time.Duration, onOutput func(ExecutionOutput)) (ExecutionResult, error) {
-	execution, err := m.StartExecution(ctx, b, ExecutionForeground, command, cwdInBed, envs, timeout, nil, onOutput)
+	execution, err := m.StartExecution(ctx, b, ExecutionForeground, command, cwdInBed, "", envs, timeout, nil, onOutput)
 	if err != nil {
 		return ExecutionResult{}, err
 	}

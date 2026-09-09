@@ -425,7 +425,7 @@ func TestBackgroundCommandAndLogs(t *testing.T) {
 	m := newTestManager(t)
 	b, _ := m.Ensure(context.Background(), "default")
 
-	execution, err := m.StartExecution(nil, b, ExecutionBackground, "printf 'a\\nb\\nc\\n'", "", nil, 0, nil, nil)
+	execution, err := m.StartExecution(nil, b, ExecutionBackground, "printf 'a\\nb\\nc\\n'", "", "", nil, 0, nil, nil)
 	if err != nil {
 		t.Fatalf("StartExecution: %v", err)
 	}

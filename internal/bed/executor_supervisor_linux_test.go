@@ -118,9 +118,9 @@ func TestBedKeepsIdentityWhenExecutorIsReplaced(t *testing.T) {
 	}
 }
 
-// TestSupervisorTeardownKillsTree is S1's payoff: evicting the bed terminates its
-// init, which must take down an in-flight command AND a setsid escapee that no
-// pgid sweep could reach.
+// TestSupervisorTeardownKillsTree checks forced teardown after cooperative
+// eviction refuses an active bed. The supervisor must take down both the
+// in-flight command and a setsid escapee that no pgid sweep could reach.
 func TestSupervisorTeardownKillsTree(t *testing.T) {
 	m := newSupervisorManager(t)
 	b := resolveSupervisedBed(t, m, "conv-supervisor-kill")
@@ -150,9 +150,10 @@ func TestSupervisorTeardownKillsTree(t *testing.T) {
 		return escapee > 0
 	})
 
-	if ok, err := m.Evict(context.Background(), "conv-init-kill"); err != nil || !ok {
-		t.Fatalf("Evict: ok=%v err=%v", ok, err)
+	if ok, err := m.Evict(context.Background(), b.ID); err != nil || ok {
+		t.Fatalf("Evict active bed: ok=%v err=%v", ok, err)
 	}
+	m.teardown(b)
 	select {
 	case result := <-done:
 		if result.Process.Kind != executor.ProcessSignaled || result.Cause != CauseBedTeardown {
@@ -197,4 +198,8 @@ func waitForCond(t *testing.T, what string, ok func() bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timeout waiting for %s", what)
+}
+
+func TestSupervisorCommandInput(t *testing.T) {
+	testCommandInput(t, newSupervisorManager(t), "supervisor")
 }

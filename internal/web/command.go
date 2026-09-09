@@ -31,6 +31,7 @@ func jsonUnmarshal(s string, v any) error { return json.Unmarshal([]byte(s), v) 
 // RunCommandRequest mirrors execd's shape.
 type RunCommandRequest struct {
 	Command    string            `json:"command"`
+	Stdin      string            `json:"stdin,omitempty"`
 	Cwd        string            `json:"cwd,omitempty"`
 	Background bool              `json:"background,omitempty"`
 	TimeoutMs  int64             `json:"timeout,omitempty"`
@@ -89,7 +90,7 @@ func (s *Server) runCommand(c *gin.Context) {
 	timeout := time.Duration(req.TimeoutMs) * time.Millisecond
 	if req.Background {
 		executionCtx := context.WithoutCancel(c.Request.Context())
-		execution, err := s.mgr.StartExecution(executionCtx, b, bed.ExecutionBackground, req.Command, cwdInBed, req.Envs, timeout, nil, nil)
+		execution, err := s.mgr.StartExecution(executionCtx, b, bed.ExecutionBackground, req.Command, cwdInBed, req.Stdin, req.Envs, timeout, nil, nil)
 		if err != nil {
 			runtimeError(c, err.Error())
 			return
@@ -107,7 +108,7 @@ func (s *Server) runCommand(c *gin.Context) {
 	stopSSE := func() {}
 	defer func() { stopSSE() }()
 	startedExecutionID := ""
-	execution, err := s.mgr.StartExecution(c.Request.Context(), b, bed.ExecutionForeground, req.Command, cwdInBed, req.Envs, timeout, func(status bed.ExecutionStatus) {
+	execution, err := s.mgr.StartExecution(c.Request.Context(), b, bed.ExecutionForeground, req.Command, cwdInBed, req.Stdin, req.Envs, timeout, func(status bed.ExecutionStatus) {
 		startedExecutionID = status.ID
 		stopSSE = sse.start(c.Request.Context(), status.ID, ssePingInterval)
 	}, func(output bed.ExecutionOutput) {
