@@ -26,6 +26,7 @@ const (
 	OpExec       OperationKind = "exec"
 	OpFile       OperationKind = "file"
 	OpBrowser    OperationKind = "browser"
+	OpMCP        OperationKind = "mcp"
 	OpCheckpoint OperationKind = "checkpoint"
 	OpControl    OperationKind = "control"
 )

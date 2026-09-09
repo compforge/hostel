@@ -4,7 +4,7 @@
 
 **面向 AI agent 的 sandbox runtime**：在一台机器 / 一个容器内管理多个隔离执行单元（**bed**）。资源与文件 API 以 OpenSandbox 为设计基线，执行协议由 hostel 自己拥有。形态上 hostel = **web server + bed manager + amenity manager + store** 的组合（后续可扩充更多 manager）。可单机跑（laptop/VM/CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
 
-- **做**：bed 生命周期、exec / file、共享多租服务（Chromium/Jupyter…）管理。
+- **做**：bed 生命周期、exec / file、共享多租服务（Chromium/Jupyter/MCP…）管理。
 - **不做**（留给上层调度系统）：实例调度、跨实例路由、计费配额。
 - 参考 OpenSandbox execd（Apache-2.0）净重写，非其 fork；归属见 `NOTICE`。设计见 `docs/kernel.md`，未交付项见 `docs/backlog.md`。
 
@@ -22,7 +22,7 @@
 - **path projection**：调用方配置的通用 `BedFS path → Executor path` 投影；可配置多个，Hostel 不解释路径的业务含义。`/workspace` 是内置投影，不通过该配置声明。
 - **房型（dorm / room / suite）**：bed 的隔离档，与 bed 正交（见〈关键约定〉isolation）。
 - **luggage**：非正常生命周期状态，只表达异常退出或旧版 Hostel 遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
-- **amenity**：bed 外由 hostel 统一管理的共享重资产设施（Chromium / Jupyter…）。
+- **amenity**：bed 外由 hostel 统一管理、按 bed 分配状态的共享设施（Chromium / Jupyter / MCP 连接池）。
 - **executor**：某个 bed 当前的、可替换的进程承载域。bed 持久存在，executor 丢失或关闭后可用新 id 重建；Linux 默认使用 supervisor backend，非 Linux / 显式 local 使用 daemon 直接派生。
 - **execution**：一次命令运行。每次有独立 id，且记录其所属 bed id 与 executor id。
 
@@ -83,7 +83,7 @@ internal/
 │   ├── manager.go     Manager：resident bed 集合、初始化后的 Bed 组装、回收(Evict→revoke→persist→原子复核→teardown/Purge/CollectExpired)、持久化(persistBed/Checkpoint/PersistDirty)
 │   ├── initialization.go InitializeBed singleflight、phase/readiness、后台 Stage-in、容量预占与 Ready 发布；Ensure 复用并等待
 │   ├── store_sync.go  Store 同步调度：合并 lifecycle/pressure trigger，自主串行、周期与失败退避
-│   ├── operation.go   operation（无状态请求，kind=exec/file/browser/checkpoint/control）：BeginOperation + timeout 截断
+│   ├── operation.go   operation（无状态请求，kind=exec/file/browser/mcp/checkpoint/control）：BeginOperation + timeout 截断
 │   ├── session.go     session（可撤销有状态持有，cdp 类）：OpenSession/Touch/Close；revokeSessions 供 evict 在 persist 前吊销（shell 走 shell.go 自备机制，revoke 时一并 Close）
 │   ├── env.go         bed 进程环境唯一组装点：过滤 Hostel 保留命名空间 + Carrier env + BED_* context + request overlay
 │   ├── observability.go Bed 生命周期记录：initialize/persist/evict 的结构化 stage 日志与最近摘要
@@ -143,3 +143,5 @@ internal/
 - 单机 E2E（binary/image profiles、环境契约与覆盖边界）：`tests/e2e/README.md`
 - 归属（execd 参考的具体设计点）：`NOTICE`
 - API 契约来源：上游 OpenSandbox 仓库的 `specs/execd-api.yaml`（https://github.com/alibaba/opensandbox）
+
+- MCP 远程工具与连接生命周期、公共 Go 嵌入入口：`docs/mcp.md`

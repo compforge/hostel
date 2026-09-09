@@ -121,3 +121,9 @@ launch 模式：镜像里带 chromium/chrome 二进制（`--chromium-path` 或 P
 - Jupyter amenity（第二个实例，验证框架通用性后加）；
 - browser CDP ws 透传 / playwright 直连；
 - context 状态持久化（cookie 随 evict 消失）。
+
+## MCP 连接池
+
+MCP amenity 在 daemon 内维护连接池，每个 bed 拥有独立配置、凭据与会话。
+工具请求通过 operation 保持 bed 活跃，空闲连接随 bed 回收。它没有独立子进程，
+属于共享设施对有状态远程连接的扩展。协议、调用快照隔离与超时规则见 [mcp.md](mcp.md)。
