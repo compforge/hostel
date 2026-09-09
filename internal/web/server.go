@@ -144,6 +144,10 @@ func (s *Server) routes() {
 		dirs.DELETE("", s.dirDelete)
 	}
 
+	e.PUT("/v1/mcp/config", s.mcpRequest(s.mcpConfigure))
+	e.POST("/v1/mcp/servers/:name/tools/list", s.mcpRequest(s.mcpListTools))
+	e.POST("/v1/mcp/servers/:name/tools/call", s.mcpRequest(s.mcpCallTool))
+
 	e.POST("/command", s.runCommand)
 	e.DELETE("/command", s.interruptCommand)
 	e.GET("/command/status/:id", s.commandStatus)

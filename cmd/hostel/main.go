@@ -42,6 +42,7 @@ import (
 	"github.com/qiankunli/hostel/internal/supervisor"
 	"github.com/qiankunli/hostel/internal/tracing"
 	"github.com/qiankunli/hostel/internal/web"
+	"github.com/qiankunli/hostel/pkg/mcpproxy"
 )
 
 // version is stamped at build time via -ldflags "-X main.version=...".
@@ -112,6 +113,7 @@ func main() {
 	// registered when launch (binary) or attach (--chromium-cdp-url) is
 	// possible; otherwise the facility is honestly absent.
 	amenities := amenity.NewRegistry()
+	amenities.Register(amenity.NewMCP(mcpproxy.Options{}))
 	if br, ok := amenity.NewChromium(amenity.ChromiumConfig{
 		ExecPath:  cfg.ChromiumPath,
 		CDPURL:    cfg.ChromiumCDPURL,

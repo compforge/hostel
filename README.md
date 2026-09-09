@@ -342,3 +342,12 @@ diverge over time. See [`NOTICE`](NOTICE) for attribution details.
 The image aggregates PRoot as a separate GPL-2.0 program and ships its license,
 modification notice, and corresponding modified source under
 `/usr/share/doc/proot/`.
+
+## Remote MCP tools
+
+Hostel can proxy remote SSE and Streamable HTTP MCP tools for each bed. Configure
+`PUT /v1/mcp/config`, then use `POST /v1/mcp/servers/{name}/tools/list` or
+`POST /v1/mcp/servers/{name}/tools/call`, selecting the bed with `X-Hostel-Bed`.
+Connections are reused within a bed and released when it is evicted. These are
+trusted control-plane endpoints, with the same access boundary as `/command`.
+See [MCP configuration, lifecycle and embedding](docs/mcp.md).

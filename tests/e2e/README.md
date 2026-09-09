@@ -12,6 +12,9 @@ this boundary.
 make e2e
 ```
 
+The core profile also covers remote MCP configuration, list/call, metadata,
+call-scoped overrides and cross-bed isolation over SSE and Streamable HTTP.
+
 The core profile covers health and capability reporting, asynchronous bed
 creation, inventory invariants, capacity, foreground/background execution,
 status/log/interrupt control, stateful and isolated sessions, the complete
