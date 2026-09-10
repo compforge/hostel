@@ -87,3 +87,12 @@ than becoming a skip.
 The binary and image variables are mutually exclusive. Image mode is intended
 for a Linux runner with Docker because the target container uses host networking
 to reach the test-owned browser fixture.
+
+## Network namespace contract
+
+In a disposable Linux container with the required namespace, routing and nft
+permissions, set `HOSTEL_E2E_REQUIRE_NETWORK=1` and run `make e2e` in binary
+mode. `TestNetworkNamespaces` requires an enabled diagnostic verdict and checks
+separate Bed namespaces, command/session namespace consistency and purge/recreate.
+The runtime prerequisite is a complete successful probe, not just `NET_ADMIN`.
+Do not run this privileged profile with the image fixture's host networking.

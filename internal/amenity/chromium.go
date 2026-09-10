@@ -313,6 +313,10 @@ func (c *chromium) tenant(bedID, workspace string) (*chromiumTenant, error) {
 		// Target.* context management is a BROWSER-session domain — route via
 		// the browser executor, not the page session (else: Not allowed).
 		bctx := cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Browser)
+		// TODO(network): set this Bed's proxyServer when the Bed-scoped egress
+		// proxy is available. BrowserContext does not inherit a command's netns;
+		// validate bypass/QUIC/WebRTC paths before advertising browser enforcement.
+		// See docs/backlog.md and docs/network.md.
 		id, err := target.CreateBrowserContext().Do(bctx)
 		if err != nil {
 			return err

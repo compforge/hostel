@@ -65,7 +65,7 @@ func (m *Manager) startOneShot(ctx context.Context, b *Bed, command, cwdInBed st
 	}
 	cmd.Stdout = stdoutW
 	cmd.Stderr = stderrW
-	bedExecutor, err := b.executorFor(ctx, m.executorFactory)
+	bedExecutor, err := b.executorFor(ctx, m.networkExecutorFactory())
 	if err == nil {
 		procID := "process-" + randx.Hex(8)
 		var proc executor.Process

@@ -120,7 +120,7 @@ FROM debian:bookworm-slim
 ARG WITH_CHROMIUM=true
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bash ca-certificates libcap2 libtalloc2 tini unzip \
+        bash ca-certificates libcap2 libtalloc2 tini unzip iproute2 nftables util-linux \
     && if [ "$WITH_CHROMIUM" = "true" ]; then \
         apt-get install -y --no-install-recommends chromium fonts-liberation; \
     fi \

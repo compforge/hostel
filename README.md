@@ -93,7 +93,7 @@ bed, so it does not introduce a second lifecycle object. Its run stream uses the
 same hostel-native execution events as `/command`. The default bed only serves
 requests that omit a bed id and is never listed or attached as an isolated
 session. Creation currently supports the balanced profile with the bed-owned
-read-write `/workspace` and shared network; unsupported isolation options are
+read-write `/workspace`; network sharing follows the instance network capability; unsupported isolation options are
 rejected instead of being silently ignored. Diff and commit report
 `NOT_SUPPORTED`.
 
@@ -373,3 +373,12 @@ Hostel can proxy remote SSE and Streamable HTTP MCP tools for each bed. Configur
 Connections are reused within a bed and released when it is evicted. These are
 trusted control-plane endpoints, with the same access boundary as `/command`.
 See [MCP configuration, lifecycle and embedding](docs/mcp.md).
+
+### Optional network namespaces
+
+Hostel probes per-Bed networking at startup. When the complete probe succeeds,
+commands and persistent shells use a private IPv4 network namespace with routed
+outbound connectivity. Otherwise networking stays shared and Hostel still starts.
+`GET /v1/diagnostics` and `/healthz` expose `network.enabled`, `backend`, `scope`,
+and the probe failure reason. Shared Chromium traffic is not covered.
+See [network management](docs/network.md) for prerequisites and boundaries.

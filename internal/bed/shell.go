@@ -261,7 +261,7 @@ func (m *Manager) CreateShell(b *Bed, cwdInBed string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	bedExecutor, err := b.executorFor(context.Background(), m.executorFactory)
+	bedExecutor, err := b.executorFor(context.Background(), m.networkExecutorFactory())
 	if err != nil {
 		return "", err
 	}
@@ -321,7 +321,7 @@ func (m *Manager) ForegroundShell(b *Bed) (*Shell, error) {
 	if err != nil {
 		return nil, err
 	}
-	bedExecutor, err := b.executorFor(context.Background(), m.executorFactory)
+	bedExecutor, err := b.executorFor(context.Background(), m.networkExecutorFactory())
 	if err != nil {
 		return nil, err
 	}

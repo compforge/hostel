@@ -93,6 +93,7 @@ internal/
 │   └── command.go     一次性命令构建与启动；所有终态和观测事实归 execution.go
 ├── bedfs/             BedFS 数据域：bed_home/workspace、client/carrier/Executor 路径投影与文件操作；新建路径按属主 chown
 ├── store/             全局 Store Manager：Kind 路由、共享客户端与同步调度；Store 接口实现 noop/cas/pack/tar 策略，S3 是可选远端 backend，auto 识别快照布局，Stage-in 旁路恢复后原子发布；见 docs/store.md
+├── network/            可选 per-bed netns：启动实测、IPv4 接线、DNS 与执行入口；见 docs/network.md
 ├── resource/          per-bed cgroup v2 记账 + carrier CPU/内存准入；只读准入不要求子树委派
 ├── amenity/           Amenity 接口(生命周期 State)+ Registry；chromium 实例(共享浏览器/每 bed BrowserContext)；见 docs/amenity.md
 └── web/               gin 薄适配层：server(路由+bedOf 解析) / errors / sse / files / command / beds
@@ -130,6 +131,8 @@ internal/
 - 通用小工具优先用 [go-stdx](https://github.com/qiankunli/go-stdx)（env 解析、随机 id、shell quote、原子写文件、目录字节数等），不要在仓内再手写它已有的操作；沉淀出的新通用件也应迁去 go-stdx 而非留在 internal。
 
 ## References
+
+- 网络管理：`docs/network.md`（自动探测、命令作用域与诊断；共享 Chromium 代理待支持）
 
 - 设计文档（定位、bed 模型、managed-service 框架、决策表与 v1 范围）：`docs/kernel.md`
 - 待办清单（尚未交付的演进项）：`docs/backlog.md`
