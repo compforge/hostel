@@ -22,6 +22,8 @@ inheritable 与 ambient sets，避免把网络管理权限交给 Bed 程序。
 
 回收先停止 Bed 的命令和 shell、释放 amenity，再删除网络；失败的网络清理仍由 Manager
 持有并在关闭时重试。网络地址和 namespace 不写入 workspace，不随 Store 恢复。
+初始化已分配网络但未发布 resident 时，先用独立超时回收网络和 BedFS，再通知初始化
+结束，避免同 ID 的下一次初始化与旧网络清理交错。
 
 ## 实现约束与诊断
 

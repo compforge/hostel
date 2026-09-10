@@ -10,6 +10,17 @@ import (
 	"github.com/qiankunli/hostel/internal/network"
 )
 
+// bedNetwork is the network lifecycle consumed by Bed management and execution.
+// The concrete network.Manager owns namespaces and their cleanup retries.
+type bedNetwork interface {
+	Report() network.Report
+	Acquire(context.Context, string) error
+	Wrap(string, *exec.Cmd) error
+	Gateway(string) string
+	Release(context.Context, string) error
+	Close(context.Context) error
+}
+
 // SetNetworkManager is called once before serving. Network ownership follows
 // resident Bed lifetime, so replacing an Executor does not replace its netns.
 func (m *Manager) SetNetworkManager(manager *network.Manager) { m.network = manager }
@@ -24,7 +35,7 @@ func (m *Manager) networkExecutorFactory() executor.Factory {
 
 type networkFactory struct {
 	executor.Factory
-	manager *network.Manager
+	manager bedNetwork
 }
 
 func (f networkFactory) Create(ctx context.Context, bedID string) (executor.Executor, error) {
@@ -37,7 +48,7 @@ func (f networkFactory) Create(ctx context.Context, bedID string) (executor.Exec
 
 type networkExecutor struct {
 	executor.Executor
-	manager *network.Manager
+	manager bedNetwork
 }
 
 func (e networkExecutor) Start(ctx context.Context, id string, cmd *exec.Cmd) (executor.Process, error) {

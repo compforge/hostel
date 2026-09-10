@@ -50,7 +50,7 @@ type Manager struct {
 	maxPinnedBeds   int                // pinned-count pressure reference; 0 = pressure disabled
 	pressurePercent int                // shared occupied/pinned high-watermark percentage
 	pinnedBeds      atomic.Int64       // tenant beds running work or holding data not yet durable
-	network         *network.Manager
+	network         bedNetwork
 	store           *store.Manager // daemon-wide persistence component
 	processEnv      processEnv     // explicit carrier software env; never daemon-wide inheritance
 	// bedIdleTTL is set once at startup. Accepted operations extend their bed
@@ -122,6 +122,7 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		maxPinnedBeds:   maxBeds,
 		pressurePercent: defaultBedPressureThresholdPercent,
 		store:           st,
+		network:         (*network.Manager)(nil), // nil manager preserves shared networking
 		processEnv:      processEnv,
 		beds:            make(map[string]*Bed),
 		initializations: make(map[string]*bedInitialization),
