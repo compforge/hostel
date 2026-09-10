@@ -126,7 +126,7 @@ func (s *Server) isolatedCreate(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	if !validateIsolatedCreate(c, req) {
+	if !validateIsolatedCreate(c, req, !s.mgr.NetworkReport().Enabled) {
 		return
 	}
 
@@ -156,7 +156,7 @@ func (s *Server) isolatedCreate(c *gin.Context) {
 	})
 }
 
-func validateIsolatedCreate(c *gin.Context, req isolatedCreateRequest) bool {
+func validateIsolatedCreate(c *gin.Context, req isolatedCreateRequest, shareNet bool) bool {
 	switch req.Profile {
 	case "", "balanced":
 	case "strict":
@@ -187,8 +187,8 @@ func validateIsolatedCreate(c *gin.Context, req isolatedCreateRequest) bool {
 		respondError(c, http.StatusBadRequest, ErrNotSupported, "extra_writable and binds are not supported")
 		return false
 	}
-	if req.ShareNet != nil && !*req.ShareNet {
-		respondError(c, http.StatusBadRequest, ErrNotSupported, "private network namespaces are not supported")
+	if req.ShareNet != nil && *req.ShareNet != shareNet {
+		respondError(c, http.StatusBadRequest, ErrNotSupported, "share_net does not match this instance network capability")
 		return false
 	}
 	if req.EnvPassthrough.Mode != "" || len(req.EnvPassthrough.Keys) > 0 {
@@ -216,7 +216,7 @@ func (s *Server) isolatedGet(c *gin.Context) {
 	if b == nil {
 		return
 	}
-	c.JSON(http.StatusOK, isolatedState(b))
+	c.JSON(http.StatusOK, isolatedState(b, !s.mgr.NetworkReport().Enabled))
 }
 
 // GET /v1/isolated/sessions
@@ -228,7 +228,7 @@ func (s *Server) isolatedList(c *gin.Context) {
 		if b.ID == s.mgr.DefaultBedID() {
 			continue
 		}
-		state := isolatedState(b)
+		state := isolatedState(b, !s.mgr.NetworkReport().Enabled)
 		items = append(items, isolatedSessionSummary{
 			SessionID:            b.ID,
 			Status:               state.Status,
@@ -240,14 +240,13 @@ func (s *Server) isolatedList(c *gin.Context) {
 	c.JSON(http.StatusOK, isolatedListResponse{Sessions: items})
 }
 
-func isolatedState(b *bed.Bed) isolatedSessionState {
+func isolatedState(b *bed.Bed, shareNet bool) isolatedSessionState {
 	st := b.Status()
 	var remaining *int
 	if !st.RetainUntil.IsZero() {
 		seconds := max(0, int(time.Until(st.RetainUntil).Seconds()))
 		remaining = &seconds
 	}
-	shareNet := true
 	return isolatedSessionState{
 		// Evicting is deliberately still active here: activity may cancel the
 		// eviction, while "dead" is terminal in the isolated-session contract.
@@ -369,8 +368,9 @@ func (s *Server) isolatedCapabilities(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"available":         iso.Available(),
 		"isolator":          iso.Name(),
-		"message":           "Hostel bed adapter: balanced profile with an rw /workspace and shared network",
-		"setpriv_available": false,
+		"message":           "Hostel bed adapter: balanced profile with an rw /workspace",
+		"network":           s.mgr.NetworkReport(),
+		"setpriv_available": s.mgr.NetworkReport().Enabled,
 		"userns_available":  false,
 		"commit_supported":  false,
 		"diff_supported":    false,

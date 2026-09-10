@@ -37,6 +37,7 @@ import (
 	"github.com/qiankunli/hostel/internal/config"
 	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/network"
 	"github.com/qiankunli/hostel/internal/resource"
 	"github.com/qiankunli/hostel/internal/store"
 	"github.com/qiankunli/hostel/internal/supervisor"
@@ -156,6 +157,9 @@ func main() {
 	if filtered := mgr.SetCarrierEnvironment(os.Environ()); len(filtered) > 0 {
 		log.Printf("hostel: filtered reserved carrier environment from bed processes: keys=%v", filtered)
 	}
+
+	networks := network.New(context.Background())
+	mgr.SetNetworkManager(networks)
 	resources := resource.New()
 	mgr.SetResourceTracker(resources)
 	resourceReport := resources.Report()

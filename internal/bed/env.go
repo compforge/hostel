@@ -131,7 +131,7 @@ func (m *Manager) buildBedEnv(b *Bed, requestEnv map[string]string) ([]string, e
 	env["SHELL"] = m.shellPath
 
 	if endpoint := m.bedCDPEndpoint(b.ID); endpoint != "" {
-		env["PLAYWRIGHT_MCP_CDP_ENDPOINT"] = endpoint
+		env["PLAYWRIGHT_MCP_CDP_ENDPOINT"] = m.networkEndpoint(b.ID, endpoint)
 	}
 	for name, value := range requestEnv {
 		env[name] = value

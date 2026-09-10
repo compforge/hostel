@@ -237,23 +237,31 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 	published := false
 	defer func() {
 		if !published {
-			_ = resident.BedFS().Close()
+			// Roll back before finishInitialization releases the identity and wakes
+			// waiters. Otherwise a same-ID retry could acquire this old network
+			// while cleanup is still running. The initialization ctx may be canceled.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if cleanupErr := m.network.Release(cleanupCtx, bedID); cleanupErr != nil {
+				log.Printf("bed: initialization network cleanup: %v", cleanupErr)
+				err = errors.Join(err, cleanupErr)
+			}
+			cancel()
+			err = errors.Join(err, resident.BedFS().Close())
+			resident = nil
 		}
+		m.finishInitialization(initialization, resident, err)
 	}()
-	if err := ctx.Err(); err != nil {
-		m.finishInitialization(initialization, nil, err)
+	if err = ctx.Err(); err != nil {
 		return
 	}
 	m.updateInitialization(initialization, "PublishingResident", "publishing the resident Bed")
-	if err := m.publishInitializedBed(initialization, resident); err != nil {
-		m.finishInitialization(initialization, nil, err)
+	if err = m.publishInitializedBed(initialization, resident); err != nil {
 		return
 	}
 	published = true
 
 	// The one full-id log line is the grep anchor from an upstream sandbox id.
 	log.Printf("hostel bed resident: bed=%s short=%s store=%s", bedID, resident.Short(), resident.Store)
-	m.finishInitialization(initialization, resident, nil)
 }
 
 func (m *Manager) publishInitializedBed(initialization *bedInitialization, resident *Bed) error {

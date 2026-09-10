@@ -281,6 +281,7 @@ func (s *Server) healthz(c *gin.Context) {
 	resources := s.mgr.ResourceReport()
 	c.JSON(http.StatusOK, gin.H{
 		"ok":                             true,
+		"network":                        s.mgr.NetworkReport(),
 		"isolator":                       iso.Name(),
 		"isolator_ok":                    iso.Available(),
 		"workspace_mount":                iso.WorkspaceMounted(),
@@ -318,6 +319,7 @@ func (s *Server) diagnostics(c *gin.Context) {
 	report, ok := iso.(isolation.Report)
 	if !ok {
 		c.JSON(http.StatusOK, gin.H{
+			"network":        s.mgr.NetworkReport(),
 			"system":         isolation.SystemFacts{},
 			"probes":         map[string]isolation.ProbeReport{},
 			"isolation":      gin.H{"effective": iso.Level().String(), "mechanism": iso.Name()},
@@ -327,8 +329,9 @@ func (s *Server) diagnostics(c *gin.Context) {
 	}
 	diagnostics := report.Diagnostics()
 	c.JSON(http.StatusOK, gin.H{
-		"system": diagnostics.System,
-		"probes": diagnostics.Probes,
+		"network": s.mgr.NetworkReport(),
+		"system":  diagnostics.System,
+		"probes":  diagnostics.Probes,
 		"isolation": gin.H{
 			"requested": report.Requested().String(),
 			"effective": report.Effective().String(),

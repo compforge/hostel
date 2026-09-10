@@ -65,7 +65,7 @@ bed core
 
 阶段按真实等待边界划分，而不是按函数数量划分：
 
-- initialize：`stage_in_bedfs → prepare_bedfs → prepare_resident`；Stage-in 的内部等待边界另投影为 readiness reason（inspect/select/restore）
+- initialize：`stage_in_bedfs → prepare_bedfs → prepare_resident`，网络启用时另有 `prepare_network`；Stage-in 的内部等待边界另投影为 readiness reason（inspect/select/restore）
 - persist：`wait_persist_lock → prepare_snapshot → persist_store → commit_watermark`
 
 阶段集合是诊断契约。新增阶段应表示新的可行动等待边界，不能仅为某次故障增加同义概念。

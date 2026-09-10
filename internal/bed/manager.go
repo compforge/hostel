@@ -30,6 +30,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/network"
 	"github.com/qiankunli/hostel/internal/resource"
 	"github.com/qiankunli/hostel/internal/store"
 )
@@ -49,8 +50,9 @@ type Manager struct {
 	maxPinnedBeds   int                // pinned-count pressure reference; 0 = pressure disabled
 	pressurePercent int                // shared occupied/pinned high-watermark percentage
 	pinnedBeds      atomic.Int64       // tenant beds running work or holding data not yet durable
-	store           *store.Manager     // daemon-wide persistence component
-	processEnv      processEnv         // explicit carrier software env; never daemon-wide inheritance
+	network         bedNetwork
+	store           *store.Manager // daemon-wide persistence component
+	processEnv      processEnv     // explicit carrier software env; never daemon-wide inheritance
 	// bedIdleTTL is set once at startup. Accepted operations extend their bed
 	// through timeout+idleTTL so the idle reaper cannot kill in-flight work.
 	bedIdleTTL time.Duration
@@ -120,6 +122,7 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		maxPinnedBeds:   maxBeds,
 		pressurePercent: defaultBedPressureThresholdPercent,
 		store:           st,
+		network:         (*network.Manager)(nil), // nil manager preserves shared networking
 		processEnv:      processEnv,
 		beds:            make(map[string]*Bed),
 		initializations: make(map[string]*bedInitialization),
@@ -450,6 +453,12 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 		_ = filesystem.Close()
 		return nil, fmt.Errorf("bed: write meta %s: %w", id, err)
 	}
+	if m.network.Report().Enabled {
+		if err := trace.stage("prepare_network", func() error { return m.network.Acquire(ctx, id) }); err != nil {
+			_ = filesystem.Close()
+			return nil, err
+		}
+	}
 	return b, nil
 }
 
@@ -598,6 +607,11 @@ func (m *Manager) teardown(b *Bed) {
 	_ = b.shutdownExecutor(shutdownCtx)
 	cancel()
 	m.amenities.ReleaseAll(b.ID)
+	networkCtx, cancelNetwork := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := m.network.Release(networkCtx, b.ID); err != nil {
+		log.Printf("bed: network cleanup: %v", err)
+	}
+	cancelNetwork()
 	_ = b.BedFS().Close()
 }
 
@@ -619,6 +633,9 @@ func (m *Manager) Close(ctx context.Context) error {
 		if err := b.BedFS().Close(); err != nil {
 			closeErr = errors.Join(closeErr, fmt.Errorf("bed %s filesystem: %w", b.ID, err))
 		}
+	}
+	if err := m.network.Close(ctx); err != nil {
+		closeErr = errors.Join(closeErr, err)
 	}
 	if err := m.executorFactory.Close(); err != nil {
 		closeErr = errors.Join(closeErr, err)
