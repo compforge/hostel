@@ -178,7 +178,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("hostel: configure resource admission: %v", err)
 	}
-	mgr.SetResourceAdmission(resourceAdmission)
 	admissionReport := resourceAdmission.Report()
 	if admissionReport.Enabled {
 		log.Printf("hostel: carrier resource admission enabled (cpu=%d%% memory=%d%% available=%v reason=%s)",
@@ -229,6 +228,21 @@ func main() {
 	default:
 		log.Fatalf("hostel: invalid executor backend %q", cfg.Executor)
 	}
+
+	// Individual backend probes cannot prove that privilege ordering composes.
+	probeCtx, cancelEnvironmentProbe := context.WithTimeout(context.Background(), 30*time.Second)
+	environmentErr := mgr.ProbeEnvironment(probeCtx)
+	cancelEnvironmentProbe()
+	if environmentErr != nil {
+		closeCtx, cancelClose := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = mgr.Close(closeCtx)
+		cancelClose()
+		log.Fatalf("hostel: execution environment unavailable: %v", environmentErr)
+	}
+	log.Printf("hostel: execution environment verified (file=%s network=%s executor=%s)", iso.Name(), networks.Report().Backend, mgr.ExecutorBackend())
+
+	// Carrier pressure gates tenant work, not the startup capability probe.
+	mgr.SetResourceAdmission(resourceAdmission)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

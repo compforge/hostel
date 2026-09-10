@@ -93,6 +93,10 @@ to reach the test-owned browser fixture.
 In a disposable Linux container with the required namespace, routing and nft
 permissions, set `HOSTEL_E2E_REQUIRE_NETWORK=1` and run `make e2e` in binary
 mode. `TestNetworkNamespaces` requires an enabled diagnostic verdict and checks
-separate Bed namespaces, command/session namespace consistency and purge/recreate.
+the `local` / `supervisor` × `dorm` / `room` / `suite` matrix: separate Bed namespaces,
+command/session namespace consistency, zero capability sets, `no_new_privs`, and
+purge/recreate. Set `HOSTEL_E2E_REQUIRE_ISOLATION=dorm,room,suite` to reject file-level
+degradation as well. Binary fixtures use a traversable workspace root so a selected
+Bed UID can access its own absolute paths.
 The runtime prerequisite is a complete successful probe, not just `NET_ADMIN`.
 Do not run this privileged profile with the image fixture's host networking.

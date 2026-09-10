@@ -207,12 +207,51 @@ func cpuUsageMicros(raw string) (uint64, error) {
 	return 0, fmt.Errorf("usage_usec missing from cpu.stat")
 }
 
-func (t *cgroupTracker) Release(bedID string) error {
+// ExecutorGroup keeps the Bed parent empty, so controllers can be delegated to
+// Executor children. Removing a child preserves the parent's accumulated CPU.
+func (t *cgroupTracker) ExecutorGroup(bedID, executorID string) (Group, error) {
+	parent, err := t.OpenGroup(bedID)
+	if err != nil {
+		return nil, err
+	}
+	_ = parent.Close()
 	path := t.groupPath(bedID)
-	if err := os.WriteFile(filepath.Join(path, "cgroup.kill"), []byte("1"), 0o644); err != nil &&
-		!errors.Is(err, os.ErrNotExist) {
-		// Older cgroup v2 kernels may lack cgroup.kill; the Executor already
-		// killed the tree, so continue to the populated/rmdir check.
+	if err := enableControllers(path, "cpu", "memory"); err != nil {
+		return nil, err
+	}
+	child := filepath.Join(path, executorID)
+	if err := os.Mkdir(child, 0o755); err != nil {
+		return nil, fmt.Errorf("create executor cgroup: %w", err)
+	}
+	return &cgroupGroup{path: child}, nil
+}
+
+type cgroupGroup struct{ path string }
+
+func (g *cgroupGroup) Open() (*os.File, error) { return os.Open(g.path) }
+func (g *cgroupGroup) Close() error            { return removeGroup(g.path) }
+
+func (t *cgroupTracker) Release(bedID string) error {
+	// Only Bed teardown removes the accounting parent. Executor shutdown owns
+	// child groups and must finish first; never kill an entire Bed on replacement.
+	path := t.groupPath(bedID)
+	entries, err := os.ReadDir(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			if err := removeGroup(filepath.Join(path, entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return removeGroup(path)
+}
+
+func removeGroup(path string) error {
+	if err := os.WriteFile(filepath.Join(path, "cgroup.kill"), []byte("1"), 0o644); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("kill cgroup %s: %w", path, err)
 	}
 	for range 20 {
 		err := os.Remove(path)
@@ -220,9 +259,9 @@ func (t *cgroupTracker) Release(bedID string) error {
 			return nil
 		}
 		if !errors.Is(err, syscall.EBUSY) {
-			return fmt.Errorf("remove cgroup for bed %s: %w", bedID, err)
+			return fmt.Errorf("remove cgroup %s: %w", path, err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return fmt.Errorf("remove cgroup for bed %s: still populated", bedID)
+	return fmt.Errorf("remove cgroup %s: still populated", path)
 }

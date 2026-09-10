@@ -40,14 +40,14 @@ func TestLinuxNetwork(t *testing.T) {
 		t.Fatalf("network unavailable: %+v", m.Report())
 	}
 	for _, id := range []string{"a", "b"} {
-		if err := m.Acquire(context.Background(), id); err != nil {
+		if _, err := m.Acquire(context.Background(), id); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var identities []string
 	for _, id := range []string{"a", "b"} {
 		cmd := exec.Command("readlink", "/proc/self/ns/net")
-		if err := m.Wrap(id, cmd); err != nil {
+		if err := m.beds[id].Enter(cmd); err != nil {
 			t.Fatal(err)
 		}
 		out, err := cmd.Output()
@@ -60,7 +60,7 @@ func TestLinuxNetwork(t *testing.T) {
 		t.Fatal("Beds share a netns")
 	}
 	// Bed-to-carrier connectivity survives namespace entry and privilege drop.
-	listener, err := net.Listen("tcp4", net.JoinHostPort(m.Gateway("a"), "0"))
+	listener, err := net.Listen("tcp4", net.JoinHostPort(m.beds["a"].Gateway(), "0"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,18 +74,18 @@ func TestLinuxNetwork(t *testing.T) {
 	}()
 	helper := exec.Command(os.Args[0], "-test.run=^TestNetworkSocketHelper$")
 	helper.Env = append(os.Environ(), "HOSTEL_NETWORK_HELPER=client", "HOSTEL_NETWORK_ADDRESS="+listener.Addr().String())
-	if err := m.Wrap("a", helper); err != nil {
+	if err := m.beds["a"].Enter(helper); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := helper.CombinedOutput(); err != nil || !strings.Contains(string(out), "hello") {
 		t.Fatalf("gateway: %s %v", out, err)
 	}
 	// A listener in Bed B must not be reachable from Bed A.
-	b := m.beds["b"].(*linuxEndpoint)
+	b := m.beds["b"].endpoint.(*linuxEndpoint)
 	address := net.JoinHostPort(b.address.String(), "18081")
 	server := exec.Command(os.Args[0], "-test.run=^TestNetworkSocketHelper$")
 	server.Env = append(os.Environ(), "HOSTEL_NETWORK_HELPER=server", "HOSTEL_NETWORK_ADDRESS="+address)
-	if err := m.Wrap("b", server); err != nil {
+	if err := m.beds["b"].Enter(server); err != nil {
 		t.Fatal(err)
 	}
 	stdout, err := server.StdoutPipe()
@@ -102,7 +102,7 @@ func TestLinuxNetwork(t *testing.T) {
 	}
 	client := exec.Command(os.Args[0], "-test.run=^TestNetworkSocketHelper$")
 	client.Env = append(os.Environ(), "HOSTEL_NETWORK_HELPER=blocked", "HOSTEL_NETWORK_ADDRESS="+address)
-	if err := m.Wrap("a", client); err != nil {
+	if err := m.beds["a"].Enter(client); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := client.CombinedOutput(); err != nil {

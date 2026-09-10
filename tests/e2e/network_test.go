@@ -15,7 +15,15 @@ func TestNetworkNamespaces(t *testing.T) {
 	if os.Getenv("HOSTEL_E2E_REQUIRE_NETWORK") != "1" {
 		t.Skip("set HOSTEL_E2E_REQUIRE_NETWORK=1 in a disposable capable Linux container")
 	}
-	target := startTarget(t, targetOptions{})
+	for _, backend := range []string{"local", "supervisor"} {
+		for _, level := range []string{"dorm", "room", "suite"} {
+			t.Run(backend+"/"+level, func(t *testing.T) { testNetworkEnvironment(t, backend, level) })
+		}
+	}
+}
+
+func testNetworkEnvironment(t *testing.T, backend, level string) {
+	target := startTarget(t, targetOptions{isolation: level, executor: backend})
 	c := target.client
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -33,6 +41,36 @@ func TestNetworkNamespaces(t *testing.T) {
 	must2xx(t, "diagnostics", response)
 	if !diagnostics.Network.Enabled || diagnostics.Network.Scope != "bed_processes" {
 		t.Fatalf("network: %+v", diagnostics.Network)
+	}
+	var health healthView
+	response, err = c.json(ctx, "GET", "/healthz", "", nil, &health)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must2xx(t, "health", response)
+	if requiredIsolationLevels()[level] && health.Isolation.Effective != level {
+		t.Fatalf("required %s degraded: %+v", level, health.Isolation)
+	}
+	t.Logf("executor=%s file=%s mechanism=%s", backend, health.Isolation.Effective, health.Isolation.Mechanism)
+	check, response := c.command(t, "network-a", map[string]any{"command": "grep -E '^(CapEff|CapPrm|CapInh|CapAmb|CapBnd|NoNewPrivs):' /proc/self/status", "timeout": 30000})
+	must2xx(t, "privilege probe", response)
+	assertCommandExit(t, check, 0)
+	lines := strings.Split(strings.TrimSpace(check.Stdout), "\n")
+	if len(lines) != 6 {
+		t.Fatalf("incomplete privilege status: %q", check.Stdout)
+	}
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			t.Fatalf("bad privilege status: %q", line)
+		}
+		expected := "0000000000000000"
+		if fields[0] == "NoNewPrivs:" {
+			expected = "1"
+		}
+		if fields[1] != expected {
+			t.Fatalf("privilege leaked: %s", line)
+		}
 	}
 	ids := make(map[string]string)
 	for _, bed := range []string{"network-a", "network-b"} {

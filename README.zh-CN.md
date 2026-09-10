@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-**hostel 是一个面向 AI agent 的 sandbox runtime**：用一个进程管理多个互相隔离的 sandbox，对外提供 HTTP API——创建 sandbox、在其中执行命令与 shell 会话、读写它的文件。每个 sandbox 称为一个 **bed**。可跑在任何地方：你的电脑、一台 VM、CI、或一个容器里。
+**hostel 是一个面向 AI agent 的 sandbox runtime**：用一个进程管理多个按环境能力尽量隔离的 sandbox，对外提供 HTTP API——创建 sandbox、在其中执行命令与 shell 会话、读写它的文件。每个 sandbox 称为一个 **bed**。可跑在任何地方：你的电脑、一台 VM、CI、或一个容器里。
 
 资源与文件 API 以 [OpenSandbox](https://github.com/alibaba/opensandbox) execd 为设计基线；命令执行采用 hostel 原生协议，每次运行都有稳定 execution id，并以结构化终态保留 exit、signal 与 termination cause。
 
@@ -10,7 +10,7 @@
 
 给每个 agent（或用户、或任务）配一整个 VM / 容器，启动慢、且空闲时也占着真实的 CPU/内存——而 agent 的负载大部分时间是空闲的（墙钟大头在等模型、不在跑命令）。想同时跑很多个时，这种粒度很浪费。
 
-hostel 走更轻的路：把多个隔离的 **bed** 装进一个进程。bed 创建近乎瞬时、空闲时几乎零成本，于是一台机器 / 一个容器能承载大量 bed，被多个 agent 复用。隔离是文件系统级的（bed 共享宿主内核）——适合**可信 / 半可信**代码；**不可信**代码应使用更强的隔离（microVM 或独立的 VM/容器）。
+hostel 走更轻的路：用一个进程管理多个 **bed**。bed 创建近乎瞬时、空闲时几乎零成本，于是一台机器 / 一个容器能承载大量 bed，被多个 agent 复用。Bed 共享宿主内核，文件、网络与资源边界取决于实际机制——适合**可信 / 半可信**代码；**不可信**代码应使用更强的隔离（microVM 或独立的 VM/容器）。
 
 ## 运行时模型
 
@@ -18,7 +18,7 @@ hostel 走更轻的路：把多个隔离的 **bed** 装进一个进程。bed 创
 - **Executor 是 Bed 当前的进程域**：拥有 command 与 session 进程，可以在不替换 Bed 的前提下重建；**Execution** 是一次命令运行，同时记录 bed id 与 executor id。
 - 常驻 shell 只属于显式创建的 `/session`；普通 `/command` 每次使用独立的新进程。
 - **默认 bed**：请求不带 bed id 就落到 `default`——只需要一个 sandbox 时可完全无视 bed 概念。
-- **选择 bed**：请求带 HTTP header `X-Hostel-Bed`（或 `?bed=`），空即默认。bed 之间互相隔离——一个 bed 的 shell 和文件对另一个不可见。
+- **选择 bed**：请求带 HTTP header `X-Hostel-Bed`（或 `?bed=`），空即默认。命令与文件 API 操作指定 Bed；跨 Bed 可见性取决于实际隔离机制，API 访问授权由接入方负责。
 
 ## 快速开始
 
@@ -33,7 +33,7 @@ curl -sN -XPOST localhost:8872/command \
   -H 'Content-Type: application/json' -d '{"command":"echo hi > /workspace/a.txt; cat /workspace/a.txt"}'
 # 文件读回
 curl -s 'localhost:8872/files/download?path=/workspace/a.txt'
-# 指定 bed（另一个隔离单元，看不到 default 的文件）
+# 指定另一个 Bed：文件 API 在该 Bed 内解析路径
 curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv-1'
 ```
 
@@ -53,7 +53,7 @@ curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv
 隔离会话的资源模型直接把一个 isolated session 对应到一个非 default bed，run 流与 `/command` 使用同一套 hostel 原生 execution 事件，
 不额外引入第二套生命周期对象。default bed 只服务原生 API 未指定 bed 的请求，不会出现在 session
 列表中，也不能通过 session 接口 attach。创建当前支持 balanced profile、bed 自有的读写
-`/workspace` 和共享网络；做不到的隔离参数会明确拒绝，不会静默忽略。diff / commit 返回
+`/workspace`；是否共享网络由实例实际网络能力决定。做不到的隔离参数会明确拒绝，不会静默忽略。diff / commit 返回
 `NOT_SUPPORTED`。
 
 指标跟随目标 bed（`X-Hostel-Bed` / `?bed=`）：cgroup v2 已委派时，CPU 用量和当前内存来自该
@@ -65,23 +65,24 @@ bed 的记账组，CPU 数量和总内存仍表示共享 carrier 容量；当前
 
 ## 隔离
 
-数据隔离按**青年旅社房型**分档，`--isolation dorm|room|suite|auto`（默认 auto=环境顶格），`effective=min(请求, env 上限)`，超上限诚实降级：
+Bed 的理想语义是独立执行空间，文件、进程、网络和资源相互隔离。Hostel 根据环境能力
+尽量兑现，并如实报告实际边界；共享运行环境降低承载成本，具体机制决定哪些边界受到强制保护。
 
-- `dorm`（通铺）：无强制隔离（=direct，全平台）；PRoot/pathshim 只会尽力补进程路径视图；
-- `room`（单间，厕所公用）：landlock 内核强制——兄弟数据不可访问但可见、`/tmp`/系统路径共享，无需任何 capability（Linux ≥5.13）；
-- `suite`（套房，全私有）：bwrap mount ns——兄弟不可见 + 私有 `/tmp` + `/workspace` 规范挂载（需 userns 或 CAP_SYS_ADMIN）。
+文件隔离按房型分档：`--isolation dorm|room|suite|auto`（默认 auto 选择环境上限，
+请求超过上限时降级到可达档位）。
 
-启动时 probe 环境上限，healthz/capabilities 报 `isolation.{level,mechanism,requested,effective,ceiling}`。详见 `docs/data.md`。
+- `dorm`：逻辑分床，没有强制跨 Bed 文件访问屏障。
+- `room`：通过 Landlock 或独立 UID 限制邻居数据访问，目录存在性和公共系统路径仍可见。
+- `suite`：bwrap 提供私有 mount 视图，遮蔽兄弟工作区，并挂载自己的 `/workspace`。
 
-更强的隔离（真 setuid、seccomp、每个 bed 的 CPU/内存限制（cgroup）、写时复制 overlay workspace、PTY over WebSocket）在路线图上。
-
-## 共享服务（Chromium / Jupyter …，规划中）
-
-有些工具启动重、但天生支持多租户——浏览器、Jupyter server。hostel 会只跑一份共享实例，用工具自身的机制给每个 bed 一份独立切片（每 bed 一个浏览器 context、一个 kernel），产物存进该 bed 的 workspace。v1 先接好释放钩子（bed 删除或超时时释放它的切片），Chromium/Jupyter 的实际接入后续再加。
+房型只表示文件隔离程度。网络 namespace 独立探测，目前覆盖 Bed 命令与 shell，共享
+Chromium/MCP 的出站仍走 Carrier。资源记账不等于硬限额；PRoot/pathshim 改善路径体验，
+不提供安全边界。健康与能力接口分别披露实际机制、作用域和能力缺席原因。
+完整模型见 [隔离设计](docs/isolation.md)，未完成项见 [backlog](docs/backlog.md)。
 
 ## amenity(共享设施)
 
-重资产、自带多租能力的工具由 hostel **共享一份**、按 bed 切片。首个是 **Chromium**:一份共享浏览器,每 bed 一个隔离 BrowserContext,产物落 bed workspace。启用方式:镜像带 chromium 二进制(`--chromium-path`,或自动探测)或 attach 既有实例(`--chromium-cdp-url`)。北向只给 bed 级动作(**不透传 CDP socket**):
+重资产、自带多租能力的工具由 hostel **共享一份**、按 bed 切片。首个是 **Chromium**:一份共享浏览器,每 Bed 一个 BrowserContext,产物落 bed workspace。启用方式:镜像带 chromium 二进制(`--chromium-path`,或自动探测)或 attach 既有实例(`--chromium-cdp-url`)。北向提供 Bed 级动作（不裸透传原始 CDP socket）:
 
 ```
 POST /v1/beds/:id/browser/goto        {url}
@@ -91,7 +92,10 @@ POST /v1/beds/:id/browser/{click,type,press,scroll,wait}
 POST /v1/beds/:id/browser/close
 ```
 
-浏览器首次使用时启动、空闲后自停;capabilities 报 `amenities: {chromium: idle|running}`。
+浏览器首次使用时启动、空闲后自停，capabilities 报告设施生命周期状态。另有供 Playwright
+使用的 Bed 级 CDP 代理，其有限过滤不承诺对抗性隔离；浏览器出站仍走 Carrier 网络。
+[MCP](docs/mcp.md) 按 Bed 管理远端连接，Jupyter 尚未实现。详见
+[共享设施边界](docs/amenity.md)。
 
 ## 配置
 

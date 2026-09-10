@@ -3,6 +3,9 @@ package bed
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,17 +30,17 @@ func (n *initializationNetwork) Report() network.Report {
 	return network.Report{Enabled: true}
 }
 
-func (n *initializationNetwork) Acquire(ctx context.Context, _ string) error {
+func (n *initializationNetwork) Acquire(ctx context.Context, _ string) (network.Attachment, error) {
 	if n.active.Swap(true) {
-		return errors.New("reused network before rollback finished")
+		return nil, errors.New("reused network before rollback finished")
 	}
-	if n.acquired.Add(1) == 1 {
+	if n.acquired.Add(1) == 1 && n.afterAcquire != nil {
 		n.afterAcquire(ctx)
 	}
-	return nil
+	return n, nil
 }
 
-func (n *initializationNetwork) Release(ctx context.Context, _ string) error {
+func (n *initializationNetwork) Close(ctx context.Context) error {
 	if n.released.Add(1) == 1 {
 		close(n.releasing)
 		<-n.resume
@@ -121,5 +124,55 @@ func TestInitializationRollsBackNetworkBeforeCompletion(t *testing.T) {
 			}
 			m.teardown(resident)
 		})
+	}
+}
+
+func (n *initializationNetwork) Enter(*exec.Cmd) error { return nil }
+func (n *initializationNetwork) Gateway() string       { return "" }
+
+func TestEvictionFencesSameIDUntilDirectoryCleanup(t *testing.T) {
+	m := newTestManager(t)
+	n := &initializationNetwork{releasing: make(chan struct{}), resume: make(chan struct{})}
+	m.network = n
+	b, err := m.Ensure(context.Background(), "reused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b.Workspace(), "old"), []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := m.Evict(context.Background(), b.ID); done <- err }()
+	t.Cleanup(func() { close(n.resume) })
+	select {
+	case <-n.releasing:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cleanup did not start")
+	}
+	if _, err := m.Ensure(context.Background(), b.ID); !errors.Is(err, ErrBedUnavailable) {
+		t.Fatalf("same-ID init during cleanup: %v", err)
+	}
+	if _, err := m.BeginOperation(b, OpFile, time.Second); !errors.Is(err, ErrBedUnavailable) {
+		t.Fatalf("old Bed admitted work: %v", err)
+	}
+	if status, ok := m.Initialization(b.ID); !ok || status.Readiness.Ready || status.Phase != PhaseEvicting {
+		t.Fatalf("cleanup status: %+v %t", status, ok)
+	}
+	n.resume <- struct{}{}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	next, err := m.Ensure(context.Background(), b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next == b {
+		t.Fatal("reused retired Bed")
+	}
+	if _, err := os.Stat(filepath.Join(next.Workspace(), "old")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale file survived: %v", err)
+	}
+	if err := m.teardown(next); err != nil {
+		t.Fatal(err)
 	}
 }

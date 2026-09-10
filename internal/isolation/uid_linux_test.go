@@ -17,6 +17,7 @@
 package isolation
 
 import (
+	"github.com/qiankunli/hostel/internal/bedfs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -153,6 +154,33 @@ func TestPrepareUIDDir(t *testing.T) {
 		st := fi.Sys().(*syscall.Stat_t)
 		if int(st.Uid) != uid || int(st.Gid) != uid {
 			t.Fatalf("%s owned %d:%d, want %d:%d", p, st.Uid, st.Gid, uid, uid)
+		}
+	}
+}
+
+func TestUIDPrepareRefreshesBedFSOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to hand over the test directory")
+	}
+	home := t.TempDir()
+	fs, err := bedfs.New(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	if err := (&uidIso{}).Prepare(fs); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Write("/workspace/nested/file", []byte("owned"), 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"workspace/nested", "workspace/nested/file"} {
+		info, err := os.Stat(filepath.Join(home, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Sys().(*syscall.Stat_t).Uid; got != uint32(bedUID(home)) {
+			t.Fatalf("%s owner=%d, want %d", path, got, bedUID(home))
 		}
 	}
 }

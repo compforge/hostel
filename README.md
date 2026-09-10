@@ -2,8 +2,8 @@
 
 English | [简体中文](README.zh-CN.md)
 
-**hostel is an agent-native sandbox runtime.** It runs many isolated sandboxes
-from a single process and exposes an HTTP API to create them, run commands and
+**hostel is an agent-native sandbox runtime.** It manages many sandboxes with
+best-effort isolation from a single process and exposes an HTTP API to create them, run commands and
 shell sessions in them, and read/write their files — built for AI agents that
 each need a scratch space to execute in. Each sandbox is called a **bed**. It
 runs anywhere: your laptop, a VM, a CI job, or a container.
@@ -20,11 +20,11 @@ to start and holds real CPU/RAM even while doing nothing — and agent workloads
 sit idle most of the time (the agent spends most of its wall-clock waiting on the
 model, not running commands). That's wasteful when you want many of them at once.
 
-hostel takes a lighter approach: pack many isolated **beds** into one process.
+hostel takes a lighter approach: manage many **beds** from one process.
 A bed is near-instant to create and costs almost nothing while idle, so a single
-machine or container can hold a large number of them. Isolation is
-filesystem-level (beds share the host kernel) — a good fit for **trusted or
-semi-trusted** code; for **untrusted** code you want stronger isolation (a
+machine or container can hold a large number of them. Beds share the host kernel;
+file, network and resource boundaries depend on available mechanisms. This fits
+**trusted or semi-trusted** code; for **untrusted** code you want stronger isolation (a
 microVM or a dedicated VM/container).
 
 ## Runtime model
@@ -39,8 +39,8 @@ microVM or a dedicated VM/container).
 - **Default bed**: a request without a bed id lands on `default`, so if you only
   need one sandbox you can ignore beds entirely.
 - **Choosing a bed**: send the HTTP header `X-Hostel-Bed` (or `?bed=`); empty
-  means the default. Beds are isolated from each other — one bed's shell and
-  files are invisible to another.
+  means the default. Commands and file APIs target that bed; cross-bed visibility
+  depends on the active isolation mechanisms. The caller must enforce API access authorization.
 
 ## Quick start
 
@@ -55,7 +55,7 @@ curl -sN -XPOST localhost:8872/command \
   -H 'Content-Type: application/json' -d '{"command":"echo hi > /workspace/a.txt; cat /workspace/a.txt"}'
 # read the file back
 curl -s 'localhost:8872/files/download?path=/workspace/a.txt'
-# target another bed (a separate isolation unit; cannot see the default bed's files)
+# target another bed: the file API resolves paths within that bed
 curl -s 'localhost:8872/files/info?path=/workspace/a.txt' -H 'X-Hostel-Bed: conv-1'
 ```
 
@@ -140,44 +140,37 @@ projection never makes its source durable unless it is explicitly added here.
 
 ## Isolation
 
-Data isolation is graded by **hostel room type**: `--isolation
-dorm|room|suite|auto` (default `auto` = the environment ceiling). The effective
-level is `min(requested, ceiling)` — an over-ask degrades honestly, a lower ask
-is a deliberate downgrade.
+A Bed aims to provide an independent execution space for files, processes,
+networking and resources. Hostel provides as much isolation as the environment
+supports and reports the actual boundaries. Shared infrastructure keeps the
+runtime lightweight; available mechanisms determine which boundaries are enforced.
 
-- `dorm` (bunk): no enforced isolation (= direct, all platforms); PRoot or
-  pathshim may add a best-effort workspace and configured process view;
-- `room` (private room, shared toilet): Landlock LSM — a bed can't *access*
-  other beds' data (EACCES) but siblings stay visible and `/tmp` / system paths
-  are shared; **no capability required** (Linux ≥5.13);
-- `suite` (fully private): bwrap mount ns — siblings invisible + private `/tmp`
-  + canonical `/workspace` mount (needs userns or CAP_SYS_ADMIN).
+File isolation is graded by room type: `--isolation dorm|room|suite|auto`
+(`auto` selects the environment ceiling; a higher request degrades to that ceiling).
 
-The environment ceiling is probed at boot; healthz/capabilities report
-`isolation.{level,mechanism,requested,effective,ceiling}`. See
-`docs/data.md`.
+- `dorm`: logical separation without an enforced cross-Bed file boundary.
+- `room`: Landlock or a separate UID restricts access to other Beds' data;
+  directory existence and shared system paths remain visible.
+- `suite`: bwrap provides a private mount view, hides sibling workspaces and
+  mounts the Bed's workspace at `/workspace`.
 
-Stronger isolation (real setuid, seccomp, per-bed CPU/memory limits via cgroups,
-copy-on-write overlay workspaces, PTY over WebSocket) is tracked in
-`docs/backlog.md`.
+These grades describe file isolation. Network namespaces are probed independently
+and currently cover Bed commands and shells; shared Chromium/MCP egress still uses
+the Carrier. Per-Bed CPU/memory accounting does not imply hard limits. PRoot and
+pathshim improve process path compatibility without adding a security boundary.
 
-## Managed services (Chromium / Jupyter / …, planned)
-
-Some tools are heavy to start but can serve many tenants at once — a browser, a
-Jupyter server. hostel will run one shared instance and give each bed its own
-slice using the tool's native mechanism (a browser context per bed, a kernel per
-bed), with outputs saved into that bed's workspace. v1 wires the teardown hook
-(a bed's slices are released when the bed is deleted or times out); the actual
-Chromium/Jupyter integrations come later.
+Health and capability responses report the selected mechanisms, scope and reasons
+for unavailable capabilities. See [the isolation design](docs/isolation.md) for
+the full model and [the backlog](docs/backlog.md) for remaining gaps.
 
 ## Amenities (shared facilities)
 
 Heavyweight, natively multi-tenant tools run **once** per hostel and are sliced
-per bed. The first is **Chromium**: one shared browser, an isolated
-BrowserContext per bed, artifacts saved into the bed workspace. Enable by
+per bed. **Chromium** uses one shared browser with a BrowserContext per bed
+and artifacts saved into the bed workspace. Enable by
 shipping a chromium binary (`--chromium-path`, or it's probed) or attaching to
-an existing instance (`--chromium-cdp-url`). Bed-scoped verbs (the raw CDP
-socket is never exposed):
+an existing instance (`--chromium-cdp-url`). Hostel exposes Bed-scoped verbs
+without handing out the raw browser-level CDP endpoint:
 
 ```
 POST /v1/beds/:id/browser/goto        {url}
@@ -188,7 +181,11 @@ POST /v1/beds/:id/browser/close
 ```
 
 The browser starts on first use and stops after an idle grace; capabilities
-reports `amenities: {chromium: idle|running}`.
+reports its lifecycle state in `amenities`. Bed-scoped CDP proxy endpoints are
+also available for Playwright clients; filtering is limited and does not promise
+adversarial isolation. Browser traffic still uses the Carrier network.
+[MCP](docs/mcp.md) manages remote connections per bed; Jupyter is not implemented.
+See [shared facility boundaries](docs/amenity.md).
 
 ## Configuration
 

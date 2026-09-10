@@ -372,7 +372,7 @@ func resourceAdmissionView(report resource.AdmissionReport) gin.H {
 
 // isolationView reports the data-isolation resolution: the effective level, the
 // mechanism realizing it, the requested wish, and the environment ceiling
-// (docs/data.md). Falls back gracefully if the isolator predates the
+// (docs/isolation.md). Falls back gracefully if the isolator predates the
 // Report interface.
 func isolationView(iso isolation.Isolator) gin.H {
 	v := gin.H{"level": iso.Level().String(), "mechanism": iso.Name()}
@@ -382,7 +382,7 @@ func isolationView(iso isolation.Isolator) gin.H {
 		v["ceiling"] = r.Ceiling().String()
 		// The host facts behind the ceiling, so an operator can see WHY a host
 		// tops out where it does (no Landlock? no setuid caps?) without shelling
-		// into it (docs/data.md).
+		// into it (docs/isolation.md).
 		v["host"] = r.Facts()
 	}
 	return v

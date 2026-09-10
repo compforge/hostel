@@ -80,7 +80,7 @@ func probeBackend(ctx context.Context) (backend, Probe) {
 	if err == nil {
 		probe.Stage = "execution"
 		// Exercise the SAME namespace entry and capability drop as Bed executions.
-		cmd := exec.Command("/bin/sh", "-c", "readlink /proc/self/ns/net; cat /proc/self/status")
+		cmd := exec.Command(b.setpriv, "--bounding-set=-all", "--inh-caps=-all", "--ambient-caps=-all", "--no-new-privs", "--", "/bin/sh", "-c", "readlink /proc/self/ns/net; cat /proc/self/status")
 		ep.Wrap(cmd)
 		out, e := run(ctx, "", cmd.Path, cmd.Args[1:]...)
 		err = e
@@ -228,9 +228,9 @@ func (e *linuxEndpoint) rules() string {
 }
 
 func (e *linuxEndpoint) Wrap(cmd *exec.Cmd) {
-	// Enter before filesystem isolation. Drop the capability bounding set before
-	// arbitrary code, including root commands, can inherit the network helper's powers.
-	args := []string{e.owner.ip, "netns", "exec", e.name, e.owner.setpriv, "--bounding-set=-all", "--inh-caps=-all", "--ambient-caps=-all", "--no-new-privs", "--", cmd.Path}
+	// Enter before filesystem isolation. The complete execution environment
+	// performs identity changes and final privilege dropping inside this wrapper.
+	args := []string{e.owner.ip, "netns", "exec", e.name, cmd.Path}
 	cmd.Args = append(args, cmd.Args[1:]...)
 	cmd.Path = e.owner.ip
 }

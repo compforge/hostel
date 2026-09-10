@@ -32,7 +32,7 @@ import (
 func (m *Manager) buildCommand(b *Bed, command, cwd string, envs map[string]string) (*exec.Cmd, error) {
 	m.touchBed(b)
 	cmd := exec.Command(m.shellPath, shellCommandArgs(m.shellPath, command)...)
-	if err := m.iso.Wrap(cmd, b.BedFS(), cwd); err != nil {
+	if err := b.environment.Wrap(cmd, cwd); err != nil {
 		return nil, err
 	}
 	env, err := m.buildBedEnv(b, envs)
@@ -65,7 +65,7 @@ func (m *Manager) startOneShot(ctx context.Context, b *Bed, command, cwdInBed st
 	}
 	cmd.Stdout = stdoutW
 	cmd.Stderr = stderrW
-	bedExecutor, err := b.executorFor(ctx, m.networkExecutorFactory())
+	bedExecutor, err := b.executorFor(ctx, m.executorFactory)
 	if err == nil {
 		procID := "process-" + randx.Hex(8)
 		var proc executor.Process

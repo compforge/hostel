@@ -37,11 +37,12 @@ type Report struct {
 }
 
 // Tracker prepares per-bed accounting groups and reads their cumulative usage.
-// OpenGroup returns a cgroup directory fd suitable for CLONE_INTO_CGROUP; nil
-// means accounting is unavailable on this host.
+// OpenGroup prepares and opens the empty Bed accounting parent; nil means
+// accounting is unavailable. Only ExecutorGroup children receive processes.
 type Tracker interface {
 	Report() Report
 	OpenGroup(bedID string) (*os.File, error)
+	ExecutorGroup(bedID, executorID string) (Group, error)
 	Usage(bedID string) (Usage, error)
 	Release(bedID string) error
 }
@@ -66,3 +67,15 @@ func (t *noopTracker) Report() Report {
 func (t *noopTracker) OpenGroup(string) (*os.File, error) { return nil, nil }
 func (t *noopTracker) Usage(string) (Usage, error)        { return Usage{}, nil }
 func (t *noopTracker) Release(string) error               { return nil }
+
+// Group is one Executor allocation below a resident Bed's accounting parent.
+// Its exact identity prevents delayed cleanup from touching a replacement.
+type Group interface {
+	Open() (*os.File, error)
+	Close() error
+}
+type noopGroup struct{}
+
+func (noopGroup) Open() (*os.File, error)                        { return nil, nil }
+func (noopGroup) Close() error                                   { return nil }
+func (*noopTracker) ExecutorGroup(string, string) (Group, error) { return noopGroup{}, nil }

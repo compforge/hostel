@@ -21,11 +21,13 @@ package bed
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/executor"
+	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/store"
 )
 
@@ -53,7 +55,10 @@ type Bed struct {
 
 	// filesystem is the Bed's durable data realm. Executor replacement changes
 	// only its process View; bed_home and file identity stay here with the Bed.
-	filesystem *bedfs.FS
+	filesystem    *bedfs.FS
+	environment   *isolation.Environment
+	cleanupMu     sync.Mutex // serializes teardown retries for this allocation
+	runtimeClosed bool
 	// Store is resolved at creation and immutable while resident. Backend
 	// instances and clients belong to the daemon-wide Store component.
 	Store store.Kind
@@ -235,7 +240,9 @@ func (b *Bed) executorFor(ctx context.Context, factory executor.Factory) (execut
 	if current != nil {
 		// A Bed survives Executor loss. Finish cleanup for the old process realm
 		// before publishing a replacement identity for the next request.
-		_ = current.Shutdown(ctx)
+		if err := current.Shutdown(ctx); err != nil {
+			return nil, fmt.Errorf("bed: previous executor cleanup: %w", err)
+		}
 	}
 	created, err := factory.Create(ctx, b.ID)
 	if err != nil {
@@ -258,7 +265,7 @@ func (b *Bed) shutdownExecutor(ctx context.Context) error {
 	}
 	err := current.Shutdown(ctx)
 	b.mu.Lock()
-	if b.executor != nil && b.executor.ID() == current.ID() {
+	if err == nil && b.executor != nil && b.executor.ID() == current.ID() {
 		b.executor = nil
 	}
 	b.mu.Unlock()

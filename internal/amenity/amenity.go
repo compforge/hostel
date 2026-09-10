@@ -22,7 +22,11 @@
 // amenity manager + store.
 package amenity
 
-import "sync"
+import (
+	"errors"
+	"fmt"
+	"sync"
+)
 
 // Lifecycle states reported by Amenity.State.
 const (
@@ -106,13 +110,17 @@ type BedScopedSecrets interface {
 
 // ReleaseAll tears down every amenity's tenant for a bed AND revokes its
 // bed-scoped secrets — this is the bed-teardown path (evict/purge), the one
-// place both lifecycles end together. Best-effort — bed teardown must not be
-// blocked by one bad facility.
-func (r *Registry) ReleaseAll(bedID string) {
+// place both lifecycles end together. Every facility and secret is visited even
+// when one release fails; the returned error keeps Bed cleanup pending.
+func (r *Registry) ReleaseAll(bedID string) error {
+	var result error
 	for _, a := range r.List() {
-		_ = a.ReleaseTenant(bedID)
+		if err := a.ReleaseTenant(bedID); err != nil {
+			result = errors.Join(result, fmt.Errorf("%s: %w", a.Name(), err))
+		}
 		if s, ok := a.(BedScopedSecrets); ok {
 			s.RevokeBedSecrets(bedID)
 		}
 	}
+	return result
 }

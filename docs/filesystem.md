@@ -1,6 +1,6 @@
 # BedFS：Bed 的文件系统语义
 
-> 状态：当前实现。数据隔离强度见 `data.md`，持久化与恢复见 `store.md`。
+> 状态：当前实现。隔离目标与实际边界见 [isolation.md](isolation.md)，持久化与恢复见 `store.md`。
 
 ## 一、定位
 
@@ -17,9 +17,10 @@ BedFS 统一拥有以下语义：
 
 隔离机制不再自行解释客户端路径。它只选择 BedFS 如何投影到 Executor，并负责兑现该视图所需的 bind、Landlock 或 uid 规则。
 
-Bedbox 向 caller 提供的契约是一个 Bed 独占整个 Pod；BedFS 负责让这份路径契约在三档下保持同义。isolation 只决定内核是否真正阻止进程越过该视图：不能把 suite/room/dorm 的可见性或权限差异写进 Client → Carrier 的映射规则。
-
-BedFS 也是三档共同的 best-effort 数据底座：Dorm 没有安全墙，仍须完成逻辑分床与路径映射；Room 沿用 Dorm 的共享 mount view，并叠加访问控制；Suite 改用私有 mount view，直接让其他 Bed 的路径不可见，不再经过 Room 的权限判断。Store 的 `HOSTEL_PERSISTED_PATHS` 默认仅 `/workspace`，其他 BedFS 路径保持运行期语义。降级只能减少安全保证，不能降掉 BedFS 的正确性。
+Bed 的理想语义是独立执行空间。BedFS 负责让文件归属与路径含义在所有房型一致；
+isolation 根据环境能力尽量兑现进程侧的访问屏障。Dorm 没有安全墙，仍须完成逻辑分床
+与路径映射；Room 增加访问控制，Suite 使用私有 mount 视图。降级不能改变同一 Client path
+的主映射。Store 另行选择需要持久化的 BedFS 子树。
 
 ## 二、三个路径空间
 
@@ -48,7 +49,7 @@ Executor 与 daemon 共享 mount namespace。Hostel 启动时从 `PATH` 发现�
 
 PRoot 的路径 syscall 覆盖更完整，但依赖 ptrace；pathshim 不依赖 ptrace，作为次选。两者都可用时选择 PRoot。Landlock 或 uid 始终独立负责访问边界，workspace helper 不参与 isolation level 判定。
 
-进程链保持职责顺序：
+仅展开文件视图与文件边界时，进程链保持以下职责顺序；网络及最终降权的组合约束见 [isolation.md](isolation.md)：
 
 ```text
 dorm: proot / pathshim → command

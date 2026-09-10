@@ -43,20 +43,25 @@ func (*LocalFactory) Backend() string { return "local" }
 func (*LocalFactory) Close() error    { return nil }
 
 func (f *LocalFactory) Create(_ context.Context, bedID string) (Executor, error) {
+	id := "executor-" + randx.Hex(8)
+	group, err := f.resources.ExecutorGroup(bedID, id)
+	if err != nil {
+		return nil, err
+	}
 	return &localExecutor{
-		id:        "executor-" + randx.Hex(8),
+		id:        id,
 		bedID:     bedID,
 		state:     StateReady,
-		resources: f.resources,
+		group:     group,
 		processes: make(map[string]*localProcess),
 		done:      make(chan struct{}),
 	}, nil
 }
 
 type localExecutor struct {
-	id        string
-	bedID     string
-	resources resource.Tracker
+	id    string
+	bedID string
+	group resource.Group
 
 	mu        sync.Mutex
 	state     State
@@ -118,7 +123,7 @@ func (e *localExecutor) Start(ctx context.Context, processID string, cmd *exec.C
 	// each direct child if its parent daemon disappears; process-group cleanup
 	// remains the orderly-shutdown path.
 	setPdeathsig(cmd, syscall.SIGKILL)
-	releaseGroup, err := bindProcessCgroup(cmd, e.resources, e.bedID)
+	releaseGroup, err := bindProcessCgroup(cmd, e.group)
 	if err != nil {
 		return nil, err
 	}
@@ -151,31 +156,30 @@ func (e *localExecutor) Shutdown(ctx context.Context) error {
 			processes = append(processes, process)
 		}
 		e.mu.Unlock()
-
 		for _, process := range processes {
 			process.Kill()
 		}
-		for _, process := range processes {
-			select {
-			case <-process.done:
-			case <-ctx.Done():
-				_ = e.resources.Release(e.bedID)
-				e.finish(StateLost, ctx.Err())
-				return
-			}
-		}
-		_ = e.resources.Release(e.bedID)
-		e.finish(StateStopped, nil)
 	})
-	select {
-	case <-e.done:
-		if exit := e.Exit(); exit.State == StateLost {
-			return exit.Err
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+	e.mu.Lock()
+	processes := make([]*localProcess, 0, len(e.processes))
+	for _, process := range e.processes {
+		processes = append(processes, process)
 	}
+	e.mu.Unlock()
+	for _, process := range processes {
+		select {
+		case <-process.done:
+		case <-ctx.Done():
+			// Retain the draining domain for another Shutdown attempt. In particular,
+			// a noop cgroup cannot make an unfinished wait safe to forget.
+			return errors.Join(ctx.Err(), e.group.Close())
+		}
+	}
+	if err := e.group.Close(); err != nil {
+		return err
+	}
+	e.finish(StateStopped, nil)
+	return nil
 }
 
 func (e *localExecutor) finish(state State, err error) {

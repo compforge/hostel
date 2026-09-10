@@ -23,18 +23,18 @@ import (
 	"github.com/qiankunli/hostel/internal/resource"
 )
 
-func bindProcessCgroup(cmd *exec.Cmd, tracker resource.Tracker, bedID string) (func(), error) {
-	group, err := tracker.OpenGroup(bedID)
+func bindProcessCgroup(cmd *exec.Cmd, group resource.Group) (func(), error) {
+	file, err := group.Open()
 	if err != nil {
 		return nil, err
 	}
-	if group == nil {
+	if file == nil {
 		return func() {}, nil
 	}
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.UseCgroupFD = true
-	cmd.SysProcAttr.CgroupFD = int(group.Fd())
-	return func() { _ = group.Close() }, nil
+	cmd.SysProcAttr.CgroupFD = int(file.Fd())
+	return func() { _ = file.Close() }, nil
 }

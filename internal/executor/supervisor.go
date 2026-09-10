@@ -58,6 +58,16 @@ func (f *SupervisorFactory) Create(ctx context.Context, bedID string) (Executor,
 		ctx = context.Background()
 	}
 	executorID := "executor-" + randx.Hex(8)
+	group, err := f.resources.ExecutorGroup(bedID, executorID)
+	if err != nil {
+		return nil, err
+	}
+	started := false
+	defer func() {
+		if !started {
+			_ = group.Close()
+		}
+	}()
 	socket := filepath.Join(f.socketDir, executorID+".sock")
 	cmd := exec.Command(f.exe, supervisor.Arg,
 		"--socket", socket,
@@ -69,7 +79,7 @@ func (f *SupervisorFactory) Create(ctx context.Context, bedID string) (Executor,
 	// SIGTERM lets the supervisor run its graceful Shutdown path and publish child
 	// terminal statuses when Hostel exits unexpectedly.
 	setPdeathsig(cmd, syscall.SIGTERM)
-	releaseGroup, err := bindProcessCgroup(cmd, f.resources, bedID)
+	releaseGroup, err := bindProcessCgroup(cmd, group)
 	if err != nil {
 		return nil, fmt.Errorf("executor: prepare cgroup for bed %s: %w", bedID, err)
 	}
@@ -77,16 +87,17 @@ func (f *SupervisorFactory) Create(ctx context.Context, bedID string) (Executor,
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("executor: start supervisor for bed %s: %w", bedID, err)
 	}
+	started = true
 	e := &supervisedExecutor{
-		id:        executorID,
-		bedID:     bedID,
-		socket:    socket,
-		cmd:       cmd,
-		proc:      cmd.Process,
-		client:    supervisor.NewClient(socket, executorID),
-		resources: f.resources,
-		state:     StateStarting,
-		done:      make(chan struct{}),
+		id:     executorID,
+		bedID:  bedID,
+		socket: socket,
+		cmd:    cmd,
+		proc:   cmd.Process,
+		client: supervisor.NewClient(socket, executorID),
+		group:  group,
+		state:  StateStarting,
+		done:   make(chan struct{}),
 	}
 	go e.watch()
 
@@ -148,13 +159,13 @@ func (f *SupervisorFactory) Probe(ctx context.Context) error {
 }
 
 type supervisedExecutor struct {
-	id        string
-	bedID     string
-	socket    string
-	cmd       *exec.Cmd
-	proc      *os.Process
-	client    *supervisor.Client
-	resources resource.Tracker
+	id     string
+	bedID  string
+	socket string
+	cmd    *exec.Cmd
+	proc   *os.Process
+	client *supervisor.Client
+	group  resource.Group
 
 	mu           sync.Mutex
 	state        State
@@ -283,10 +294,7 @@ func (e *supervisedExecutor) Shutdown(ctx context.Context) error {
 	})
 	select {
 	case <-e.done:
-		if exit := e.Exit(); exit.State == StateLost {
-			return exit.Err
-		}
-		return nil
+		return e.group.Close()
 	case <-ctx.Done():
 		e.forceLoss(ctx.Err())
 		_ = e.proc.Kill()
@@ -334,7 +342,12 @@ func (e *supervisedExecutor) watch() {
 func (e *supervisedExecutor) cleanup() {
 	e.cleanupOnce.Do(func() {
 		_ = os.Remove(e.socket)
-		_ = e.resources.Release(e.bedID)
+		if err := e.group.Close(); err != nil {
+			e.mu.Lock()
+			e.state = StateLost
+			e.exit = Exit{State: StateLost, Err: err}
+			e.mu.Unlock()
+		}
 	})
 }
 

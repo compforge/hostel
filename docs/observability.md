@@ -22,7 +22,8 @@ hostel 需要从三个层面回答同一组问题：
 
 - `phase=initializing|resident|evicting|purging|dormant|failed` 表示 Bed 生命周期位置；
 - `readiness.status/reason/message/updated_at` 表示是否可接收数据面请求及当前等待或失败边界；
-- `activity=active|idle` 表示 resident / evicting Bed 当前有无 operation，由 inflight 派生；
+- `activity=active|idle` 表示 resident / 仍在持久化复核的 evicting Bed 当前有无 operation，由 inflight 派生；
+- `evicting` + `readiness.reason=CleanupPending` 表示已经停止准入但仍持有待清理资源，只占 occupied 名额，不占 resident，也不报告 activity；
 - `generation` 表示本地数据版本；
 - `retained_until` 表示最早安全回收期限；
 - `inflight` 表示仍在执行的 bed 请求数。
@@ -130,14 +131,18 @@ purging / failed / resident / dormant luggage）的当前事实，不承载 time
 每条 record 包含 action 结果、来源或触发原因、起止时间、总耗时、阶段耗时和失败阶段。
 接口只返回固定数量的最近摘要，不返回原始日志或无限增长的历史。
 
-实例 health / capabilities 只表达 hostel 实例是否可服务及支持什么能力，不能混入某个
-bed 的一次失败。
+实例 health / capabilities 表达 Hostel 是否可服务、实际选定的机制和当前可用能力；
+不能把某个 Bed 的一次失败泛化成全实例能力缺席。文件档位、workspace 进程视图、网络
+作用域、资源记账、容量准入和设施状态分别披露。`isolator_ok`、Bed Ready 或 amenity
+running 都不能推导出完整隔离，语义由 [isolation.md](isolation.md) 统一定义。
 
 `GET /v1/diagnostics` 返回 isolation 启动解析时缓存的系统事实和机制探测原始记录，包括 runtime、
 进程 capability/seccomp、LSM label、namespace sysctl、kernel feature、ptrace Yama scope，以及模拟 PRoot
 启动序列的 `TRACEME → SETOPTIONS → SYSCALL` 探测。二进制 helper 先记录配置命令名、PATH 解析路径、是否存在和是否可执行；各探测再保留是否执行、退出码、stdout、stderr、
-错误和耗时。读取接口不重新执行探测；字段只保留观测值和读取错误，不输出
-状态判断、缺失权限分类、部署要求或修复建议。不存在的内核节点以 `value: null` 和 `read_error`
+错误和耗时。读取接口不重新执行探测。`system` 与 `probes` 保留观测值和读取错误，
+不推导部署要求或修复建议；`isolation`、`workspace_view`、`network` 另行给出已选择的能力
+与不可用原因。网络 probe 的作用域与字段见 [network.md](network.md)。
+不存在的内核节点以 `value: null` 和 `read_error`
 表达，与节点存在且值为 `0` 严格区分。
 
 所有 execution 进入同一个有界 registry。status 返回结构化终态，logs 返回带 stream 与单调

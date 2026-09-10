@@ -122,6 +122,9 @@ func (m *Manager) Initialization(id string) (InitializationStatus, bool) {
 	if purge, ok := m.purges[id]; ok {
 		return purge.status, true
 	}
+	if b := m.retirements[id]; b != nil {
+		return retirementStatus(b), true
+	}
 	initialization, ok := m.initializations[id]
 	if !ok {
 		return InitializationStatus{}, false
@@ -135,10 +138,15 @@ func (m *Manager) initializationStatuses() []InitializationStatus {
 	m.pruneFailedInitializationsLocked(time.Now())
 	statuses := make([]InitializationStatus, 0, len(m.initializations)+len(m.purges))
 	for id, initialization := range m.initializations {
-		if _, purging := m.purges[id]; purging {
+		if _, purging := m.purges[id]; purging || m.retirements[id] != nil {
 			continue
 		}
 		statuses = append(statuses, initialization.status)
+	}
+	for id, b := range m.retirements {
+		if m.purges[id] == nil {
+			statuses = append(statuses, retirementStatus(b))
+		}
 	}
 	for _, purge := range m.purges {
 		statuses = append(statuses, purge.status)
@@ -173,6 +181,7 @@ func (m *Manager) beginInitialization(
 		m.mu.Unlock()
 		return nil, nil, ErrBedPurging
 	}
+
 	if resident, ok := m.beds[id]; ok {
 		m.mu.Unlock()
 		return nil, resident, checkBedStore(requestedStore, selected, resident.Store)
@@ -180,6 +189,10 @@ func (m *Manager) beginInitialization(
 	if current, ok := m.initializations[id]; ok && current.status.Phase == PhaseInitializing {
 		m.mu.Unlock()
 		return current, nil, checkBedStore(requestedStore, selected, current.status.Store)
+	}
+	if m.retirements[id] != nil {
+		m.mu.Unlock()
+		return nil, nil, fmt.Errorf("%w: cleanup pending for %s", ErrBedUnavailable, id)
 	}
 	if selectionErr != nil {
 		m.mu.Unlock()
@@ -240,13 +253,18 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 			// Roll back before finishInitialization releases the identity and wakes
 			// waiters. Otherwise a same-ID retry could acquire this old network
 			// while cleanup is still running. The initialization ctx may be canceled.
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if cleanupErr := m.network.Release(cleanupCtx, bedID); cleanupErr != nil {
-				log.Printf("bed: initialization network cleanup: %v", cleanupErr)
-				err = errors.Join(err, cleanupErr)
+			m.mu.Lock()
+			m.retirements[bedID] = resident
+			m.mu.Unlock()
+			resident.cleanupMu.Lock()
+			cleanupErr := m.teardown(resident)
+			resident.cleanupMu.Unlock()
+			if cleanupErr == nil {
+				m.mu.Lock()
+				delete(m.retirements, bedID)
+				m.mu.Unlock()
 			}
-			cancel()
-			err = errors.Join(err, resident.BedFS().Close())
+			err = errors.Join(err, cleanupErr)
 			resident = nil
 		}
 		m.finishInitialization(initialization, resident, err)
@@ -320,6 +338,10 @@ func failedReadinessReason(current string) string {
 		return "SnapshotRestoreFailed"
 	case "PreparingBedFS":
 		return "BedFSPreparationFailed"
+	case "PreparingNetwork":
+		return "NetworkPreparationFailed"
+	case "PreparingResources":
+		return "ResourcePreparationFailed"
 	case "PublishingResident":
 		return "ResidentPublicationFailed"
 	default:
@@ -443,4 +465,8 @@ func checkBedStore(requested string, selected, current store.Kind) error {
 		return ErrStoreConflict
 	}
 	return nil
+}
+
+func retirementStatus(b *Bed) InitializationStatus {
+	return InitializationStatus{ID: b.ID, Store: b.Store, BedStatus: BedStatus{Phase: PhaseEvicting, Readiness: Readiness{Reason: "CleanupPending", Message: "previous Bed resources are being released; retry eviction before reinitializing"}}}
 }

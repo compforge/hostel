@@ -1,6 +1,8 @@
 # Hostel Backlog
 
-Hostel 当前未交付的演进项：
+Hostel 当前未交付的演进项与待修复项（隔离目标及组合约束见 [isolation.md](isolation.md)）：
+
+- CDP 代理：完整指令与 target/session 授权校验、Playwright 实际流量覆盖；当前有限过滤不承诺对抗性隔离（见 [amenity.md](amenity.md)）。
 
 - 持久 namespace Executor + PID 1
 - per-bed cgroup 硬限额（见 `resource.md`）

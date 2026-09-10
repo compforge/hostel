@@ -43,8 +43,20 @@ func TestIsolatedSessionCompatibility(t *testing.T) {
 	get, err := c.json(ctx, "GET", base, "", nil, &state)
 	cancel()
 	if err != nil || get.Status != http.StatusOK || state.Status != "active" || state.Profile != "balanced" ||
-		state.Workspace.Path != "/workspace" || state.Workspace.Mode != "rw" || !state.ShareNet {
+		state.Workspace.Path != "/workspace" || state.Workspace.Mode != "rw" {
 		t.Fatalf("get isolated session: status=%d err=%v state=%+v body=%s", get.Status, err, state, get.Body)
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	var diagnostics struct {
+		Network struct {
+			Enabled bool `json:"enabled"`
+		} `json:"network"`
+	}
+	verdict, err := c.json(ctx, "GET", "/v1/diagnostics", "", nil, &diagnostics)
+	cancel()
+	if err != nil || verdict.Status != http.StatusOK || state.ShareNet == diagnostics.Network.Enabled {
+		t.Fatalf("isolated share_net=%t disagrees with network=%+v: %v", state.ShareNet, diagnostics.Network, err)
 	}
 
 	primed, response := c.stream(t, base+"/run", "", map[string]any{
