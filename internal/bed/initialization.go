@@ -50,17 +50,19 @@ type Readiness struct {
 // Bed is returned with PhaseResident and Ready=true; an accepted asynchronous
 // initialization returns PhaseInitializing.
 type InitializationStatus struct {
-	ID string
+	ID    string
+	Store string
 	BedStatus
 	StartedAt time.Time
 }
 
 type bedInitialization struct {
-	status InitializationStatus
-	done   chan struct{}
-	cancel context.CancelFunc
-	bed    *Bed
-	err    error
+	storePolicy string
+	status      InitializationStatus
+	done        chan struct{}
+	cancel      context.CancelFunc
+	bed         *Bed
+	err         error
 }
 
 const (
@@ -72,7 +74,11 @@ const (
 // exactly once. Slow Store work continues independently of the initiating HTTP
 // request; callers observe progress through InitializationStatus.
 func (m *Manager) InitializeBed(ctx context.Context, id string) (InitializationStatus, error) {
-	initialization, resident, err := m.beginInitialization(ctx, id)
+	return m.InitializeBedWithOptions(ctx, id, CreateOptions{})
+}
+
+func (m *Manager) InitializeBedWithOptions(ctx context.Context, id string, options CreateOptions) (InitializationStatus, error) {
+	initialization, resident, err := m.beginInitialization(ctx, id, options.Store)
 	if err != nil {
 		return InitializationStatus{}, err
 	}
@@ -89,7 +95,7 @@ func (m *Manager) InitializeBed(ctx context.Context, id string) (InitializationS
 // the same initialization as POST /v1/beds, but waits for readiness before
 // returning a Bed so no operation can observe a partial BedFS.
 func (m *Manager) Ensure(ctx context.Context, id string) (*Bed, error) {
-	initialization, resident, err := m.beginInitialization(ctx, id)
+	initialization, resident, err := m.beginInitialization(ctx, id, "")
 	if err != nil || resident != nil {
 		return resident, err
 	}
@@ -143,6 +149,7 @@ func (m *Manager) initializationStatuses() []InitializationStatus {
 func (m *Manager) beginInitialization(
 	ctx context.Context,
 	id string,
+	requestedStore string,
 ) (*bedInitialization, *Bed, error) {
 	if id == "" {
 		id = m.defaultBed
@@ -154,6 +161,28 @@ func (m *Manager) beginInitialization(
 		ctx = context.Background()
 	}
 
+	if err := m.validateStorePolicy(requestedStore); err != nil {
+		return nil, nil, err
+	}
+	// Resolve outside the manager lock: filesystem latency must not stall all
+	// Beds. The singleflight checks below recheck the winning live selection.
+	requestedStore = m.normalizedStorePolicy(requestedStore)
+	if requestedStore != "" {
+		selected, err := m.storeForPolicy(ctx, requestedStore)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %v", ErrStoreInvalid, err)
+		}
+		requestedStore = selected.Name()
+	}
+	policy, policyErr := m.resolveStorePolicy(id, requestedStore)
+	if policyErr == nil {
+		selected, err := m.storeForPolicy(ctx, policy)
+		if err != nil {
+			policyErr = fmt.Errorf("%w: %v", ErrStoreInvalid, err)
+		} else {
+			policy = selected.Name()
+		}
+	}
 	m.mu.Lock()
 	m.pruneFailedInitializationsLocked(time.Now())
 	if _, purging := m.purges[id]; purging {
@@ -162,11 +191,15 @@ func (m *Manager) beginInitialization(
 	}
 	if resident, ok := m.beds[id]; ok {
 		m.mu.Unlock()
-		return nil, resident, nil
+		return nil, resident, storePolicyMatches(requestedStore, resident.storePolicy)
 	}
 	if current, ok := m.initializations[id]; ok && current.status.Phase == PhaseInitializing {
 		m.mu.Unlock()
-		return current, nil, nil
+		return current, nil, storePolicyMatches(requestedStore, current.storePolicy)
+	}
+	if policyErr != nil {
+		m.mu.Unlock()
+		return nil, nil, policyErr
 	}
 	// A new request retries a failed initialization. Its previous status remains
 	// observable until this explicit desired-state signal arrives.
@@ -188,8 +221,10 @@ func (m *Manager) beginInitialization(
 	now := time.Now()
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), initializationTimeout)
 	initialization := &bedInitialization{
+		storePolicy: policy,
 		status: InitializationStatus{
-			ID: id,
+			ID:    id,
+			Store: policy,
 			BedStatus: BedStatus{
 				Phase: PhaseInitializing,
 				Readiness: Readiness{
@@ -234,7 +269,7 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 	published = true
 
 	// The one full-id log line is the grep anchor from an upstream sandbox id.
-	log.Printf("hostel bed resident: bed=%s short=%s", bedID, resident.Short())
+	log.Printf("hostel bed resident: bed=%s short=%s store=%s", bedID, resident.Short(), resident.StoreName())
 	m.finishInitialization(initialization, resident, nil)
 }
 
@@ -382,6 +417,7 @@ func residentInitializationStatus(resident *Bed) InitializationStatus {
 	status := resident.Status()
 	return InitializationStatus{
 		ID:        resident.ID,
+		Store:     resident.StoreName(),
 		BedStatus: status.BedStatus,
 	}
 }

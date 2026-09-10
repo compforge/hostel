@@ -26,6 +26,7 @@ import (
 
 	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/executor"
+	"github.com/qiankunli/hostel/internal/store"
 )
 
 // ShortID derives a display-only short form of a bed id for log lines. Caller
@@ -55,7 +56,9 @@ type Bed struct {
 	filesystem *bedfs.FS
 	// durable is immutable: noop treats local changes as already accepted,
 	// while a real store keeps dirty data pinned until its snapshot commits.
-	durable bool
+	durable     bool
+	store       store.Store
+	storePolicy string
 
 	executorMu sync.Mutex // serializes lazy create, replacement and shutdown
 	executor   executor.Executor

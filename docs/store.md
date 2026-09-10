@@ -31,6 +31,27 @@ evict 完成                ──→ 删除本地 Bed 目录（所有 Store bac
 
 ## 三、关键设计
 
+### Bed 级选择与实例默认配置
+
+`HOSTEL_STORE` 和 S3 连接参数定义实例默认 Store。创建 Bed 时可通过
+`POST /v1/beds` 的 `store` 字段选择 `noop`、`auto`、`s3`/`cas`、`pack`、`tar` 或 `default`；API 参数优先，省略时复用该 Bed 的本地
+选择，新的身份继承实例默认。两类 Bed 可以共用同一 Hostel，实例不解释调用方业务。
+选择 noop 只禁用该 Bed 的自动远端读写，不移除 S3 配置，也不限制调用方自行管理数据。
+
+选择在 Stage-in 前解析为最终 backend 名称并写入 Bed 元数据（`cas` 归一为 `s3`），贯穿 Restore、checkpoint、周期同步、evict、luggage GC 与
+purge。已存在或正在初始化的身份拒绝显式切换 Store，返回 `409 BED_STORE_CONFLICT`；
+purge 结束身份后可以重新选择。省略字段是重用语义，不表示强制切回默认。
+
+控制记录保存在 workspace-root 下的 `.bed-stores/<id>.json`，不位于会被 Stage-in
+替换或 evict 删除的 Bed 目录中。它只保存策略，不保存 workspace 内容；daemon 重启和
+luggage GC 不清除它，purge 在数据删除成功后清除。已有本地 Bed 没有记录时按实例默认
+解释。记录损坏时拒绝回退默认，以免误触远端数据。跨 carrier 时调度方必须重传选择；
+新 carrier 没有该本地控制记录。
+
+`capabilities.bed_store_selection=true` 声明此 API 能力。`instance.store` / capabilities
+的 `persistence` 仍是实例默认值；Bed 明细、初始化响应与 inventory 的 `store` 是实际
+后端。持久化脏状态与 pin 按 Bed 计算，noop Bed 不因待上传数据占用 durable pin。
+
 ### 1. Store 抽象（与 Isolator 同构，core store-agnostic）
 
 ```go
@@ -49,7 +70,7 @@ luggage。Bed manager 只在 Stage-in、BedFS/isolation 准备全部成功后发
 可选 backend：
 
 - `auto`：默认值，只负责选择和兼容，不实现存储格式。
-- `noop`：laptop 零依赖模式。
+- `noop`：不由 Hostel 自动持久化；适用于本地临时工作区或调用方显式管理持久化的 Bed。
 - `s3` / `cas`：CAS 内容寻址增量。
 - `pack`：packfile 增量。
 - `tar`：全量 tar.gz。

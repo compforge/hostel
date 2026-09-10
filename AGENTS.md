@@ -82,6 +82,7 @@ internal/
 │   ├── bed.go         Bed：隔离单元本体 + Status（phase/readiness/activity + generation/retained_until）+ touch/accessor
 │   ├── manager.go     Manager：resident bed 集合、初始化后的 Bed 组装、回收(Evict→revoke→persist→原子复核→teardown/Purge/CollectExpired)、持久化(persistBed/Checkpoint/PersistDirty)
 │   ├── initialization.go InitializeBed singleflight、phase/readiness、后台 Stage-in、容量预占与 Ready 发布；Ensure 复用并等待
+│   ├── store_policy.go Bed 级 default/noop 选择、Stage-in 前的本地控制记录与冲突约束
 │   ├── store_sync.go  Store 同步调度：合并 lifecycle/pressure trigger，自主串行、周期与失败退避
 │   ├── operation.go   operation（无状态请求，kind=exec/file/browser/mcp/checkpoint/control）：BeginOperation + timeout 截断
 │   ├── session.go     session（可撤销有状态持有，cdp 类）：OpenSession/Touch/Close；revokeSessions 供 evict 在 persist 前吊销（shell 走 shell.go 自备机制，revoke 时一并 Close）

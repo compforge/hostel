@@ -351,11 +351,18 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 	// snapshot. A stale copy is replaced atomically, never merged. A restore
 	// failure leaves the orphan untouched and fails initialization rather than
 	// silently starting empty.
+	st, err := m.storeForPolicy(ctx, initialization.storePolicy)
+	if err != nil {
+		return nil, err
+	}
+	if err := trace.stage("record_store", func() error { return m.saveStorePolicy(id, initialization.storePolicy) }); err != nil {
+		return nil, fmt.Errorf("bed: record store %s: %w", id, err)
+	}
 	local, localPresent := loadMeta(bedDir)
 	var staged store.StageInResult
 	if err := trace.stage("stage_in_bedfs", func() error {
 		var err error
-		staged, err = store.StageInBedFS(ctx, m.store, store.StageInRequest{
+		staged, err = store.StageInBedFS(ctx, st, store.StageInRequest{
 			BedID:           id,
 			BedDir:          bedDir,
 			LocalPresent:    localPresent,
@@ -400,7 +407,13 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 		var ok bool
 		meta, ok = loadMeta(bedDir)
 		if !ok {
-			meta = bedMeta{Version: 1, BedID: id, CreatedAt: now}
+			meta = bedMeta{Version: 1, BedID: id, CreatedAt: now, Store: initialization.storePolicy}
+			if err := saveMeta(bedDir, meta); err != nil {
+				return err
+			}
+		}
+		if meta.Store != initialization.storePolicy {
+			meta.Store = initialization.storePolicy
 			if err := saveMeta(bedDir, meta); err != nil {
 				return err
 			}
@@ -426,11 +439,12 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 			snapshotGeneration: meta.SnapshotGeneration,
 			snapshotBytes:      meta.SnapshotBytes,
 			localBytes:         filepathx.DirBytes(bedDir),
-			durable:            m.store.Name() != "noop",
-			shells:             make(map[string]*Shell),
-			sessions:           make(map[string]*Session),
-			inflightByKind:     make(map[OperationKind]int),
-			filesystem:         filesystem,
+			durable:            st.Name() != "noop",
+			store:              st, storePolicy: initialization.storePolicy,
+			shells:         make(map[string]*Shell),
+			sessions:       make(map[string]*Session),
+			inflightByKind: make(map[OperationKind]int),
+			filesystem:     filesystem,
 		}
 		resolved = b
 		if staged.Snapshot != nil {
@@ -682,7 +696,7 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 		var ok bool
 		meta, ok = loadMeta(b.Dir)
 		if !ok {
-			meta = bedMeta{Version: 1, BedID: b.ID, CreatedAt: b.CreatedAt}
+			meta = bedMeta{Version: 1, BedID: b.ID, CreatedAt: b.CreatedAt, Store: b.storePolicy}
 		}
 		meta.Generation++
 		// Flush counters before packing so they travel with the snapshot.
@@ -706,14 +720,14 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 	var snapshot *store.SnapshotInfo
 	if err := trace.stage("persist_store", func() error {
 		persistStarted = time.Now()
-		if err := m.store.Persist(ctx, b.ID, b.Dir, meta.Generation); err != nil {
+		if err := b.store.Persist(ctx, b.ID, b.Dir, meta.Generation); err != nil {
 			return err
 		}
 		persistedAt = time.Now()
 		// Snapshot facts are scheduler hints, not part of persist correctness.
 		// Refresh them at this lifecycle boundary so inventory never performs
 		// remote Stat calls on its request path.
-		if info, statErr := m.store.Stat(ctx, b.ID); statErr == nil {
+		if info, statErr := b.store.Stat(ctx, b.ID); statErr == nil {
 			snapshot = info
 		} else {
 			log.Printf("hostel: refresh snapshot facts failed: bed=%s error=%v", b.Short(), statErr)
@@ -777,6 +791,15 @@ func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, b
 	var done []string
 	failed := false
 	for _, b := range m.List() {
+		if !b.durable {
+			// Mixed carriers still need local disk-size facts for noop Beds, but no
+			// automatic snapshot generation or Store I/O for them.
+			bytes := filepathx.DirBytes(b.Dir)
+			b.mu.Lock()
+			b.localBytes = bytes
+			b.mu.Unlock()
+			continue
+		}
 		b.mu.Lock()
 		// A session can stay open indefinitely without writing. Its existence
 		// must not block durability; real session traffic touches lastActiveAt,

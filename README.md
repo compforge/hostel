@@ -252,6 +252,24 @@ Persistence: setting `--s3-bucket` (any S3-compatible endpoint) turns it on.
   layout. Tar always replaces one complete tar.gz and keeps one object per bed.
 - Without a bucket, auto uses the no-op backend.
 
+A Bed can opt out of automatic persistence while sharing a configured S3
+instance with other Beds:
+
+```http
+POST /v1/beds
+Content-Type: application/json
+
+{"id":"externally-managed","store":"noop"}
+```
+
+Omit `store` to reuse an existing choice or inherit the instance default for a
+new Bed; `store: "default"` explicitly selects that default. Explicit `noop`,
+`auto`, `s3`/`cas`, `pack`, or `tar` values override it. The choice survives
+local eviction and daemon restart. Recreating on another instance requires the
+caller to repeat it. Changing an existing choice returns `409 BED_STORE_CONFLICT`;
+purge ends the identity and permits a new choice. See [Store](docs/store.md) for
+lifecycle and inventory semantics.
+
 Snapshots restore when the bed is created again and persist on evict
 (DELETE / idle reap) or explicit checkpoint. Normal
 operations and pressure submit coalesced sync requests; the store loop owns
@@ -259,7 +277,7 @@ serialization, retry/backoff, and the optional `--persist-interval` safety net.
 A bed's durable identity is the
 snapshot; the local dir is just its working copy.
 `DELETE /v1/beds/:id` evicts (a durable snapshot keeps the identity; noop keeps
-nothing); add `?purge=true` to also delete any snapshot and end the identity.
+only its local Store selection); add `?purge=true` to also delete any snapshot and end the identity.
 An evict raced by live traffic returns
 `409 BED_BUSY` instead of dropping mid-flight writes.
 Bucket addressing defaults to virtual-hosted style (required by TOS); set

@@ -55,6 +55,7 @@ type readinessView struct {
 }
 
 type bedView struct {
+	Store     string `json:"store"`
 	ID        string `json:"id"`
 	Workspace string `json:"workspace"`
 	Status    struct {

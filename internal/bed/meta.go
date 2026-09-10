@@ -47,6 +47,7 @@ type Usage struct {
 
 // bedMeta is hostel's durable per-bed bookkeeping (docs/store.md §4).
 type bedMeta struct {
+	Store   string `json:"store,omitempty"`
 	Version int    `json:"version"`
 	BedID   string `json:"bed_id"`
 	// CreatedAt is when the bed identity was first created — it survives

@@ -104,8 +104,23 @@ func (m *Manager) finishPurge(id string, purge *bedPurge, err error) {
 }
 
 func (m *Manager) purgeOwned(ctx context.Context, id string) error {
+	policy, err := m.resolveStorePolicy(id, "")
+	m.mu.Lock()
+	if b := m.beds[id]; b != nil {
+		policy, err = b.storePolicy, nil
+	} else if initialization := m.initializations[id]; initialization != nil {
+		policy, err = initialization.storePolicy, nil
+	}
+	m.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	st, err := m.storeForPolicy(ctx, policy)
+	if err != nil {
+		return err
+	}
 	joinCtx, cancelJoin := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
-	_, err := m.cancelInitialization(joinCtx, id)
+	_, err = m.cancelInitialization(joinCtx, id)
 	cancelJoin()
 	if err != nil {
 		return fmt.Errorf("bed: stop initialization before purge %s: %w", id, err)
@@ -139,5 +154,11 @@ func (m *Manager) purgeOwned(ctx context.Context, id string) error {
 	}
 	deleteCtx, cancelDelete := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
 	defer cancelDelete()
-	return m.store.Delete(deleteCtx, id)
+	if err := st.Delete(deleteCtx, id); err != nil {
+		return err
+	}
+	if err := os.Remove(m.storePolicyPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }

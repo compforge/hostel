@@ -38,6 +38,7 @@ const gcTmpPrefix = ".gc-"
 
 // LuggageEntry describes one cold local copy for GC and inventory reporting.
 type LuggageEntry struct {
+	Store string
 	BedID string
 	// Bytes is the dir's file size total — the disk this entry occupies.
 	Bytes int64
@@ -81,7 +82,12 @@ func (m *Manager) ListLuggage() []LuggageEntry {
 			continue
 		}
 		dir := filepath.Join(m.root, id)
-		l := LuggageEntry{BedID: id, Bytes: filepathx.DirBytes(dir)}
+		policy, err := m.resolveStorePolicy(id, "")
+		backend := ""
+		if err == nil {
+			backend = policy
+		}
+		l := LuggageEntry{BedID: id, Bytes: filepathx.DirBytes(dir), Store: backend}
 		if meta, ok := loadMeta(dir); ok {
 			l.Generation = meta.Generation
 			l.SnapshotGeneration = meta.SnapshotGeneration
@@ -134,7 +140,15 @@ func (m *Manager) CollectLuggage(ctx context.Context) []string {
 	// One Stat (HEAD) per entry, paid only on the over-watermark path.
 	stale := map[string]bool{}
 	for _, l := range luggage {
-		if info, err := m.store.Stat(ctx, l.BedID); err == nil && info != nil && l.Generation < info.Generation {
+		policy, err := m.resolveStorePolicy(l.BedID, "")
+		if err != nil {
+			continue
+		}
+		st, err := m.storeForPolicy(ctx, policy)
+		if err != nil {
+			continue
+		}
+		if info, err := st.Stat(ctx, l.BedID); err == nil && info != nil && l.Generation < info.Generation {
 			stale[l.BedID] = true
 		}
 	}
@@ -146,6 +160,9 @@ func (m *Manager) CollectLuggage(ctx context.Context) []string {
 	})
 	var reaped []string
 	for _, l := range luggage {
+		if l.Store == "" {
+			continue
+		} // unknown policy is not permission to discard data
 		if total <= m.luggageLow {
 			break
 		}
@@ -204,6 +221,7 @@ func (m *Manager) sweepGCLeftovers() {
 // the last PERSISTED counter — an active bed's workspace may be ahead of it,
 // which is exactly what "the authoritative copy is here" means.
 type InventoryBed struct {
+	Store              string    `json:"store"`
 	ID                 string    `json:"id"`
 	Status             BedStatus `json:"status"`
 	Generation         int64     `json:"generation"`
@@ -239,6 +257,7 @@ func (m *Manager) Inventory() []InventoryBed {
 		status := b.Status()
 		entry := InventoryBed{
 			ID:                 b.ID,
+			Store:              b.StoreName(),
 			Status:             status.BedStatus,
 			Generation:         status.Generation,
 			SnapshotGeneration: status.SnapshotGeneration,
@@ -259,13 +278,14 @@ func (m *Manager) Inventory() []InventoryBed {
 		}
 		out = append(out, InventoryBed{
 			ID:           initialization.ID,
+			Store:        initialization.Store,
 			Status:       initialization.BedStatus,
 			LastActiveAt: initialization.StartedAt,
 		})
 	}
 	for _, l := range m.ListLuggage() {
 		out = append(out, InventoryBed{
-			ID: l.BedID,
+			ID: l.BedID, Store: l.Store,
 			Status: BedStatus{
 				Phase:     PhaseDormant,
 				Readiness: Readiness{Reason: "NotResident", UpdatedAt: l.LastActiveAt},

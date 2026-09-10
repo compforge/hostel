@@ -16,6 +16,7 @@ package web
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 
 // bedView is the JSON shape for a bed in the management API.
 type bedView struct {
+	Store        string        `json:"store"`
 	ID           string        `json:"id"`
 	Status       bed.BedStatus `json:"status"`
 	DataSynced   bool          `json:"data_synced"`
@@ -44,6 +46,7 @@ func (s *Server) viewOf(b *bed.Bed) bedView {
 func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 	return bedView{
 		ID:           b.ID,
+		Store:        b.StoreName(),
 		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
 		Pinned:       status.Pinned,
@@ -55,7 +58,7 @@ func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 }
 
 func initializationView(status bed.InitializationStatus) bedView {
-	return bedView{ID: status.ID, Status: status.BedStatus}
+	return bedView{ID: status.ID, Store: status.Store, Status: status.BedStatus}
 }
 
 type lifecycleStageView struct {
@@ -216,6 +219,7 @@ func (s *Server) bedList(c *gin.Context) {
 		"instance": gin.H{
 			"status":                         statusOfInstance(beds, s.mgr.DefaultBedOccupied(), time.Now()),
 			"store":                          s.mgr.StoreName(),
+			"bed_store_selection":            true,
 			"isolation":                      s.mgr.Isolator().Level().String(),
 			"occupied_beds":                  s.mgr.OccupiedBedCount(),
 			"resident_beds":                  s.mgr.ResidentBedCount(),
@@ -237,7 +241,8 @@ func (s *Server) bedList(c *gin.Context) {
 }
 
 type createBedRequest struct {
-	ID string `json:"id,omitempty"`
+	ID    string `json:"id,omitempty"`
+	Store string `json:"store,omitempty"`
 }
 
 // POST /v1/beds — create (or return existing) a bed. Empty id → server-assigned.
@@ -246,12 +251,15 @@ type createBedRequest struct {
 // +case:id=bed_capacity_limit,desc=`Fill max_beds and create one more bed`,expect=`429 BED_LIMIT_EXCEEDED without exceeding resident capacity`
 func (s *Server) bedCreate(c *gin.Context) {
 	var req createBedRequest
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		badRequest(c, "invalid create bed request")
+		return
+	}
 	id := req.ID
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	status, err := s.mgr.InitializeBed(c.Request.Context(), id)
+	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Store: req.Store})
 	if err != nil {
 		respondBedError(c, err)
 		return
@@ -392,6 +400,7 @@ func (s *Server) capabilities(c *gin.Context) {
 		"max_pinned_beds":                s.mgr.MaxPinnedBeds(),
 		"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
 		"persistence":                    s.mgr.StoreName(),
+		"bed_store_selection":            true,
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,
 			"available": resources.Available,
@@ -423,5 +432,10 @@ func (s *Server) bedCheckpoint(c *gin.Context) {
 		runtimeError(c, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"persistence": s.mgr.StoreName()})
+	b, ok := s.mgr.Get(id)
+	if !ok {
+		runtimeError(c, "checkpointed bed is no longer resident")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"persistence": b.StoreName()})
 }

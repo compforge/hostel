@@ -24,6 +24,7 @@ const (
 )
 
 type targetOptions struct {
+	store            string
 	isolation        string
 	maxBeds          int
 	allowPtrace      bool
@@ -43,6 +44,9 @@ type target struct {
 // API; process/container lifecycle is fixture plumbing, not an alternate server.
 func startTarget(t *testing.T, options targetOptions) *target {
 	t.Helper()
+	if options.store == "" {
+		options.store = "noop"
+	}
 	if options.isolation == "" {
 		options.isolation = "dorm"
 	}
@@ -136,7 +140,7 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 		"--workspace-root", workspaceRoot,
 		"--isolation", options.isolation,
 		"--executor", "auto",
-		"--store", "noop",
+		"--store", options.store,
 		"--max-beds", fmt.Sprint(options.maxBeds),
 		"--max-pinned-beds", fmt.Sprint(options.maxBeds),
 		"--admission-cpu-threshold", "0",

@@ -18,8 +18,6 @@ import (
 	"context"
 	"log"
 	"time"
-
-	"github.com/qiankunli/go-stdx/filepathx"
 )
 
 const (
@@ -65,10 +63,6 @@ func (m *Manager) RunStoreSync(ctx context.Context, interval time.Duration) {
 	defer stopRetry()
 
 	run := func(trigger string) {
-		if m.store.Name() == "noop" {
-			m.sampleLocalBytes()
-			return
-		}
 		done, failed := m.persistDirty(ctx, trigger)
 		if len(done) > 0 {
 			log.Printf("hostel: store synced beds: %v", done)
@@ -102,17 +96,5 @@ func (m *Manager) RunStoreSync(ctx context.Context, interval time.Duration) {
 			retry = nil
 			run("retry")
 		}
-	}
-}
-
-// sampleLocalBytes keeps directory scans out of GET /v1/beds. Lifecycle and
-// pressure triggers only wake this serialized controller; the controller owns
-// when the stale-tolerant size hint is refreshed.
-func (m *Manager) sampleLocalBytes() {
-	for _, b := range m.List() {
-		bytes := filepathx.DirBytes(b.Dir)
-		b.mu.Lock()
-		b.localBytes = bytes
-		b.mu.Unlock()
 	}
 }
