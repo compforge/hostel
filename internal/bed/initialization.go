@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"time"
 
 	"github.com/qiankunli/hostel/internal/store"
@@ -50,7 +51,8 @@ type Readiness struct {
 // Bed is returned with PhaseResident and Ready=true; an accepted asynchronous
 // initialization returns PhaseInitializing.
 type InitializationStatus struct {
-	ID string
+	ID    string
+	Store store.Kind
 	BedStatus
 	StartedAt time.Time
 }
@@ -72,7 +74,11 @@ const (
 // exactly once. Slow Store work continues independently of the initiating HTTP
 // request; callers observe progress through InitializationStatus.
 func (m *Manager) InitializeBed(ctx context.Context, id string) (InitializationStatus, error) {
-	initialization, resident, err := m.beginInitialization(ctx, id)
+	return m.InitializeBedWithOptions(ctx, id, CreateOptions{})
+}
+
+func (m *Manager) InitializeBedWithOptions(ctx context.Context, id string, options CreateOptions) (InitializationStatus, error) {
+	initialization, resident, err := m.beginInitialization(ctx, id, options.Store)
 	if err != nil {
 		return InitializationStatus{}, err
 	}
@@ -89,7 +95,7 @@ func (m *Manager) InitializeBed(ctx context.Context, id string) (InitializationS
 // the same initialization as POST /v1/beds, but waits for readiness before
 // returning a Bed so no operation can observe a partial BedFS.
 func (m *Manager) Ensure(ctx context.Context, id string) (*Bed, error) {
-	initialization, resident, err := m.beginInitialization(ctx, id)
+	initialization, resident, err := m.beginInitialization(ctx, id, "")
 	if err != nil || resident != nil {
 		return resident, err
 	}
@@ -143,6 +149,7 @@ func (m *Manager) initializationStatuses() []InitializationStatus {
 func (m *Manager) beginInitialization(
 	ctx context.Context,
 	id string,
+	requestedStore string,
 ) (*bedInitialization, *Bed, error) {
 	if id == "" {
 		id = m.defaultBed
@@ -154,6 +161,12 @@ func (m *Manager) beginInitialization(
 		ctx = context.Background()
 	}
 
+	// Resolve outside the manager lock; resident/in-flight Beds below remain
+	// authoritative when the request omits Store.
+	selected, selectionErr := m.bedStore(ctx, id, requestedStore)
+	if requestedStore != "" && selectionErr != nil {
+		return nil, nil, selectionErr
+	}
 	m.mu.Lock()
 	m.pruneFailedInitializationsLocked(time.Now())
 	if _, purging := m.purges[id]; purging {
@@ -162,11 +175,15 @@ func (m *Manager) beginInitialization(
 	}
 	if resident, ok := m.beds[id]; ok {
 		m.mu.Unlock()
-		return nil, resident, nil
+		return nil, resident, checkBedStore(requestedStore, selected, resident.Store)
 	}
 	if current, ok := m.initializations[id]; ok && current.status.Phase == PhaseInitializing {
 		m.mu.Unlock()
-		return current, nil, nil
+		return current, nil, checkBedStore(requestedStore, selected, current.status.Store)
+	}
+	if selectionErr != nil {
+		m.mu.Unlock()
+		return nil, nil, selectionErr
 	}
 	// A new request retries a failed initialization. Its previous status remains
 	// observable until this explicit desired-state signal arrives.
@@ -189,7 +206,8 @@ func (m *Manager) beginInitialization(
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), initializationTimeout)
 	initialization := &bedInitialization{
 		status: InitializationStatus{
-			ID: id,
+			ID:    id,
+			Store: selected,
 			BedStatus: BedStatus{
 				Phase: PhaseInitializing,
 				Readiness: Readiness{
@@ -234,7 +252,7 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 	published = true
 
 	// The one full-id log line is the grep anchor from an upstream sandbox id.
-	log.Printf("hostel bed resident: bed=%s short=%s", bedID, resident.Short())
+	log.Printf("hostel bed resident: bed=%s short=%s store=%s", bedID, resident.Short(), resident.Store)
 	m.finishInitialization(initialization, resident, nil)
 }
 
@@ -382,6 +400,39 @@ func residentInitializationStatus(resident *Bed) InitializationStatus {
 	status := resident.Status()
 	return InitializationStatus{
 		ID:        resident.ID,
+		Store:     resident.Store,
 		BedStatus: status.BedStatus,
 	}
+}
+
+// CreateOptions selects the backend when creating a Bed. An explicit Store
+// overrides the instance default. After eviction, callers must repeat overrides
+// because the local Bed metadata is removed together with its workspace.
+type CreateOptions struct{ Store string }
+
+var (
+	ErrStoreInvalid  = errors.New("bed: unsupported store kind")
+	ErrStoreConflict = errors.New("bed: cannot change an active bed's store")
+)
+
+// bedStore uses local metadata for an orphaned Bed. No separate routing record
+// outlives its working copy; absent both an override and metadata, use default.
+func (m *Manager) bedStore(ctx context.Context, id, requested string) (store.Kind, error) {
+	if requested == "" {
+		meta, _ := loadMeta(filepath.Join(m.root, id))
+		requested = string(meta.Store)
+	}
+	selected, err := m.store.Resolve(ctx, requested)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrStoreInvalid, err)
+	}
+	return selected, nil
+}
+
+// A create retry may reuse a live Bed, but cannot migrate its active backend.
+func checkBedStore(requested string, selected, current store.Kind) error {
+	if requested != "" && selected != current {
+		return ErrStoreConflict
+	}
+	return nil
 }

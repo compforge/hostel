@@ -48,12 +48,12 @@ type SnapshotInfo struct {
 	Bytes int64
 }
 
-// Store is the persistence backend for bed workspaces. Implementations must
+// Store implements a synchronization policy and remote snapshot layout for bed workspaces. Implementations must
 // treat Persist as atomic per bed (a reader never sees a half-written
 // snapshot) — a single commit-point object per bed gives this on S3.
 type Store interface {
-	// Name reports the backend for capabilities/healthz ("noop", "auto", "s3", "pack", "tar").
-	Name() string
+	// Name reports this implementation's canonical synchronization kind.
+	Name() Kind
 	// Stat describes the bed's snapshot, or nil when none exists. Must be
 	// cheap (S3: HEAD + user metadata, no download) — luggage freshness
 	// checks call it on every resume.
@@ -73,9 +73,9 @@ type Store interface {
 	Delete(ctx context.Context, bedID string) error
 }
 
-// Config selects and parameterizes the backend (flags/env in config package).
+// Config selects a synchronization policy and configures the optional S3 remote.
 type Config struct {
-	Backend         string // "auto" (default) | "noop" | "s3" ("cas" alias) | "pack" | "tar"
+	Kind            string // "auto" (default) | "noop" | "cas" | "pack" | "tar"
 	Bucket          string
 	Prefix          string // key prefix inside the bucket, e.g. "hostel/prod"
 	Endpoint        string // non-AWS S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS

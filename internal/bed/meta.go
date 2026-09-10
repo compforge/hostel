@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/osx"
+	"github.com/qiankunli/hostel/internal/store"
 )
 
 // metaFile sits next to (not inside) the bed's data dir, so bed code can never
@@ -47,8 +48,9 @@ type Usage struct {
 
 // bedMeta is hostel's durable per-bed bookkeeping (docs/store.md §4).
 type bedMeta struct {
-	Version int    `json:"version"`
-	BedID   string `json:"bed_id"`
+	Store   store.Kind `json:"store,omitempty"`
+	Version int        `json:"version"`
+	BedID   string     `json:"bed_id"`
 	// CreatedAt is when the bed identity was first created — it survives
 	// evict/resume cycles via the snapshot.
 	CreatedAt time.Time `json:"created_at"`

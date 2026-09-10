@@ -36,6 +36,10 @@ import (
 // respondBedError maps bed resolution/admission failures: a full or
 // resource-pressured instance is 429 backpressure, anything else is a bad id.
 func respondBedError(c *gin.Context, err error) {
+	if errors.Is(err, bed.ErrStoreConflict) {
+		respondError(c, http.StatusConflict, ErrBedStoreConflict, err.Error())
+		return
+	}
 	if errors.Is(err, bed.ErrResourcePressure) {
 		respondError(c, http.StatusTooManyRequests, ErrResourcePressure, err.Error())
 		return

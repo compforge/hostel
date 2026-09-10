@@ -22,41 +22,6 @@ import (
 	"path/filepath"
 )
 
-// New selects an explicit backend or builds the per-bed auto router. Explicit
-// backends never inspect or migrate another layout. Auto with no bucket remains
-// noop; with a bucket it recognizes each bed's committed layout before routing.
-func New(ctx context.Context, cfg Config) (Store, error) {
-	switch cfg.Backend {
-	case "", "auto":
-		if cfg.Bucket == "" {
-			return Noop{}, nil
-		}
-		if cfg.AutoPackFileThreshold < 0 {
-			return nil, fmt.Errorf("store: auto pack file threshold must be non-negative")
-		}
-		return newAuto(ctx, cfg)
-	case "noop":
-		return Noop{}, nil
-	case "s3", "cas":
-		if cfg.Bucket == "" {
-			return nil, fmt.Errorf("store: s3 backend requires a bucket")
-		}
-		return newCAS(ctx, cfg)
-	case "pack":
-		if cfg.Bucket == "" {
-			return nil, fmt.Errorf("store: pack backend requires a bucket")
-		}
-		return newPack(ctx, cfg)
-	case "tar":
-		if cfg.Bucket == "" {
-			return nil, fmt.Errorf("store: tar backend requires a bucket")
-		}
-		return newTar(ctx, cfg)
-	default:
-		return nil, fmt.Errorf("store: unknown backend %q", cfg.Backend)
-	}
-}
-
 type storeLayout string
 
 const (
@@ -81,29 +46,16 @@ type autoState struct {
 	byLayout map[storeLayout]inspectedBackend
 }
 
-// autoStore owns selection and transition policy, not a persistence format. It
-// delegates every data operation to CAS, pack or tar. New beds use pack; CAS
-// exists for backward compatibility. CAS -> pack publishes a newer pack
-// snapshot but deliberately leaves the old CAS objects untouched; only
-// explicit purge removes durable objects.
+// autoStore discovers the newest snapshot across all layouts. Kind controls
+// subsequent writes, never which existing snapshots can be read. Changing
+// formats publishes a higher generation; old layouts remain until purge.
 type autoStore struct {
+	kind              Kind
 	cas               *casStore
 	pack              *packStore
 	tar               *tarStore
 	packFileThreshold int
 	filter            snapshotFilter
-}
-
-func newAuto(ctx context.Context, cfg Config) (Store, error) {
-	obj, err := newS3Obj(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	filter, err := newSnapshotFilter(cfg.PersistedPaths)
-	if err != nil {
-		return nil, err
-	}
-	return newAutoStore(obj, cfg.Prefix, cfg.AutoPackFileThreshold, filter), nil
 }
 
 func newAutoStore(obj objAPI, prefix string, packFileThreshold int, filters ...snapshotFilter) *autoStore {
@@ -112,6 +64,7 @@ func newAutoStore(obj objAPI, prefix string, packFileThreshold int, filters ...s
 		filter = filters[0]
 	}
 	return &autoStore{
+		kind:              KindAuto,
 		cas:               newCASStore(obj, prefix, filter),
 		pack:              newPackStore(obj, prefix, filter),
 		tar:               newTarStore(obj, prefix, filter),
@@ -120,7 +73,14 @@ func newAutoStore(obj objAPI, prefix string, packFileThreshold int, filters ...s
 	}
 }
 
-func (s *autoStore) Name() string { return "auto" }
+// withKind shares the same clients and formats while selecting a write policy.
+func (s *autoStore) withKind(kind Kind) *autoStore {
+	selected := *s
+	selected.kind = kind
+	return &selected
+}
+
+func (s *autoStore) Name() Kind { return s.kind }
 
 func (s *autoStore) backends() []routedBackend {
 	return []routedBackend{
@@ -210,7 +170,7 @@ func (s *autoStore) Persist(ctx context.Context, bedID, dir string, generation i
 	if state.selected != nil {
 		target = state.selected.routedBackend
 	}
-	if state.selected != nil && state.selected.layout == layoutCAS {
+	if s.kind == KindAuto && state.selected != nil && state.selected.layout == layoutCAS {
 		usePack, err := exceedsSnapshotFileThreshold(dir, s.packFileThreshold, s.filter)
 		if err != nil {
 			return fmt.Errorf("store: persist %s: count snapshot files: %w", bedID, err)
@@ -218,6 +178,14 @@ func (s *autoStore) Persist(ctx context.Context, bedID, dir string, generation i
 		if usePack {
 			target = routedBackend{layout: layoutPack, store: s.pack}
 		}
+	}
+	switch s.kind {
+	case KindCAS:
+		target = routedBackend{layout: layoutCAS, store: s.cas}
+	case KindPack:
+		target = routedBackend{layout: layoutPack, store: s.pack}
+	case KindTar:
+		target = routedBackend{layout: layoutTar, store: s.tar}
 	}
 	return target.store.Persist(ctx, bedID, dir, generation)
 }

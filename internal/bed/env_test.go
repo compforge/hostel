@@ -36,7 +36,7 @@ func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 	host := []string{
 		"PATH=/carrier/bin",
 		"LANG=C.UTF-8",
-		"HOSTEL_STORE=s3",
+		"HOSTEL_STORE=cas",
 		"BED_FAKE=carrier-owned",
 		"PLAYWRIGHT_MCP_CDP_ENDPOINT=ws://carrier",
 		"AWS_SECRET_ACCESS_KEY=carrier-secret",

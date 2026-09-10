@@ -82,7 +82,7 @@ internal/
 │   ├── bed.go         Bed：隔离单元本体 + Status（phase/readiness/activity + generation/retained_until）+ touch/accessor
 │   ├── manager.go     Manager：resident bed 集合、初始化后的 Bed 组装、回收(Evict→revoke→persist→原子复核→teardown/Purge/CollectExpired)、持久化(persistBed/Checkpoint/PersistDirty)
 │   ├── initialization.go InitializeBed singleflight、phase/readiness、后台 Stage-in、容量预占与 Ready 发布；Ensure 复用并等待
-│   ├── store_sync.go  Store 同步调度：合并 lifecycle/pressure trigger，自主串行、周期与失败退避
+│   ├── store_sync.go  将 Bed 同步诉求与安全遍历入口接到全局 Store Manager 的唯一同步循环
 │   ├── operation.go   operation（无状态请求，kind=exec/file/browser/mcp/checkpoint/control）：BeginOperation + timeout 截断
 │   ├── session.go     session（可撤销有状态持有，cdp 类）：OpenSession/Touch/Close；revokeSessions 供 evict 在 persist 前吊销（shell 走 shell.go 自备机制，revoke 时一并 Close）
 │   ├── env.go         bed 进程环境唯一组装点：过滤 Hostel 保留命名空间 + Carrier env + BED_* context + request overlay
@@ -92,7 +92,7 @@ internal/
 │   ├── shell.go       常驻 bash：CreateShell/ForegroundShell；持有 Executor View；Run 用 marker 分帧、单消费，RunAt 以独立控制步骤投影 cwd（状态跨 run 保持）
 │   └── command.go     一次性命令构建与启动；所有终态和观测事实归 execution.go
 ├── bedfs/             BedFS 数据域：bed_home/workspace、client/carrier/Executor 路径投影与文件操作；新建路径按属主 chown
-├── store/             Hostel 直管的 bed 持久化与 Stage-in：router 按配置/bed 布局选 noop/s3(CAS)/pack(聚合增量)/tar(全量单对象)，Restore 旁路完成后原子发布；见 docs/store.md
+├── store/             全局 Store Manager：Kind 路由、共享客户端与同步调度；Store 接口实现 noop/cas/pack/tar 策略，S3 是可选远端 backend，auto 识别快照布局，Stage-in 旁路恢复后原子发布；见 docs/store.md
 ├── resource/          per-bed cgroup v2 记账 + carrier CPU/内存准入；只读准入不要求子树委派
 ├── amenity/           Amenity 接口(生命周期 State)+ Registry；chromium 实例(共享浏览器/每 bed BrowserContext)；见 docs/amenity.md
 └── web/               gin 薄适配层：server(路由+bedOf 解析) / errors / sse / files / command / beds

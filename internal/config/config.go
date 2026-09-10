@@ -95,13 +95,13 @@ type Config struct {
 	// back to local; explicit "supervisor" fails startup when unavailable.
 	Executor string
 
-	// Workspace persistence (docs/store.md). Backend "auto" (default) is noop
+	// Workspace synchronization (docs/store.md). Policy "auto" (default) is noop
 	// without a bucket; with a bucket it defaults new beds to pack and detects
 	// existing beds for backward compatibility.
-	// "s3" stores one object per content-addressed chunk; "pack" groups chunks
+	// "cas" stores one object per content-addressed chunk; "pack" groups chunks
 	// into larger objects; "tar" uploads one full tar.gz. S3 credentials are
 	// Hostel-owned configuration and never enter a bed process.
-	StoreBackend      string
+	StoreKind         string
 	S3Bucket          string
 	S3Prefix          string
 	S3Endpoint        string // S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS
@@ -161,7 +161,7 @@ func Load(args []string) *Config {
 	fs.IntVar(&c.AdmissionCPUThreshold, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.AdmissionMemoryThreshold, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
 	fs.StringVar(&c.Executor, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
-	fs.StringVar(&c.StoreBackend, "store", osx.EnvStr("HOSTEL_STORE", "auto"), "workspace persistence backend: auto (per-bed detection) | noop | s3 | cas | pack | tar")
+	fs.StringVar(&c.StoreKind, "store", osx.EnvStr("HOSTEL_STORE", "auto"), "workspace synchronization policy: auto (per-bed detection) | noop | cas | pack | tar")
 	fs.StringVar(&c.S3Bucket, "s3-bucket", osx.EnvStr("HOSTEL_S3_BUCKET", ""), "S3 bucket for bed snapshots")
 	fs.StringVar(&c.S3Prefix, "s3-prefix", osx.EnvStr("HOSTEL_S3_PREFIX", "hostel"), "key prefix for bed snapshots")
 	fs.StringVar(&c.S3Endpoint, "s3-endpoint", osx.EnvStr("HOSTEL_S3_ENDPOINT", ""), "S3-compatible endpoint (empty = AWS)")

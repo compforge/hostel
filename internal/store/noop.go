@@ -16,12 +16,12 @@ package store
 
 import "context"
 
-// Noop is the no-configuration backend. It deliberately satisfies the full
+// Noop is the caller-managed synchronization policy. It deliberately satisfies the full
 // Store contract so callers need no persistence-specific branches; future
 // local-only behavior belongs here rather than in the auto router.
 type Noop struct{}
 
-func (Noop) Name() string                                         { return "noop" }
+func (Noop) Name() Kind                                           { return KindNoop }
 func (Noop) Stat(context.Context, string) (*SnapshotInfo, error)  { return nil, nil }
 func (Noop) Restore(context.Context, string, string) error        { return nil }
 func (Noop) Persist(context.Context, string, string, int64) error { return nil }

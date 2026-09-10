@@ -22,6 +22,12 @@ file/directory mutation round trip, file/command interoperability, cross-bed
 access, active-bed eviction safety, noop eviction starting fresh, purge, and the
 dorm/room/suite isolation resolution available on the host.
 
+The binary profile also verifies per-Bed Store precedence against a runner-local
+S3 endpoint: API noop bypasses configured S3 throughout the Bed lifecycle, and
+API S3 overrides a noop instance default. The endpoint deliberately denies S3
+requests; this case proves backend selection and error propagation, not remote
+backup integrity. Unit Store tests cover the persistence formats.
+
 By default, a host may honestly degrade an unavailable isolation request. A
 release runner can require levels to be realized instead:
 

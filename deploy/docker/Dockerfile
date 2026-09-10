@@ -164,7 +164,7 @@ ENV PYTHONUSERBASE=/usr/local \
 # No VOLUME: it would bake the default path in at build time and silently
 # stop applying when HOSTEL_WORKSPACE_ROOT is overridden. To keep beds across
 # container restarts without an object store, mount a volume at the workspace
-# root yourself (-v beds:/workspace); with --store s3 the local workspace is
+# root yourself (-v beds:/workspace); with S3 configured the local workspace is
 # just a disposable working copy.
 EXPOSE 8872
 

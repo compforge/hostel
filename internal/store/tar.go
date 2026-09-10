@@ -68,7 +68,7 @@ func newTarStore(obj objAPI, prefix string, filters ...snapshotFilter) *tarStore
 	return &tarStore{obj: obj, prefix: prefix, filter: filter}
 }
 
-func (s *tarStore) Name() string { return "tar" }
+func (s *tarStore) Name() Kind { return KindTar }
 
 func (s *tarStore) bedPrefix(bedID string) string {
 	return path.Join(s.prefix, "tar", bedID) + "/"

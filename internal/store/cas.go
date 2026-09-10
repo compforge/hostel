@@ -27,7 +27,7 @@ import (
 	"github.com/folbricht/desync"
 )
 
-// casStore is the current s3 backend (docs/store.md §3.3): the bed dir is
+// casStore implements content-addressed synchronization to S3 (docs/store.md §3.3): the bed dir is
 // serialized to a catar stream (desync, the casync model), CDC-chunked, and
 // only chunks absent from the bed's previous snapshot are uploaded. The index
 // object is the commit point and carries the generation, so one small PUT
@@ -92,7 +92,7 @@ func newCASStore(obj objAPI, prefix string, filters ...snapshotFilter) *casStore
 	return &casStore{obj: obj, prefix: prefix, filter: filter}
 }
 
-func (s *casStore) Name() string { return "s3" }
+func (s *casStore) Name() Kind { return KindCAS }
 
 func (s *casStore) bedPrefix(bedID string) string {
 	return path.Join(s.prefix, bedID)

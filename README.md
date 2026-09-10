@@ -242,15 +242,36 @@ and failures are exposed through readiness reason/message. Native data-plane
 requests still create on first use by joining the same initialization and waiting
 for Ready, so they never observe a partial BedFS.
 
-Persistence: setting `--s3-bucket` (any S3-compatible endpoint) turns it on.
+The optional S3 backend defines where snapshots are stored (`--s3-bucket` and
+other S3 connection settings). `--store` chooses how to synchronize and organize
+those snapshots; local data remains in BedHome.
 
 - The default `--store auto` stores new beds as immutable ~32 MiB pack files.
 - Auto detects existing layouts for backward compatibility:
   - Existing CAS beds remain readable and can transition to pack.
   - Existing pack and tar beds keep their current layout.
-- Explicit `s3` / `pack` / `tar` selections never inspect or migrate another
-  layout. Tar always replaces one complete tar.gz and keeps one object per bed.
-- Without a bucket, auto uses the no-op backend.
+- Explicit `cas` / `pack` / `tar` selections write the chosen layout and use
+  auto detection to read the newest snapshot across layouts. Switching formats
+  continues the existing generation sequence; purge removes all layouts.
+  Tar always replaces one complete tar.gz and keeps one object per bed.
+- Without a bucket, every valid store policy is effectively noop.
+
+A Bed can opt out of automatic persistence while sharing a configured S3
+instance with other Beds:
+
+```http
+POST /v1/beds
+Content-Type: application/json
+
+{"id":"externally-managed","store":"noop"}
+```
+
+Explicit `store` values (`noop`, `auto`, `cas`, `pack`, `tar`) take
+precedence over `HOSTEL_STORE`. Omission
+reuses a resident Bed or its local metadata; a new Bed inherits the default.
+Eviction removes the local metadata, so repeat the override when recreating a
+Bed or moving it to another instance. Changing an active Bed's policy returns
+`409 BED_STORE_CONFLICT`. See [Store](docs/store.md).
 
 Snapshots restore when the bed is created again and persist on evict
 (DELETE / idle reap) or explicit checkpoint. Normal
@@ -258,15 +279,16 @@ operations and pressure submit coalesced sync requests; the store loop owns
 serialization, retry/backoff, and the optional `--persist-interval` safety net.
 A bed's durable identity is the
 snapshot; the local dir is just its working copy.
-`DELETE /v1/beds/:id` evicts (a durable snapshot keeps the identity; noop keeps
-nothing); add `?purge=true` to also delete any snapshot and end the identity.
+`DELETE /v1/beds/:id` evicts (durable snapshots remain; noop keeps no data).
+Add `?purge=true` to delete the snapshot as well. If the Bed has no local metadata,
+repeat its override, for example `?purge=true&store=noop`; omission uses the instance default.
 An evict raced by live traffic returns
 `409 BED_BUSY` instead of dropping mid-flight writes.
 Bucket addressing defaults to virtual-hosted style (required by TOS); set
 `--s3-path-style` only for endpoints such as MinIO that require path-style.
 
 Successful idle eviction removes the local Bed directory for every Store
-backend. A durable Store persists first and the next placement restores the
+policy. A durable Store persists first and the next placement restores the
 snapshot; noop performs no persistence and the next placement starts fresh.
 Luggage scanning only covers orphaned directories left by an unclean shutdown
 or older Hostel version.
