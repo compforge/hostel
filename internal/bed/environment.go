@@ -16,7 +16,7 @@ import (
 // A failed combination is a startup error, not permission to run unconfined.
 func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	id := "environment-probe-" + randx.Hex(6)
-	initialization, _, err := m.beginInitialization(ctx, id, string(store.KindNoop))
+	initialization, _, err := m.beginInitialization(ctx, id, CreateOptions{Store: string(store.KindNoop)})
 	if err != nil {
 		return err
 	}

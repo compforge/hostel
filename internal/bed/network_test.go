@@ -97,7 +97,7 @@ func TestInitializationRollsBackNetworkBeforeCompletion(t *testing.T) {
 			default:
 			}
 			if failure != "publication" {
-				current, resident, err := m.beginInitialization(context.Background(), "rollback", "")
+				current, resident, err := m.beginInitialization(context.Background(), "rollback", CreateOptions{})
 				if err != nil || current != initialization || resident != nil {
 					t.Fatalf("identity released during rollback: current=%p resident=%v err=%v", current, resident, err)
 				}
