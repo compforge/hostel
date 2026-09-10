@@ -110,17 +110,17 @@ func (m *Manager) finishPurge(id string, purge *bedPurge, err error) {
 }
 
 func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
-	st, err := m.bedStore(ctx, id, requested)
+	kind, err := m.bedStore(ctx, id, requested)
 	if err != nil {
 		return err
 	}
 	m.mu.Lock()
 	if b := m.beds[id]; b != nil {
-		err = checkBedStore(requested, st, b.store)
-		st = b.store
+		err = checkBedStore(requested, kind, b.Store)
+		kind = b.Store
 	} else if initialization := m.initializations[id]; initialization != nil {
-		err = checkBedStore(requested, st, initialization.store)
-		st = initialization.store
+		err = checkBedStore(requested, kind, initialization.status.Store)
+		kind = initialization.status.Store
 	}
 	m.mu.Unlock()
 	if err != nil {
@@ -159,7 +159,7 @@ func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
 	deleteCtx, cancelDelete := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
 	defer cancelDelete()
 	// Keep local metadata available for retry if deleting the snapshot fails.
-	if err := st.Delete(deleteCtx, id); err != nil {
+	if err := m.store.Delete(deleteCtx, kind, id); err != nil {
 		return err
 	}
 	return os.RemoveAll(filepath.Join(m.root, id))

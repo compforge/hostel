@@ -10,15 +10,15 @@ func TestSelectionOverridesDefaultAndSharesObjectClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for requested, want := range map[string]string{"": "auto", "noop": "noop", "s3": "s3", "cas": "s3", "pack": "pack", "tar": "tar"} {
-		got, err := Select(t.Context(), selection, requested)
-		if err != nil || got.Name() != want {
+	for requested, want := range map[string]BackendKind{"": "auto", "noop": "noop", "s3": "s3", "cas": "s3", "pack": "pack", "tar": "tar"} {
+		got, err := selection.Resolve(t.Context(), requested)
+		if err != nil || got != want {
 			t.Fatalf("select %q = %v, %v", requested, got, err)
 		}
 	}
-	cas, _ := Select(t.Context(), selection, "s3")
-	pack, _ := Select(t.Context(), selection, "pack")
-	tar, _ := Select(t.Context(), selection, "tar")
+	cas, _ := selection.backend(t.Context(), BackendS3)
+	pack, _ := selection.backend(t.Context(), BackendPack)
+	tar, _ := selection.backend(t.Context(), BackendTar)
 	if cas.(*casStore).obj != pack.(*packStore).obj || cas.(*casStore).obj != tar.(*tarStore).obj {
 		t.Fatal("backend formats opened separate object clients")
 	}
@@ -27,14 +27,14 @@ func TestSelectionOverridesDefaultAndSharesObjectClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s3, err := Select(t.Context(), noop, "s3")
-	if err != nil || s3.Name() != "s3" {
+	s3, err := noop.Resolve(t.Context(), "s3")
+	if err != nil || s3 != BackendS3 {
 		t.Fatalf("API override of noop: %v %v", s3, err)
 	}
-	if noop.Name() != "noop" {
+	if noop.DefaultKind() != "noop" {
 		t.Fatal("Bed override mutated instance default")
 	}
-	if _, err := Select(t.Context(), selection, "unknown"); err == nil {
+	if _, err := selection.Resolve(t.Context(), "unknown"); err == nil {
 		t.Fatal("unknown backend accepted")
 	}
 }

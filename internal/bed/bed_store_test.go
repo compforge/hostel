@@ -41,9 +41,9 @@ func (s *countedStore) Delete(ctx context.Context, id string) error {
 	return s.fakeStore.Delete(ctx, id)
 }
 
-func storeTestManager(t *testing.T, root string, st store.Store) *Manager {
+func storeTestManager(t *testing.T, root string, st store.Backend) *Manager {
 	t.Helper()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, st)
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(st))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +65,8 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.StoreName() != "noop" {
-		t.Fatalf("noop bed store=%s", b.StoreName())
+	if b.Store != "noop" {
+		t.Fatalf("noop bed store=%s", b.Store)
 	}
 	if err := os.WriteFile(filepath.Join(b.Workspace(), "marker.txt"), []byte("local only"), 0600); err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resumed.StoreName() != "noop" {
+	if resumed.Store != "noop" {
 		t.Fatal("recreate ignored explicit store")
 	}
 	if _, err := os.Stat(filepath.Join(resumed.Workspace(), "marker.txt")); !errors.Is(err, os.ErrNotExist) {
@@ -157,10 +157,10 @@ func TestBedStoreUsesLocalMetadataAndDefaultsAfterEviction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.StoreName() != "noop" {
+	if b.Store != "noop" {
 		t.Fatal("local metadata lost selection")
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, "one", CreateOptions{Store: st.Name()}); !errors.Is(err, ErrStoreConflict) {
+	if _, err := m.InitializeBedWithOptions(ctx, "one", CreateOptions{Store: string(st.Name())}); !errors.Is(err, ErrStoreConflict) {
 		t.Fatalf("live store switch=%v", err)
 	}
 	if ok, err := m.Evict(ctx, "one"); err != nil || !ok {
@@ -170,7 +170,7 @@ func TestBedStoreUsesLocalMetadataAndDefaultsAfterEviction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.StoreName() != st.Name() {
+	if b.Store != st.Name() {
 		t.Fatal("absent Bed without override must inherit default")
 	}
 }
@@ -244,8 +244,8 @@ func TestOmittedBedStoreInheritsConfiguredBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.StoreName() != st.Name() {
-		t.Fatalf("unspecified store=%s", b.StoreName())
+	if b.Store != st.Name() {
+		t.Fatalf("unspecified store=%s", b.Store)
 	}
 	if err := m.Checkpoint(ctx, b.ID); err != nil {
 		t.Fatal(err)
@@ -261,15 +261,19 @@ func TestOmittedBedStoreInheritsConfiguredBackend(t *testing.T) {
 func TestDurableBedSyncsWithNoopInstanceDefault(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	m := storeTestManager(t, t.TempDir(), store.Noop{})
+	st := newFakeStore()
+	root := t.TempDir()
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(store.Noop{}, st))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.InitializeBedWithOptions(ctx, "durable", CreateOptions{Store: "s3"}); err != nil {
+		t.Fatal(err)
+	}
 	b, err := m.Ensure(ctx, "durable")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Install the selected backend before starting the controller; the unit
-	// fixture avoids external S3 while keeping a noop instance default.
-	st := newFakeStore()
-	b.store = st
 	if err := os.WriteFile(filepath.Join(b.Workspace(), "marker.txt"), []byte("sync"), 0600); err != nil {
 		t.Fatal(err)
 	}

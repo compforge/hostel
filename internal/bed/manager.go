@@ -49,8 +49,7 @@ type Manager struct {
 	maxPinnedBeds   int                // pinned-count pressure reference; 0 = pressure disabled
 	pressurePercent int                // shared occupied/pinned high-watermark percentage
 	pinnedBeds      atomic.Int64       // tenant beds running work or holding data not yet durable
-	store           store.Store        // workspace persistence (Noop when disabled)
-	storeSync       chan struct{}      // coalesced requests; the store loop owns execution cadence
+	store           *store.Store       // daemon-wide persistence component
 	processEnv      processEnv         // explicit carrier software env; never daemon-wide inheritance
 	// bedIdleTTL is set once at startup. Accepted operations extend their bed
 	// through timeout+idleTTL so the idle reaper cannot kill in-flight work.
@@ -95,14 +94,14 @@ var ErrBedUnavailable = errors.New("bed: no longer resident")
 
 // NewManager creates the bed manager and ensures the workspace root exists.
 // amenities and st may be nil; maxBeds 0 = unlimited.
-func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Registry, maxBeds int, st store.Store) (*Manager, error) {
+func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Registry, maxBeds int, st *store.Store) (*Manager, error) {
 	processEnv, _ := newProcessEnv(os.Environ())
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("bed: create workspace root %s: %w", root, err)
 	}
 	shellPath = resolveShellPath(shellPath)
 	if st == nil {
-		st = store.Noop{}
+		st = store.NewWithBackends(store.Noop{})
 	}
 	resources := resource.Noop("resource tracker not configured")
 	return &Manager{
@@ -121,7 +120,6 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		maxPinnedBeds:   maxBeds,
 		pressurePercent: defaultBedPressureThresholdPercent,
 		store:           st,
-		storeSync:       make(chan struct{}, 1),
 		processEnv:      processEnv,
 		beds:            make(map[string]*Bed),
 		initializations: make(map[string]*bedInitialization),
@@ -308,7 +306,7 @@ func (m *Manager) tenantOccupiedBedsLocked() int {
 }
 
 // StoreName reports the persistence backend for capabilities reporting.
-func (m *Manager) StoreName() string { return m.store.Name() }
+func (m *Manager) StoreName() string { return string(m.store.DefaultKind()) }
 
 // DefaultBedID reports the id used when a request omits a bed.
 func (m *Manager) DefaultBedID() string { return m.defaultBed }
@@ -351,12 +349,12 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 	// snapshot. A stale copy is replaced atomically, never merged. A restore
 	// failure leaves the orphan untouched and fails initialization rather than
 	// silently starting empty.
-	st := initialization.store
+	kind := initialization.status.Store
 	local, localPresent := loadMeta(bedDir)
 	var staged store.StageInResult
 	if err := trace.stage("stage_in_bedfs", func() error {
 		var err error
-		staged, err = store.StageInBedFS(ctx, st, store.StageInRequest{
+		staged, err = m.store.StageInBedFS(ctx, kind, store.StageInRequest{
 			BedID:           id,
 			BedDir:          bedDir,
 			LocalPresent:    localPresent,
@@ -401,13 +399,13 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 		var ok bool
 		meta, ok = loadMeta(bedDir)
 		if !ok {
-			meta = bedMeta{Version: 1, BedID: id, CreatedAt: now, Store: st.Name()}
+			meta = bedMeta{Version: 1, BedID: id, CreatedAt: now, Store: kind}
 			if err := saveMeta(bedDir, meta); err != nil {
 				return err
 			}
 		}
-		if meta.Store != st.Name() {
-			meta.Store = st.Name()
+		if meta.Store != kind {
+			meta.Store = kind
 			if err := saveMeta(bedDir, meta); err != nil {
 				return err
 			}
@@ -433,7 +431,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 			snapshotGeneration: meta.SnapshotGeneration,
 			snapshotBytes:      meta.SnapshotBytes,
 			localBytes:         filepathx.DirBytes(bedDir),
-			store:              st,
+			Store:              kind,
 			shells:             make(map[string]*Shell),
 			sessions:           make(map[string]*Session),
 			inflightByKind:     make(map[OperationKind]int),
@@ -689,7 +687,7 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 		var ok bool
 		meta, ok = loadMeta(b.Dir)
 		if !ok {
-			meta = bedMeta{Version: 1, BedID: b.ID, CreatedAt: b.CreatedAt, Store: b.StoreName()}
+			meta = bedMeta{Version: 1, BedID: b.ID, CreatedAt: b.CreatedAt, Store: b.Store}
 		}
 		meta.Generation++
 		// Flush counters before packing so they travel with the snapshot.
@@ -713,14 +711,14 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 	var snapshot *store.SnapshotInfo
 	if err := trace.stage("persist_store", func() error {
 		persistStarted = time.Now()
-		if err := b.store.Persist(ctx, b.ID, b.Dir, meta.Generation); err != nil {
+		if err := m.store.Persist(ctx, b.Store, b.ID, b.Dir, meta.Generation); err != nil {
 			return err
 		}
 		persistedAt = time.Now()
 		// Snapshot facts are scheduler hints, not part of persist correctness.
 		// Refresh them at this lifecycle boundary so inventory never performs
 		// remote Stat calls on its request path.
-		if info, statErr := b.store.Stat(ctx, b.ID); statErr == nil {
+		if info, statErr := m.store.Stat(ctx, b.Store, b.ID); statErr == nil {
 			snapshot = info
 		} else {
 			log.Printf("hostel: refresh snapshot facts failed: bed=%s error=%v", b.Short(), statErr)
@@ -784,7 +782,7 @@ func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, b
 	var done []string
 	failed := false
 	for _, b := range m.List() {
-		if b.StoreName() == "noop" {
+		if b.Store == store.BackendNoop {
 			// Mixed carriers still need local disk-size facts for noop Beds, but no
 			// automatic snapshot generation or Store I/O for them.
 			bytes := filepathx.DirBytes(b.Dir)

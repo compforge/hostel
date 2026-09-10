@@ -43,11 +43,11 @@ func TestAutoDetectsExistingLayout(t *testing.T) {
 	ctx := context.Background()
 	for _, test := range []struct {
 		name string
-		new  func(objAPI) Store
+		new  func(objAPI) Backend
 	}{
-		{name: "cas", new: func(obj objAPI) Store { return newCASStore(obj, "sandbox") }},
-		{name: "pack", new: func(obj objAPI) Store { return newPackStore(obj, "sandbox") }},
-		{name: "tar", new: func(obj objAPI) Store { return newTarStore(obj, "sandbox") }},
+		{name: "cas", new: func(obj objAPI) Backend { return newCASStore(obj, "sandbox") }},
+		{name: "pack", new: func(obj objAPI) Backend { return newPackStore(obj, "sandbox") }},
+		{name: "tar", new: func(obj objAPI) Backend { return newTarStore(obj, "sandbox") }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			obj := newMemObj()

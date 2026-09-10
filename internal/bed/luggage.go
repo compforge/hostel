@@ -39,7 +39,7 @@ const gcTmpPrefix = ".gc-"
 
 // LuggageEntry describes one cold local copy for GC and inventory reporting.
 type LuggageEntry struct {
-	Store string
+	Store store.BackendKind
 	BedID string
 	// Bytes is the dir's file size total — the disk this entry occupies.
 	Bytes int64
@@ -86,7 +86,7 @@ func (m *Manager) ListLuggage() []LuggageEntry {
 		meta, hasMeta := loadMeta(dir)
 		backend := meta.Store
 		if backend == "" {
-			backend = m.store.Name()
+			backend = m.store.DefaultKind()
 		}
 		l := LuggageEntry{BedID: id, Bytes: filepathx.DirBytes(dir), Store: backend}
 		if hasMeta {
@@ -141,11 +141,7 @@ func (m *Manager) CollectLuggage(ctx context.Context) []string {
 	// One Stat (HEAD) per entry, paid only on the over-watermark path.
 	stale := map[string]bool{}
 	for _, l := range luggage {
-		st, err := store.Select(ctx, m.store, l.Store)
-		if err != nil {
-			continue
-		}
-		if info, err := st.Stat(ctx, l.BedID); err == nil && info != nil && l.Generation < info.Generation {
+		if info, err := m.store.Stat(ctx, l.Store, l.BedID); err == nil && info != nil && l.Generation < info.Generation {
 			stale[l.BedID] = true
 		}
 	}
@@ -215,18 +211,18 @@ func (m *Manager) sweepGCLeftovers() {
 // the last PERSISTED counter — an active bed's workspace may be ahead of it,
 // which is exactly what "the authoritative copy is here" means.
 type InventoryBed struct {
-	Store              string    `json:"store"`
-	ID                 string    `json:"id"`
-	Status             BedStatus `json:"status"`
-	Generation         int64     `json:"generation"`
-	SnapshotGeneration int64     `json:"snapshot_generation,omitempty"`
-	SnapshotBytes      int64     `json:"snapshot_bytes,omitempty"`
-	LocalBytes         int64     `json:"local_bytes,omitempty"`
-	RestoreBytes       int64     `json:"restore_bytes,omitempty"`
-	DataSynced         bool      `json:"data_synced"`
-	Pinned             bool      `json:"pinned"`
-	LastActiveAt       time.Time `json:"last_active_at"`
-	RetainUntil        time.Time `json:"retained_until,omitzero"` // resident beds only
+	Store              store.BackendKind `json:"store"`
+	ID                 string            `json:"id"`
+	Status             BedStatus         `json:"status"`
+	Generation         int64             `json:"generation"`
+	SnapshotGeneration int64             `json:"snapshot_generation,omitempty"`
+	SnapshotBytes      int64             `json:"snapshot_bytes,omitempty"`
+	LocalBytes         int64             `json:"local_bytes,omitempty"`
+	RestoreBytes       int64             `json:"restore_bytes,omitempty"`
+	DataSynced         bool              `json:"data_synced"`
+	Pinned             bool              `json:"pinned"`
+	LastActiveAt       time.Time         `json:"last_active_at"`
+	RetainUntil        time.Time         `json:"retained_until,omitzero"` // resident beds only
 	// Usage lets the scheduler weigh placement and migration: command
 	// rate/duration derive from deltas between polls; Last{Persist,Restore}Ms
 	// approximate this bed's migration cost (node-specific — see Usage).
@@ -251,7 +247,7 @@ func (m *Manager) Inventory() []InventoryBed {
 		status := b.Status()
 		entry := InventoryBed{
 			ID:                 b.ID,
-			Store:              b.StoreName(),
+			Store:              b.Store,
 			Status:             status.BedStatus,
 			Generation:         status.Generation,
 			SnapshotGeneration: status.SnapshotGeneration,

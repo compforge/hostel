@@ -46,7 +46,7 @@ func (s *Server) viewOf(b *bed.Bed) bedView {
 func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 	return bedView{
 		ID:           b.ID,
-		Store:        b.StoreName(),
+		Store:        string(b.Store),
 		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
 		Pinned:       status.Pinned,
@@ -58,7 +58,7 @@ func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 }
 
 func initializationView(status bed.InitializationStatus) bedView {
-	return bedView{ID: status.ID, Store: status.Store, Status: status.BedStatus}
+	return bedView{ID: status.ID, Store: string(status.Store), Status: status.BedStatus}
 }
 
 type lifecycleStageView struct {
@@ -441,5 +441,5 @@ func (s *Server) bedCheckpoint(c *gin.Context) {
 		runtimeError(c, "checkpointed bed is no longer resident")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"persistence": b.StoreName()})
+	c.JSON(http.StatusOK, gin.H{"persistence": string(b.Store)})
 }

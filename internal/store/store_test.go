@@ -25,10 +25,10 @@ func testS3Config() Config {
 
 func TestBackendSelection(t *testing.T) {
 	st, err := New(t.Context(), Config{Backend: "noop"})
-	if err != nil || st.Name() != "noop" {
+	if err != nil || st.DefaultKind() != "noop" {
 		t.Fatalf("New noop: %v %v", st, err)
 	}
-	info, err := st.Stat(t.Context(), "x")
+	info, err := st.Stat(t.Context(), BackendNoop, "x")
 	if err != nil || info != nil {
 		t.Fatalf("noop Stat = %v %v", info, err)
 	}
@@ -41,12 +41,12 @@ func TestBackendSelection(t *testing.T) {
 		t.Fatal("unknown backend should fail")
 	}
 	// auto without persistence config is noop; with a bucket it routes per bed.
-	if st, err := New(t.Context(), Config{Backend: "auto"}); err != nil || st.Name() != "noop" {
+	if st, err := New(t.Context(), Config{Backend: "auto"}); err != nil || st.DefaultKind() != "noop" {
 		t.Fatalf("auto without bucket = %v, %v; want noop", st, err)
 	}
 	cfg := testS3Config()
 	cfg.Backend = "auto"
-	if st, err := New(t.Context(), cfg); err != nil || st.Name() != "auto" {
+	if st, err := New(t.Context(), cfg); err != nil || st.DefaultKind() != "auto" {
 		t.Fatalf("auto with bucket = %v, %v; want auto", st, err)
 	}
 	cfg.AutoPackFileThreshold = -1
@@ -55,11 +55,11 @@ func TestBackendSelection(t *testing.T) {
 	}
 	cfg = testS3Config()
 	cfg.Backend = "pack"
-	if st, err := New(t.Context(), cfg); err != nil || st.Name() != "pack" {
+	if st, err := New(t.Context(), cfg); err != nil || st.DefaultKind() != "pack" {
 		t.Fatalf("pack with bucket = %v, %v; want pack", st, err)
 	}
 	cfg.Backend = "tar"
-	if st, err := New(t.Context(), cfg); err != nil || st.Name() != "tar" {
+	if st, err := New(t.Context(), cfg); err != nil || st.DefaultKind() != "tar" {
 		t.Fatalf("tar with bucket = %v, %v; want tar", st, err)
 	}
 }

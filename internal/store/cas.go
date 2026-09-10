@@ -72,7 +72,7 @@ var casConverters = desync.Converters{desync.Compressor{}}
 // ContentLength says nothing about the workspace.
 const casMetaBytes = "bytes"
 
-func newCAS(ctx context.Context, cfg Config) (Store, error) {
+func newCAS(ctx context.Context, cfg Config) (Backend, error) {
 	obj, err := newS3Obj(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -92,7 +92,7 @@ func newCASStore(obj objAPI, prefix string, filters ...snapshotFilter) *casStore
 	return &casStore{obj: obj, prefix: prefix, filter: filter}
 }
 
-func (s *casStore) Name() string { return "s3" }
+func (s *casStore) Name() BackendKind { return BackendS3 }
 
 func (s *casStore) bedPrefix(bedID string) string {
 	return path.Join(s.prefix, bedID)

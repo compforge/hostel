@@ -22,19 +22,6 @@ import (
 	"path/filepath"
 )
 
-// New selects an explicit backend or builds the per-bed auto router. Explicit
-// backends never inspect or migrate another layout. Auto with no bucket remains
-// noop; with a bucket it recognizes each bed's committed layout before routing.
-func New(ctx context.Context, cfg Config) (Store, error) {
-	s := &backends{cfg: cfg}
-	selected, err := s.selectBackend(ctx, cfg.Backend)
-	if err != nil {
-		return nil, err
-	}
-	s.Store = selected
-	return s, nil
-}
-
 type storeLayout string
 
 const (
@@ -45,7 +32,7 @@ const (
 
 type routedBackend struct {
 	layout storeLayout
-	store  Store
+	store  Backend
 }
 
 type inspectedBackend struct {
@@ -86,7 +73,7 @@ func newAutoStore(obj objAPI, prefix string, packFileThreshold int, filters ...s
 	}
 }
 
-func (s *autoStore) Name() string { return "auto" }
+func (s *autoStore) Name() BackendKind { return BackendAuto }
 
 func (s *autoStore) backends() []routedBackend {
 	return []routedBackend{
