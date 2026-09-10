@@ -14,6 +14,7 @@ import (
 // without exposing its network namespace to Bed processes. All requests are
 // bounded by a common concurrency limit and timeout; this is not a DNS cache.
 type dnsForwarder struct {
+	policy    *policyControl
 	address   string
 	upstreams []string
 	udp       *net.UDPConn
@@ -119,6 +120,13 @@ func (d *dnsForwarder) serveTCP(ctx context.Context) {
 	}
 }
 func (d *dnsForwarder) exchange(ctx context.Context, protocol string, payload []byte) ([]byte, error) {
+	if d.policy != nil {
+		return d.policy.exchange(ctx, payload, func() ([]byte, error) { return d.exchangeUpstream(ctx, protocol, payload) })
+	}
+	return d.exchangeUpstream(ctx, protocol, payload)
+}
+
+func (d *dnsForwarder) exchangeUpstream(ctx context.Context, protocol string, payload []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var last error

@@ -12,6 +12,7 @@ import (
 type bedNetwork interface {
 	Report() network.Report
 	Acquire(context.Context, string) (network.Attachment, error)
+	NetworkPolicy(context.Context, string, network.PolicyMutation) (network.PolicyStatus, error)
 	Close(context.Context) error
 }
 
@@ -33,4 +34,10 @@ func (m *Manager) networkEndpoint(b *Bed, endpoint string) string {
 		u.Host = net.JoinHostPort(gateway, u.Port())
 	}
 	return u.String()
+}
+
+// NetworkPolicy consumes an existing Bed; the HTTP layer holds an operation
+// reference so eviction cannot destroy its namespace during a kernel update.
+func (m *Manager) NetworkPolicy(ctx context.Context, b *Bed, mutation network.PolicyMutation) (network.PolicyStatus, error) {
+	return m.network.NetworkPolicy(ctx, b.ID, mutation)
 }

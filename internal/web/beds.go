@@ -24,6 +24,7 @@ import (
 	"github.com/qiankunli/go-stdx/randx"
 
 	"github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/network"
 )
 
 // bedView is the JSON shape for a bed in the management API.
@@ -221,6 +222,7 @@ func (s *Server) bedList(c *gin.Context) {
 			"store":                          s.mgr.StoreName(),
 			"bed_store_selection":            true,
 			"network":                        s.mgr.NetworkReport(),
+			"network_policy":                 true,
 			"isolation":                      s.mgr.Isolator().Level().String(),
 			"occupied_beds":                  s.mgr.OccupiedBedCount(),
 			"resident_beds":                  s.mgr.ResidentBedCount(),
@@ -242,8 +244,9 @@ func (s *Server) bedList(c *gin.Context) {
 }
 
 type createBedRequest struct {
-	ID    string `json:"id,omitempty"`
-	Store string `json:"store,omitempty"`
+	NetworkPolicy *network.Policy `json:"networkPolicy,omitempty"`
+	ID            string          `json:"id,omitempty"`
+	Store         string          `json:"store,omitempty"`
 }
 
 // POST /v1/beds — create (or return existing) a bed. Empty id → server-assigned.
@@ -260,9 +263,15 @@ func (s *Server) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Store: req.Store})
+	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Store: req.Store, NetworkPolicy: req.NetworkPolicy})
 	if err != nil {
-		respondBedError(c, err)
+		if errors.Is(err, network.ErrUnavailable) {
+			respondError(c, http.StatusServiceUnavailable, ErrServiceUnavailable, "bed network policy is unavailable")
+		} else if errors.Is(err, network.ErrInvalidPolicy) {
+			badRequest(c, err.Error())
+		} else {
+			respondBedError(c, err)
+		}
 		return
 	}
 	if status.Readiness.Ready {
@@ -407,6 +416,7 @@ func (s *Server) capabilities(c *gin.Context) {
 		"persistence":                    s.mgr.StoreName(),
 		"bed_store_selection":            true,
 		"network":                        s.mgr.NetworkReport(),
+		"network_policy":                 true,
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,
 			"available": resources.Available,

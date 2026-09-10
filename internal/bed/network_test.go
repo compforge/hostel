@@ -97,7 +97,7 @@ func TestInitializationRollsBackNetworkBeforeCompletion(t *testing.T) {
 			default:
 			}
 			if failure != "publication" {
-				current, resident, err := m.beginInitialization(context.Background(), "rollback", "")
+				current, resident, err := m.beginInitialization(context.Background(), "rollback", CreateOptions{})
 				if err != nil || current != initialization || resident != nil {
 					t.Fatalf("identity released during rollback: current=%p resident=%v err=%v", current, resident, err)
 				}
@@ -174,5 +174,84 @@ func TestEvictionFencesSameIDUntilDirectoryCleanup(t *testing.T) {
 	}
 	if err := m.teardown(next); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func (n *initializationNetwork) NetworkPolicy(context.Context, string, network.PolicyMutation) (network.PolicyStatus, error) {
+	return network.PolicyStatus{}, network.ErrUnavailable
+}
+
+type policyInitializationNetwork struct {
+	*network.Manager
+	entered chan struct{}
+	proceed chan struct{}
+	applied atomic.Int32
+	fail    bool
+}
+
+func (n *policyInitializationNetwork) Report() network.Report { return network.Report{Enabled: true} }
+func (n *policyInitializationNetwork) Acquire(context.Context, string) (network.Attachment, error) {
+	return nil, nil
+}
+func (n *policyInitializationNetwork) NetworkPolicy(ctx context.Context, _ string, _ network.PolicyMutation) (network.PolicyStatus, error) {
+	n.applied.Add(1)
+	if n.entered != nil {
+		close(n.entered)
+		select {
+		case <-n.proceed:
+		case <-ctx.Done():
+			return network.PolicyStatus{}, ctx.Err()
+		}
+	}
+	if n.fail {
+		return network.PolicyStatus{}, errors.New("nft rejected policy")
+	}
+	return network.PolicyStatus{}, nil
+}
+func TestInitialPolicyIsAppliedBeforeResidentPublication(t *testing.T) {
+	m := newTestManager(t)
+	n := &policyInitializationNetwork{entered: make(chan struct{}), proceed: make(chan struct{})}
+	m.network = n
+	initial := &network.Policy{DefaultAction: "deny"}
+	if _, err := m.InitializeBedWithOptions(t.Context(), "policy-bed", CreateOptions{Store: "noop", NetworkPolicy: initial}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-n.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("policy was not applied")
+	}
+	if _, resident := m.Get("policy-bed"); resident {
+		t.Fatal("Bed published before policy commit")
+	}
+	close(n.proceed)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if _, err := m.Ensure(ctx, "policy-bed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.InitializeBedWithOptions(ctx, "policy-bed", CreateOptions{Store: "noop", NetworkPolicy: initial}); err != nil {
+		t.Fatal(err)
+	}
+	if n.applied.Load() != 1 {
+		t.Fatal("create retry reset effective policy")
+	}
+	if _, err := m.InitializeBedWithOptions(ctx, "policy-bed", CreateOptions{NetworkPolicy: &network.Policy{DefaultAction: "allow"}}); !errors.Is(err, network.ErrInvalidPolicy) {
+		t.Fatalf("conflicting initial policy: %v", err)
+	}
+}
+func TestInitialPolicyFailureNeverPublishesBed(t *testing.T) {
+	m := newTestManager(t)
+	m.network = &policyInitializationNetwork{fail: true}
+	if _, err := m.InitializeBedWithOptions(t.Context(), "policy-failed", CreateOptions{Store: "noop", NetworkPolicy: &network.Policy{DefaultAction: "deny"}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if _, err := m.Ensure(ctx, "policy-failed"); err == nil {
+		t.Fatal("failed initial policy published Bed")
+	}
+	if _, ok := m.Get("policy-failed"); ok {
+		t.Fatal("failed Bed became resident")
 	}
 }

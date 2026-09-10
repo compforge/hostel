@@ -45,8 +45,7 @@ Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspac
 - DNS 由有界的 UDP/TCP 转发器使用 carrier resolver，兼容 carrier 内的 loopback DNS。
 - Bed 内的 CDP 地址使用 gateway 访问共享 Hostel API；使用该能力时 API 需监听可从
   veth 访问的地址（默认 `:8872`），不是仅监听 carrier loopback。
-- 这些边界不等于安全容器：Hostel 的可信/半可信代码模型不变。当前没有域名/CIDR policy
-  注入 API、透明 MITM 或 Credential Vault，不声明与 hisandbox egress 等价。
+- 这些边界不等于安全容器：Hostel 的可信/半可信代码模型不变。透明 MITM 和 Credential Vault 不在当前能力范围。
 
 `GET /v1/diagnostics` 和 `/healthz` 的 `network` 返回启用状态、backend、作用域、失败
 原因和启动 probe（attempted、stage、duration_ms、error）。`enabled=false` 是网络能力
@@ -58,3 +57,33 @@ Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspac
 该能力完成前浏览器不宣称受 Bed 网络隔离约束；待办统一记录于 `backlog.md`。
 
 组合与回收验证见 [单机 E2E](../tests/e2e/README.md) 和 [isolation.md](isolation.md)。
+
+## Bed 网络策略
+
+NetworkManager 同时拥有 Bed netns 和有效策略。控制面可以在 `POST /v1/beds` 的
+`networkPolicy` 字段指定初始策略，规则安装成功后才发布 Bed 就绪；重复创建相同 Bed
+不会重置运行期策略，初始参数冲突则拒绝。未启用网络能力时，带策略的创建请求返回 503，
+不带策略的创建继续使用原有降级行为。`/v1/beds/capabilities` 的 `network_policy` 表示
+API 是否支持，实际可用性仍看 `network.enabled`。
+
+每个现存 Bed 提供 `/v1/beds/{id}/network/policy`：GET 查询、POST/PUT 替换、PATCH 合并
+规则数组、DELETE 删除 target 字符串数组。`/network/healthz` 查询同一 Bed 的有效状态。
+这些控制面接口按路径中的 Bed 定位，不接受 header 覆盖；操作引用防止执行期间被回收。
+缺少 Bed 返回 404，网络管理未启用返回 503，非法规则返回 400，nft 提交失败返回 500。
+查询不会创建 Bed，也不会把共享网络报成 enforcing。
+
+策略包含 `defaultAction: allow|deny` 和 `egress: [{action,target}]`；target 接受 IP、CIDR、
+域名和 `*.example.com` 通配域名。省略 defaultAction 时，空规则允许全部，有规则则默认拒绝。
+IP/CIDR 拒绝优先于允许；域名拒绝由 Bed DNS 执行，默认拒绝策略下，仅在 nft 成功安装解析结果
+后才返回 DNS 响应。放行地址使用 DNS TTL（最多 300 秒）到期，受每 Bed 4096 个地址上限约束。
+Bed 进程只能向本 Bed DNS gateway 的 53 端口查询；IP 规则控制实际连接，域名规则不解释
+HTTPS、DoH 或已经由调用方掌握的 IP，不能作为 HTTP Host/SNI 校验或 MITM 的替代。
+
+策略更新使用原子 nft transaction，失败保留旧策略；更新清除旧的 DNS 放行集，旧版本下
+尚未返回的 DNS 响应不能重新开放地址。已缓存 DNS 的客户端在收紧规则后可能需要重新解析。
+规则在 Bed 自己的网络 namespace 内执行，不修改 carrier 默认出站策略；现有跨 Bed 隔离
+规则仍然成立。当前网络 backend 仅提供 IPv4 外部连通，IPv6 转发仍被阻断。
+
+响应的 `scope=bed_processes` 明确限定命令和 shell；共享 Chromium、Hostel 代办的文件下载
+等 carrier 进程不在其作用域。策略随 resident Bed 网络存在，evict 后销毁，不随 workspace
+Store 保存；控制面重建 Bed 时需重传初始策略。透明凭据注入与 browser proxy 仍是独立能力。

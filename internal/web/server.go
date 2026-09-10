@@ -197,6 +197,10 @@ func (s *Server) routes() {
 		v1.POST("", s.bedCreate)
 		v1.GET("/capabilities", s.capabilities)
 		v1.GET("/:bedId", s.bedGet)
+		v1.GET("/:bedId/network/healthz", s.networkPolicy)
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+			v1.Handle(method, "/:bedId/network/policy", s.networkPolicy)
+		}
 		v1.DELETE("/:bedId", s.bedDelete)
 		v1.POST("/:bedId/checkpoint", s.bedCheckpoint)
 		// Browser amenity verbs (docs/amenity.md §2) — bed-scoped actions,
