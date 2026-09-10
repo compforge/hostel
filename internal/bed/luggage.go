@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/filepathx"
+	"github.com/qiankunli/hostel/internal/store"
 )
 
 // Luggage is an orphaned DORMANT Bed directory left by an unclean shutdown or
@@ -82,13 +83,13 @@ func (m *Manager) ListLuggage() []LuggageEntry {
 			continue
 		}
 		dir := filepath.Join(m.root, id)
-		policy, err := m.resolveStorePolicy(id, "")
-		backend := ""
-		if err == nil {
-			backend = policy
+		meta, hasMeta := loadMeta(dir)
+		backend := meta.Store
+		if backend == "" {
+			backend = m.store.Name()
 		}
 		l := LuggageEntry{BedID: id, Bytes: filepathx.DirBytes(dir), Store: backend}
-		if meta, ok := loadMeta(dir); ok {
+		if hasMeta {
 			l.Generation = meta.Generation
 			l.SnapshotGeneration = meta.SnapshotGeneration
 			l.SnapshotBytes = meta.SnapshotBytes
@@ -140,11 +141,7 @@ func (m *Manager) CollectLuggage(ctx context.Context) []string {
 	// One Stat (HEAD) per entry, paid only on the over-watermark path.
 	stale := map[string]bool{}
 	for _, l := range luggage {
-		policy, err := m.resolveStorePolicy(l.BedID, "")
-		if err != nil {
-			continue
-		}
-		st, err := m.storeForPolicy(ctx, policy)
+		st, err := store.Select(ctx, m.store, l.Store)
 		if err != nil {
 			continue
 		}
@@ -160,9 +157,6 @@ func (m *Manager) CollectLuggage(ctx context.Context) []string {
 	})
 	var reaped []string
 	for _, l := range luggage {
-		if l.Store == "" {
-			continue
-		} // unknown policy is not permission to discard data
 		if total <= m.luggageLow {
 			break
 		}

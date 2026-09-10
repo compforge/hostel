@@ -353,7 +353,11 @@ func lifecycleRecordToView(record *bed.LifecycleRecord) *lifecycleRecordView {
 func (s *Server) bedDelete(c *gin.Context) {
 	id := c.Param("bedId")
 	if c.Query("purge") == "true" {
-		if err := s.mgr.Purge(c.Request.Context(), id); err != nil {
+		if err := s.mgr.PurgeWithStore(c.Request.Context(), id, c.Query("store")); err != nil {
+			if errors.Is(err, bed.ErrStoreInvalid) || errors.Is(err, bed.ErrStoreConflict) {
+				respondBedError(c, err)
+				return
+			}
 			if errors.Is(err, bed.ErrPurgeDefault) {
 				badRequest(c, err.Error())
 				return

@@ -26,35 +26,13 @@ import (
 // backends never inspect or migrate another layout. Auto with no bucket remains
 // noop; with a bucket it recognizes each bed's committed layout before routing.
 func New(ctx context.Context, cfg Config) (Store, error) {
-	switch cfg.Backend {
-	case "", "auto":
-		if cfg.Bucket == "" {
-			return Noop{}, nil
-		}
-		if cfg.AutoPackFileThreshold < 0 {
-			return nil, fmt.Errorf("store: auto pack file threshold must be non-negative")
-		}
-		return newAuto(ctx, cfg)
-	case "noop":
-		return Noop{}, nil
-	case "s3", "cas":
-		if cfg.Bucket == "" {
-			return nil, fmt.Errorf("store: s3 backend requires a bucket")
-		}
-		return newCAS(ctx, cfg)
-	case "pack":
-		if cfg.Bucket == "" {
-			return nil, fmt.Errorf("store: pack backend requires a bucket")
-		}
-		return newPack(ctx, cfg)
-	case "tar":
-		if cfg.Bucket == "" {
-			return nil, fmt.Errorf("store: tar backend requires a bucket")
-		}
-		return newTar(ctx, cfg)
-	default:
-		return nil, fmt.Errorf("store: unknown backend %q", cfg.Backend)
+	s := &backends{cfg: cfg}
+	selected, err := s.selectBackend(ctx, cfg.Backend)
+	if err != nil {
+		return nil, err
 	}
+	s.Store = selected
+	return s, nil
 }
 
 type storeLayout string
@@ -92,18 +70,6 @@ type autoStore struct {
 	tar               *tarStore
 	packFileThreshold int
 	filter            snapshotFilter
-}
-
-func newAuto(ctx context.Context, cfg Config) (Store, error) {
-	obj, err := newS3Obj(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	filter, err := newSnapshotFilter(cfg.PersistedPaths)
-	if err != nil {
-		return nil, err
-	}
-	return newAutoStore(obj, cfg.Prefix, cfg.AutoPackFileThreshold, filter), nil
 }
 
 func newAutoStore(obj objAPI, prefix string, packFileThreshold int, filters ...snapshotFilter) *autoStore {

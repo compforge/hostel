@@ -57,12 +57,12 @@ type InitializationStatus struct {
 }
 
 type bedInitialization struct {
-	storePolicy string
-	status      InitializationStatus
-	done        chan struct{}
-	cancel      context.CancelFunc
-	bed         *Bed
-	err         error
+	store  store.Store
+	status InitializationStatus
+	done   chan struct{}
+	cancel context.CancelFunc
+	bed    *Bed
+	err    error
 }
 
 const (
@@ -161,27 +161,11 @@ func (m *Manager) beginInitialization(
 		ctx = context.Background()
 	}
 
-	if err := m.validateStorePolicy(requestedStore); err != nil {
-		return nil, nil, err
-	}
-	// Resolve outside the manager lock: filesystem latency must not stall all
-	// Beds. The singleflight checks below recheck the winning live selection.
-	requestedStore = m.normalizedStorePolicy(requestedStore)
-	if requestedStore != "" {
-		selected, err := m.storeForPolicy(ctx, requestedStore)
-		if err != nil {
-			return nil, nil, fmt.Errorf("%w: %v", ErrStoreInvalid, err)
-		}
-		requestedStore = selected.Name()
-	}
-	policy, policyErr := m.resolveStorePolicy(id, requestedStore)
-	if policyErr == nil {
-		selected, err := m.storeForPolicy(ctx, policy)
-		if err != nil {
-			policyErr = fmt.Errorf("%w: %v", ErrStoreInvalid, err)
-		} else {
-			policy = selected.Name()
-		}
+	// Resolve outside the manager lock; resident/in-flight Beds below remain
+	// authoritative when the request omits Store.
+	selected, selectionErr := m.bedStore(ctx, id, requestedStore)
+	if requestedStore != "" && selectionErr != nil {
+		return nil, nil, selectionErr
 	}
 	m.mu.Lock()
 	m.pruneFailedInitializationsLocked(time.Now())
@@ -191,15 +175,15 @@ func (m *Manager) beginInitialization(
 	}
 	if resident, ok := m.beds[id]; ok {
 		m.mu.Unlock()
-		return nil, resident, storePolicyMatches(requestedStore, resident.storePolicy)
+		return nil, resident, checkBedStore(requestedStore, selected, resident.store)
 	}
 	if current, ok := m.initializations[id]; ok && current.status.Phase == PhaseInitializing {
 		m.mu.Unlock()
-		return current, nil, storePolicyMatches(requestedStore, current.storePolicy)
+		return current, nil, checkBedStore(requestedStore, selected, current.store)
 	}
-	if policyErr != nil {
+	if selectionErr != nil {
 		m.mu.Unlock()
-		return nil, nil, policyErr
+		return nil, nil, selectionErr
 	}
 	// A new request retries a failed initialization. Its previous status remains
 	// observable until this explicit desired-state signal arrives.
@@ -221,10 +205,10 @@ func (m *Manager) beginInitialization(
 	now := time.Now()
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), initializationTimeout)
 	initialization := &bedInitialization{
-		storePolicy: policy,
+		store: selected,
 		status: InitializationStatus{
 			ID:    id,
-			Store: policy,
+			Store: selected.Name(),
 			BedStatus: BedStatus{
 				Phase: PhaseInitializing,
 				Readiness: Readiness{

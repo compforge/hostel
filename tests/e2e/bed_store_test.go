@@ -38,8 +38,7 @@ func TestBedStoreAPIOverridesInstanceDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	must2xx(t, "create noop", created)
-	b := c.waitBed(t, "noop-bed", func(b bedView) bool { return b.Status.Readiness.Ready }, "noop ready")
-	_ = b
+	c.waitBed(t, "noop-bed", func(b bedView) bool { return b.Status.Readiness.Ready }, "noop ready")
 	must2xx(t, "write noop", c.upload(t, "noop-bed", "/workspace/data.txt", []byte("local data")))
 	for _, action := range []struct{ method, path string }{{"POST", "/v1/beds/noop-bed/checkpoint"}, {"DELETE", "/v1/beds/noop-bed"}} {
 		response, err := c.json(ctx, action.method, action.path, "", nil, nil)
@@ -48,16 +47,21 @@ func TestBedStoreAPIOverridesInstanceDefault(t *testing.T) {
 		}
 		must2xx(t, action.path, response)
 	}
-	created, err = c.json(ctx, "POST", "/v1/beds", "", map[string]string{"id": "noop-bed"}, nil)
+	created, err = c.json(ctx, "POST", "/v1/beds", "", map[string]string{"id": "noop-bed", "store": "noop"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	must2xx(t, "resume noop", created)
-	c.waitBed(t, "noop-bed", func(b bedView) bool { return b.Status.Readiness.Ready && b.Store == "noop" }, "noop choice retained")
+	c.waitBed(t, "noop-bed", func(b bedView) bool { return b.Status.Readiness.Ready && b.Store == "noop" }, "noop override reused")
 	if got := c.download(t, "noop-bed", "/workspace/data.txt"); got.Status != 404 {
 		t.Fatalf("noop restored data: %d", got.Status)
 	}
-	response, err := c.json(ctx, "DELETE", "/v1/beds/noop-bed?purge=true", "", nil, nil)
+	evicted, err := c.json(ctx, "DELETE", "/v1/beds/noop-bed", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must2xx(t, "evict before purge", evicted)
+	response, err := c.json(ctx, "DELETE", "/v1/beds/noop-bed?purge=true&store=noop", "", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

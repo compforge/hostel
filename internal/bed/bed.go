@@ -54,11 +54,9 @@ type Bed struct {
 	// filesystem is the Bed's durable data realm. Executor replacement changes
 	// only its process View; bed_home and file identity stay here with the Bed.
 	filesystem *bedfs.FS
-	// durable is immutable: noop treats local changes as already accepted,
-	// while a real store keeps dirty data pinned until its snapshot commits.
-	durable     bool
-	store       store.Store
-	storePolicy string
+	// store is fixed for the resident Bed; noop accepts local changes without
+	// requiring a remote snapshot or durability pin.
+	store store.Store
 
 	executorMu sync.Mutex // serializes lazy create, replacement and shutdown
 	executor   executor.Executor
@@ -154,7 +152,7 @@ func (b *Bed) activityLocked() Activity {
 }
 
 func (b *Bed) dataSyncedLocked() bool {
-	return !b.durable || !b.lastActiveAt.After(b.persistedAt)
+	return b.StoreName() == "noop" || !b.lastActiveAt.After(b.persistedAt)
 }
 
 // pinnedLocked is a compound capacity fact, not another lifecycle state.

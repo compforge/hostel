@@ -40,10 +40,6 @@ func respondBedError(c *gin.Context, err error) {
 		respondError(c, http.StatusConflict, ErrBedStoreConflict, err.Error())
 		return
 	}
-	if errors.Is(err, bed.ErrStoreRecord) {
-		runtimeError(c, err.Error())
-		return
-	}
 	if errors.Is(err, bed.ErrResourcePressure) {
 		respondError(c, http.StatusTooManyRequests, ErrResourcePressure, err.Error())
 		return

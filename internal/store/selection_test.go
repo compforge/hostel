@@ -6,11 +6,11 @@ import (
 
 func TestSelectionOverridesDefaultAndSharesObjectClient(t *testing.T) {
 	cfg := Config{Backend: "auto", Bucket: "test", Endpoint: "http://127.0.0.1:1", Region: "us-east-1", AccessKeyID: "test", SecretAccessKey: "test"}
-	selection, err := NewSelection(t.Context(), cfg)
+	selection, err := New(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for requested, want := range map[string]string{"": "auto", "default": "auto", "noop": "noop", "s3": "s3", "cas": "s3", "pack": "pack", "tar": "tar"} {
+	for requested, want := range map[string]string{"": "auto", "noop": "noop", "s3": "s3", "cas": "s3", "pack": "pack", "tar": "tar"} {
 		got, err := Select(t.Context(), selection, requested)
 		if err != nil || got.Name() != want {
 			t.Fatalf("select %q = %v, %v", requested, got, err)
@@ -23,7 +23,7 @@ func TestSelectionOverridesDefaultAndSharesObjectClient(t *testing.T) {
 		t.Fatal("backend formats opened separate object clients")
 	}
 	cfg.Backend = "noop"
-	noop, err := NewSelection(t.Context(), cfg)
+	noop, err := New(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,7 +17,7 @@ func TestBedStoreAPISelectionAndConflict(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"store":"noop"`) {
 		t.Fatalf("bed=%s", rec.Body.String())
 	}
-	rec = do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"one","store":"default"}`), headers)
+	rec = do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"one","store":"noop"}`), headers)
 	if rec.Code != 200 {
 		t.Fatalf("conflict=%d %s", rec.Code, rec.Body.String())
 	}

@@ -33,20 +33,21 @@ evict 完成                ──→ 删除本地 Bed 目录（所有 Store bac
 
 ### Bed 级选择与实例默认配置
 
-`HOSTEL_STORE` 和 S3 连接参数定义实例默认 Store。创建 Bed 时可通过
-`POST /v1/beds` 的 `store` 字段选择 `noop`、`auto`、`s3`/`cas`、`pack`、`tar` 或 `default`；API 参数优先，省略时复用该 Bed 的本地
-选择，新的身份继承实例默认。两类 Bed 可以共用同一 Hostel，实例不解释调用方业务。
-选择 noop 只禁用该 Bed 的自动远端读写，不移除 S3 配置，也不限制调用方自行管理数据。
+`HOSTEL_STORE` 定义实例默认 backend，S3 连接参数由 Store 组件统一管理和复用。
+创建 Bed 时，API 的 `store` 参数优先于默认值，解析后的 backend 就是 `bed.store`。
+同一个 Hostel 可以同时管理 noop 和 durable Bed；Hostel 不解释调用方业务。
 
-选择在 Stage-in 前解析为最终 backend 名称并写入 Bed 元数据（`cas` 归一为 `s3`），贯穿 Restore、checkpoint、周期同步、evict、luggage GC 与
-purge。已存在或正在初始化的身份拒绝显式切换 Store，返回 `409 BED_STORE_CONFLICT`；
-purge 结束身份后可以重新选择。省略字段是重用语义，不表示强制切回默认。
+Bed 只持有一个有效 Store，元数据中的 `store` 是它的序列化形式。Restore、checkpoint、
+周期同步、evict、luggage GC 和 purge 都使用该 Bed 的 Store。noop 不做远端读写，
+也不因待上传数据占用 durable pin，持久化由调用方自行管理。
 
-控制记录保存在 workspace-root 下的 `.bed-stores/<id>.json`，不位于会被 Stage-in
-替换或 evict 删除的 Bed 目录中。它只保存策略，不保存 workspace 内容；daemon 重启和
-luggage GC 不清除它，purge 在数据删除成功后清除。已有本地 Bed 没有记录时按实例默认
-解释。记录损坏时拒绝回退默认，以免误触远端数据。跨 carrier 时调度方必须重传选择；
-新 carrier 没有该本地控制记录。
+创建请求省略 Store 时复用正在使用的 Bed，或读取遗留本地目录的元数据；没有本地 Bed
+则使用实例默认。重复创建可以复用同一 backend，但不能切换正在初始化或使用中的 backend，
+因为创建接口不承担运行中数据迁移。
+
+正常 evict 删除本地目录及元数据。重建或跨 carrier 创建时，调用方必须重传 Store 覆盖值。
+无本地 Bed 的 purge 同样支持 `?purge=true&store=<backend>`，未传时取实例默认。
+Store 的路由选择必须在 Restore 之前确定，因此不能依赖尚未读取的远端快照元数据。
 
 `capabilities.bed_store_selection=true` 声明此 API 能力。`instance.store` / capabilities
 的 `persistence` 仍是实例默认值；Bed 明细、初始化响应与 inventory 的 `store` 是实际

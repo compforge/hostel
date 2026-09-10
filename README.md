@@ -262,13 +262,12 @@ Content-Type: application/json
 {"id":"externally-managed","store":"noop"}
 ```
 
-Omit `store` to reuse an existing choice or inherit the instance default for a
-new Bed; `store: "default"` explicitly selects that default. Explicit `noop`,
-`auto`, `s3`/`cas`, `pack`, or `tar` values override it. The choice survives
-local eviction and daemon restart. Recreating on another instance requires the
-caller to repeat it. Changing an existing choice returns `409 BED_STORE_CONFLICT`;
-purge ends the identity and permits a new choice. See [Store](docs/store.md) for
-lifecycle and inventory semantics.
+Explicit `store` values (`noop`, `auto`, `s3`/`cas`, `pack`, `tar`) take
+precedence over `HOSTEL_STORE`. Omission
+reuses a resident Bed or its local metadata; a new Bed inherits the default.
+Eviction removes the local metadata, so repeat the override when recreating a
+Bed or moving it to another instance. Changing an active Bed's backend returns
+`409 BED_STORE_CONFLICT`. See [Store](docs/store.md).
 
 Snapshots restore when the bed is created again and persist on evict
 (DELETE / idle reap) or explicit checkpoint. Normal
@@ -276,8 +275,9 @@ operations and pressure submit coalesced sync requests; the store loop owns
 serialization, retry/backoff, and the optional `--persist-interval` safety net.
 A bed's durable identity is the
 snapshot; the local dir is just its working copy.
-`DELETE /v1/beds/:id` evicts (a durable snapshot keeps the identity; noop keeps
-only its local Store selection); add `?purge=true` to also delete any snapshot and end the identity.
+`DELETE /v1/beds/:id` evicts (durable snapshots remain; noop keeps no data).
+Add `?purge=true` to delete the snapshot as well. If the Bed has no local metadata,
+repeat its override, for example `?purge=true&store=noop`; omission uses the instance default.
 An evict raced by live traffic returns
 `409 BED_BUSY` instead of dropping mid-flight writes.
 Bucket addressing defaults to virtual-hosted style (required by TOS); set

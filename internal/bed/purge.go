@@ -44,6 +44,12 @@ type bedPurge struct {
 // purge fence remains visible for the whole transition, so no concurrent
 // InitializeBed can recreate the identity before deletion commits.
 func (m *Manager) Purge(ctx context.Context, id string) error {
+	return m.PurgeWithStore(ctx, id, "")
+}
+
+// PurgeWithStore accepts the same Store override as creation. Callers must
+// repeat it when the Bed is absent locally (evicted or moved to another carrier).
+func (m *Manager) PurgeWithStore(ctx context.Context, id, requestedStore string) error {
 	if id == "" || id == m.defaultBed {
 		return ErrPurgeDefault
 	}
@@ -66,7 +72,7 @@ func (m *Manager) Purge(ctx context.Context, id string) error {
 		}
 	}
 
-	err := m.purgeOwned(ctx, id)
+	err := m.purgeOwned(ctx, id, requestedStore)
 	m.finishPurge(id, purge, err)
 	return err
 }
@@ -103,19 +109,20 @@ func (m *Manager) finishPurge(id string, purge *bedPurge, err error) {
 	close(purge.done)
 }
 
-func (m *Manager) purgeOwned(ctx context.Context, id string) error {
-	policy, err := m.resolveStorePolicy(id, "")
-	m.mu.Lock()
-	if b := m.beds[id]; b != nil {
-		policy, err = b.storePolicy, nil
-	} else if initialization := m.initializations[id]; initialization != nil {
-		policy, err = initialization.storePolicy, nil
-	}
-	m.mu.Unlock()
+func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
+	st, err := m.bedStore(ctx, id, requested)
 	if err != nil {
 		return err
 	}
-	st, err := m.storeForPolicy(ctx, policy)
+	m.mu.Lock()
+	if b := m.beds[id]; b != nil {
+		err = checkBedStore(requested, st, b.store)
+		st = b.store
+	} else if initialization := m.initializations[id]; initialization != nil {
+		err = checkBedStore(requested, st, initialization.store)
+		st = initialization.store
+	}
+	m.mu.Unlock()
 	if err != nil {
 		return err
 	}
@@ -149,16 +156,11 @@ func (m *Manager) purgeOwned(ctx context.Context, id string) error {
 		defer b.persistMu.Unlock()
 		m.teardown(b)
 	}
-	if err := os.RemoveAll(filepath.Join(m.root, id)); err != nil {
-		return err
-	}
 	deleteCtx, cancelDelete := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
 	defer cancelDelete()
+	// Keep local metadata available for retry if deleting the snapshot fails.
 	if err := st.Delete(deleteCtx, id); err != nil {
 		return err
 	}
-	if err := os.Remove(m.storePolicyPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
+	return os.RemoveAll(filepath.Join(m.root, id))
 }

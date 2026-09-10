@@ -186,7 +186,7 @@ func TestLifecycleObservations(t *testing.T) {
 	if lifecycle.LastInitialization == nil || lifecycle.LastInitialization.Result != "success" || lifecycle.LastInitialization.Source != "fresh" {
 		t.Fatalf("LastInitialization = %+v", lifecycle.LastInitialization)
 	}
-	if got := lifecycleStageNames(lifecycle.LastInitialization); got != "record_store,stage_in_bedfs,prepare_bedfs,prepare_resident" {
+	if got := lifecycleStageNames(lifecycle.LastInitialization); got != "stage_in_bedfs,prepare_bedfs,prepare_resident" {
 		t.Fatalf("initialization stages = %q", got)
 	}
 
