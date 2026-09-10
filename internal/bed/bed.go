@@ -28,6 +28,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/network"
 	"github.com/qiankunli/hostel/internal/store"
 )
 
@@ -47,7 +48,8 @@ func ShortID(id string) string {
 
 // Bed is one isolation unit.
 type Bed struct {
-	ID string
+	initialPolicy *network.Policy // creation identity only; effective policy belongs to NetworkManager
+	ID            string
 	// Dir is the bed's dir: meta.json + data/ (docs/store.md §4).
 	// Snapshots pack this dir; bed code never sees it.
 	Dir       string

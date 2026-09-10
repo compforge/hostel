@@ -31,6 +31,7 @@ type linuxEndpoint struct {
 	name, link, peer                 string
 	gateway, address                 netip.Addr
 	dns                              *dnsForwarder
+	policy                           *policyControl
 	namespace, device, table, config bool
 }
 
@@ -178,6 +179,8 @@ func (e *linuxEndpoint) create(ctx context.Context) error {
 	}
 	e.config = true
 	e.dns = newDNSForwarder(e.gateway.String(), b.resolvers)
+	e.policy = &policyControl{current: Policy{DefaultAction: "allow"}, apply: e.applyPolicy, learn: e.learnDNS}
+	e.dns.policy = e.policy
 	if err := os.WriteFile(filepath.Join(dir, "resolv.conf"), []byte("nameserver "+e.gateway.String()+"\n"+b.resolverOptions), 0644); err != nil {
 		return err
 	}
@@ -202,6 +205,9 @@ func (e *linuxEndpoint) create(ctx context.Context) error {
 		return err
 	}
 	e.table = true
+	if err := e.applyPolicy(ctx, e.policy.current); err != nil {
+		return err
+	}
 	if err := e.dns.Start(); err != nil {
 		return err
 	}
@@ -238,6 +244,11 @@ func (e *linuxEndpoint) Gateway() string { return e.gateway.String() }
 
 func (e *linuxEndpoint) Close(ctx context.Context) error {
 	var err error
+	if e.policy != nil {
+		e.policy.mu.Lock()
+		e.policy.closed = true
+		e.policy.mu.Unlock()
+	}
 	if e.dns != nil {
 		e.dns.Close()
 	}

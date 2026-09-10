@@ -22,7 +22,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/qiankunli/hostel/internal/network"
 	"github.com/qiankunli/hostel/internal/store"
+	"reflect"
 )
 
 // Phase is the coarse local lifecycle of a Bed identity. Activity
@@ -58,11 +60,12 @@ type InitializationStatus struct {
 }
 
 type bedInitialization struct {
-	status InitializationStatus
-	done   chan struct{}
-	cancel context.CancelFunc
-	bed    *Bed
-	err    error
+	initialPolicy *network.Policy
+	status        InitializationStatus
+	done          chan struct{}
+	cancel        context.CancelFunc
+	bed           *Bed
+	err           error
 }
 
 const (
@@ -78,7 +81,7 @@ func (m *Manager) InitializeBed(ctx context.Context, id string) (InitializationS
 }
 
 func (m *Manager) InitializeBedWithOptions(ctx context.Context, id string, options CreateOptions) (InitializationStatus, error) {
-	initialization, resident, err := m.beginInitialization(ctx, id, options.Store)
+	initialization, resident, err := m.beginInitialization(ctx, id, options)
 	if err != nil {
 		return InitializationStatus{}, err
 	}
@@ -95,7 +98,7 @@ func (m *Manager) InitializeBedWithOptions(ctx context.Context, id string, optio
 // the same initialization as POST /v1/beds, but waits for readiness before
 // returning a Bed so no operation can observe a partial BedFS.
 func (m *Manager) Ensure(ctx context.Context, id string) (*Bed, error) {
-	initialization, resident, err := m.beginInitialization(ctx, id, "")
+	initialization, resident, err := m.beginInitialization(ctx, id, CreateOptions{})
 	if err != nil || resident != nil {
 		return resident, err
 	}
@@ -157,8 +160,19 @@ func (m *Manager) initializationStatuses() []InitializationStatus {
 func (m *Manager) beginInitialization(
 	ctx context.Context,
 	id string,
-	requestedStore string,
+	options CreateOptions,
 ) (*bedInitialization, *Bed, error) {
+	requestedStore := options.Store
+	if options.NetworkPolicy != nil {
+		normalized, err := network.NormalizePolicy(*options.NetworkPolicy)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !m.network.Report().Enabled {
+			return nil, nil, network.ErrUnavailable
+		}
+		options.NetworkPolicy = &normalized
+	}
 	if id == "" {
 		id = m.defaultBed
 	}
@@ -184,11 +198,11 @@ func (m *Manager) beginInitialization(
 
 	if resident, ok := m.beds[id]; ok {
 		m.mu.Unlock()
-		return nil, resident, checkBedStore(requestedStore, selected, resident.Store)
+		return nil, resident, errors.Join(checkBedStore(requestedStore, selected, resident.Store), checkInitialPolicy(options.NetworkPolicy, resident.initialPolicy))
 	}
 	if current, ok := m.initializations[id]; ok && current.status.Phase == PhaseInitializing {
 		m.mu.Unlock()
-		return current, nil, checkBedStore(requestedStore, selected, current.status.Store)
+		return current, nil, errors.Join(checkBedStore(requestedStore, selected, current.status.Store), checkInitialPolicy(options.NetworkPolicy, current.initialPolicy))
 	}
 	if m.retirements[id] != nil {
 		m.mu.Unlock()
@@ -218,6 +232,7 @@ func (m *Manager) beginInitialization(
 	now := time.Now()
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), initializationTimeout)
 	initialization := &bedInitialization{
+		initialPolicy: options.NetworkPolicy,
 		status: InitializationStatus{
 			ID:    id,
 			Store: selected,
@@ -271,6 +286,14 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 	}()
 	if err = ctx.Err(); err != nil {
 		return
+	}
+	if initialization.initialPolicy != nil {
+		// Apply before publishing resident: no Bed command can run with allow-all
+		// while its requested initial policy is still being installed.
+		if _, err = m.network.NetworkPolicy(ctx, bedID, network.PolicyMutation{Replace: initialization.initialPolicy}); err != nil {
+			return
+		}
+		resident.initialPolicy = initialization.initialPolicy
 	}
 	m.updateInitialization(initialization, "PublishingResident", "publishing the resident Bed")
 	if err = m.publishInitializedBed(initialization, resident); err != nil {
@@ -438,7 +461,10 @@ func residentInitializationStatus(resident *Bed) InitializationStatus {
 // CreateOptions selects the backend when creating a Bed. An explicit Store
 // overrides the instance default. After eviction, callers must repeat overrides
 // because the local Bed metadata is removed together with its workspace.
-type CreateOptions struct{ Store string }
+type CreateOptions struct {
+	Store         string
+	NetworkPolicy *network.Policy
+}
 
 var (
 	ErrStoreInvalid  = errors.New("bed: unsupported store kind")
@@ -469,4 +495,11 @@ func checkBedStore(requested string, selected, current store.Kind) error {
 
 func retirementStatus(b *Bed) InitializationStatus {
 	return InitializationStatus{ID: b.ID, Store: b.Store, BedStatus: BedStatus{Phase: PhaseEvicting, Readiness: Readiness{Reason: "CleanupPending", Message: "previous Bed resources are being released; retry eviction before reinitializing"}}}
+}
+
+func checkInitialPolicy(requested, initial *network.Policy) error {
+	if requested != nil && !reflect.DeepEqual(requested, initial) {
+		return fmt.Errorf("%w: initial policy differs; use the policy API to update a resident Bed", network.ErrInvalidPolicy)
+	}
+	return nil
 }
