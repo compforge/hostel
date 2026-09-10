@@ -22,6 +22,6 @@ import (
 	"github.com/qiankunli/hostel/internal/resource"
 )
 
-func bindProcessCgroup(_ *exec.Cmd, _ resource.Tracker, _ string) (func(), error) {
+func bindProcessCgroup(_ *exec.Cmd, _ resource.Group) (func(), error) {
 	return func() {}, nil
 }

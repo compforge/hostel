@@ -52,17 +52,20 @@ bed.status.readiness：status + reason + message + updated_at
 | `resident_idle_synced` | 是 | 是 | 否 |
 | `evicting_dirty` | 是 | 是 | 是 |
 | `evicting_synced` | 是 | 是 | 否 |
-| `dormant` / `failed` / `purging` / 已移除 | 否 | 否 | 否 |
+| `evicting` + `CleanupPending` / 有残留运行资源的 `purging` | 是 | 否 | 否 |
+| `dormant` / `failed` / 无运行资源的 `purging` / 已移除 | 否 | 否 | 否 |
 
 三个聚合的包含关系为 `pinned_beds ⊆ resident_beds ⊆ occupied_beds`：
 
 - `occupied_beds`：正在占用 `max_beds` 名额的 tenant Bed，包含 initializing、resident 和 evicting。
-- `resident_beds`：已在当前 Node 准备好 BedFS/运行境的 tenant Bed，包含 resident 和 evicting，不包含 initializing。
+- `resident_beds`：已在当前 Node 准备好 BedFS/运行境的 tenant Bed，包含 resident 和仍在持久化复核的 evicting；不包含 initializing 或已停止准入的 CleanupPending。
 - `pinned_beds`：其中有 operation，或 durable store 下 `data_synced=false` 的 Bed；它们暂时只能由当前 carrier 承接。noop 只在 operation 进行期间 pinned。
 
 `phase_counts.initializing` 仍表达生命周期，`activity_counts.active|idle` 仍只表达已 resident Bed 的操作态；不为了“凑总数”把 initializing 塞进 activity。兼容 default Bed 不参与上述三项 tenant 容量计数。
 
 ![Bed 状态变化与 Node 容量计数](assets/bed-state-counts.svg)
+
+图中回收箭头表示清理成功路径；失败时停留在上表的 CleanupPending，占位直到清理完成。
 
 ## 流程
 
@@ -96,7 +99,7 @@ hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。�
 
 三条驱动线：
 
-- **初始化线**：`POST /v1/beds` 只接受 desired state，返回 `202`，后台执行 `StageInBedFS → prepare BedFS/isolation → publish resident`。Store Stat/Restore 不占用创建请求；同 id 并发初始化合并为一个任务，且在外部 I/O 前预占 `max-beds` 名额。`GET /v1/beds/:id` 通过 phase/readiness 观察进度；原生数据面首次请求走 `Ensure`，加入同一任务并等待 Ready，因此不会操作半成品目录。
+- **初始化线**：`POST /v1/beds` 只接受 desired state，返回 `202`，后台执行 `StageInBedFS → prepare BedFS/isolation → prepare network（启用时）→ publish resident`。Store Stat/Restore 不占用创建请求；同 id 并发初始化合并为一个任务，且在外部 I/O 前预占 `max-beds` 名额。`GET /v1/beds/:id` 通过 phase/readiness 观察进度；原生数据面首次请求走 `Ensure`，加入同一任务并等待 Ready，因此不会操作半成品目录。
 
 - **活跃度线**：request 的 touch 刷新 `last_active_at` 与 `retained_until`；`CollectExpired` 定时扫描过期 bed 触发 evict。evict 先 revoke 全部 session（cancel + 有界等待，shell 的 Close 也在这一阶段），再 persist，最后原子复核 `activitySeq`/`inflight`——persist 窗口内来了新活动则取消本次回收（服务优先于回收）。
 - **数据同步线**：`generation` 是数据版本，`persistedAt` 是同步水位，`last_active_at > persistedAt` 即 dirty。initialization/operation/session/pressure 只向 Store 同步循环提交 trigger；循环负责合并、串行、周期与失败退避。`Checkpoint` 和 `evict` 是必须等待结果的边界。语义详见 `docs/store.md`。
@@ -104,7 +107,7 @@ hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。�
 ### 3. Hostel
 
 ```text
-启动组装（isolation → amenity → store → bed manager → web）→ 服务
+启动组装（探测文件、网络与资源能力 → 组装设施、Store 与 Bed manager → web）→ 服务
    ├─ 后台循环：idle bed reaper / luggage GC / Store 同步调度
    └─ 事实上报：/healthz（可服务性）、GET /v1/beds（status + bed 概要）
 → SIGTERM 优雅关停
@@ -112,9 +115,9 @@ hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。�
 
 hostel 不自杀，也没有 drain 接口。它表达"可以释放我"的唯一方式是 `GET /v1/beds` 里的 `instance.status`（retained / draining / releasable）——判据收敛在 hostel 内，上游只读结论，不再自己拼 phase/activity counts、store 和 luggage。
 
-容量准入与这里的生命周期状态正交：`instance.status` 回答“能否安全释放这个 Hostel”，未来的
-`admission.accepting_new_beds` 回答“资源余量是否还能承接新的未 pinned bed”。短期数量安全阀与长期
-pod/cgroup 资源水位方案见 `resource.md`〈当前准入策略〉。
+容量准入与生命周期状态正交：`instance.status` 回答“能否安全释放这个 Hostel”，
+`resource_admission.accepting` 回答当前资源水位是否允许接纳新 Bed；数量上限另行检查。
+二者都不代表已经施加 per-bed 硬限额，详见 [resource.md](resource.md)。
 
 ## 接口边界
 
@@ -148,7 +151,21 @@ shell（`/session`）与 CDP 连接语义逐项相同：客户端显式开闭、
 
 Store Stat/Restore 的延迟和可用性属于数据准备，不属于 HTTP handler 或 Hostel 进程启动。管理接口先记录“希望这个 Bed resident”，初始化控制器再把它推进到 Ready：调用方可区分“请求已接受”和“Bed 已可服务”，S3 冷启动不会占住创建连接，也不会让半恢复目录进入 resident map。readiness reason 保留当前等待边界，失败 message 保留原始错误链，控制面无需从裸 EOF 或 500 文本猜原因。
 
-Ready 是数据面准入门槛，不是“初始化任务已接受”：Store Stage-in/Restore 未完成时 Bed 始终保持 initializing/not ready；只有恢复结果原子发布，且 BedFS/isolation 准备成功后，才进入 resident/ready。这个顺序类似 kubelet 在镜像拉取与容器准备完成前不会把 Pod 标成 Ready；区别是 kubelet 还会汇总容器 readiness、探针和 readiness gates 等更多条件，而 Hostel 的 Bed Ready 只表达自身负责的数据恢复与运行环境已经可服务。
+Ready 是数据面准入门槛，不是“初始化任务已接受”：Store Stage-in/Restore 未完成时 Bed 始终保持 initializing/not ready；只有恢复结果原子发布，且 BedFS/isolation、已启用的网络和资源记账父组准备成功后，才进入 resident/ready。这个顺序类似 kubelet 在镜像拉取与容器准备完成前不会把 Pod 标成 Ready；区别是 kubelet 还会汇总容器 readiness、探针和 readiness gates 等更多条件，而 Hostel 的 Bed Ready 只表达自身负责的数据恢复与运行环境已经可服务。
+
+### 隔离资源与 Bed 生命周期
+
+Bed Ready 只表示本次选定能力的准备已经完成，不表示所有维度都达到理想隔离，也不是
+所有执行组合的端到端验证。能力不足时的降级与执行失败语义见 [isolation.md](isolation.md)。
+
+resident Bed 的网络资源不属于某一次 Executor：Executor 替换保留网络身份；Bed teardown
+停止执行并释放设施后再回收网络。设施切片、Bed 级凭据和底层网络各有清理 owner。
+最终活动复核后，Bed 转入待清理集合，从 resident 移除，但继续占用 occupied 名额。
+其状态为 `evicting` / `CleanupPending` / not ready，不再报告 resident 的 activity。
+停止 Executor、释放设施、资源组、网络、BedFS 并删除本地目录后才释放身份。任一步失败
+都保留原 Bed 与资源句柄；Evict/Purge 或实例关闭可以重试，同 ID 初始化与 luggage GC
+在此期间不能接管目录。初始化回滚失败也遵循同一规则。具体 owner 见
+[network.md](network.md) 和 [amenity.md](amenity.md)。
 
 ### 为什么终结权必须在上一层
 

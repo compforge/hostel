@@ -63,6 +63,9 @@ func TestExecutionLifecycle(t *testing.T) {
 		t.Fatalf("supervisor interrupted process outcome=%+v", finished.Result.Process)
 	}
 
+	// A killed shell may append a diagnostic after the pre-interrupt cursor.
+	// Check the empty tail only after consuming the complete terminal log.
+	logs = waitExecutionLogs(t, c, background.ExecutionID, func(got executionLogsView) bool { return !got.Running })
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	var tail executionLogsView
 	tailResult, err := c.json(ctx, "GET", "/command/"+url.PathEscape(background.ExecutionID)+"/logs?cursor="+url.QueryEscape(strconv.FormatInt(logs.NextCursor, 10)), "", nil, &tail)

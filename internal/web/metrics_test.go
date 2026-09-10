@@ -106,3 +106,7 @@ func TestMetricsWatchHeaders(t *testing.T) {
 		}
 	}
 }
+
+func (t *fakeResourceTracker) ExecutorGroup(bedID, executorID string) (resource.Group, error) {
+	return resource.Noop("test").ExecutorGroup(bedID, executorID)
+}

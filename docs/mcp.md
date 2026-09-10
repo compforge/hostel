@@ -4,6 +4,10 @@ Hostel 在 carrier 内维护远程 MCP 连接，每个 bed 拥有独立的配置
 MCP server 可以位于外部；设施支持 SSE 和 Streamable HTTP 的工具发现与执行，
 不启动 stdio server，不承担上层平台的工具授权、调度或持久化配置。
 
+配置与连接切分属于 [Bed 隔离](isolation.md) 的设施维度，整体所有权见
+[amenity.md](amenity.md)。它不为远端 MCP server 创建租户，也不保证远端存储按 Bed 隔离；
+远端数据授权取决于所提供的凭据及服务自身策略。
+
 ## 调用与隔离
 
 HTTP 请求沿用 `X-Hostel-Bed`（或 `?bed=`）选择 bed，省略时使用 default。

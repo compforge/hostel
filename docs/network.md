@@ -2,11 +2,14 @@
 
 ## 理念与边界
 
+网络隔离沿 Bed 的独立执行空间目标按环境能力尽量兑现，统一模型与组合约束见
+[isolation.md](isolation.md)。
+
 `network.Manager` 是实例级组件，管理 resident Bed 的网络资源。网络与文件隔离档正交；
 Bed 的每次命令和常驻 shell 使用相同 netns，Executor 替换不改变该网络身份。
 当前覆盖 `bed_processes`：共享 Chromium/MCP 等 amenity 的出站仍走 carrier 网络。
 
-网络能力自动启用，没有默认要求部署提权的开关。启动探测失败不影响服务启动；普通 Bed
+网络能力自动启用，没有默认要求部署提权的开关。网络候选探测失败不影响服务启动；普通 Bed
 继续共享 carrier 网络。探测成功后，单个 Bed 创建网络失败会使该次初始化失败，不能在
 同一实例中静默改成共享网络。运行中权限撤销也不会自动放开已隔离 Bed。
 
@@ -16,14 +19,19 @@ Bed 的每次命令和常驻 shell 使用相同 netns，Executor 替换不改变
 netns、veth、路由、nft 表与 DNS 转发入口，执行真实的 namespace 进入和能力丢弃，清理
 后缓存 verdict。诊断请求不会重新运行探测。
 
-Bed 初始化完成数据准备后分配网络，网络完成后才发布 resident。所有 Executor 的 Start
-入口先进入 Bed netns，再执行文件隔离和用户命令。进入后丢弃 capability bounding、
-inheritable 与 ambient sets，避免把网络管理权限交给 Bed 程序。
+Bed 初始化完成数据准备后获取具体 `Attachment`，保存到 resident Bed 的
+`isolation.Environment`，准备完成后才发布 Ready。命令和 shell 共用这个组合入口：
+先进入 netns，再准备文件视图，最后切换 UID（如需要）、清空 capability bounding /
+inheritable / ambient sets 并设置 `no_new_privs`，然后启动用户程序。Network Manager
+只负责网络进入，不自行决定文件边界前后的降权时机。实例在 HTTP 启动前还会实测选中的
+完整命令与 shell 组合；组合失败明确阻止启动。
 
-回收先停止 Bed 的命令和 shell、释放 amenity，再删除网络；失败的网络清理仍由 Manager
-持有并在关闭时重试。网络地址和 namespace 不写入 workspace，不随 Store 恢复。
-初始化已分配网络但未发布 resident 时，先用独立超时回收网络和 BedFS，再通知初始化
-结束，避免同 ID 的下一次初始化与旧网络清理交错。
+回收先停止 Bed 的命令和 shell、释放 amenity 与资源组，再删除网络。关闭失败的
+Attachment 保留清理 owner，但立即失去执行资格；同 ID Acquire 必须先清理残留才能
+分配新网络，旧句柄不能删除新分配。Bed Manager 同时保留待清理身份，阻止重建，并允许
+Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspace，不随 Store 恢复。
+初始化已分配网络但未发布 resident 时，先回收运行资源再通知初始化结束；回收失败继续
+保留身份与容量名额。
 
 ## 实现约束与诊断
 
@@ -48,3 +56,5 @@ inheritable 与 ambient sets，避免把网络管理权限交给 Bed 程序。
 共享 Chromium 的 BrowserContext 不是 OS 网络边界。待办是在创建 Context 时设置各 Bed
 的 `proxyServer`，代理按 Bed 的网络策略拨号，并覆盖 bypass、QUIC/WebRTC 等路径。
 该能力完成前浏览器不宣称受 Bed 网络隔离约束；待办统一记录于 `backlog.md`。
+
+组合与回收验证见 [单机 E2E](../tests/e2e/README.md) 和 [isolation.md](isolation.md)。

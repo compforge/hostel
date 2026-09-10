@@ -26,6 +26,7 @@ const (
 type targetOptions struct {
 	store            string
 	isolation        string
+	executor         string
 	maxBeds          int
 	allowPtrace      bool
 	helperPath       string
@@ -44,6 +45,9 @@ type target struct {
 // API; process/container lifecycle is fixture plumbing, not an alternate server.
 func startTarget(t *testing.T, options targetOptions) *target {
 	t.Helper()
+	if options.executor == "" {
+		options.executor = "auto"
+	}
 	if options.store == "" {
 		options.store = "noop"
 	}
@@ -119,7 +123,16 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 	}
 	workspaceRoot := options.workspaceRoot
 	if workspaceRoot == "" {
-		workspaceRoot = filepath.Join(t.TempDir(), "beds")
+		// Bed UIDs must traverse the fixture root to use absolute workspace paths.
+		// testing.T.TempDir's private ancestors would hide an otherwise valid UID backend.
+		workspaceRoot, err = os.MkdirTemp("", "hostel-e2e-beds-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(workspaceRoot) })
+		if err := os.Chmod(workspaceRoot, 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	pathshim := options.pathshim
 	if options.pathshimHostPath != "" {
@@ -139,7 +152,7 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 		"--addr", addr,
 		"--workspace-root", workspaceRoot,
 		"--isolation", options.isolation,
-		"--executor", "auto",
+		"--executor", options.executor,
 		"--store", options.store,
 		"--max-beds", fmt.Sprint(options.maxBeds),
 		"--max-pinned-beds", fmt.Sprint(options.maxBeds),

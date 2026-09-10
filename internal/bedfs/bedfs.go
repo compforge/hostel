@@ -79,7 +79,7 @@ type FS struct {
 	// (uid-isolated beds), else -1. Mechanism-independent invariant: whatever
 	// lands in a bed's workspace belongs to the bed — BedFS runs as the
 	// daemon, so without this, file-API writes would leave daemon-owned files
-	// the bed can read but not modify (docs/data.md, room/uid).
+	// the bed can read but not modify (docs/isolation.md, room/uid).
 	uid, gid int
 }
 
@@ -92,12 +92,26 @@ func New(root string) (*FS, error) {
 		return nil, fmt.Errorf("bedfs: open root %q: %w", root, err)
 	}
 	o := &FS{paths: newPaths(root), root: confined, uid: -1, gid: -1}
-	if fi, err := os.Lstat(root); err == nil {
-		if uid, gid, ok := ownerOf(fi); ok && uid != os.Geteuid() {
-			o.uid, o.gid = uid, gid
-		}
+	if err := o.RefreshOwner(); err != nil {
+		_ = confined.Close()
+		return nil, err
 	}
 	return o, nil
+}
+
+// RefreshOwner refreshes the owner used for subsequent daemon file operations.
+// Call only during preparation, before publishing the Bed: UID isolation changes
+// the root owner after New opens its descriptor.
+func (o *FS) RefreshOwner() error {
+	fi, err := o.root.Stat(".")
+	if err != nil {
+		return err
+	}
+	o.uid, o.gid = -1, -1
+	if uid, gid, ok := ownerOf(fi); ok && uid != os.Geteuid() {
+		o.uid, o.gid = uid, gid
+	}
+	return nil
 }
 
 // Close releases the descriptor anchoring this BedFS. A Bed keeps it open for

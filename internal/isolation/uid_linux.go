@@ -45,7 +45,7 @@ const AsUserArg = "__asuser"
 // default user gets 231072..) or LDAP/service accounts. Under our threat model
 // (a bed straying into another bed, not adversarial uid-squatting) that's
 // acceptable; a bed colliding with a real host identity is a deployment
-// concern, documented in docs/data.md. The uid is derived from the
+// concern, documented in docs/isolation.md. The uid is derived from the
 // data dir path (no registry), so Prepare (chown) and Wrap (setuid) agree with
 // no shared state and it stays stable across restarts. Two beds hashing to the
 // same uid is possible but rare; a colliding pair degrades to mutual access
@@ -161,6 +161,8 @@ func uidSmoke(self, workspaceRoot string) ProbeReport {
 
 	script := fmt.Sprintf("echo ok > probe.txt || exit 10; cat %q >/dev/null 2>&1 && exit 11; exit 0", secret)
 	cmd := exec.Command(self, AsUserArg, strconv.Itoa(bedUID(own)), own, "--", "/bin/sh", "-c", script)
+	// Production chdirs before dropping UID; the probe must exercise the same order.
+	cmd.Dir = own
 	report := runExecProbe(cmd)
 	if report.ExitCode == nil || *report.ExitCode == 0 {
 		return report
@@ -204,7 +206,10 @@ func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 // and write its own files. Implements Preparer; the bed manager calls it after
 // the dir is (re)created — including after a restore repopulated the tree.
 func (u *uidIso) Prepare(fs *bedfs.FS) error {
-	return prepareUIDDir(fs.Home(), bedUID(fs.Home()))
+	if err := prepareUIDDir(fs.Home(), bedUID(fs.Home())); err != nil {
+		return err
+	}
+	return fs.RefreshOwner()
 }
 
 func prepareUIDDir(dir string, uid int) error {
@@ -225,7 +230,7 @@ func prepareUIDDir(dir string, uid int) error {
 // off — precisely the old/custom-kernel hosts uid isolation targets). So we
 // skip any multiply-linked regular file: it keeps its original owner (root), so
 // the bed still can't write it. Deployments should also keep
-// fs.protected_hardlinks=1 (docs/data.md). Directories legitimately
+// fs.protected_hardlinks=1 (docs/isolation.md). Directories legitimately
 // have nlink>1 (subdirs, "."), so the guard is regular-files-only.
 func chownTree(root string, uid int) error {
 	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -265,4 +270,9 @@ func ApplyAsUser(uid int, _ string) error {
 		return fmt.Errorf("setuid: %w", err)
 	}
 	return nil
+}
+
+func (u *uidIso) identity(fs *bedfs.FS) identity {
+	uid := bedUID(fs.Home())
+	return identity{uid: uid, gid: uid}
 }

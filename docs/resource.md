@@ -1,11 +1,12 @@
 # Hostel 资源治理：采集、汇报、策略与隔离
 
-> **状态：carrier 资源采集、资源汇报、容量准入与 per-bed 记账已落地；per-bed 硬隔离后置。**
+> **状态：carrier 资源采集、资源汇报、容量准入与 per-bed 记账已落地；per-bed 硬限额尚未实现。**
 
 Hostel 的资源治理分成四层：**采集事实 → 汇报事实 → 执行策略 → 内核硬隔离**。前三层已经可以帮助 Hostel 判断自己
-是否“客满”；最后一层解决单个 bed 跑飞和邻居公平问题，暂不阻塞高密度承载能力。
+是否“客满”；最后一层约束单个 Bed 的资源消耗，以实现邻居保护。当前仍共享 Carrier
+预算，不能把记账或准入成功当成每个 Bed 已获得独立资源保障。
 
-数据治理见 `data.md`，持久化见 `store.md`。
+隔离目标与实际边界见 [isolation.md](isolation.md)，持久化见 `store.md`。
 
 ## 一、理念与概念
 
@@ -111,21 +112,26 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 `--bed-pressure-threshold-percent`、`--admission-cpu-threshold` 与 `--admission-memory-threshold` 只表达策略水位；具体默认值和当前字段
 shape 以配置代码及 README 为准，避免设计文档随调参漂移。
 
-## 三、关键设计与后续边界
+## 三、关键设计与能力边界
 
 ### 1. per-bed 记账已落地，但不等于隔离
 
-获得 cgroup v2 子树委派时，`Tracker` 为每个 bed 建立子 cgroup，并用 `CLONE_INTO_CGROUP` 让
-supervisor 或 local Executor 的直接命令从第一条指令起进入目标组。这样 `cpu.stat` 能累计已经退出的短命令，避免
-`/proc` 扫描漏记，也为未来硬限额复用同一资源边界。
+获得 cgroup v2 子树委派时，`Tracker` 为每个 Bed 建立记账父组，每个 Executor 持有
+独立的子组句柄。`CLONE_INTO_CGROUP` 让 supervisor 或 local Executor 的直接命令从
+第一条指令起进入该 Executor 子组。Bed 父组聚合 `cpu.stat` 和 `memory.current`，
+累计短命令及已经结束的 Executor 的 CPU 用量，避免 `/proc` 扫描漏记。
+
+Executor Shutdown 只清理自己的子组；成功完成旧域清理后才可创建替代 Executor。
+Bed teardown 最后释放记账父组，因此替换 Executor 不会清空 Bed 累计 CPU，也不会让
+旧 Executor 的迟到清理杀死新进程。父组保留为空的 domain，以便向子组委派 controller。
 
 使用 `CLONE_INTO_CGROUP` 而不是启动后再写 `cgroup.procs`，是为了消除 fork 与迁移之间的窗口：
 短进程可能在迁移前退出，也可能先 fork 出逃离记账与限额边界的子进程。
 
-### 2. per-bed 硬隔离暂缓
+### 2. per-bed 硬限额的设计边界
 
-当前不会向 bed 子组写 `cpu.max`、`memory.max` 或 `pids.max`。这部分先放在后续阶段，原因是需要
-先明确限额来源、默认公平模型、不同 workload 档位以及 amenity 如何单独预算；过早固定一个统一
+当前不会向 bed 子组写 `cpu.max`、`memory.max` 或 `pids.max`。实现硬限额前需要
+明确限额来源、默认公平模型、不同 workload 档位以及 amenity 如何单独预算；固定一个统一
 per-bed 配额，容易把高密度、强突发的 agent workload 错配成传统常驻服务。
 
 后续实现仍应遵循以下边界：
@@ -159,4 +165,6 @@ per-bed 配额，容易把高密度、强突发的 agent workload 错配成传�
   压力达到水位后拒绝新的 carrier 归属。
 - per-bed 硬隔离落地时，再补 CPU throttle、OOM、pids exhaustion 与邻居延迟验证。
 
-非目标仍包括磁盘容量配额、网络带宽限制，以及共享 amenity 的虚假 tenant 级资源归因。
+当前也没有磁盘容量配额和网络带宽限制；这些是资源独立性的未覆盖维度，不改变 Bed 的
+隔离目标。共享 amenity 仍计入 Carrier 总量，不能虚构 tenant 级精确归因。未完成能力统一见
+[backlog.md](backlog.md)。

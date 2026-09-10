@@ -468,13 +468,30 @@ func (c *chromium) ReleaseTenant(bedID string) error {
 	if !ok {
 		return nil
 	}
-	delete(c.tenants, bedID)
 	if c.state == StateRunning {
-		_ = chromedp.Run(c.master, chromedp.ActionFunc(func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(c.master, 5*time.Second)
+		defer cancel()
+		if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 			bctx := cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Browser)
-			return target.DisposeBrowserContext(t.contextID).Do(bctx)
-		}))
+			if err := target.DisposeBrowserContext(t.contextID).Do(bctx); err != nil {
+				// A prior dispose may have succeeded while its reply was lost.
+				// Confirm absence before forgetting ownership; otherwise retry later.
+				contexts, _, lookupErr := target.GetBrowserContexts().Do(bctx)
+				if lookupErr != nil {
+					return err
+				}
+				for _, id := range contexts {
+					if id == t.contextID {
+						return err
+					}
+				}
+			}
+			return nil
+		})); err != nil {
+			return fmt.Errorf("release browser context: %w", err)
+		}
 	}
+	delete(c.tenants, bedID)
 	t.tabStop()
 	if len(c.tenants) == 0 && !c.attach && c.cfg.IdleStop > 0 && c.state == StateRunning {
 		c.idleTimer = time.AfterFunc(c.cfg.IdleStop, func() {

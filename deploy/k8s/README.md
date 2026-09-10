@@ -252,3 +252,53 @@ a usable PRoot view additionally reports the same successful execution facts
 for `proot` and `workspace_view={"mode":"proot","available":true}`. If suite
 is already selected, PRoot remains discovered but is not smoke-tested, so
 `attempted: false` is expected.
+
+## 文件隔离机制的部署条件
+
+本节只描述文件隔离机制的部署条件；网络 netns 有独立的权限与组合要求，见
+[网络设计](../../docs/network.md) 和 [隔离总览](../../docs/isolation.md)。
+
+
+先区分两类权限：Hostel/Bedbox **运行时隔离依赖 Pod securityContext、节点内核、容器运行时和准入策略**；ServiceAccount 的 RBAC 只决定 sandbox-server 能否创建/管理 Pod，不能单独授权某个 AppArmor profile。
+
+| Level / 机制 | Hostel container 的要求 | 节点 / runtime 要求 | Pod Security Admission |
+|---|---|---|---|
+| `dorm` / direct | 无额外 capability、无需 privileged、无需 AppArmor 豁免；实际读写能力仍由 container UID、capability、只读根和 volume 权限决定 | 普通 Linux Pod 即可 | 可适配 Baseline/Restricted；是否能非 root 运行取决于镜像和 volume 属主，不是 Dorm 机制要求 |
+| `room` / Landlock | 无额外 capability、无需 privileged；可保持 `RuntimeDefault` AppArmor/seccomp，只要实际 smoke 通过 | Linux ≥5.13、内核编译并启用 Landlock LSM，seccomp 不得拦截所需 Landlock syscall | 机制本身可适配 Restricted；当前镜像/volume 若仍要求 root，需另行收敛运行用户 |
+| `room` / UID | daemon 以 root 运行，或至少具备 `CHOWN`、`SETUID`、`SETGID`；daemon 还需 `DAC_OVERRIDE`（非 root 形态可用 `DAC_READ_SEARCH`）读取归属不同 UID 的 BedFS | seccomp 必须允许 setgroups/setgid/setuid/chown；保持 `fs.protected_hardlinks=1`，并核对 UID 段 | 可适配 Baseline；不适配 Restricted（Restricted 只允许加回 `NET_BIND_SERVICE`，且要求非 root） |
+| `suite` / bwrap | 推荐 `privileged: false`、drop `ALL`、不加 `CAP_SYS_ADMIN`；AppArmor 必须为 `Unconfined`，或节点预装一个允许 bwrap userns/mount 操作的 `Localhost` profile；seccomp profile 也必须允许实际 smoke | bwrap 可执行；内核允许进程创建 user namespace，并允许其中的 mount namespace 操作 | `Unconfined` 不满足 Baseline/Restricted，需 namespace/runtimeClass/user 级豁免或自定义 admission；合适的 `Localhost` profile 可满足 AppArmor 这一项 |
+
+Suite 推荐的 container 片段（Kubernetes 1.30+ 原生 AppArmor 字段）：
+
+```yaml
+securityContext:
+  privileged: false
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
+  appArmorProfile:
+    type: Unconfined
+```
+
+Pod Security Admission 豁免示例见 [`deploy/k8s/pod-security-admission-exemption.yaml`](pod-security-admission-exemption.yaml)；它由集群管理员合入 kube-apiserver 的 `AdmissionConfiguration`，不能通过 `kubectl apply` 安装。
+
+若 `RuntimeDefault` seccomp 仍拦截 bwrap，使用节点预装且只放行所需 syscall 的 `Localhost` seccomp profile；不要直接把 `privileged: true` 当成 suite 的默认解法。AppArmor 也优先选择精确适配 bwrap 的 `Localhost` profile；无法维护该 profile 时才使用 `Unconfined`。Kubernetes 官方说明 1.30 前 AppArmor 通过 annotation 指定，当前 API 支持 `RuntimeDefault`、`Localhost`、`Unconfined`；Pod Security Baseline 只允许前两者。
+
+UID room 的最小 capability 片段：
+
+```yaml
+securityContext:
+  runAsUser: 0
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+    add: ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"]
+  seccompProfile:
+    type: RuntimeDefault
+```
+
+Hostel carrier 本身不调用 Kubernetes API，建议 `automountServiceAccountToken: false`。负责创建 carrier Pod 的 sandbox-server ServiceAccount 只需要目标 namespace 中 Pod 生命周期所需的普通 RBAC（如 create/get/list/watch/delete）；Pod 能否声明 `Unconfined` 或额外 capability 最终由 Pod Security Admission、ValidatingAdmissionPolicy/Gatekeeper/Kyverno 等准入层决定，而不是由 RBAC verb 决定。
+
+参考 Kubernetes 官方文档：[AppArmor](https://kubernetes.io/docs/tutorials/security/apparmor/)、[Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)、[Security Context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)。

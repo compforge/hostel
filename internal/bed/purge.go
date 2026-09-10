@@ -118,6 +118,9 @@ func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
 	if b := m.beds[id]; b != nil {
 		err = checkBedStore(requested, kind, b.Store)
 		kind = b.Store
+	} else if b := m.retirements[id]; b != nil {
+		err = checkBedStore(requested, kind, b.Store)
+		kind = b.Store
 	} else if initialization := m.initializations[id]; initialization != nil {
 		err = checkBedStore(requested, kind, initialization.status.Store)
 		kind = initialization.status.Store
@@ -135,9 +138,13 @@ func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
 
 	m.mu.Lock()
 	b, ok := m.beds[id]
+	if !ok {
+		b = m.retirements[id]
+	}
 	if ok {
 		b.mu.Lock()
 		b.purging = true
+		m.retirements[id] = b
 		delete(m.beds, id)
 		if id != m.defaultBed {
 			m.residentBeds.Add(-1)
@@ -148,13 +155,17 @@ func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
 		b.mu.Unlock()
 	}
 	m.mu.Unlock()
-	if ok {
+	if b != nil {
+		b.cleanupMu.Lock()
+		defer b.cleanupMu.Unlock()
 		// A persist that already passed admission may still be uploading. Join it
 		// before Delete; queued persists observe purging after this lock is released
 		// and fail instead of recreating the snapshot.
 		b.persistMu.Lock()
 		defer b.persistMu.Unlock()
-		m.teardown(b)
+		if err := m.teardown(b); err != nil {
+			return err
+		}
 	}
 	deleteCtx, cancelDelete := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
 	defer cancelDelete()
@@ -162,5 +173,11 @@ func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
 	if err := m.store.Delete(deleteCtx, kind, id); err != nil {
 		return err
 	}
-	return os.RemoveAll(filepath.Join(m.root, id))
+	if err := os.RemoveAll(filepath.Join(m.root, id)); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	delete(m.retirements, id)
+	m.mu.Unlock()
+	return nil
 }

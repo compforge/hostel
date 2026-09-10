@@ -99,10 +99,10 @@ type Shell struct {
 // inherit the daemon env, which lacks the bed identity and endpoints. Stdio is
 // explicit os.Pipe pairs (not StdinPipe/StdoutPipe) so the raw fds can cross a
 // process boundary when supervisor is the Executor backend.
-func startShell(bedExecutor executor.Executor, shellPath string, env []string, iso isolation.Isolator, fs *bedfs.FS, cwdInBed string) (*Shell, error) {
+func startShell(bedExecutor executor.Executor, shellPath string, env []string, environment *isolation.Environment, cwdInBed string) (*Shell, error) {
 	cmd := exec.Command(shellPath, shellInteractiveArgs(shellPath)...)
 	cmd.Env = env
-	if err := iso.Wrap(cmd, fs, cwdInBed); err != nil {
+	if err := environment.Wrap(cmd, cwdInBed); err != nil {
 		return nil, err
 	}
 	inR, inW, err := os.Pipe()
@@ -135,7 +135,7 @@ func startShell(bedExecutor executor.Executor, shellPath string, env []string, i
 		proc:            proc,
 		stdin:           inW,
 		lines:           make(chan string, 64),
-		view:            iso.View(fs),
+		view:            environment.View(),
 	}
 	// Single long-lived reader → lines channel.
 	go func() {
@@ -261,11 +261,11 @@ func (m *Manager) CreateShell(b *Bed, cwdInBed string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	bedExecutor, err := b.executorFor(context.Background(), m.networkExecutorFactory())
+	bedExecutor, err := b.executorFor(context.Background(), m.executorFactory)
 	if err != nil {
 		return "", err
 	}
-	sh, err := startShell(bedExecutor, m.shellPath, env, m.iso, b.BedFS(), cwdInBed)
+	sh, err := startShell(bedExecutor, m.shellPath, env, b.environment, cwdInBed)
 	if err != nil {
 		return "", err
 	}
@@ -321,11 +321,11 @@ func (m *Manager) ForegroundShell(b *Bed) (*Shell, error) {
 	if err != nil {
 		return nil, err
 	}
-	bedExecutor, err := b.executorFor(context.Background(), m.networkExecutorFactory())
+	bedExecutor, err := b.executorFor(context.Background(), m.executorFactory)
 	if err != nil {
 		return nil, err
 	}
-	sh, err := startShell(bedExecutor, m.shellPath, env, m.iso, b.BedFS(), "")
+	sh, err := startShell(bedExecutor, m.shellPath, env, b.environment, "")
 	if err != nil {
 		return nil, err
 	}

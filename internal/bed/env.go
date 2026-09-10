@@ -122,7 +122,7 @@ func (m *Manager) buildBedEnv(b *Bed, requestEnv map[string]string) ([]string, e
 		env[name] = value
 	}
 
-	home := m.iso.View(b.BedFS()).Workspace()
+	home := b.environment.View().Workspace()
 	env["BED_ID"] = b.ID
 	env["HOME"] = home
 	env["TMPDIR"] = "/tmp"
@@ -131,7 +131,7 @@ func (m *Manager) buildBedEnv(b *Bed, requestEnv map[string]string) ([]string, e
 	env["SHELL"] = m.shellPath
 
 	if endpoint := m.bedCDPEndpoint(b.ID); endpoint != "" {
-		env["PLAYWRIGHT_MCP_CDP_ENDPOINT"] = m.networkEndpoint(b.ID, endpoint)
+		env["PLAYWRIGHT_MCP_CDP_ENDPOINT"] = m.networkEndpoint(b, endpoint)
 	}
 	for name, value := range requestEnv {
 		env[name] = value

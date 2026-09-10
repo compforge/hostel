@@ -64,11 +64,14 @@ func (m *Manager) ListLuggage() []LuggageEntry {
 		return nil
 	}
 	m.mu.Lock()
-	active := make(map[string]bool, len(m.beds)+len(m.initializations)+len(m.purges))
+	active := make(map[string]bool, len(m.beds)+len(m.initializations)+len(m.purges)+len(m.retirements))
 	for id := range m.beds {
 		active[id] = true
 	}
 	for id := range m.initializations {
+		active[id] = true
+	}
+	for id := range m.retirements {
 		active[id] = true
 	}
 	for id := range m.purges {
@@ -177,6 +180,10 @@ func (m *Manager) removeLuggage(id string) bool {
 		return false
 	}
 	if _, ok := m.initializations[id]; ok {
+		m.mu.Unlock()
+		return false
+	}
+	if m.retirements[id] != nil {
 		m.mu.Unlock()
 		return false
 	}
