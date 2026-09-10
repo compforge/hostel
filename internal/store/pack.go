@@ -42,7 +42,7 @@ import (
 //	<prefix>/beds/<bedID>/snapshots/<snapshotID>.json
 //	<prefix>/beds/<bedID>/packs/<first2>/<packID>.pack
 //
-// Packs remain per-bed for now. Backend exposes one mutable snapshot per bed and
+// Packs remain per-bed for now. Store exposes one mutable snapshot per bed and
 // no snapshot reference/fork primitive; making packs global before that model
 // exists would make purge require unsafe cross-bed garbage collection.
 type packStore struct {
@@ -82,7 +82,7 @@ type packLocation struct {
 	length int64
 }
 
-func newPack(ctx context.Context, cfg Config) (Backend, error) {
+func newPack(ctx context.Context, cfg Config) (Store, error) {
 	obj, err := newS3Obj(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -102,7 +102,7 @@ func newPackStore(obj objAPI, prefix string, filters ...snapshotFilter) *packSto
 	return &packStore{obj: obj, prefix: prefix, targetBytes: packTargetBytes, filter: filter}
 }
 
-func (s *packStore) Name() BackendKind { return BackendPack }
+func (s *packStore) Name() Kind { return KindPack }
 
 func (s *packStore) bedPrefix(bedID string) string {
 	return path.Join(s.prefix, "beds", bedID) + "/"

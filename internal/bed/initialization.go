@@ -52,7 +52,7 @@ type Readiness struct {
 // initialization returns PhaseInitializing.
 type InitializationStatus struct {
 	ID    string
-	Store store.BackendKind
+	Store store.Kind
 	BedStatus
 	StartedAt time.Time
 }
@@ -417,7 +417,7 @@ var (
 
 // bedStore uses local metadata for an orphaned Bed. No separate routing record
 // outlives its working copy; absent both an override and metadata, use default.
-func (m *Manager) bedStore(ctx context.Context, id, requested string) (store.BackendKind, error) {
+func (m *Manager) bedStore(ctx context.Context, id, requested string) (store.Kind, error) {
 	if requested == "" {
 		meta, _ := loadMeta(filepath.Join(m.root, id))
 		requested = string(meta.Store)
@@ -430,7 +430,7 @@ func (m *Manager) bedStore(ctx context.Context, id, requested string) (store.Bac
 }
 
 // A create retry may reuse a live Bed, but cannot migrate its active backend.
-func checkBedStore(requested string, selected, current store.BackendKind) error {
+func checkBedStore(requested string, selected, current store.Kind) error {
 	if requested != "" && selected != current {
 		return ErrStoreConflict
 	}

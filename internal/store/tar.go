@@ -48,7 +48,7 @@ type tarStore struct {
 // operation bounded, but allow enough time for a full workspace on a slow link.
 const tarOpTimeout = 30 * time.Minute
 
-func newTar(ctx context.Context, cfg Config) (Backend, error) {
+func newTar(ctx context.Context, cfg Config) (Store, error) {
 	obj, err := newS3Obj(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -68,7 +68,7 @@ func newTarStore(obj objAPI, prefix string, filters ...snapshotFilter) *tarStore
 	return &tarStore{obj: obj, prefix: prefix, filter: filter}
 }
 
-func (s *tarStore) Name() BackendKind { return BackendTar }
+func (s *tarStore) Name() Kind { return KindTar }
 
 func (s *tarStore) bedPrefix(bedID string) string {
 	return path.Join(s.prefix, "tar", bedID) + "/"

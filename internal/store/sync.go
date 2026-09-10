@@ -27,7 +27,7 @@ const (
 
 // RequestSync submits a coalesced urgency signal. Callers never upload
 // directly: the store loop owns serialization, periodic cadence and retries.
-func (s *Store) RequestSync() {
+func (s *Manager) RequestSync() {
 	select {
 	case s.syncRequested <- struct{}{}:
 	default:
@@ -38,8 +38,8 @@ func (s *Store) RequestSync() {
 // interval disables only the periodic safety net; lifecycle and pressure
 // triggers still wake the controller.
 // syncBeds supplies a lifecycle-safe pass over the current Bed list. The Bed
-// manager retains its lock and watermark protocol; Store owns invocation cadence.
-func (s *Store) Run(ctx context.Context, interval time.Duration, syncBeds func(context.Context, string) ([]string, bool)) {
+// manager retains its lock and watermark protocol; Manager owns invocation cadence.
+func (s *Manager) Run(ctx context.Context, interval time.Duration, syncBeds func(context.Context, string) ([]string, bool)) {
 	var periodic <-chan time.Time
 	var ticker *time.Ticker
 	if interval > 0 {

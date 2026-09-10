@@ -168,7 +168,7 @@ func TestResidentBedCountTracksRemoval(t *testing.T) {
 func TestLifecycleObservations(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -584,7 +584,7 @@ func TestMaxBedsCap(t *testing.T) {
 
 func TestMaxPinnedBedsHighWatermarkDoesNotReject(t *testing.T) {
 	root := t.TempDir()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, store.NewWithBackends(newFakeStore()))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -690,7 +690,7 @@ func TestMaxPinnedBedsResolution(t *testing.T) {
 
 func TestMaxPinnedBedsConcurrentWorkCanExceedHighWatermark(t *testing.T) {
 	root := t.TempDir()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, store.NewWithBackends(newFakeStore()))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -856,7 +856,7 @@ func TestNoopDataDoesNotRemainPinned(t *testing.T) {
 func TestStoreSyncTriggerReleasesPinnedBed(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, store.NewWithBackends(fs))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, store.NewManagerWithStores(fs))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -1000,7 +1000,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{snaps: map[string][]byte{}, metas: map[string][]byte{}, gens: map[string]int64{}}
 }
 
-func (f *fakeStore) Name() store.BackendKind { return store.BackendS3 }
+func (f *fakeStore) Name() store.Kind { return store.KindS3 }
 func (f *fakeStore) Stat(_ context.Context, id string) (*store.SnapshotInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1071,7 +1071,7 @@ func TestInitializeBedRunsStoreWorkAsynchronouslyAndReservesCapacity(t *testing.
 		started:   make(chan struct{}, 1),
 		release:   make(chan struct{}),
 	}
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, store.NewWithBackends(backend))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, store.NewManagerWithStores(backend))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1134,7 +1134,7 @@ func TestInitializeBedRetainsFailureReason(t *testing.T) {
 		release:   make(chan struct{}),
 		statError: errors.New("S3 Stat timeout"),
 	}
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, store.NewWithBackends(backend))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, store.NewManagerWithStores(backend))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1170,7 +1170,7 @@ func TestInitializeBedRetainsFailureReason(t *testing.T) {
 func TestDurableEvictRemovesLocalCopyAndColdResumes(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -1211,7 +1211,7 @@ func TestDurableEvictRemovesLocalCopyAndColdResumes(t *testing.T) {
 func TestStaleLuggageDiscardedOnResume(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 
 	b, _ := m.Ensure(context.Background(), "conv-s")
 	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("old"), 0o644)
@@ -1251,7 +1251,7 @@ func TestStaleLuggageDiscardedOnResume(t *testing.T) {
 func TestColdResumeRestoresFromSnapshot(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 
 	b, _ := m.Ensure(context.Background(), "conv-c")
 	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("payload"), 0o644)
@@ -1271,7 +1271,7 @@ func TestPersistFailureAbortsDelete(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
 	fs.fail = true
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 
 	b, _ := m.Ensure(context.Background(), "conv-2")
 	if _, err := m.Evict(context.Background(), "conv-2"); err == nil {
@@ -1289,7 +1289,7 @@ func TestPersistFailureAbortsDelete(t *testing.T) {
 func TestPersistDirty(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 
 	b, _ := m.Ensure(context.Background(), "conv-3")
 	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("v1"), 0o644)
@@ -1310,7 +1310,7 @@ func TestPersistDirty(t *testing.T) {
 func TestPersistDirtyDoesNotWaitForSessionClose(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 	b, _ := m.Ensure(context.Background(), "session-sync")
 	sess, err := m.OpenSession(b, SessionKindCDP, nil)
 	if err != nil {
@@ -1347,7 +1347,7 @@ func TestPersistKeepsActivityAfterSnapshotPinned(t *testing.T) {
 		started:   make(chan struct{}, 1),
 		release:   make(chan struct{}),
 	}
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, store.NewManagerWithStores(fs))
 	b, _ := m.Ensure(context.Background(), "watermark")
 
 	finish, err := m.BeginOperation(b, OpExec, 0)
@@ -1456,7 +1456,7 @@ func (s *slowStore) Persist(ctx context.Context, id, dir string, generation int6
 func TestEvictCanceledByActivity(t *testing.T) {
 	root := t.TempDir()
 	ss := &slowStore{fakeStore: newFakeStore(), gate: make(chan struct{})}
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(ss))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(ss))
 
 	b, _ := m.Ensure(context.Background(), "conv-race")
 	res := make(chan struct {
@@ -1502,7 +1502,7 @@ func TestEvictCanceledByActivity(t *testing.T) {
 func TestPurgeEndsIdentity(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 
 	b, _ := m.Ensure(context.Background(), "conv-p")
 	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("x"), 0o644)
@@ -1540,7 +1540,7 @@ type purgeContextKey struct{}
 func TestPurgeCompletesStoreDeleteAfterRequestCancellation(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 	if _, err := m.Ensure(context.Background(), "cancelled-purge"); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -1573,7 +1573,7 @@ func TestPurgeJoinsCanceledInitializationBeforeDeleting(t *testing.T) {
 		started:   make(chan struct{}, 1),
 		release:   make(chan struct{}),
 	}
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(backend))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(backend))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1602,7 +1602,7 @@ func TestPurgeFencesConcurrentInitializationUntilCanceledWorkStops(t *testing.T)
 		canceled:  make(chan struct{}, 1),
 		release:   make(chan struct{}),
 	}
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(backend))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(backend))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1649,7 +1649,7 @@ func TestPurgeJoinsConcurrentPersistBeforeDeletingSnapshot(t *testing.T) {
 		started:   make(chan struct{}, 1),
 		release:   make(chan struct{}),
 	}
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(backend))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(backend))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1702,7 +1702,7 @@ func TestPurgeJoinsConcurrentPersistBeforeDeletingSnapshot(t *testing.T) {
 func TestGenerationMonotonicAcrossPersists(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 
 	b, _ := m.Ensure(context.Background(), "conv-g")
 	if err := m.Checkpoint(context.Background(), "conv-g"); err != nil {
@@ -1765,7 +1765,7 @@ func writeLegacyLuggage(t *testing.T, root, id string, size int, generation int6
 func TestCollectLuggageWatermarks(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 
 	now := time.Now()
 	writeLegacyLuggage(t, root, "conv-old", 10_000, 1, now.Add(-3*time.Hour))
@@ -1796,7 +1796,7 @@ func TestCollectLuggageWatermarks(t *testing.T) {
 func TestCollectLuggageStaleFirst(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 
 	now := time.Now()
 	writeLegacyLuggage(t, root, "conv-a", 10_000, 1, now.Add(-2*time.Hour))
@@ -1825,7 +1825,7 @@ func TestCollectLuggageStaleFirst(t *testing.T) {
 func TestInventory(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 
 	_, _ = m.Ensure(context.Background(), "default")
 	_, _ = m.Ensure(context.Background(), "conv-live")
@@ -1876,7 +1876,7 @@ func TestEstimatedRestoreBytesUsesFullSnapshotForStaleCopy(t *testing.T) {
 func TestProfileAccumulatesAndSurvivesEvict(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(fs))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(fs))
 
 	b, _ := m.Ensure(context.Background(), "conv-prof")
 	b.RecordCommand(1500 * time.Millisecond)
@@ -1921,7 +1921,7 @@ func (s sleepyStore) Restore(ctx context.Context, id, dir string) error {
 func TestProfileRecordsMigrationCost(t *testing.T) {
 	root := t.TempDir()
 	ss := sleepyStore{fakeStore: newFakeStore()}
-	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(ss))
+	m, _ := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(ss))
 
 	b, _ := m.Ensure(context.Background(), "conv-cost")
 	_ = os.WriteFile(filepath.Join(b.Workspace(), "data.txt"), []byte("x"), 0o644)

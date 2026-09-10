@@ -32,7 +32,7 @@ const (
 
 type routedBackend struct {
 	layout storeLayout
-	store  Backend
+	store  Store
 }
 
 type inspectedBackend struct {
@@ -73,7 +73,7 @@ func newAutoStore(obj objAPI, prefix string, packFileThreshold int, filters ...s
 	}
 }
 
-func (s *autoStore) Name() BackendKind { return BackendAuto }
+func (s *autoStore) Name() Kind { return KindAuto }
 
 func (s *autoStore) backends() []routedBackend {
 	return []routedBackend{

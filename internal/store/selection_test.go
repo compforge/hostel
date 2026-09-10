@@ -6,29 +6,29 @@ import (
 
 func TestSelectionOverridesDefaultAndSharesObjectClient(t *testing.T) {
 	cfg := Config{Backend: "auto", Bucket: "test", Endpoint: "http://127.0.0.1:1", Region: "us-east-1", AccessKeyID: "test", SecretAccessKey: "test"}
-	selection, err := New(t.Context(), cfg)
+	selection, err := NewManager(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for requested, want := range map[string]BackendKind{"": "auto", "noop": "noop", "s3": "s3", "cas": "s3", "pack": "pack", "tar": "tar"} {
+	for requested, want := range map[string]Kind{"": "auto", "noop": "noop", "s3": "s3", "cas": "s3", "pack": "pack", "tar": "tar"} {
 		got, err := selection.Resolve(t.Context(), requested)
 		if err != nil || got != want {
 			t.Fatalf("select %q = %v, %v", requested, got, err)
 		}
 	}
-	cas, _ := selection.backend(t.Context(), BackendS3)
-	pack, _ := selection.backend(t.Context(), BackendPack)
-	tar, _ := selection.backend(t.Context(), BackendTar)
+	cas, _ := selection.backend(t.Context(), KindS3)
+	pack, _ := selection.backend(t.Context(), KindPack)
+	tar, _ := selection.backend(t.Context(), KindTar)
 	if cas.(*casStore).obj != pack.(*packStore).obj || cas.(*casStore).obj != tar.(*tarStore).obj {
 		t.Fatal("backend formats opened separate object clients")
 	}
 	cfg.Backend = "noop"
-	noop, err := New(t.Context(), cfg)
+	noop, err := NewManager(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s3, err := noop.Resolve(t.Context(), "s3")
-	if err != nil || s3 != BackendS3 {
+	if err != nil || s3 != KindS3 {
 		t.Fatalf("API override of noop: %v %v", s3, err)
 	}
 	if noop.DefaultKind() != "noop" {

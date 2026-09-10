@@ -126,7 +126,7 @@ func main() {
 
 	// Fail fast on a misconfigured store: booting with silent noop while the
 	// operator believes snapshots are on would be quiet data loss.
-	st, err := store.New(context.Background(), store.Config{
+	st, err := store.NewManager(context.Background(), store.Config{
 		Backend:               cfg.StoreBackend,
 		Bucket:                cfg.S3Bucket,
 		Prefix:                cfg.S3Prefix,

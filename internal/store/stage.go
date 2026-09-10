@@ -64,7 +64,7 @@ type StageInResult struct {
 // StageInBedFS prepares a complete local Bed directory. A newer snapshot is
 // restored into a sibling staging directory and atomically published, so a
 // failed restore never replaces usable luggage with a partial tree.
-func StageInBedFS(ctx context.Context, backend Backend, request StageInRequest) (StageInResult, error) {
+func StageInBedFS(ctx context.Context, backend Store, request StageInRequest) (StageInResult, error) {
 	step := func(value StageInStep) {
 		if request.OnStep != nil {
 			request.OnStep(value)

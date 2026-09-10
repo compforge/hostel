@@ -39,7 +39,7 @@ const gcTmpPrefix = ".gc-"
 
 // LuggageEntry describes one cold local copy for GC and inventory reporting.
 type LuggageEntry struct {
-	Store store.BackendKind
+	Store store.Kind
 	BedID string
 	// Bytes is the dir's file size total — the disk this entry occupies.
 	Bytes int64
@@ -211,18 +211,18 @@ func (m *Manager) sweepGCLeftovers() {
 // the last PERSISTED counter — an active bed's workspace may be ahead of it,
 // which is exactly what "the authoritative copy is here" means.
 type InventoryBed struct {
-	Store              store.BackendKind `json:"store"`
-	ID                 string            `json:"id"`
-	Status             BedStatus         `json:"status"`
-	Generation         int64             `json:"generation"`
-	SnapshotGeneration int64             `json:"snapshot_generation,omitempty"`
-	SnapshotBytes      int64             `json:"snapshot_bytes,omitempty"`
-	LocalBytes         int64             `json:"local_bytes,omitempty"`
-	RestoreBytes       int64             `json:"restore_bytes,omitempty"`
-	DataSynced         bool              `json:"data_synced"`
-	Pinned             bool              `json:"pinned"`
-	LastActiveAt       time.Time         `json:"last_active_at"`
-	RetainUntil        time.Time         `json:"retained_until,omitzero"` // resident beds only
+	Store              store.Kind `json:"store"`
+	ID                 string     `json:"id"`
+	Status             BedStatus  `json:"status"`
+	Generation         int64      `json:"generation"`
+	SnapshotGeneration int64      `json:"snapshot_generation,omitempty"`
+	SnapshotBytes      int64      `json:"snapshot_bytes,omitempty"`
+	LocalBytes         int64      `json:"local_bytes,omitempty"`
+	RestoreBytes       int64      `json:"restore_bytes,omitempty"`
+	DataSynced         bool       `json:"data_synced"`
+	Pinned             bool       `json:"pinned"`
+	LastActiveAt       time.Time  `json:"last_active_at"`
+	RetainUntil        time.Time  `json:"retained_until,omitzero"` // resident beds only
 	// Usage lets the scheduler weigh placement and migration: command
 	// rate/duration derive from deltas between polls; Last{Persist,Restore}Ms
 	// approximate this bed's migration cost (node-specific — see Usage).

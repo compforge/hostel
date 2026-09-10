@@ -41,9 +41,9 @@ func (s *countedStore) Delete(ctx context.Context, id string) error {
 	return s.fakeStore.Delete(ctx, id)
 }
 
-func storeTestManager(t *testing.T, root string, st store.Backend) *Manager {
+func storeTestManager(t *testing.T, root string, st store.Store) *Manager {
 	t.Helper()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(st))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(st))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestDurableBedSyncsWithNoopInstanceDefault(t *testing.T) {
 	defer cancel()
 	st := newFakeStore()
 	root := t.TempDir()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewWithBackends(store.Noop{}, st))
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(store.Noop{}, st))
 	if err != nil {
 		t.Fatal(err)
 	}

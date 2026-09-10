@@ -37,8 +37,8 @@ evict 完成                ──→ 删除本地 Bed 目录（所有 Store bac
 创建 Bed 时，API 的 `store` 参数优先于默认值，解析后的 backend 就是 `bed.store`。
 同一个 Hostel 可以同时管理 noop 和 durable Bed；Hostel 不解释调用方业务。
 
-Bed 的 `Store` 字段类型为 `store.BackendKind`，只保存已解析的 backend 名称；元数据中的
-`store` 是它的序列化形式。全局 Store 统一持有 backend 实例和 S3 client。Restore、checkpoint、
+Bed 的 `Store` 字段类型为 `store.Kind`，只保存已解析的 backend 名称；元数据中的
+`store` 是它的序列化形式。全局 Store Manager 统一持有 backend 实例和 S3 client。Restore、checkpoint、
 周期同步、evict、luggage GC 和 purge 都使用该 Bed 的 Store。noop 不做远端读写，
 也不因待上传数据占用 durable pin，持久化由调用方自行管理。
 
@@ -54,21 +54,21 @@ Store 的路由选择必须在 Restore 之前确定，因此不能依赖尚未�
 的 `persistence` 仍是实例默认值；Bed 明细、初始化响应与 inventory 的 `store` 是实际
 后端。持久化脏状态与 pin 按 Bed 计算，noop Bed 不因待上传数据占用 durable pin。
 
-### 1. 全局 Store 与 Backend 接口
+### 1. Store Manager 与 Store 接口
 
 ```go
-type Backend interface {
+type Store interface {
     Stat(bedID string) (*SnapshotInfo, error)      // nil=无快照；含 generation/bytes，S3 上是 HEAD，免下载
     Restore(bedID, dir string) error               // create/resume 时，放行前拉下来
     Persist(bedID, dir string, generation int64) error // idle/delete/checkpoint 时，推上去
 }
 ```
 
-全局 `Store` 拥有 backend 路由与唯一同步循环，负责触发合并、定时和重试。Bed Manager 提供
+全局 `store.Manager` 拥有 backend 路由与唯一同步循环，负责触发合并、定时和重试。Bed Manager 提供
 遵循现有锁与 generation 协议的 Bed 遍历入口；Store 不反向依赖具体 Bed 类型。checkpoint、
 evict 等生命周期动作等待同一个 Store 的同步操作，不必等后台扫描。
 
-`Backend` 接口只负责远端事实与传输；`StageInBedFS` 负责本地发布语义。需要 Restore 时，它先写入
+`Store` 接口只负责远端事实与传输；`StageInBedFS` 负责本地发布语义。需要 Restore 时，它先写入
 bed 目录旁的 staging 目录，成功后才用 rename 替换 stale luggage；失败则清理 staging 并保留原
 luggage。Bed manager 只在 Stage-in、BedFS/isolation 准备全部成功后发布 resident，因此远端数据
 故障既不会得到一个空 Bed，也不会得到一个半恢复目录。

@@ -28,7 +28,7 @@ type stageTestStore struct {
 	restoreCalls int
 }
 
-func (*stageTestStore) Name() BackendKind { return BackendS3 }
+func (*stageTestStore) Name() Kind { return KindS3 }
 
 func (s *stageTestStore) Stat(context.Context, string) (*SnapshotInfo, error) {
 	return s.snapshot, nil

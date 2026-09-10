@@ -49,7 +49,7 @@ type Manager struct {
 	maxPinnedBeds   int                // pinned-count pressure reference; 0 = pressure disabled
 	pressurePercent int                // shared occupied/pinned high-watermark percentage
 	pinnedBeds      atomic.Int64       // tenant beds running work or holding data not yet durable
-	store           *store.Store       // daemon-wide persistence component
+	store           *store.Manager     // daemon-wide persistence component
 	processEnv      processEnv         // explicit carrier software env; never daemon-wide inheritance
 	// bedIdleTTL is set once at startup. Accepted operations extend their bed
 	// through timeout+idleTTL so the idle reaper cannot kill in-flight work.
@@ -94,14 +94,14 @@ var ErrBedUnavailable = errors.New("bed: no longer resident")
 
 // NewManager creates the bed manager and ensures the workspace root exists.
 // amenities and st may be nil; maxBeds 0 = unlimited.
-func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Registry, maxBeds int, st *store.Store) (*Manager, error) {
+func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Registry, maxBeds int, st *store.Manager) (*Manager, error) {
 	processEnv, _ := newProcessEnv(os.Environ())
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("bed: create workspace root %s: %w", root, err)
 	}
 	shellPath = resolveShellPath(shellPath)
 	if st == nil {
-		st = store.NewWithBackends(store.Noop{})
+		st = store.NewManagerWithStores(store.Noop{})
 	}
 	resources := resource.Noop("resource tracker not configured")
 	return &Manager{
@@ -782,7 +782,7 @@ func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, b
 	var done []string
 	failed := false
 	for _, b := range m.List() {
-		if b.Store == store.BackendNoop {
+		if b.Store == store.KindNoop {
 			// Mixed carriers still need local disk-size facts for noop Beds, but no
 			// automatic snapshot generation or Store I/O for them.
 			bytes := filepathx.DirBytes(b.Dir)
