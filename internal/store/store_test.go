@@ -23,8 +23,8 @@ func testS3Config() Config {
 	}
 }
 
-func TestBackendSelection(t *testing.T) {
-	st, err := NewManager(t.Context(), Config{Backend: "noop"})
+func TestStoreKindSelection(t *testing.T) {
+	st, err := NewManager(t.Context(), Config{Kind: "noop"})
 	if err != nil || st.DefaultKind() != "noop" {
 		t.Fatalf("New noop: %v %v", st, err)
 	}
@@ -32,20 +32,20 @@ func TestBackendSelection(t *testing.T) {
 	if err != nil || info != nil {
 		t.Fatalf("noop Stat = %v %v", info, err)
 	}
-	for _, backend := range []string{"s3", "cas" /* alias */, "pack", "tar"} {
-		if _, err := NewManager(t.Context(), Config{Backend: backend}); err == nil {
-			t.Fatalf("%s without bucket should fail", backend)
+	for _, backend := range []string{"cas", "pack", "tar"} {
+		if st, err := NewManager(t.Context(), Config{Kind: backend}); err != nil || st.DefaultKind() != KindNoop {
+			t.Fatalf("%s without bucket = %v, %v; want noop", backend, st, err)
 		}
 	}
-	if _, err := NewManager(t.Context(), Config{Backend: "bogus"}); err == nil {
+	if _, err := NewManager(t.Context(), Config{Kind: "bogus"}); err == nil {
 		t.Fatal("unknown backend should fail")
 	}
 	// auto without persistence config is noop; with a bucket it routes per bed.
-	if st, err := NewManager(t.Context(), Config{Backend: "auto"}); err != nil || st.DefaultKind() != "noop" {
+	if st, err := NewManager(t.Context(), Config{Kind: "auto"}); err != nil || st.DefaultKind() != "noop" {
 		t.Fatalf("auto without bucket = %v, %v; want noop", st, err)
 	}
 	cfg := testS3Config()
-	cfg.Backend = "auto"
+	cfg.Kind = "auto"
 	if st, err := NewManager(t.Context(), cfg); err != nil || st.DefaultKind() != "auto" {
 		t.Fatalf("auto with bucket = %v, %v; want auto", st, err)
 	}
@@ -54,11 +54,11 @@ func TestBackendSelection(t *testing.T) {
 		t.Fatal("auto with negative file threshold should fail")
 	}
 	cfg = testS3Config()
-	cfg.Backend = "pack"
+	cfg.Kind = "pack"
 	if st, err := NewManager(t.Context(), cfg); err != nil || st.DefaultKind() != "pack" {
 		t.Fatalf("pack with bucket = %v, %v; want pack", st, err)
 	}
-	cfg.Backend = "tar"
+	cfg.Kind = "tar"
 	if st, err := NewManager(t.Context(), cfg); err != nil || st.DefaultKind() != "tar" {
 		t.Fatalf("tar with bucket = %v, %v; want tar", st, err)
 	}

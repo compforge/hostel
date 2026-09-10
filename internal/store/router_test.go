@@ -17,6 +17,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -221,5 +222,69 @@ func TestSnapshotFileThresholdExcludesEphemeralPaths(t *testing.T) {
 	}
 	if exceeded, err := exceedsSnapshotFileThreshold(dir, 1); err != nil || !exceeded {
 		t.Fatalf("persistable file did not exceed threshold: %v, %v", exceeded, err)
+	}
+}
+
+// A policy change must neither hide the previous format nor reset its generation.
+func TestPoliciesReadAndReplaceOtherLayouts(t *testing.T) {
+	for _, previous := range []Kind{KindCAS, KindPack, KindTar} {
+		for _, next := range []Kind{KindAuto, KindCAS, KindPack, KindTar} {
+			t.Run(string(previous)+"_to_"+string(next), func(t *testing.T) {
+				ctx := t.Context()
+				automatic := newAutoStore(newMemObj(), "sandbox", 0)
+				before := automatic.withKind(previous)
+				after := automatic.withKind(next)
+				src := t.TempDir()
+				writeAutoTree(t, src, 2)
+				if err := before.Persist(ctx, "bed", src, 7); err != nil {
+					t.Fatal(err)
+				}
+				info, err := after.Stat(ctx, "bed")
+				if err != nil || info == nil || info.Generation != 7 {
+					t.Fatalf("stat = %+v, %v", info, err)
+				}
+				restored := t.TempDir()
+				if err := after.Restore(ctx, "bed", restored); err != nil {
+					t.Fatal(err)
+				}
+				name := filepath.Join("data", "workspace", "files", "a.txt")
+				data, err := os.ReadFile(filepath.Join(restored, name))
+				if err != nil || string(data) != "a" {
+					t.Fatalf("restore = %q, %v", data, err)
+				}
+				if err := after.Persist(ctx, "bed", src, 7); !errors.Is(err, ErrConflict) {
+					t.Fatalf("stale write = %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(src, name), []byte("new policy"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := after.Persist(ctx, "bed", src, 8); err != nil {
+					t.Fatal(err)
+				}
+				state, err := automatic.inspect(ctx, "bed")
+				wantLayout := storeLayout(next)
+				if next == KindAuto {
+					wantLayout = storeLayout(previous)
+				}
+				if err != nil || state.selected == nil || state.selected.layout != wantLayout || state.selected.info.Generation != 8 {
+					t.Fatalf("selected = %+v, %v", state.selected, err)
+				}
+				// Readers using the previous policy must also see the new snapshot.
+				dst := t.TempDir()
+				if err := before.Restore(ctx, "bed", dst); err != nil {
+					t.Fatal(err)
+				}
+				data, err = os.ReadFile(filepath.Join(dst, name))
+				if err != nil || string(data) != "new policy" {
+					t.Fatalf("latest restore = %q, %v", data, err)
+				}
+				if err := after.Delete(ctx, "bed"); err != nil {
+					t.Fatal(err)
+				}
+				if info, err := automatic.Stat(ctx, "bed"); err != nil || info != nil {
+					t.Fatalf("purge left snapshot = %+v, %v", info, err)
+				}
+			})
+		}
 	}
 }

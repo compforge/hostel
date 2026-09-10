@@ -411,7 +411,7 @@ func residentInitializationStatus(resident *Bed) InitializationStatus {
 type CreateOptions struct{ Store string }
 
 var (
-	ErrStoreInvalid  = errors.New("bed: unsupported store backend")
+	ErrStoreInvalid  = errors.New("bed: unsupported store kind")
 	ErrStoreConflict = errors.New("bed: cannot change an active bed's store")
 )
 

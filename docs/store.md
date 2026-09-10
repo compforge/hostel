@@ -23,36 +23,40 @@ prepare + publish          ──→ readiness=true，Bed 进入 resident map
 bed 活着                  ──→ 本地读写，零网络往返；operation/pressure 只提交同步 trigger
 Store 同步循环            ──→ 合并 trigger + 自有周期/重试 → 静默 bed → Persist 到 S3
 delete / checkpoint       ──→ 回收边界或显式请求直接等待 Persist
-evict 完成                ──→ 删除本地 Bed 目录（所有 Store backend 一致）
+evict 完成                ──→ 删除本地 Bed 目录（所有 Store 策略 一致）
                                 └→ durable 下保留快照；noop 下不保留数据
 ```
 
-接入点（锚点）：`bed.Manager.InitializeBed`（异步初始化）、`store.StageInBedFS`（数据准备）、`Ensure`（原生 API 等待同一初始化）、Evict / idle GC（persist）、`POST /v1/beds/:id/checkpoint`（显式持久化）；capabilities 报 `persistence: noop|auto|s3|pack|tar`。
+接入点（锚点）：`bed.Manager.InitializeBed`（异步初始化）、`store.StageInBedFS`（数据准备）、`Ensure`（原生 API 等待同一初始化）、Evict / idle GC（persist）、`POST /v1/beds/:id/checkpoint`（显式持久化）；capabilities 报 `persistence: noop|auto|cas|pack|tar`。
 
 ## 三、关键设计
 
 ### Bed 级选择与实例默认配置
 
-`HOSTEL_STORE` 定义实例默认 backend，S3 连接参数由 Store 组件统一管理和复用。
-创建 Bed 时，API 的 `store` 参数优先于默认值，解析后的 backend 就是 `bed.store`。
+`HOSTEL_STORE` 定义实例默认同步策略。backend 表示远端存储位置，目前只有可选的 S3；
+S3 的连接参数由 Store Manager 统一管理和复用。CAS、Pack、Tar 决定如何同步及组织 S3 快照，
+不会改变 BedHome 的本地数据位置。未配置 S3 时所有有效策略都等效 noop；配了 S3 后，显式 noop 仍跳过自动同步。
+创建 Bed 时，API 的 `store` 参数优先于默认值，解析后的同步策略就是 `bed.store`。
 同一个 Hostel 可以同时管理 noop 和 durable Bed；Hostel 不解释调用方业务。
 
-Bed 的 `Store` 字段类型为 `store.Kind`，只保存已解析的 backend 名称；元数据中的
-`store` 是它的序列化形式。全局 Store Manager 统一持有 backend 实例和 S3 client。Restore、checkpoint、
+Bed 的 `Store` 字段类型为 `store.Kind`，只保存已解析的策略名称；元数据中的
+`store` 是它的序列化形式。全局 Store Manager 统一持有 Store 实例和 S3 client。Restore、checkpoint、
 周期同步、evict、luggage GC 和 purge 都使用该 Bed 的 Store。noop 不做远端读写，
 也不因待上传数据占用 durable pin，持久化由调用方自行管理。
 
 创建请求省略 Store 时复用正在使用的 Bed，或读取遗留本地目录的元数据；没有本地 Bed
-则使用实例默认。重复创建可以复用同一 backend，但不能切换正在初始化或使用中的 backend，
+则使用实例默认。重复创建可以复用同一策略，但不能切换正在初始化或使用中的策略，
 因为创建接口不承担运行中数据迁移。
 
 正常 evict 删除本地目录及元数据。重建或跨 carrier 创建时，调用方必须重传 Store 覆盖值。
-无本地 Bed 的 purge 同样支持 `?purge=true&store=<backend>`，未传时取实例默认。
+无本地 Bed 的 purge 同样支持 `?purge=true&store=<kind>`，未传时取实例默认。
 Store 的路由选择必须在 Restore 之前确定，因此不能依赖尚未读取的远端快照元数据。
 
 `capabilities.bed_store_selection=true` 声明此 API 能力。`instance.store` / capabilities
 的 `persistence` 仍是实例默认值；Bed 明细、初始化响应与 inventory 的 `store` 是实际
-后端。持久化脏状态与 pin 按 Bed 计算，noop Bed 不因待上传数据占用 durable pin。
+同步策略。持久化脏状态与 pin 按 Bed 计算，noop Bed 不因待上传数据占用 durable pin。
+
+所有持久化策略读取时共用 auto 的布局识别：以最高 generation 的提交点恢复；后续写入使用当前显式策略，auto 则沿用其自动选择规则。切换格式不重置 generation，旧格式保留到 purge，purge 删除所有格式的快照。
 
 ### 1. Store Manager 与 Store 接口
 
@@ -64,7 +68,7 @@ type Store interface {
 }
 ```
 
-全局 `store.Manager` 拥有 backend 路由与唯一同步循环，负责触发合并、定时和重试。Bed Manager 提供
+全局 `store.Manager` 拥有策略路由与唯一同步循环，负责触发合并、定时和重试。Bed Manager 提供
 遵循现有锁与 generation 协议的 Bed 遍历入口；Store 不反向依赖具体 Bed 类型。checkpoint、
 evict 等生命周期动作等待同一个 Store 的同步操作，不必等后台扫描。
 
@@ -73,11 +77,11 @@ bed 目录旁的 staging 目录，成功后才用 rename 替换 stale luggage；
 luggage。Bed manager 只在 Stage-in、BedFS/isolation 准备全部成功后发布 resident，因此远端数据
 故障既不会得到一个空 Bed，也不会得到一个半恢复目录。
 
-可选 backend：
+可选同步策略：
 
 - `auto`：默认值，只负责选择和兼容，不实现存储格式。
 - `noop`：不由 Hostel 自动持久化；适用于本地临时工作区或调用方显式管理持久化的 Bed。
-- `s3` / `cas`：CAS 内容寻址增量。
+- `cas`：CAS 内容寻址增量。
 - `pack`：packfile 增量。
 - `tar`：全量 tar.gz。
 
@@ -98,7 +102,7 @@ AWS、MinIO、火山 TOS、Ceph 等 S3 兼容 API 共用以下配置：
 - 当前 CAS bed 的可持久化非目录条目数超过阈值时，下一代快照写成 pack，之后不因文件数下降而回退。
 - CAS → pack 先发布更高 generation 的 pack 提交点，旧 CAS 对象保留到显式 purge，避免后台策略切换隐式删除持久数据。
 - purge 清理该 bed 的全部三种布局。
-- 显式 `s3` / `pack` / `tar` 只操作指定布局，不探测或迁移其它布局。
+- 显式 `cas` / `pack` / `tar` 读取时识别全部布局，后续写入所选格式；格式变化沿用 generation，purge 清理全部布局。
 
 ### 2. persist 触发：入口表达诉求，Store 掌握节奏
 
@@ -111,15 +115,15 @@ initialization、operation 开闭、session 流量和 carrier pressure 都只向
 
 三种 S3 布局都保持“一张 bed 一个原子提交点”，取舍点是增量粒度与远端对象数量：
 
-| backend | 远端单位 | 优点 | 代价 |
+| 同步策略 | 远端单位 | 优点 | 代价 |
 |---|---|---|---|
-| `s3` / `cas` | 一个 chunk 一个对象 | 小改动只上传受影响 chunk；在线 GC 简单且完整 | chunk 数就是对象数 / MinIO inode 数；请求数也高 |
+| `cas` | 一个 chunk 一个对象 | 小改动只上传受影响 chunk；在线 GC 简单且完整 | chunk 数就是对象数 / MinIO inode 数；请求数也高 |
 | `pack` | 多个压缩 chunk 合成约 32 MiB pack | checkpoint 的对象数和请求数显著下降，更适合 inode 紧张的 MinIO | 小改动至少新增一个 pack；当前无在线 compaction/prune，历史对象追加保留到 purge |
 | `tar` | 一张 bed 固定一个 tar.gz | 永远只有一个远端对象；实现、恢复和 purge 最直接 | 内容是否变化都要全量打包、上传和下载；无增量复用 |
 
 #### CAS 布局
 
-s3 backend 的布局：复用 **desync 库**（casync 的 Go 实现，BSD-3；catar 序列化 + CDC 滚动哈希切块 + 并发装配都是现成的，hostel 只写对象 IO 适配和编排）。bed 目录序列化成 catar 流 → CDC 切块（64K/256K/1M）→ **只上传上代快照没有的块**（上代 index 就是"已在库"清单，未变数据零请求）→ index 对象作为提交点（一次小 PUT 原子发布整份快照，携带 generation）。内容没变时 catar 流稳定 → 块序列相同 → **块上传 no-op**，仍会用一次小 index PUT 推进 generation，保证跨 carrier 的 luggage 新鲜度判定正确。**小文件海**（node_modules，per-object sync 的经典死穴）不是问题：切块作用在 catar 流上，与文件数解耦。
+CAS 策略的布局：复用 **desync 库**（casync 的 Go 实现，BSD-3；catar 序列化 + CDC 滚动哈希切块 + 并发装配都是现成的，hostel 只写对象 IO 适配和编排）。bed 目录序列化成 catar 流 → CDC 切块（64K/256K/1M）→ **只上传上代快照没有的块**（上代 index 就是"已在库"清单，未变数据零请求）→ index 对象作为提交点（一次小 PUT 原子发布整份快照，携带 generation）。内容没变时 catar 流稳定 → 块序列相同 → **块上传 no-op**，仍会用一次小 index PUT 推进 generation，保证跨 carrier 的 luggage 新鲜度判定正确。**小文件海**（node_modules，per-object sync 的经典死穴）不是问题：切块作用在 catar 流上，与文件数解耦。
 
 ```text
 <prefix>/
@@ -220,7 +224,7 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 
 ### luggage：异常遗留目录
 
-Store backend 不改变 Bed 生命周期。成功 evict 都会删除本地 Bed 目录：durable store 在此之前真正 Persist，下次 placement 从快照 cold Restore；noop 的 Persist 不做任何事，下次 placement 从 fresh Bed 开始。
+Store 策略不改变 Bed 生命周期。成功 evict 都会删除本地 Bed 目录：durable store 在此之前真正 Persist，下次 placement 从快照 cold Restore；noop 的 Persist 不做任何事，下次 placement 从 fresh Bed 开始。
 
 `luggage` 不再是正常 evict 的目标状态，只表达两类异常遗留目录：
 
@@ -254,7 +258,7 @@ noop 只是 `Persist/Restore/Stat/Delete` 的空实现，不改变 lifecycle：B
 ### bed 目录分层（配套）
 
 ```
-{workspace-root}/{bedID}/        ← Store 遍历根；所有 backend 在 evict 后删除
+{workspace-root}/{bedID}/        ← Store 遍历根；所有策略在 evict 后删除
   meta.json   # hostel 私有：created_at、last_persisted_at、generation、last_active_at（将来：manifest、lease）
   *.local     # 本机私有元数据，不进快照
   data/       # bed_home：不整体进快照
@@ -275,13 +279,13 @@ meta 对 bed 内代码**不可见**（bwrap 只 bind `data/`，root 整体被 tm
 
 已实现（`internal/store/` + `bed.Manager` 生命周期钩子）：
 
-- `Store` 接口 + 独立 `noop` / `s3` / `pack` / `tar` 实现；`router.go` 只负责配置选择、按 bed 识别提交点和既有 CAS → pack 单向切换，S3 client 由三种远端布局复用
+- `Store` 接口 + 独立 `noop` / `cas` / `pack` / `tar` 实现；`router.go` 只负责配置选择、按 bed 识别提交点和既有 CAS → pack 单向切换，S3 client 由三种远端布局复用
 - 异步 initialization：`POST /v1/beds` 快速返回 phase/readiness；`Ensure` 加入同一 singleflight 并等待。Stage-in 失败保留原因且拒绝发布 resident——静默空启动等于数据丢失
 - 原子 Stage-in：快照恢复到 sibling staging 目录，完整后才替换 stale luggage；下载失败保留可用现场；**persist 失败中止 Evict**（毁掉唯一副本比留着 bed 重试更糟）、`POST /v1/beds/:id/checkpoint`
 - Store 同步循环：合并 lifecycle/pressure trigger，自主串行、周期兜底与失败退避；只传静默 dirty bed，并以 snapshot activity watermark 提交同步水位
 - **Bed 生命周期**（§四）：`BeginOperation` 统一 Exec/文件/浏览器/checkpoint 活跃度；`phase`、`readiness`、派生的 `activity: active|idle` 与 generation/expiry 正交；`Evict` 不杀 active operation，evicting 期间新 operation 取消驱逐；`Purge`（`DELETE ?purge=true`）终结身份
-- capabilities / healthz 报 `persistence: noop|auto|s3|pack|tar`
-- **统一 evict + luggage 兼容**：成功 evict 在所有 Store backend 下都删除本地目录；durable 可恢复，noop 从 fresh Bed 开始；异常/旧版 luggage 仍按 generation 判新鲜，并由 `--luggage-high/low-bytes` 水位 GC（stale 优先 → LRU）
+- capabilities / healthz 报 `persistence: noop|auto|cas|pack|tar`
+- **统一 evict + luggage 兼容**：成功 evict 在所有 Store 策略 下都删除本地目录；durable 可恢复，noop 从 fresh Bed 开始；异常/旧版 luggage 仍按 generation 判新鲜，并由 `--luggage-high/low-bytes` 水位 GC（stale 优先 → LRU）
 - **双活冲突探测**（§三.5）：`Persist` 写前 HEAD 比对 generation，远端更新则 `store.ErrConflict` 拒绝覆盖（first-writer-wins；evict 路径因 persist 失败自然中止，bed 留在本机继续服务）
 - **cas 后端**（§三.3，`internal/store/cas.go`，desync 库）：catar+CDC 流式切块上传（上代 index 做免传清单）、index 提交点带 generation/bytes metadata、块序列相同时零 chunk 上传但推进 index generation、提交后按"LIST − index 引用"做 per-bed GC、restore 经 `UnTarIndex` 并发拉块（块 ID 对解压数据复核，桶内损坏在 restore 报错而不是落进 workspace；desync `LocalFS` 为 `os.Root` 背书，自带 symlink 逃逸防护）；全流程在内存 objAPI fake 上有单测（roundtrip/增量/GC/no-op/冲突/purge）
 - **pack 后端**（§三.3，`internal/store/pack.go`）：32 MiB 目标 pack、immutable manifest、`head.json` 原子提交、上代 chunk 免传、pack/manifest/chunk 三级摘要校验、两 pack LRU restore；内存 objAPI fake 覆盖布局/roundtrip/增量/no-op/冲突/purge。是 auto 的新 bed 默认布局，也是高文件数既有 CAS bed 的单向目标；未实现在线 prune/compaction

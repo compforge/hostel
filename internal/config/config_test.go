@@ -119,8 +119,8 @@ func TestExecutorConfig(t *testing.T) {
 }
 
 func TestStoreAutoPackThresholdConfig(t *testing.T) {
-	if c := Load(nil); c.StoreBackend != "auto" || c.AutoPackFileThreshold != 100 {
-		t.Fatalf("default store config = %q/%d, want auto/100", c.StoreBackend, c.AutoPackFileThreshold)
+	if c := Load(nil); c.StoreKind != "auto" || c.AutoPackFileThreshold != 100 {
+		t.Fatalf("default store config = %q/%d, want auto/100", c.StoreKind, c.AutoPackFileThreshold)
 	}
 	t.Setenv("HOSTEL_STORE_AUTO_PACK_FILE_THRESHOLD", "25000")
 	if c := Load(nil); c.AutoPackFileThreshold != 25_000 {

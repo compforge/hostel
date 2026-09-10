@@ -30,7 +30,7 @@ func TestBedStoreAPIOverridesInstanceDefault(t *testing.T) {
 	t.Setenv("HOSTEL_S3_PATH_STYLE", "true")
 	t.Setenv("HOSTEL_S3_ACCESS_KEY_ID", "e2e-key")
 	t.Setenv("HOSTEL_S3_SECRET_ACCESS_KEY", "e2e-secret")
-	c := startTarget(t, targetOptions{store: "s3"}).client
+	c := startTarget(t, targetOptions{store: "cas"}).client
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	created, err := c.json(ctx, "POST", "/v1/beds", "", map[string]string{"id": "noop-bed", "store": "noop"}, nil)
@@ -74,19 +74,19 @@ func TestBedStoreAPIOverridesInstanceDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	must2xx(t, "create default", created)
-	c.waitBed(t, "default-bed", func(b bedView) bool { return b.Status.Phase == "failed" && b.Store == "s3" }, "default Store denial")
+	c.waitBed(t, "default-bed", func(b bedView) bool { return b.Status.Phase == "failed" && b.Store == "cas" }, "default Store denial")
 	if storageRequests.Load() == 0 {
 		t.Fatal("default Bed did not use configured S3")
 	}
 	// Reverse direction: an API-selected S3 Bed also overrides a noop default.
 	reverse := startTarget(t, targetOptions{store: "noop"}).client
 	before := storageRequests.Load()
-	explicit, err := reverse.json(ctx, "POST", "/v1/beds", "", map[string]string{"id": "explicit-s3", "store": "s3"}, nil)
+	explicit, err := reverse.json(ctx, "POST", "/v1/beds", "", map[string]string{"id": "explicit-s3", "store": "cas"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	must2xx(t, "override noop with S3", explicit)
-	reverse.waitBed(t, "explicit-s3", func(b bedView) bool { return b.Status.Phase == "failed" && b.Store == "s3" }, "explicit S3 denial")
+	reverse.waitBed(t, "explicit-s3", func(b bedView) bool { return b.Status.Phase == "failed" && b.Store == "cas" }, "explicit S3 denial")
 	if storageRequests.Load() <= before {
 		t.Fatal("API S3 selection did not override noop default")
 	}

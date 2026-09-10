@@ -111,9 +111,9 @@ Bed 初始化在管理面异步执行：`POST /v1/beds` 返回 `202` 与 `status
 - auto 按 bed 识别已有提交点，以兼容老客户：
   - 既有 CAS bed 可继续读取，并可迁移到 pack。
   - 已有 pack / tar bed 保持原布局。
-- 显式 `--store s3|pack|tar` 不识别或迁移其它布局。
+- 显式 `--store cas|pack|tar` 读取时识别各布局的最新快照，后续写入所选格式；切换格式不重置 generation。
 - `tar` 每次全量覆盖一个 tar.gz，让每张 bed 始终只有一个对象。
-- 未配置 bucket 时，auto 使用 noop。
+- 未配置 bucket 时，所有有效策略都等效 noop；配置 S3 后，显式 noop 仍跳过自动持久化。
 
 同 id 再建时恢复，驱逐（DELETE / idle 回收）或显式 checkpoint 时持久化。普通 operation 与 pressure 只提交可合并的同步诉求，Store 同步循环统一负责串行、失败退避和 `--persist-interval` 周期兜底。bed 的持久身份是快照，本地目录只是工作副本。
 

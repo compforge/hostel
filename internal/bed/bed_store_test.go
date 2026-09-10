@@ -267,7 +267,7 @@ func TestDurableBedSyncsWithNoopInstanceDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, "durable", CreateOptions{Store: "s3"}); err != nil {
+	if _, err := m.InitializeBedWithOptions(ctx, "durable", CreateOptions{Store: "cas"}); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(ctx, "durable")
