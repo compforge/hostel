@@ -1,6 +1,27 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
+
+func TestBedUserConfig(t *testing.T) {
+	wantUID, wantGID := os.Geteuid(), os.Getegid()
+	if wantUID == 0 {
+		wantUID, wantGID = 1000, 1000
+	}
+	if c := Load(nil); c.BedUID != wantUID || c.BedGID != wantGID {
+		t.Fatalf("default bed user = %d:%d, want %d:%d", c.BedUID, c.BedGID, wantUID, wantGID)
+	}
+	t.Setenv("HOSTEL_BED_UID", "1200")
+	t.Setenv("HOSTEL_BED_GID", "1300")
+	if c := Load(nil); c.BedUID != 1200 || c.BedGID != 1300 {
+		t.Fatalf("env bed user = %d:%d, want 1200:1300", c.BedUID, c.BedGID)
+	}
+	if c := Load([]string{"-bed-uid", "1400", "-bed-gid", "1500"}); c.BedUID != 1400 || c.BedGID != 1500 {
+		t.Fatalf("flag bed user = %d:%d, want 1400:1500", c.BedUID, c.BedGID)
+	}
+}
 
 func TestIsolationAndManagedServiceConfigContract(t *testing.T) {
 	// The three north-facing room types are configuration values; resolution to

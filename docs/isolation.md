@@ -43,7 +43,7 @@ Bed 是跨机制不变的单元；Executor 是它当前可替换的进程承载�
 | 维度 | 理想状态 | 当前能力与缺口 |
 |---|---|---|
 | 文件与路径 | 每个 Bed 使用自己的文件空间，不能读写邻居数据 | BedFS 统一结构化路径；文件房型决定进程侧的访问屏障；用户态投影只改善路径体验 |
-| 进程与身份 | 执行独立、可完整回收，不能观察或干扰邻居进程 | Executor/supervisor 管理进程归属与回收；UID 可增加跨身份保护；当前 suite 没有私有 PID namespace |
+| 进程与身份 | 执行独立、可完整回收，不能观察或干扰邻居进程 | daemon 保留管理权限，BedUser 统一约束命令身份；Executor/supervisor 管理进程归属与回收；当前 suite 没有私有 PID namespace |
 | 网络 | 每个 Bed 有独立网络空间，并受自己的出站约束 | 可选 netns 覆盖 Bed 命令与 shell；不可用时共享 Carrier；共享设施出站和可配置 egress policy 尚未收敛 |
 | CPU / 内存 | 一个 Bed 的失控负载不挤占或拖垮邻居 | Carrier 准入与可选 per-bed cgroup 记账已有；per-bed 硬限额尚未实现 |
 | 环境与凭据 | Bed 只接触属于自己或明确共享的配置、凭据 | 过滤 Hostel 保留命名空间；其余 Carrier 环境默认继承，部署方负责其中的敏感信息 |
@@ -79,13 +79,19 @@ workspace backend 共同实现 BedFS 的进程视图。流程细节由 [lifecycl
 - **释放中的资源不再服务新执行**：失败清理仍需有人负责，但不能因此继续被视为可用。
   同 ID 的重新初始化不得复用残缺资源，也不得被上一轮清理回收。
 
-`isolation.Environment` 绑定一个 resident Bed 的文件视图与具体网络 allocation，命令和
-shell 都通过它组装。启用 netns 时，执行顺序为网络进入 → 文件视图准备 → 身份切换与
-最终降权 → 用户程序；UID 切换和 capability 丢弃交给同一个 `setpriv` 操作，避免先丢失
-切换身份所需权限。Store、Network 和 Executor 仍各自提供能力，Bed 协调其生命周期。
+`isolation.Environment` 绑定一个 resident Bed 的文件视图、具体网络 allocation 和最终
+`BedUser`，命令和 shell 都通过它组装。普通文件房型采用实例配置的固定 BedUser：root
+daemon 默认使用 1000:1000，非 root daemon 默认沿用自身身份。UID 房型按 Bed 目录稳定派生
+专属的高位 UID/GID，并以同一个 BedUser 值驱动目录 ownership 和进程身份，不维护第二套
+执行路径。执行顺序为网络进入 → 身份切换与最终降权 → 文件边界和进程视图 → 用户程序：
+Network 先使用 daemon 权限完成 netns entry，UID 切换和 capability 丢弃交给同一个
+`setpriv` 操作，bwrap/Landlock/路径 helper 再以 BedUser 运行。Store、Network 和 Executor
+仍各自提供能力，Bed 协调其生命周期。共享 Chromium
+位于 Bed 进程树之外，不从某个 BedUser 派生运行身份。
 
 实例选定能力后，以临时 Bed 走真实命令和常驻 shell 的子目录读写路径，并核对 file API
-可见同一产物。组合探测失败会阻止
+可见同一产物，同时核对最终 UID/GID、实际 capability 集合与 `NoNewPrivs`；root daemon
+还会清空并核对 capability bounding set。组合探测失败会阻止
 HTTP 服务启动，不在运行时降级。这个探测证明选中路径可执行，跨 Bed 拒绝访问、权限
 集合与失败回收仍由对应机制 probe 和回归测试验证。
 
@@ -137,7 +143,8 @@ file API 新建文件及目录也交给该属主。
 当前 UID 从数据目录路径散列到固定高位范围，不保证全局唯一，也可能与宿主账号或 userns
 映射重叠；部署须核对该范围，碰撞会削弱相应 Bed 的隔离。属主交接跳过多硬链接普通文件，
 以免把 Bed 外的 inode 改属主；部署应保留 `fs.protected_hardlinks=1`。具体规则靠
-`internal/isolation/uid_linux.go` 与 BedFS 的属主操作承接。
+`internal/isolation/uid_linux.go` 选择 per-Bed 用户，`internal/privilege` 与 BedFS
+共同承接进程 credentials 和文件属主操作。
 
 ### 软件共享与敏感信息
 

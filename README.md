@@ -193,7 +193,7 @@ See [shared facility boundaries](docs/amenity.md).
 Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` / `--projected-paths` / `--persisted-paths` /
 `--dorm-read-fallback-root` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
 `--max-pinned-beds` / `--bed-pressure-threshold-percent` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
-`--executor` / `--sync` /
+`--executor` / `--bed-uid` / `--bed-gid` / `--sync` /
 `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--s3-region` / `--persist-interval` /
 `--luggage-high-bytes` / `--luggage-low-bytes` /
 `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` /
@@ -348,13 +348,17 @@ multi-platform image can't load into the local docker).
 
 In-container defaults (all overridable via `HOSTEL_*`): `--isolation suite`,
 `--workspace-root /workspace` (a declared volume), `--chromium-path
-/usr/bin/chromium`. `tini` is PID 1 (reaps shell/chromium children); the
+/usr/bin/chromium`. A root daemon keeps the privileges needed for mount,
+network and Store operations, while Bed commands run as UID/GID 1000 by
+default; `HOSTEL_BED_UID` and `HOSTEL_BED_GID` select another non-root fixed
+identity. `tini` is PID 1 (reaps shell/chromium children); the
 `HEALTHCHECK` calls `hostel --health` (self-GETs `/healthz`, no curl needed).
 Whether bwrap actually isolates depends on usable user namespaces and mount
 policy; PRoot depends on usable ptrace. Without either, Hostel logs the degrade
 and keeps serving through the next supported workspace view. The
-image runs as root by default (bwrap mount setup + chromium `--no-sandbox`);
-harden with a dropped-capability `securityContext` per deployment.
+image daemon runs as root by default (bwrap mount setup + chromium
+`--no-sandbox`); grant only the capabilities required by the selected
+deployment features.
 
 ## License & acknowledgements
 

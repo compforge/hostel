@@ -19,26 +19,15 @@ package isolation
 import (
 	"fmt"
 	"hash/fnv"
-	"io/fs"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/qiankunli/hostel/internal/bedfs"
+	"github.com/qiankunli/hostel/internal/privilege"
 )
-
-// AsUserArg is the hidden subcommand hostel re-execs into to drop to the bed's
-// dedicated uid before exec-ing the real command (main handles it). Like
-// landlock's __confine, the drop must happen in the CALLING process — the
-// daemon manages every bed and must keep its privileges — so the mechanism is a
-// self-re-exec: `hostel __asuser <uid> <bedDataDir> -- <cmd>...`.
-const AsUserArg = "__asuser"
 
 // Bed uids live in a fixed high band, ASSUMED unused by the host — not
 // guaranteed: this range can overlap /etc/subuid userns mappings (the 2nd
@@ -50,11 +39,6 @@ const AsUserArg = "__asuser"
 // no shared state and it stays stable across restarts. Two beds hashing to the
 // same uid is possible but rare; a colliding pair degrades to mutual access
 // (dorm between just those two) — never a crash.
-const (
-	uidBase  = 200000
-	uidRange = 100000 // uids 200000..299999
-)
-
 // bedUID derives a bed's dedicated uid from its data dir. gid == uid: each bed
 // gets a private primary group of the same number.
 func bedUID(dataDir string) int {
@@ -71,35 +55,32 @@ func bedUID(dataDir string) int {
 // "private room, shared toilet" tier. Needs the daemon to hold
 // CAP_SETUID/SETGID/CHOWN (root, or a setcap'd binary) but no special kernel —
 // so it fills the room slot where Landlock is absent (old/custom kernels).
-type uidIso struct {
-	self string // hostel binary, re-execed as the uid-dropper
-}
+type uidIso struct{}
 
 func newUID(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
-	report := ProbeReport{}
-	self, err := os.Executable()
-	if err != nil {
-		report.Error = err.Error()
-		return unavailable{name: "uid", lvl: Room}, report
+	helper, helperErr := privilege.ProcessCredentialHelper()
+	if helperErr != nil {
+		discovery := ProbeReport{ConfiguredPath: "setpriv", Error: "find binary: " + helperErr.Error()}
+		return unavailable{name: "uid", lvl: Room}, discovery
 	}
-	report.ResolvedPath = self
+	discovery := discoverExecutable(helper)
+	discovery.ConfiguredPath = "setpriv"
 	// Missing caps isn't an error — many environments simply don't grant them;
 	// the resolver falls through to the next mechanism and logs honestly.
 	if miss := missingUIDCaps(facts); miss != "" {
-		return unavailable{name: "uid", lvl: Room}, report
+		return unavailable{name: "uid", lvl: Room}, discovery
 	}
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		log.Printf("isolation: cannot create workspace root %s: %v", workspaceRoot, err)
 	}
 	// Caps present ≠ enforcement works. Prove the whole chain once — chown →
 	// setuid → no_new_privs → EACCES on a sibling — exactly as production runs.
-	report = uidSmoke(self, workspaceRoot)
-	report.ResolvedPath = self
+	report := withExecutionProbe(discovery, uidSmoke(workspaceRoot))
 	if report.failed() {
 		log.Printf("isolation: uid isolation caps present but unusable (%s)", report.Error)
 		return unavailable{name: "uid", lvl: Room}, report
 	}
-	return &uidIso{self: self}, report
+	return &uidIso{}, report
 }
 
 // capsForUID: the effective capabilities the daemon needs to run beds under
@@ -124,11 +105,11 @@ func missingUIDCaps(facts HostFacts) string {
 }
 
 // uidSmoke proves the mechanism bites, using the exact production form: prepare
-// two sibling dirs owned by DIFFERENT bed uids, then run `hostel __asuser` as
-// one and check it can write its own dir but gets EACCES on the sibling's
+// two sibling dirs owned by DIFFERENT bed uids, then run through BedUser as one
+// and check it can write its own dir but gets EACCES on the sibling's
 // secret. Catches a silently-broken setuid (e.g. no CAP_SETUID) that the cap
 // bits alone wouldn't — same honesty contract as landlockSmoke.
-func uidSmoke(self, workspaceRoot string) ProbeReport {
+func uidSmoke(workspaceRoot string) ProbeReport {
 	base, err := os.MkdirTemp(workspaceRoot, ".uidprobe-*")
 	if err != nil {
 		return ProbeReport{Error: fmt.Sprintf("smoke test: temp dir: %v", err)}
@@ -160,9 +141,16 @@ func uidSmoke(self, workspaceRoot string) ProbeReport {
 	}
 
 	script := fmt.Sprintf("echo ok > probe.txt || exit 10; cat %q >/dev/null 2>&1 && exit 11; exit 0", secret)
-	cmd := exec.Command(self, AsUserArg, strconv.Itoa(bedUID(own)), own, "--", "/bin/sh", "-c", script)
+	cmd := exec.Command("/bin/sh", "-c", script)
 	// Production chdirs before dropping UID; the probe must exercise the same order.
 	cmd.Dir = own
+	user, err := privilege.NewBedUser(bedUID(own), bedUID(own))
+	if err != nil {
+		return ProbeReport{Error: "smoke test: " + err.Error()}
+	}
+	if err := user.Wrap(cmd); err != nil {
+		return ProbeReport{Error: "smoke test: " + err.Error()}
+	}
 	report := runExecProbe(cmd)
 	if report.ExitCode == nil || *report.ExitCode == 0 {
 		return report
@@ -185,94 +173,35 @@ func (u *uidIso) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
 func (u *uidIso) WorkspaceMounted() bool       { return false }
 
 func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
-	// Prefix `hostel __asuser <uid> <bed_home> --` so the child drops
-	// to the bed uid, then execs the user command. The uid derives from bed_home
-	// (stable per bed dir); cmd.Dir gives the parent its start dir — the
-	// requested BedFS directory. exec.Cmd performs the chdir before the helper
-	// drops privileges, so __asuser must preserve it.
-	uid := bedUID(fs.Home())
-	prefix := []string{u.self, AsUserArg, strconv.Itoa(uid), fs.Home(), "--"}
-	userArgs := cmd.Args
-	cmd.Args = make([]string, 0, len(prefix)+len(userArgs))
-	cmd.Args = append(cmd.Args, prefix...)
-	cmd.Args = append(cmd.Args, userArgs...)
-	cmd.Path = u.self
 	cmd.Dir = commandCwd(fs, cwd)
 	return nil
 }
 
-// Prepare hands bed_home to its dedicated uid: 0700 on the dir
-// so siblings can't enter, owned recursively by the uid so the bed can read
-// and write its own files. Implements Preparer; the bed manager calls it after
-// the dir is (re)created — including after a restore repopulated the tree.
+// Prepare tightens bed_home before BedUser hands the restored tree to this
+// Bed's dedicated uid. Ownership is centralized in BedUser so every isolation
+// mechanism follows the same file/process identity invariant.
 func (u *uidIso) Prepare(fs *bedfs.FS) error {
-	if err := prepareUIDDir(fs.Home(), bedUID(fs.Home())); err != nil {
-		return err
-	}
-	return fs.RefreshOwner()
+	return os.Chmod(fs.Home(), 0o700)
 }
 
 func prepareUIDDir(dir string, uid int) error {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
-	return chownTree(dir, uid)
+	filesystem, err := bedfs.New(dir)
+	if err != nil {
+		return err
+	}
+	defer filesystem.Close()
+	user, err := privilege.NewBedUser(uid, uid)
+	if err != nil {
+		return err
+	}
+	return user.Prepare(filesystem)
 }
-
-// chownTree recursively chowns root to uid:uid (uid == gid). Lchown so symlinks
-// are retargeted, not their referents; WalkDir doesn't descend symlinked dirs,
-// so a symlink can't lead the walk out of the tree.
-//
-// Hardlinks are the subtle case: a hardlink is a second name for the SAME
-// inode, so chowning it by path also rehomes whatever else points at that inode
-// — a bed could `ln /etc/x data/x` and, on the next Prepare, be handed
-// ownership of a host file (privilege escalation when fs.protected_hardlinks is
-// off — precisely the old/custom-kernel hosts uid isolation targets). So we
-// skip any multiply-linked regular file: it keeps its original owner (root), so
-// the bed still can't write it. Deployments should also keep
-// fs.protected_hardlinks=1 (docs/isolation.md). Directories legitimately
-// have nlink>1 (subdirs, "."), so the guard is regular-files-only.
-func chownTree(root string, uid int) error {
-	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.Type().IsRegular() {
-			info, ierr := d.Info()
-			if ierr != nil {
-				return ierr
-			}
-			if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
-				return nil // multiply-linked: may point outside the tree, don't rehome it
-			}
-		}
-		return os.Lchown(p, uid, uid)
-	})
-}
-
-// ApplyAsUser drops the CURRENT process to uid (uid == gid, private group),
-// sets no_new_privs so a setuid-root binary in the image can't re-escalate,
-// then preserves the cwd inherited from exec.Cmd before exec-ing the command.
-// Called by main's __asuser subcommand. Order matters: each privileged step
-// must run before we drop the capability that permits it (groups and gid before
-// uid), and no_new_privs before the exec it must outlive.
-func ApplyAsUser(uid int, _ string) error {
-	if err := syscall.Setgroups([]int{}); err != nil {
-		return fmt.Errorf("setgroups: %w", err)
-	}
-	if err := syscall.Setgid(uid); err != nil {
-		return fmt.Errorf("setgid: %w", err)
-	}
-	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, uintptr(1), 0, 0, 0); err != nil {
-		return fmt.Errorf("no_new_privs: %w", err)
-	}
-	if err := syscall.Setuid(uid); err != nil {
-		return fmt.Errorf("setuid: %w", err)
-	}
-	return nil
-}
-
-func (u *uidIso) identity(fs *bedfs.FS) identity {
+func (u *uidIso) bedUser(fs *bedfs.FS, _ privilege.BedUser) (privilege.BedUser, error) {
 	uid := bedUID(fs.Home())
-	return identity{uid: uid, gid: uid}
+	return privilege.NewBedUser(uid, uid)
 }
+
+func (*uidIso) dedicatedBedUsers() bool { return true }

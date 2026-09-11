@@ -32,7 +32,14 @@ type healthView struct {
 	OK              bool   `json:"ok"`
 	ExecutorBackend string `json:"executor_backend"`
 	WorkspaceMount  bool   `json:"workspace_mount"`
-	WorkspaceView   struct {
+	BedUser         struct {
+		Strategy string `json:"strategy"`
+		UID      int    `json:"uid"`
+		GID      int    `json:"gid"`
+		UIDMin   int    `json:"uid_min"`
+		UIDMax   int    `json:"uid_max"`
+	} `json:"bed_user"`
+	WorkspaceView struct {
 		Mode      string `json:"mode"`
 		Available bool   `json:"available"`
 		Reason    string `json:"reason"`

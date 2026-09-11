@@ -29,6 +29,7 @@ import (
 	"os/exec"
 
 	"github.com/qiankunli/hostel/internal/bedfs"
+	"github.com/qiankunli/hostel/internal/privilege"
 )
 
 // Level is a data-isolation guarantee, ordered weakest→strongest.
@@ -72,11 +73,14 @@ func parseRequest(s string) Level {
 	}
 }
 
-// Boundary confines an exec.Cmd and reports the isolation guarantee it
-// provides. Filesystem projection is selected independently so a user-space
-// path helper cannot masquerade as a stronger security boundary.
+// Boundary contributes the mechanism-specific part of a Bed execution
+// environment and reports its isolation guarantee. Filesystem projection is
+// selected independently so a user-space path helper cannot masquerade as a
+// stronger security boundary. The Bed manager always executes through
+// Environment, which composes this boundary with the resolved BedUser and
+// network attachment.
 type Boundary interface {
-	// Name is the mechanism: direct | landlock | bwrap.
+	// Name is the mechanism: direct | uid | landlock | bwrap.
 	Name() string
 	// Level is the guarantee this mechanism delivers.
 	Level() Level
@@ -91,8 +95,8 @@ type Boundary interface {
 	Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error
 }
 
-// Isolator is the resolved runtime consumed by beds: one security Boundary
-// plus one process-visible BedFS view.
+// Isolator is the resolved file/isolation component used to build a Bed's
+// Environment: one security Boundary plus one process-visible BedFS view.
 type Isolator interface {
 	Boundary
 	View(*bedfs.FS) bedfs.View
@@ -135,11 +139,11 @@ func WithPathProjections(projections []bedfs.PathProjection) Option {
 }
 
 // Preparer is an optional Boundary capability: a mechanism that must prepare a
-// bed's data dir before its commands run. uid isolation implements it (chown
-// the dir to the bed's dedicated uid); mount- and LSM-based mechanisms need no
-// on-disk prep and don't. The bed manager calls Prepare after (re)creating the
-// data dir. The resolved result always satisfies Preparer (no-op when the
-// chosen mechanism isn't one), so callers can assert unconditionally.
+// bed's data dir before its commands run. uid isolation tightens directory
+// traversal here; BedUser owns the common ownership handoff. Mount- and
+// LSM-based mechanisms need no mechanism-specific on-disk prep. The bed manager
+// calls Prepare after (re)creating the data dir. The resolved result always
+// satisfies Preparer (no-op when the chosen mechanism isn't one).
 type Preparer interface {
 	Prepare(fs *bedfs.FS) error
 }
@@ -173,6 +177,18 @@ func (r *resolved) Diagnostics() DiagnosticsReport {
 		probes[name] = probe
 	}
 	return DiagnosticsReport{System: r.diagnostics.System, Probes: probes}
+}
+
+func (r *resolved) bedUser(fs *bedfs.FS, configured privilege.BedUser) (privilege.BedUser, error) {
+	if provider, ok := r.boundary.(bedUserProvider); ok {
+		return provider.bedUser(fs, configured)
+	}
+	return configured, nil
+}
+
+func (r *resolved) dedicatedBedUsers() bool {
+	provider, ok := r.boundary.(interface{ dedicatedBedUsers() bool })
+	return ok && provider.dedicatedBedUsers()
 }
 
 // Prepare forwards to the chosen mechanism when it needs data-dir preparation

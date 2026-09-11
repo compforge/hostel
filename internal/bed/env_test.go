@@ -24,6 +24,7 @@ import (
 
 	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/privilege"
 	"github.com/qiankunli/hostel/internal/resource"
 )
 
@@ -78,6 +79,22 @@ func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 	}
 	if !slices.IsSorted(cmd.Env) {
 		t.Fatalf("environment is not deterministic: %v", cmd.Env)
+	}
+}
+
+func TestManagerBedUserIsFixedAtConstruction(t *testing.T) {
+	root := t.TempDir()
+	user, err := privilege.NewBedUser(1200, 1300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, nil, WithBedUser(user))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := m.BedUserReport()
+	if report.Strategy != "fixed" || report.UID != 1200 || report.GID != 1300 {
+		t.Fatalf("bed user report = %+v", report)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +74,7 @@ func TestIsolationLevels(t *testing.T) {
 			default:
 				t.Fatalf("unknown effective isolation %q", health.Isolation.Effective)
 			}
+			assertBedUserPolicy(t, c, health)
 
 			pwd, response := c.command(t, "isolation-a", map[string]any{"command": "pwd", "timeout": 30_000})
 			must2xx(t, "workspace path probe", response)
@@ -84,6 +86,45 @@ func TestIsolationLevels(t *testing.T) {
 				assertCanonicalWorkspaceView(t, c, health.WorkspaceView.Mode)
 			}
 		})
+	}
+}
+
+func assertBedUserPolicy(t *testing.T, c *apiClient, health healthView) {
+	t.Helper()
+	identity := func(bed string) (int, int) {
+		result, response := c.command(t, bed, map[string]any{
+			"command": "id -u; id -g",
+			"timeout": 30_000,
+		})
+		must2xx(t, "bed user probe", response)
+		assertCommandExit(t, result, 0)
+		fields := strings.Fields(result.Stdout)
+		if len(fields) != 2 {
+			t.Fatalf("bed %s identity output = %q", bed, result.Stdout)
+		}
+		uid, uidErr := strconv.Atoi(fields[0])
+		gid, gidErr := strconv.Atoi(fields[1])
+		if uidErr != nil || gidErr != nil {
+			t.Fatalf("bed %s identity output = %q: uid_err=%v gid_err=%v", bed, result.Stdout, uidErr, gidErr)
+		}
+		return uid, gid
+	}
+
+	aUID, aGID := identity("isolation-a")
+	bUID, bGID := identity("isolation-b")
+	switch health.BedUser.Strategy {
+	case "fixed":
+		if aUID != health.BedUser.UID || aGID != health.BedUser.GID || bUID != aUID || bGID != aGID {
+			t.Fatalf("fixed bed user: health=%+v a=%d:%d b=%d:%d", health.BedUser, aUID, aGID, bUID, bGID)
+		}
+	case "per_bed":
+		if aUID == bUID || aGID != aUID || bGID != bUID ||
+			aUID < health.BedUser.UIDMin || aUID > health.BedUser.UIDMax ||
+			bUID < health.BedUser.UIDMin || bUID > health.BedUser.UIDMax {
+			t.Fatalf("per-bed users: health=%+v a=%d:%d b=%d:%d", health.BedUser, aUID, aGID, bUID, bGID)
+		}
+	default:
+		t.Fatalf("unknown bed user strategy %q", health.BedUser.Strategy)
 	}
 }
 

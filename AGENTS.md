@@ -74,6 +74,7 @@ internal/
 ├── config/            flags + HOSTEL_* env
 ├── tracing/           OpenTelemetry 进程初始化：OTLP exporter、W3C propagation 与日志 trace/span 关联
 ├── isolation/         执行环境组装：Boundary 解析 direct/landlock/uid/bwrap 隔离档，workspace backend 独立解析 mount/PRoot/pathshim/carrier 进程视图
+├── privilege/         Bed 操作系统权限：BedUser、文件 ownership、进程 credentials（UID/GID/groups/capabilities/no_new_privs）
 ├── executor/          Executor 抽象与 local / supervisor backend；进程 identity、幂等 Start、终态与整域 Shutdown
 ├── supervisor/        supervisor backend 的可重连 IPC 协议与 Linux supervisor/reaper 实现
 ├── bed/               ★核心。bed=隔离单元=对外一个 sandbox
@@ -101,7 +102,7 @@ internal/
 └── web/               gin 薄适配层：server(路由+bedOf 解析) / errors / sse / files / command / beds
 ```
 
-**数据流**：请求 →`web` 按 `X-Hostel-Bed`(缺省 default) 解析 bed → 调 `bed`/`bedfs` 核心 → 响应（命令走 SSE）。核心层（bed/bedfs/isolation/service）**不含任何 HTTP 类型**，换框架只动 `web/`。
+**数据流**：请求 →`web` 按 `X-Hostel-Bed`(缺省 default) 解析 bed → 调 `bed`/`bedfs` 核心 → 响应（命令走 SSE）。核心层（bed/bedfs/isolation/privilege/service）**不含任何 HTTP 类型**，换框架只动 `web/`。
 
 ## 关键约定
 
@@ -123,6 +124,7 @@ internal/
 - **执行层次是 `Bed → Executor → Execution`**：Bed 是 workspace / sandbox 的持久身份；Executor 是当前可替换的进程域；Execution 是一次运行。Executor 丢失只终结归属它的进程，不丢 Bed 数据，下一次请求在旧 Executor 清理成功后创建新 Executor。每次前台、后台或 session run 都生成 `Execution`；`execution_start` 先于输出，之后恰有一个 `execution_end`。`ProcessOutcome` 表达 exited / signaled / lost，termination cause 独立表达 timeout / cancel / interrupt / teardown / executor_lost，禁止再用裸 EOF、`-1` 或错误字符串承载多种语义。
 - **Trace 是生命周期事实的投影**：HTTP 使用路由模板 span，bed initialize/persist/evict 与 execution 使用稳定领域 span，stage 只记 event；不得把 command、env、stdout/stderr 写入 span。后台 initialization / execution 继承 trace identity 但不继承 HTTP cancel。详见 `docs/observability.md`。
 - **隔离按 Bed 的统一目标尽量兑现**：dorm/room/suite 是文件数据隔离档位；进程视图、网络与资源能力分别选择和披露。环境能力不足可以降级，已选机制执行失败不能静默放开边界。组合必须满足准备、降权与回收的顺序约束；当前缺口见 `docs/isolation.md` 与 `docs/backlog.md`。
+  - daemon 身份与 BedUser 正交：daemon 可保留资源管理权限，所有 command/session 使用 resident Bed 已解析的 BedUser；普通房型使用实例固定用户，uid 机制使用稳定的 per-Bed 用户。
   - BedFS 路径映射在所有档位一致；PRoot/pathshim 改善进程路径体验，不提供安全边界，也不提高文件隔离档位。
   - Store 独立选择需持久化的 BedFS 子树；新增 projection 不自动获得耐久性，详见 `docs/store.md`。
 - **amenity 通则**：共享设施按 Bed 分配应用状态，产物落对应 workspace；设施状态、Bed 级凭据与 Bed 生命周期分别管理。北向使用 Bed 级动作或受限代理，不裸透传共享设施的管理协议。应用切分不等于文件、网络或资源完整隔离，当前机制与缺口见 `docs/amenity.md`。

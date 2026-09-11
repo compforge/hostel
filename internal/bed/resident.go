@@ -11,6 +11,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/network"
+	"github.com/qiankunli/hostel/internal/privilege"
 	"github.com/qiankunli/hostel/internal/store"
 )
 
@@ -56,6 +57,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 	wsDir := filepath.Join(dataDir, "workspace")
 	m.updateInitialization(initialization, "PreparingBedFS", "preparing BedFS and isolation")
 	var filesystem *bedfs.FS
+	var bedUser privilege.BedUser
 	if err := trace.stage("prepare_bedfs", func() error {
 		if err := os.MkdirAll(wsDir, 0o755); err != nil {
 			return err
@@ -67,9 +69,15 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 		}
 		// Prepare after restore repopulates the tree and before the bed serves.
 		if p, ok := m.iso.(isolation.Preparer); ok {
-			return p.Prepare(filesystem)
+			if err := p.Prepare(filesystem); err != nil {
+				return err
+			}
 		}
-		return nil
+		bedUser, err = isolation.BedUserFor(m.iso, filesystem, m.bedUser)
+		if err != nil {
+			return err
+		}
+		return bedUser.Prepare(filesystem)
 	}); err != nil {
 		if filesystem != nil {
 			_ = filesystem.Close()
@@ -148,7 +156,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 		}
 	}
 
-	environment := isolation.Bind(m.iso, filesystem, attachment)
+	environment := isolation.Bind(m.iso, filesystem, attachment, bedUser)
 	b.environment = environment
 	// Prepare the accounting parent with the Bed; Executor children are lazy.
 	m.updateInitialization(initialization, "PreparingResources", "preparing Bed accounting group")
