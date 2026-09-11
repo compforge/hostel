@@ -1,11 +1,25 @@
-# 文件传输：Bed ↔ S3
+# 文件操作与传输
 
-## 概念与边界
+## 文件操作入口
+
+调用方根据数据从哪里来、到哪里去选择 API；这些入口共享 BedFS 的路径归属与文件访问边界。
+
+| 场景 | 入口 | 数据流与生命周期 |
+|---|---|---|
+| 查询、修改 Bed 内文件 | `/files/info`、`/files/search`、`/files/mv`、`/files/replace`、`/files/permissions`、`DELETE /files`；目录走 `/directories` | 直接操作所选 Bed，结果随请求返回 |
+| 客户端上传、下载文件 | `POST /files/upload`、`GET /files/download` | 文件字节通过 HTTP 客户端与 Bed 之间传递 |
+| Bed 与 S3 直接复制文件 | `/v1/beds/:id/transfers` | Hostel 后台传输；客户端提交源、目标，查询进度或取消，详见下文的传输契约 |
+
+`/files/*` 与 `/directories` 通过 `X-Hostel-Bed` 选择 Bed，Transfer 通过 URL 中的 Bed ID
+选择。两类入口都使用 Client path，不要求调用方知道 carrier 上的实际目录。
+自动持久化由 Store 的同步与生命周期策略触发，独立于这些显式文件操作，详见 [Store](store.md)。
+
+## 远端传输的概念与边界
 
 Transfer 是一次 Bed 内文件与 S3 对象之间的单向复制。Hostel 只认识源、目标和传输选项，
 不解释数据是否用于备份、恢复、素材导入或产物导出。`/files/*` 用于 HTTP 客户端与 Bed
 之间的文件操作；`/v1/beds/:id/transfers` 让 Hostel 直接搬运数据，客户端只控制操作。
-文件操作入口总览及共同路径规则见 [BedFS：文件操作入口](filesystem.md#文件操作入口)。
+共同的路径空间、文件归属与隔离语义见 [BedFS](filesystem.md)。
 
 Store Manager 同时拥有自动持久化和显式传输。两者共用 S3 client，但具有不同的生命周期：
 自动持久化由 `bed.store` 与 Bed 生命周期驱动；Transfer 由调用方触发，不读写 Bed generation、
@@ -29,7 +43,7 @@ Bed purge 和自动持久化 GC 不删除这里的数据。对象 key 不自动�
 普通 evict 在传输运行时拒绝回收。Purge 和 daemon 关闭则取消并等待传输退出，之后才能关闭
 BedFS 或删除本地目录；等待失败保留现场供清理重试，不能把取消请求已接受当作传输已退出。
 
-## API
+## 远端传输 API
 
 | 方法与路径 | 语义 |
 |---|---|

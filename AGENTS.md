@@ -132,7 +132,7 @@ internal/
 
 ## References
 
-- 显式文件传输：`docs/transfers.md`（Bed ↔ S3 Copy，操作状态与自动持久化边界）
+- 文件操作与传输：`docs/transfers.md`（files API 入口、Bed ↔ S3 Copy、操作状态与自动持久化边界）
 
 - 网络管理：`docs/network.md`（自动探测、命令作用域与诊断；共享 Chromium 代理待支持）
 
