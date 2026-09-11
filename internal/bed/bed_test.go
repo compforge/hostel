@@ -1000,7 +1000,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{snaps: map[string][]byte{}, metas: map[string][]byte{}, gens: map[string]int64{}}
 }
 
-func (f *fakeStore) Name() store.Kind { return store.KindCAS }
+func (f *fakeStore) Name() store.SyncKind { return store.SyncCAS }
 func (f *fakeStore) Stat(_ context.Context, id string) (*store.SnapshotInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import (
 	"archive/tar"
@@ -39,7 +39,7 @@ import (
 //
 //	<prefix>/tar/<bedID>/snapshot.tar.gz
 type tarStore struct {
-	obj    objAPI
+	obj    objects
 	prefix string
 	filter snapshotFilter
 }
@@ -48,19 +48,7 @@ type tarStore struct {
 // operation bounded, but allow enough time for a full workspace on a slow link.
 const tarOpTimeout = 30 * time.Minute
 
-func newTar(ctx context.Context, cfg Config) (Store, error) {
-	obj, err := newS3Obj(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	filter, err := newSnapshotFilter(cfg.PersistedPaths)
-	if err != nil {
-		return nil, err
-	}
-	return newTarStore(obj, cfg.Prefix, filter), nil
-}
-
-func newTarStore(obj objAPI, prefix string, filters ...snapshotFilter) *tarStore {
+func newTarStore(obj objects, prefix string, filters ...snapshotFilter) *tarStore {
 	filter := defaultSnapshotFilter()
 	if len(filters) > 0 {
 		filter = filters[0]
@@ -79,9 +67,9 @@ func (s *tarStore) snapshotKey(bedID string) string {
 }
 
 func (s *tarStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 	defer cancel()
-	meta, size, exists, err := s.obj.head(ctx, s.snapshotKey(bedID))
+	meta, size, exists, err := s.obj.Head(ctx, s.snapshotKey(bedID))
 	if err != nil || !exists {
 		return nil, err
 	}
@@ -93,7 +81,7 @@ func (s *tarStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error
 }
 
 func (s *tarStore) Persist(ctx context.Context, bedID, dir string, generation int64) error {
-	meta, _, exists, err := s.obj.head(ctx, s.snapshotKey(bedID))
+	meta, _, exists, err := s.obj.Head(ctx, s.snapshotKey(bedID))
 	if err != nil {
 		return fmt.Errorf("store: persist %s: pre-write stat: %w", bedID, err)
 	}
@@ -124,7 +112,7 @@ func (s *tarStore) Persist(ctx context.Context, bedID, dir string, generation in
 
 	putCtx, cancel := context.WithTimeout(ctx, tarOpTimeout)
 	defer cancel()
-	if err := s.obj.put(putCtx, s.snapshotKey(bedID), tmp, size, map[string]string{
+	if err := s.obj.Put(putCtx, s.snapshotKey(bedID), tmp, size, map[string]string{
 		generationMetaKey: strconv.FormatInt(generation, 10),
 	}); err != nil {
 		return fmt.Errorf("store: persist %s: put archive: %w", bedID, err)
@@ -135,7 +123,7 @@ func (s *tarStore) Persist(ctx context.Context, bedID, dir string, generation in
 func (s *tarStore) Restore(ctx context.Context, bedID, dir string) error {
 	getCtx, cancel := context.WithTimeout(ctx, tarOpTimeout)
 	defer cancel()
-	rc, err := s.obj.get(getCtx, s.snapshotKey(bedID))
+	rc, err := s.obj.Get(getCtx, s.snapshotKey(bedID))
 	if err != nil {
 		return fmt.Errorf("store: restore %s: get archive: %w", bedID, err)
 	}
@@ -147,9 +135,9 @@ func (s *tarStore) Restore(ctx context.Context, bedID, dir string) error {
 }
 
 func (s *tarStore) Delete(ctx context.Context, bedID string) error {
-	ctx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 	defer cancel()
-	if err := s.obj.del(ctx, []string{s.snapshotKey(bedID)}); err != nil {
+	if err := s.obj.Delete(ctx, []string{s.snapshotKey(bedID)}); err != nil {
 		return fmt.Errorf("store: delete %s: %w", bedID, err)
 	}
 	return nil

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package backend
 
 import (
 	"bytes"
@@ -80,8 +80,8 @@ func TestS3ObjPutOverHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newS3Client: %v", err)
 	}
-	obj := &s3obj{client: client, bucket: "bucket"}
-	if err := obj.put(context.Background(), "bed/index.caibx", bytes.NewReader(want), int64(len(want)), nil); err != nil {
+	obj := &S3{client: client, bucket: "bucket"}
+	if err := obj.Put(context.Background(), "bed/index.caibx", bytes.NewReader(want), int64(len(want)), nil); err != nil {
 		t.Fatalf("put over HTTP: %v", err)
 	}
 	if !bytes.Equal(got, want) {

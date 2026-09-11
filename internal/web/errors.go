@@ -40,7 +40,7 @@ const (
 	ErrBedLimitExceeded   ErrorCode = "BED_LIMIT_EXCEEDED"
 	ErrResourcePressure   ErrorCode = "RESOURCE_PRESSURE"
 	ErrBedBusy            ErrorCode = "BED_BUSY"
-	ErrBedStoreConflict   ErrorCode = "BED_STORE_CONFLICT"
+	ErrBedSyncConflict    ErrorCode = "BED_SYNC_CONFLICT"
 	ErrServiceUnavailable ErrorCode = "SERVICE_UNAVAILABLE"
 )
 

@@ -313,8 +313,8 @@ func (m *Manager) tenantOccupiedBedsLocked() int {
 	return n
 }
 
-// StoreName reports the persistence backend for capabilities reporting.
-func (m *Manager) StoreName() string { return string(m.store.DefaultKind()) }
+// SyncName reports the default synchronization policy for capabilities reporting.
+func (m *Manager) SyncName() string { return string(m.store.DefaultSync()) }
 
 // DefaultBedID reports the id used when a request omits a bed.
 func (m *Manager) DefaultBedID() string { return m.defaultBed }
@@ -494,6 +494,9 @@ func (m *Manager) teardown(b *Bed) error {
 	if b.runtimeClosed {
 		return nil
 	}
+	if err := m.stopBedTransfers(b.ID); err != nil {
+		return fmt.Errorf("bed %s transfer cleanup: %w", b.ID, err)
+	}
 	m.executions.killBed(b.ID, CauseBedTeardown)
 	m.revokeSessions(b)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -526,6 +529,9 @@ func (m *Manager) teardown(b *Bed) error {
 func (m *Manager) Close(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := m.store.StopTransfers(ctx, ""); err != nil {
+		return err
 	}
 	m.cancelAllInitializations(ctx)
 	beds := m.List()
@@ -609,7 +615,7 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 		var ok bool
 		meta, ok = loadMeta(b.Dir)
 		if !ok {
-			meta = bedMeta{Version: 1, BedID: b.ID, CreatedAt: b.CreatedAt, Store: b.Store}
+			meta = bedMeta{Version: 1, BedID: b.ID, CreatedAt: b.CreatedAt, Sync: b.Sync}
 		}
 		meta.Generation++
 		// Flush counters before packing so they travel with the snapshot.
@@ -633,14 +639,14 @@ func (m *Manager) persistBed(ctx context.Context, b *Bed, trigger string) (retEr
 	var snapshot *store.SnapshotInfo
 	if err := trace.stage("persist_store", func() error {
 		persistStarted = time.Now()
-		if err := m.store.Persist(ctx, b.Store, b.ID, b.Dir, meta.Generation); err != nil {
+		if err := m.store.Persist(ctx, b.Sync, b.ID, b.Dir, meta.Generation); err != nil {
 			return err
 		}
 		persistedAt = time.Now()
 		// Snapshot facts are scheduler hints, not part of persist correctness.
 		// Refresh them at this lifecycle boundary so inventory never performs
 		// remote Stat calls on its request path.
-		if info, statErr := m.store.Stat(ctx, b.Store, b.ID); statErr == nil {
+		if info, statErr := m.store.Stat(ctx, b.Sync, b.ID); statErr == nil {
 			snapshot = info
 		} else {
 			log.Printf("hostel: refresh snapshot facts failed: bed=%s error=%v", b.Short(), statErr)
@@ -704,7 +710,7 @@ func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, b
 	var done []string
 	failed := false
 	for _, b := range m.List() {
-		if b.Store == store.KindNoop {
+		if b.Sync == store.SyncNoop {
 			// Mixed carriers still need local disk-size facts for noop Beds, but no
 			// automatic snapshot generation or Store I/O for them.
 			bytes := filepathx.DirBytes(b.Dir)

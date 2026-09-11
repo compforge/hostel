@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import (
 	"bytes"
@@ -30,7 +30,7 @@ import (
 	"github.com/folbricht/desync"
 )
 
-// memObj is an in-memory objAPI so the whole cas flow — chunking, transfer
+// memObj is an in-memory objects so the whole cas flow — chunking, transfer
 // skipping, commit, GC, restore — runs in unit tests without S3.
 type memObj struct {
 	mu   sync.Mutex
@@ -43,7 +43,7 @@ func newMemObj() *memObj {
 	return &memObj{data: make(map[string][]byte), meta: make(map[string]map[string]string)}
 }
 
-func (m *memObj) head(_ context.Context, key string) (map[string]string, int64, bool, error) {
+func (m *memObj) Head(_ context.Context, key string) (map[string]string, int64, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.data[key]
@@ -57,7 +57,7 @@ func (m *memObj) head(_ context.Context, key string) (map[string]string, int64, 
 	return meta, int64(len(b)), true, nil
 }
 
-func (m *memObj) get(_ context.Context, key string) (io.ReadCloser, error) {
+func (m *memObj) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.data[key]
@@ -67,7 +67,7 @@ func (m *memObj) get(_ context.Context, key string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(append([]byte(nil), b...))), nil
 }
 
-func (m *memObj) put(_ context.Context, key string, r io.ReadSeeker, _ int64, meta map[string]string) error {
+func (m *memObj) Put(_ context.Context, key string, r io.ReadSeeker, _ int64, meta map[string]string) error {
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -80,7 +80,7 @@ func (m *memObj) put(_ context.Context, key string, r io.ReadSeeker, _ int64, me
 	return nil
 }
 
-func (m *memObj) del(_ context.Context, keys []string) error {
+func (m *memObj) Delete(_ context.Context, keys []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, k := range keys {
@@ -90,7 +90,7 @@ func (m *memObj) del(_ context.Context, keys []string) error {
 	return nil
 }
 
-func (m *memObj) list(_ context.Context, prefix string) ([]string, error) {
+func (m *memObj) List(_ context.Context, prefix string) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var keys []string
@@ -103,7 +103,7 @@ func (m *memObj) list(_ context.Context, prefix string) ([]string, error) {
 }
 
 func (m *memObj) keys(prefix string) []string {
-	ks, _ := m.list(context.Background(), prefix)
+	ks, _ := m.List(context.Background(), prefix)
 	return ks
 }
 

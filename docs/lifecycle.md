@@ -21,6 +21,10 @@ hostel 里有三个粒度的生命周期，层层驱动、层层推导：
 | **operation** | 无状态请求 | 系统按 timeout 自动收口（**timeout 强制有界**：缺省用默认值，超限截断到上限） | inflight > 0 时拒绝，有界等待后重试必然成功 | exec、file、browser verbs、checkpoint |
 | **session** | 有状态持有 | 客户端手动开、手动关（可能永远不关） | **不能等**——evict 主动 revoke（cancel + 等 handler 退出） | shell、cdp |
 
+显式 [Transfer](transfers.md) 属于 `file` operation，但持有范围覆盖整个后台传输，
+不随创建它的 HTTP 请求结束。普通 evict 等待它完成；purge / shutdown 必须取消并 join
+传输后再销毁 BedFS。状态查询与重放不额外 touch。
+
 **touch 不是请求类别，是副作用**：operation 开闭、session 打开、session 上的真实流量，都会刷新 `last_active_at` / `retained_until`。观测类请求（`GET /v1/beds`、`/v1/beds/:id`、`/healthz`）不产生 touch——控制面看多少眼都不会让 bed "显得活着"，活跃度只能由真实使用产生。
 
 类比 MySQL：operation ≈ autocommit statement（系统收口 + 执行超时），session ≈ 显式开启的连接（手动开闭 + 空闲超时，服务器可 KILL）。

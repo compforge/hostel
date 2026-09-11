@@ -53,8 +53,8 @@ type Readiness struct {
 // Bed is returned with PhaseResident and Ready=true; an accepted asynchronous
 // initialization returns PhaseInitializing.
 type InitializationStatus struct {
-	ID    string
-	Store store.Kind
+	ID   string
+	Sync store.SyncKind
 	BedStatus
 	StartedAt time.Time
 }
@@ -162,7 +162,7 @@ func (m *Manager) beginInitialization(
 	id string,
 	options CreateOptions,
 ) (*bedInitialization, *Bed, error) {
-	requestedStore := options.Store
+	requestedSync := options.Sync
 	if options.NetworkPolicy != nil {
 		normalized, err := network.NormalizePolicy(*options.NetworkPolicy)
 		if err != nil {
@@ -184,9 +184,9 @@ func (m *Manager) beginInitialization(
 	}
 
 	// Resolve outside the manager lock; resident/in-flight Beds below remain
-	// authoritative when the request omits Store.
-	selected, selectionErr := m.bedStore(ctx, id, requestedStore)
-	if requestedStore != "" && selectionErr != nil {
+	// authoritative when the request omits Sync.
+	selected, selectionErr := m.bedSync(ctx, id, requestedSync)
+	if requestedSync != "" && selectionErr != nil {
 		return nil, nil, selectionErr
 	}
 	m.mu.Lock()
@@ -198,11 +198,11 @@ func (m *Manager) beginInitialization(
 
 	if resident, ok := m.beds[id]; ok {
 		m.mu.Unlock()
-		return nil, resident, errors.Join(checkBedStore(requestedStore, selected, resident.Store), checkInitialPolicy(options.NetworkPolicy, resident.initialPolicy))
+		return nil, resident, errors.Join(checkBedSync(requestedSync, selected, resident.Sync), checkInitialPolicy(options.NetworkPolicy, resident.initialPolicy))
 	}
 	if current, ok := m.initializations[id]; ok && current.status.Phase == PhaseInitializing {
 		m.mu.Unlock()
-		return current, nil, errors.Join(checkBedStore(requestedStore, selected, current.status.Store), checkInitialPolicy(options.NetworkPolicy, current.initialPolicy))
+		return current, nil, errors.Join(checkBedSync(requestedSync, selected, current.status.Sync), checkInitialPolicy(options.NetworkPolicy, current.initialPolicy))
 	}
 	if m.retirements[id] != nil {
 		m.mu.Unlock()
@@ -234,8 +234,8 @@ func (m *Manager) beginInitialization(
 	initialization := &bedInitialization{
 		initialPolicy: options.NetworkPolicy,
 		status: InitializationStatus{
-			ID:    id,
-			Store: selected,
+			ID:   id,
+			Sync: selected,
 			BedStatus: BedStatus{
 				Phase: PhaseInitializing,
 				Readiness: Readiness{
@@ -302,7 +302,7 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 	published = true
 
 	// The one full-id log line is the grep anchor from an upstream sandbox id.
-	log.Printf("hostel bed resident: bed=%s short=%s store=%s", bedID, resident.Short(), resident.Store)
+	log.Printf("hostel bed resident: bed=%s short=%s sync=%s", bedID, resident.Short(), resident.Sync)
 }
 
 func (m *Manager) publishInitializedBed(initialization *bedInitialization, resident *Bed) error {
@@ -453,48 +453,48 @@ func residentInitializationStatus(resident *Bed) InitializationStatus {
 	status := resident.Status()
 	return InitializationStatus{
 		ID:        resident.ID,
-		Store:     resident.Store,
+		Sync:      resident.Sync,
 		BedStatus: status.BedStatus,
 	}
 }
 
-// CreateOptions selects the backend when creating a Bed. An explicit Store
+// CreateOptions selects the sync policy when creating a Bed. An explicit Sync
 // overrides the instance default. After eviction, callers must repeat overrides
 // because the local Bed metadata is removed together with its workspace.
 type CreateOptions struct {
-	Store         string
+	Sync          string
 	NetworkPolicy *network.Policy
 }
 
 var (
-	ErrStoreInvalid  = errors.New("bed: unsupported store kind")
-	ErrStoreConflict = errors.New("bed: cannot change an active bed's store")
+	ErrSyncInvalid  = errors.New("bed: unsupported sync kind")
+	ErrSyncConflict = errors.New("bed: cannot change an active bed's sync policy")
 )
 
-// bedStore uses local metadata for an orphaned Bed. No separate routing record
+// bedSync uses local metadata for an orphaned Bed. No separate routing record
 // outlives its working copy; absent both an override and metadata, use default.
-func (m *Manager) bedStore(ctx context.Context, id, requested string) (store.Kind, error) {
+func (m *Manager) bedSync(ctx context.Context, id, requested string) (store.SyncKind, error) {
 	if requested == "" {
 		meta, _ := loadMeta(filepath.Join(m.root, id))
-		requested = string(meta.Store)
+		requested = string(meta.Sync)
 	}
 	selected, err := m.store.Resolve(ctx, requested)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrStoreInvalid, err)
+		return "", fmt.Errorf("%w: %v", ErrSyncInvalid, err)
 	}
 	return selected, nil
 }
 
-// A create retry may reuse a live Bed, but cannot migrate its active backend.
-func checkBedStore(requested string, selected, current store.Kind) error {
+// A create retry may reuse a live Bed, but cannot change its active sync policy.
+func checkBedSync(requested string, selected, current store.SyncKind) error {
 	if requested != "" && selected != current {
-		return ErrStoreConflict
+		return ErrSyncConflict
 	}
 	return nil
 }
 
 func retirementStatus(b *Bed) InitializationStatus {
-	return InitializationStatus{ID: b.ID, Store: b.Store, BedStatus: BedStatus{Phase: PhaseEvicting, Readiness: Readiness{Reason: "CleanupPending", Message: "previous Bed resources are being released; retry eviction before reinitializing"}}}
+	return InitializationStatus{ID: b.ID, Sync: b.Sync, BedStatus: BedStatus{Phase: PhaseEvicting, Readiness: Readiness{Reason: "CleanupPending", Message: "previous Bed resources are being released; retry eviction before reinitializing"}}}
 }
 
 func checkInitialPolicy(requested, initial *network.Policy) error {

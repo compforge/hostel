@@ -907,7 +907,7 @@ func TestBedListEndpoint(t *testing.T) {
 	var body struct {
 		Instance struct {
 			Status           string         `json:"status"`
-			Store            string         `json:"store"`
+			Sync             string         `json:"sync"`
 			OccupiedBeds     int            `json:"occupied_beds"`
 			ResidentBeds     int            `json:"resident_beds"`
 			MaxBeds          int            `json:"max_beds"`
@@ -936,7 +936,7 @@ func TestBedListEndpoint(t *testing.T) {
 	if body.Instance.Status != "retained" {
 		t.Fatalf("instance status = %s, want retained (a bed is within its retention promise)", body.Instance.Status)
 	}
-	if body.Instance.Store != "noop" || body.Instance.OccupiedBeds != 2 || body.Instance.ResidentBeds != 2 ||
+	if body.Instance.Sync != "noop" || body.Instance.OccupiedBeds != 2 || body.Instance.ResidentBeds != 2 ||
 		body.Instance.PressurePercent != 80 ||
 		body.Instance.PinnedBeds != 1 ||
 		body.Instance.ActivityCounts["active"] != 1 || body.Instance.ActivityCounts["idle"] != 1 ||

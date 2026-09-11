@@ -48,9 +48,9 @@ type Usage struct {
 
 // bedMeta is hostel's durable per-bed bookkeeping (docs/store.md §4).
 type bedMeta struct {
-	Store   store.Kind `json:"store,omitempty"`
-	Version int        `json:"version"`
-	BedID   string     `json:"bed_id"`
+	Sync    store.SyncKind `json:"sync,omitempty"`
+	Version int            `json:"version"`
+	BedID   string         `json:"bed_id"`
 	// CreatedAt is when the bed identity was first created — it survives
 	// evict/resume cycles via the snapshot.
 	CreatedAt time.Time `json:"created_at"`
@@ -85,11 +85,19 @@ func loadMeta(bedDir string) (bedMeta, bool) {
 	if err != nil {
 		return m, false // missing = fresh bed; other errors surface on save
 	}
-	if err := json.Unmarshal(data, &m); err != nil {
+	decoded := struct {
+		*bedMeta
+		LegacyStore store.SyncKind `json:"store"`
+	}{bedMeta: &m}
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		// A corrupt meta gets rebuilt by the caller — losing CreatedAt is
 		// survivable, but never silently: this is the bed's identity record.
 		log.Printf("bed: corrupt %s in %s (%v); rebuilding meta", metaFile, bedDir, err)
 		return bedMeta{}, false
+	}
+	// Existing luggage must keep its policy, especially an explicit noop.
+	if m.Sync == "" {
+		m.Sync = decoded.LegacyStore
 	}
 	return m, true
 }

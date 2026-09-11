@@ -61,9 +61,9 @@ type Bed struct {
 	environment   *isolation.Environment
 	cleanupMu     sync.Mutex // serializes teardown retries for this allocation
 	runtimeClosed bool
-	// Store is resolved at creation and immutable while resident. Backend
+	// Sync is resolved at creation and immutable while resident. Store
 	// instances and clients belong to the daemon-wide Store component.
-	Store store.Kind
+	Sync store.SyncKind
 
 	executorMu sync.Mutex // serializes lazy create, replacement and shutdown
 	executor   executor.Executor
@@ -159,7 +159,7 @@ func (b *Bed) activityLocked() Activity {
 }
 
 func (b *Bed) dataSyncedLocked() bool {
-	return b.Store == store.KindNoop || !b.lastActiveAt.After(b.persistedAt)
+	return b.Sync == store.SyncNoop || !b.lastActiveAt.After(b.persistedAt)
 }
 
 // pinnedLocked is a compound capacity fact, not another lifecycle state.

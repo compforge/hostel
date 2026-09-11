@@ -28,7 +28,7 @@ type stageTestStore struct {
 	restoreCalls int
 }
 
-func (*stageTestStore) Name() Kind { return KindCAS }
+func (*stageTestStore) Name() SyncKind { return SyncCAS }
 
 func (s *stageTestStore) Stat(context.Context, string) (*SnapshotInfo, error) {
 	return s.snapshot, nil

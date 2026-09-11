@@ -15,6 +15,7 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -29,7 +30,7 @@ import (
 
 // bedView is the JSON shape for a bed in the management API.
 type bedView struct {
-	Store        string        `json:"store"`
+	Sync         string        `json:"sync"`
 	ID           string        `json:"id"`
 	Status       bed.BedStatus `json:"status"`
 	DataSynced   bool          `json:"data_synced"`
@@ -47,7 +48,7 @@ func (s *Server) viewOf(b *bed.Bed) bedView {
 func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 	return bedView{
 		ID:           b.ID,
-		Store:        string(b.Store),
+		Sync:         string(b.Sync),
 		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
 		Pinned:       status.Pinned,
@@ -59,7 +60,7 @@ func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
 }
 
 func initializationView(status bed.InitializationStatus) bedView {
-	return bedView{ID: status.ID, Store: string(status.Store), Status: status.BedStatus}
+	return bedView{ID: status.ID, Sync: string(status.Sync), Status: status.BedStatus}
 }
 
 type lifecycleStageView struct {
@@ -219,8 +220,11 @@ func (s *Server) bedList(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"instance": gin.H{
 			"status":                         statusOfInstance(beds, s.mgr.DefaultBedOccupied(), time.Now()),
-			"store":                          s.mgr.StoreName(),
-			"bed_store_selection":            true,
+			"sync":                           s.mgr.SyncName(),
+			"bed_sync_selection":             true,
+			"transfer_syncs":                 []string{"copy", "restic"},
+			"file_transfers":                 s.mgr.TransfersConfigured(),
+			"transfer_instance_id":           s.mgr.TransferInstanceID(),
 			"network":                        s.mgr.NetworkReport(),
 			"network_policy":                 true,
 			"isolation":                      s.mgr.Isolator().Level().String(),
@@ -246,7 +250,7 @@ func (s *Server) bedList(c *gin.Context) {
 type createBedRequest struct {
 	NetworkPolicy *network.Policy `json:"networkPolicy,omitempty"`
 	ID            string          `json:"id,omitempty"`
-	Store         string          `json:"store,omitempty"`
+	Sync          string          `json:"sync,omitempty"`
 }
 
 // POST /v1/beds — create (or return existing) a bed. Empty id → server-assigned.
@@ -255,7 +259,9 @@ type createBedRequest struct {
 // +case:id=bed_capacity_limit,desc=`Fill max_beds and create one more bed`,expect=`429 BED_LIMIT_EXCEEDED without exceeding resident capacity`
 func (s *Server) bedCreate(c *gin.Context) {
 	var req createBedRequest
-	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		badRequest(c, "invalid create bed request")
 		return
 	}
@@ -263,7 +269,7 @@ func (s *Server) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Store: req.Store, NetworkPolicy: req.NetworkPolicy})
+	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Sync: req.Sync, NetworkPolicy: req.NetworkPolicy})
 	if err != nil {
 		if errors.Is(err, network.ErrUnavailable) {
 			respondError(c, http.StatusServiceUnavailable, ErrServiceUnavailable, "bed network policy is unavailable")
@@ -363,8 +369,12 @@ func lifecycleRecordToView(record *bed.LifecycleRecord) *lifecycleRecordView {
 func (s *Server) bedDelete(c *gin.Context) {
 	id := c.Param("bedId")
 	if c.Query("purge") == "true" {
-		if err := s.mgr.PurgeWithStore(c.Request.Context(), id, c.Query("store")); err != nil {
-			if errors.Is(err, bed.ErrStoreInvalid) || errors.Is(err, bed.ErrStoreConflict) {
+		if c.Query("store") != "" {
+			badRequest(c, "use sync to select the Bed synchronization policy")
+			return
+		}
+		if err := s.mgr.PurgeWithSync(c.Request.Context(), id, c.Query("sync")); err != nil {
+			if errors.Is(err, bed.ErrSyncInvalid) || errors.Is(err, bed.ErrSyncConflict) {
 				respondBedError(c, err)
 				return
 			}
@@ -413,8 +423,11 @@ func (s *Server) capabilities(c *gin.Context) {
 		"max_beds":                       s.mgr.MaxBeds(),
 		"max_pinned_beds":                s.mgr.MaxPinnedBeds(),
 		"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
-		"persistence":                    s.mgr.StoreName(),
-		"bed_store_selection":            true,
+		"persistence":                    s.mgr.SyncName(),
+		"bed_sync_selection":             true,
+		"transfer_syncs":                 []string{"copy", "restic"},
+		"file_transfers":                 s.mgr.TransfersConfigured(),
+		"transfer_instance_id":           s.mgr.TransferInstanceID(),
 		"network":                        s.mgr.NetworkReport(),
 		"network_policy":                 true,
 		"resource_accounting": gin.H{
@@ -453,5 +466,5 @@ func (s *Server) bedCheckpoint(c *gin.Context) {
 		runtimeError(c, "checkpointed bed is no longer resident")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"persistence": string(b.Store)})
+	c.JSON(http.StatusOK, gin.H{"persistence": string(b.Sync)})
 }

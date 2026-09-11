@@ -78,6 +78,7 @@ for required host capabilities and release-gate options.
 | Command | `POST /command` (SSE), `DELETE /command`, `GET /command/status/:id`, `GET /command/:id/logs` |
 | Session | `POST /session`, `POST /session/:id/run` (SSE), `DELETE /session/:id` |
 | Isolated session | `/v1/isolated/session(s)`, `run` (SSE), session-scoped files/directories, `capabilities` |
+| Transfers | `POST /v1/beds/:id/transfers`, `GET/DELETE /v1/beds/:id/transfers/:transfer_id` — direct Bed ↔ S3 file copies; [contract](docs/transfers.md) |
 | Beds | `GET/POST /v1/beds`, `GET/DELETE /v1/beds/:id`, `POST /v1/beds/:id/checkpoint`, `GET /v1/beds/capabilities` |
 | Scheduler | `GET /v1/beds` — instance capacity, state counts + every local bed's (resident + dormant) lifecycle, generation and retention |
 
@@ -192,7 +193,7 @@ See [shared facility boundaries](docs/amenity.md).
 Flags (or `HOSTEL_*` env vars): `--addr` / `--workspace-root` / `--isolation` / `--projected-paths` / `--persisted-paths` /
 `--dorm-read-fallback-root` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` /
 `--max-pinned-beds` / `--bed-pressure-threshold-percent` / `--admission-cpu-threshold` / `--admission-memory-threshold` /
-`--executor` / `--store` /
+`--executor` / `--sync` /
 `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--s3-region` / `--persist-interval` /
 `--luggage-high-bytes` / `--luggage-low-bytes` /
 `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` /
@@ -240,14 +241,18 @@ requests still create on first use by joining the same initialization and waitin
 for Ready, so they never observe a partial BedFS.
 
 The optional S3 backend defines where snapshots are stored (`--s3-bucket` and
-other S3 connection settings). `--store` chooses how to synchronize and organize
+other S3 connection settings). `--sync` / `HOSTEL_SYNC` chooses how to synchronize and organize
 those snapshots; local data remains in BedHome.
 
-- The default `--store auto` stores new beds as immutable ~32 MiB pack files.
+For direct file copies between a Bed and S3, use the [transfers API](docs/transfers.md).
+It works with `sync=noop`, supports progress and cancellation, and addresses objects relative to the configured S3 prefix. The existing `/files/*` APIs handle file bytes
+passed through the HTTP client.
+
+- The default `--sync auto` stores new beds as immutable ~32 MiB pack files.
 - Auto detects existing layouts for backward compatibility:
   - Existing CAS beds remain readable and can transition to pack.
-  - Existing pack and tar beds keep their current layout.
-- Explicit `cas` / `pack` / `tar` selections write the chosen layout and use
+  - Existing pack, tar and restic beds keep their current layout.
+- Explicit `cas` / `pack` / `tar` / `restic` selections write the chosen layout and use
   auto detection to read the newest snapshot across layouts. Switching formats
   continues the existing generation sequence; purge removes all layouts.
   Tar always replaces one complete tar.gz and keeps one object per bed.
@@ -260,15 +265,15 @@ instance with other Beds:
 POST /v1/beds
 Content-Type: application/json
 
-{"id":"externally-managed","store":"noop"}
+{"id":"externally-managed","sync":"noop"}
 ```
 
-Explicit `store` values (`noop`, `auto`, `cas`, `pack`, `tar`) take
-precedence over `HOSTEL_STORE`. Omission
+Explicit `sync` values (`noop`, `auto`, `cas`, `pack`, `tar`, `restic`) take
+precedence over `HOSTEL_SYNC`. Omission
 reuses a resident Bed or its local metadata; a new Bed inherits the default.
 Eviction removes the local metadata, so repeat the override when recreating a
 Bed or moving it to another instance. Changing an active Bed's policy returns
-`409 BED_STORE_CONFLICT`. See [Store](docs/store.md).
+`409 BED_SYNC_CONFLICT`. See [Store](docs/store.md).
 
 Snapshots restore when the bed is created again and persist on evict
 (DELETE / idle reap) or explicit checkpoint. Normal
@@ -278,7 +283,7 @@ A bed's durable identity is the
 snapshot; the local dir is just its working copy.
 `DELETE /v1/beds/:id` evicts (durable snapshots remain; noop keeps no data).
 Add `?purge=true` to delete the snapshot as well. If the Bed has no local metadata,
-repeat its override, for example `?purge=true&store=noop`; omission uses the instance default.
+repeat its override, for example `?purge=true&sync=noop`; omission uses the instance default.
 An evict raced by live traffic returns
 `409 BED_BUSY` instead of dropping mid-flight writes.
 Bucket addressing defaults to virtual-hosted style (required by TOS); set
@@ -379,3 +384,5 @@ outbound connectivity. Otherwise networking stays shared and Hostel still starts
 `GET /v1/diagnostics` and `/healthz` expose `network.enabled`, `backend`, `scope`,
 and the probe failure reason. Shared Chromium traffic is not covered.
 See [network management](docs/network.md) for prerequisites and boundaries.
+
+Restic directory transfers use `sync: "restic"` and return a snapshot `ref`; the image includes restic 0.19.1. See [file transfers](docs/transfers.md) for repository addressing, credentials, and cancellation.

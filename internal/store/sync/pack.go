@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import (
 	"bytes"
@@ -46,7 +46,7 @@ import (
 // no snapshot reference/fork primitive; making packs global before that model
 // exists would make purge require unsafe cross-bed garbage collection.
 type packStore struct {
-	obj         objAPI
+	obj         objects
 	prefix      string
 	targetBytes int
 	filter      snapshotFilter
@@ -82,19 +82,7 @@ type packLocation struct {
 	length int64
 }
 
-func newPack(ctx context.Context, cfg Config) (Store, error) {
-	obj, err := newS3Obj(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	filter, err := newSnapshotFilter(cfg.PersistedPaths)
-	if err != nil {
-		return nil, err
-	}
-	return newPackStore(obj, cfg.Prefix, filter), nil
-}
-
-func newPackStore(obj objAPI, prefix string, filters ...snapshotFilter) *packStore {
+func newPackStore(obj objects, prefix string, filters ...snapshotFilter) *packStore {
 	filter := defaultSnapshotFilter()
 	if len(filters) > 0 {
 		filter = filters[0]
@@ -125,9 +113,9 @@ func (s *packStore) packKey(bedID, packID string) string {
 }
 
 func (s *packStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 	defer cancel()
-	meta, _, exists, err := s.obj.head(ctx, s.headKey(bedID))
+	meta, _, exists, err := s.obj.Head(ctx, s.headKey(bedID))
 	if err != nil || !exists {
 		return nil, err
 	}
@@ -142,7 +130,7 @@ func (s *packStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, erro
 }
 
 func (s *packStore) Persist(ctx context.Context, bedID, dir string, generation int64) error {
-	prevMeta, _, prevExists, err := s.obj.head(ctx, s.headKey(bedID))
+	prevMeta, _, prevExists, err := s.obj.Head(ctx, s.headKey(bedID))
 	if err != nil {
 		return fmt.Errorf("store: persist %s: pre-write stat: %w", bedID, err)
 	}
@@ -210,8 +198,8 @@ func (s *packStore) Persist(ctx context.Context, bedID, dir string, generation i
 	// Immutable data lands first; head.json is the only commit point. Readers
 	// therefore see either the complete previous snapshot or the complete new one.
 	if prevHead == nil || prevHead.Snapshot != snapshotID {
-		putCtx, cancel := context.WithTimeout(ctx, s3OpTimeout)
-		err = s.obj.put(putCtx, s.snapshotKey(bedID, snapshotID), bytes.NewReader(manifestBytes), int64(len(manifestBytes)), nil)
+		putCtx, cancel := context.WithTimeout(ctx, objectOpTimeout)
+		err = s.obj.Put(putCtx, s.snapshotKey(bedID, snapshotID), bytes.NewReader(manifestBytes), int64(len(manifestBytes)), nil)
 		cancel()
 		if err != nil {
 			return fmt.Errorf("store: persist %s: put manifest: %w", bedID, err)
@@ -223,8 +211,8 @@ func (s *packStore) Persist(ctx context.Context, bedID, dir string, generation i
 	if err != nil {
 		return fmt.Errorf("store: persist %s: encode head: %w", bedID, err)
 	}
-	putCtx, cancel := context.WithTimeout(ctx, s3OpTimeout)
-	err = s.obj.put(putCtx, s.headKey(bedID), bytes.NewReader(headBytes), int64(len(headBytes)), map[string]string{
+	putCtx, cancel := context.WithTimeout(ctx, objectOpTimeout)
+	err = s.obj.Put(putCtx, s.headKey(bedID), bytes.NewReader(headBytes), int64(len(headBytes)), map[string]string{
 		generationMetaKey: strconv.FormatInt(generation, 10),
 		packMetaBytes:     strconv.FormatInt(idx.Length(), 10),
 	})
@@ -267,20 +255,20 @@ func (s *packStore) Restore(ctx context.Context, bedID, dir string) error {
 }
 
 func (s *packStore) Delete(ctx context.Context, bedID string) error {
-	keys, err := s.obj.list(ctx, s.bedPrefix(bedID))
+	keys, err := s.obj.List(ctx, s.bedPrefix(bedID))
 	if err != nil {
 		return fmt.Errorf("store: delete %s: list packs: %w", bedID, err)
 	}
-	if err := s.obj.del(ctx, keys); err != nil {
+	if err := s.obj.Delete(ctx, keys); err != nil {
 		return fmt.Errorf("store: delete %s: %w", bedID, err)
 	}
 	return nil
 }
 
 func (s *packStore) loadHead(ctx context.Context, bedID string) (packHead, error) {
-	ctx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 	defer cancel()
-	rc, err := s.obj.get(ctx, s.headKey(bedID))
+	rc, err := s.obj.Get(ctx, s.headKey(bedID))
 	if err != nil {
 		return packHead{}, fmt.Errorf("store: head %s: %w", bedID, err)
 	}
@@ -299,9 +287,9 @@ func (s *packStore) loadManifest(ctx context.Context, bedID, snapshotID string) 
 	if !validObjectID(snapshotID) {
 		return packManifest{}, fmt.Errorf("store: manifest %s: invalid snapshot id %q", bedID, snapshotID)
 	}
-	ctx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 	defer cancel()
-	rc, err := s.obj.get(ctx, s.snapshotKey(bedID, snapshotID))
+	rc, err := s.obj.Get(ctx, s.snapshotKey(bedID, snapshotID))
 	if err != nil {
 		return packManifest{}, fmt.Errorf("store: manifest %s: %w", bedID, err)
 	}
@@ -430,8 +418,8 @@ func (w *packWriter) flushLocked() error {
 		return nil
 	}
 	packID := objectID(w.buf.Bytes())
-	ctx, cancel := context.WithTimeout(w.ctx, s3OpTimeout)
-	err := w.store.obj.put(ctx, w.store.packKey(w.bedID, packID), bytes.NewReader(w.buf.Bytes()), int64(w.buf.Len()), nil)
+	ctx, cancel := context.WithTimeout(w.ctx, objectOpTimeout)
+	err := w.store.obj.Put(ctx, w.store.packKey(w.bedID, packID), bytes.NewReader(w.buf.Bytes()), int64(w.buf.Len()), nil)
 	cancel()
 	if err != nil {
 		return err
@@ -501,8 +489,8 @@ func (r *packReader) chunkStorage(location packLocation) ([]byte, error) {
 	if ok {
 		r.lru.MoveToFront(element)
 	} else {
-		ctx, cancel := context.WithTimeout(r.ctx, s3OpTimeout)
-		rc, err := r.store.obj.get(ctx, r.store.packKey(r.bedID, location.pack))
+		ctx, cancel := context.WithTimeout(r.ctx, objectOpTimeout)
+		rc, err := r.store.obj.Get(ctx, r.store.packKey(r.bedID, location.pack))
 		if err != nil {
 			cancel()
 			return nil, err

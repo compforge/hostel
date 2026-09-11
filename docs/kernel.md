@@ -74,7 +74,8 @@ Executor 丢失终结其所属 Execution，不能把传输 EOF 当成正常退�
 具体进程视图与强制访问控制由选中的机制提供。完整模型、组合约束和能力缺口见
 [isolation.md](isolation.md)。
 
-BedFS 负责逻辑数据根及路径投影；Store 负责数据在生命周期之外能否恢复。当前默认只
+BedFS 负责逻辑数据根及路径投影；Store 管理自动持久化，也提供无业务含义的 [Bed ↔ S3 文件传输](transfers.md)。
+自动持久化负责数据在生命周期之外能否恢复。当前默认只
 持久化 workspace 子树和 Bed 元数据。正常 evict 删除本地工作副本，durable 策略可从快照
 恢复，noop 不保留数据。配置归属与恢复契约见 [store.md](store.md)。
 

@@ -22,6 +22,8 @@ isolation 根据环境能力尽量兑现进程侧的访问屏障。Dorm 没有�
 与路径映射；Room 增加访问控制，Suite 使用私有 mount 视图。降级不能改变同一 Client path
 的主映射。Store 另行选择需要持久化的 BedFS 子树。
 
+面向调用方的文件操作与传输 API 统一见 [文件操作与传输](transfers.md)。
+
 ## 二、三个路径空间
 
 | 空间 | 示例 | 所有者 |

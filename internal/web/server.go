@@ -36,8 +36,8 @@ import (
 // respondBedError maps bed resolution/admission failures: a full or
 // resource-pressured instance is 429 backpressure, anything else is a bad id.
 func respondBedError(c *gin.Context, err error) {
-	if errors.Is(err, bed.ErrStoreConflict) {
-		respondError(c, http.StatusConflict, ErrBedStoreConflict, err.Error())
+	if errors.Is(err, bed.ErrSyncConflict) {
+		respondError(c, http.StatusConflict, ErrBedSyncConflict, err.Error())
 		return
 	}
 	if errors.Is(err, bed.ErrResourcePressure) {
@@ -203,6 +203,9 @@ func (s *Server) routes() {
 		}
 		v1.DELETE("/:bedId", s.bedDelete)
 		v1.POST("/:bedId/checkpoint", s.bedCheckpoint)
+		v1.POST("/:bedId/transfers", s.startTransfer)
+		v1.GET("/:bedId/transfers/:transferId", s.transferStatus)
+		v1.DELETE("/:bedId/transfers/:transferId", s.cancelTransfer)
 		// Browser amenity verbs (docs/amenity.md §2) — bed-scoped actions,
 		// never a raw CDP passthrough.
 		v1.POST("/:bedId/browser/goto", s.browserGoto)
@@ -298,7 +301,7 @@ func (s *Server) healthz(c *gin.Context) {
 		"max_pinned_beds":                s.mgr.MaxPinnedBeds(),
 		"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
 		"bed_pressure":                   s.mgr.BedPressure(),
-		"persistence":                    s.mgr.StoreName(),
+		"persistence":                    s.mgr.SyncName(),
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,
 			"available": resources.Available,

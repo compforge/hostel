@@ -31,7 +31,7 @@ func TestLinuxNetworkPolicyAPI(t *testing.T) {
 		t.Fatalf("network unavailable: %+v", manager.Report())
 	}
 	s.mgr.SetNetworkManager(manager)
-	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"policy-a","store":"noop","networkPolicy":{"defaultAction":"deny"}}`), nil)
+	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"policy-a","sync":"noop","networkPolicy":{"defaultAction":"deny"}}`), nil)
 	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}

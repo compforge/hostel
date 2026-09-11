@@ -44,12 +44,12 @@ type bedPurge struct {
 // purge fence remains visible for the whole transition, so no concurrent
 // InitializeBed can recreate the identity before deletion commits.
 func (m *Manager) Purge(ctx context.Context, id string) error {
-	return m.PurgeWithStore(ctx, id, "")
+	return m.PurgeWithSync(ctx, id, "")
 }
 
-// PurgeWithStore accepts the same Store override as creation. Callers must
+// PurgeWithSync accepts the same Store override as creation. Callers must
 // repeat it when the Bed is absent locally (evicted or moved to another carrier).
-func (m *Manager) PurgeWithStore(ctx context.Context, id, requestedStore string) error {
+func (m *Manager) PurgeWithSync(ctx context.Context, id, requestedSync string) error {
 	if id == "" || id == m.defaultBed {
 		return ErrPurgeDefault
 	}
@@ -72,7 +72,7 @@ func (m *Manager) PurgeWithStore(ctx context.Context, id, requestedStore string)
 		}
 	}
 
-	err := m.purgeOwned(ctx, id, requestedStore)
+	err := m.purgeOwned(ctx, id, requestedSync)
 	m.finishPurge(id, purge, err)
 	return err
 }
@@ -110,20 +110,20 @@ func (m *Manager) finishPurge(id string, purge *bedPurge, err error) {
 }
 
 func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
-	kind, err := m.bedStore(ctx, id, requested)
+	kind, err := m.bedSync(ctx, id, requested)
 	if err != nil {
 		return err
 	}
 	m.mu.Lock()
 	if b := m.beds[id]; b != nil {
-		err = checkBedStore(requested, kind, b.Store)
-		kind = b.Store
+		err = checkBedSync(requested, kind, b.Sync)
+		kind = b.Sync
 	} else if b := m.retirements[id]; b != nil {
-		err = checkBedStore(requested, kind, b.Store)
-		kind = b.Store
+		err = checkBedSync(requested, kind, b.Sync)
+		kind = b.Sync
 	} else if initialization := m.initializations[id]; initialization != nil {
-		err = checkBedStore(requested, kind, initialization.status.Store)
-		kind = initialization.status.Store
+		err = checkBedSync(requested, kind, initialization.status.Sync)
+		kind = initialization.status.Sync
 	}
 	m.mu.Unlock()
 	if err != nil {
