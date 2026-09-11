@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import (
 	"bytes"
@@ -27,29 +27,31 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/store/backend"
 )
 
 const resticVersion = "0.19.1"
 const resticOutputLimit = 1 << 20
 
-// resticCommand owns the format tool, using the same remote configuration as
+// Restic owns the format tool, using the same remote configuration as
 // Store's object client. No shell or caller-supplied command is involved.
-type resticCommand struct {
-	cfg      Config
+type Restic struct {
+	cfg      ResticConfig
 	initGate chan struct{}
 }
 
-func newResticCommand(cfg Config) *resticCommand {
-	if cfg.ResticBinary == "" {
-		cfg.ResticBinary = "restic"
+func NewRestic(cfg ResticConfig) *Restic {
+	if cfg.Binary == "" {
+		cfg.Binary = "restic"
 	}
-	return &resticCommand{cfg: cfg, initGate: make(chan struct{}, 1)}
+	return &Restic{cfg: cfg, initGate: make(chan struct{}, 1)}
 }
 
-func (r *resticCommand) available(ctx context.Context) error {
+func (r *Restic) Available(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, r.cfg.ResticBinary, "version").Output()
+	output, err := exec.CommandContext(ctx, r.cfg.Binary, "version").Output()
 	if err != nil {
 		return fmt.Errorf("%w: restic %s is required", ErrTransferUnavailable, resticVersion)
 	}
@@ -60,7 +62,7 @@ func (r *resticCommand) available(ctx context.Context) error {
 	return nil
 }
 
-func (r *resticCommand) repository(key string) string {
+func (r *Restic) repository(key string) string {
 	endpoint := strings.TrimRight(r.cfg.Endpoint, "/")
 	if endpoint == "" {
 		endpoint = "https://s3.amazonaws.com"
@@ -73,7 +75,7 @@ func (r *resticCommand) repository(key string) string {
 }
 
 // Environment controls cannot override the manager's repository or credentials.
-func (r *resticCommand) environment() []string {
+func (r *Restic) environment() []string {
 	var env []string
 	for _, value := range os.Environ() {
 		if strings.HasPrefix(value, "RESTIC_") || strings.HasPrefix(value, "AWS_") || strings.HasPrefix(value, "HOSTEL_") {
@@ -82,8 +84,8 @@ func (r *resticCommand) environment() []string {
 		env = append(env, value)
 	}
 	env = append(env, "AWS_ACCESS_KEY_ID="+r.cfg.AccessKeyID, "AWS_SECRET_ACCESS_KEY="+r.cfg.SecretAccessKey, "AWS_SESSION_TOKEN="+r.cfg.SessionToken, "AWS_DEFAULT_REGION="+r.cfg.Region)
-	if r.cfg.ResticPassword != "" {
-		env = append(env, "RESTIC_PASSWORD="+r.cfg.ResticPassword)
+	if r.cfg.Password != "" {
+		env = append(env, "RESTIC_PASSWORD="+r.cfg.Password)
 	}
 	return env
 }
@@ -94,9 +96,9 @@ func (e *resticCommandError) Error() string {
 	return fmt.Sprintf("restic command failed (exit %d)", e.code)
 }
 
-func (r *resticCommand) run(ctx context.Context, repo, dir string, args ...string) ([]byte, error) {
+func (r *Restic) run(ctx context.Context, repo, dir string, args ...string) ([]byte, error) {
 	global := []string{"--repo", repo, "--no-cache", "--json", "--quiet", "--compression", "auto"}
-	if r.cfg.ResticPassword == "" {
+	if r.cfg.Password == "" {
 		global = append(global, "--insecure-no-password")
 	}
 	lookup := "dns"
@@ -106,7 +108,7 @@ func (r *resticCommand) run(ctx context.Context, repo, dir string, args ...strin
 	if strings.HasPrefix(repo, "s3:") {
 		global = append(global, "-o", "s3.bucket-lookup="+lookup, "-o", "s3.connections=4")
 	}
-	cmd := exec.CommandContext(ctx, r.cfg.ResticBinary, append(global, args...)...)
+	cmd := exec.CommandContext(ctx, r.cfg.Binary, append(global, args...)...)
 	cmd.Dir, cmd.Env = dir, r.environment()
 	// Restic handles SIGINT by releasing repository locks. Bound that grace
 	// period, and join the process before the Transfer releases its Bed pin.
@@ -148,7 +150,7 @@ func (b *resticOutput) Write(data []byte) (int, error) {
 	return n, nil
 }
 
-func (r *resticCommand) ensureRepository(ctx context.Context, repo string) error {
+func (r *Restic) ensureRepository(ctx context.Context, repo string) error {
 	select {
 	case r.initGate <- struct{}{}:
 	case <-ctx.Done():
@@ -174,7 +176,7 @@ type resticSummary struct {
 	Bytes       int64  `json:"total_bytes_processed"`
 }
 
-func (r *resticCommand) upload(ctx context.Context, repo, dir, parent string) (resticSummary, error) {
+func (r *Restic) upload(ctx context.Context, repo, dir, parent string) (resticSummary, error) {
 	if err := r.ensureRepository(ctx, repo); err != nil {
 		return resticSummary{}, transferErrorAt(err, "init", ".")
 	}
@@ -205,7 +207,14 @@ func (r *resticCommand) upload(ctx context.Context, repo, dir, parent string) (r
 	return resticSummary{}, errors.New("restic returned no snapshot reference")
 }
 
-func (r *resticCommand) download(ctx context.Context, repo, ref, dir string) error {
+func (r *Restic) download(ctx context.Context, repo, ref, dir string) error {
 	_, err := r.run(ctx, repo, "", "restore", ref, "--target", dir)
 	return transferErrorAt(err, "download", ".")
+}
+
+// ResticConfig configures the format tool and its remote repository location.
+type ResticConfig struct {
+	backend.Config
+	Binary   string
+	Password string
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import "context"
 
@@ -21,7 +21,7 @@ import "context"
 // local-only behavior belongs here rather than in the auto router.
 type Noop struct{}
 
-func (Noop) Name() SyncKind                                       { return SyncNoop }
+func (Noop) Name() Kind                                           { return KindNoop }
 func (Noop) Stat(context.Context, string) (*SnapshotInfo, error)  { return nil, nil }
 func (Noop) Restore(context.Context, string, string) error        { return nil }
 func (Noop) Persist(context.Context, string, string, int64) error { return nil }

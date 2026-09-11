@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package backend
 
 import (
 	"context"
@@ -27,10 +27,10 @@ import (
 )
 
 // visit uses pages rather than retaining every object key in a directory.
-func (o *s3obj) visit(ctx context.Context, prefix string, visit func(string) error) error {
+func (o *S3) Visit(ctx context.Context, prefix string, visit func(string) error) error {
 	pages := s3.NewListObjectsV2Paginator(o.client, &s3.ListObjectsV2Input{Bucket: &o.bucket, Prefix: &prefix})
 	for pages.HasMorePages() {
-		callCtx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+		callCtx, cancel := context.WithTimeout(ctx, OperationTimeout)
 		page, err := pages.NextPage(callCtx)
 		cancel()
 		if err != nil {
@@ -53,14 +53,14 @@ func (o *s3obj) visit(ctx context.Context, prefix string, visit func(string) err
 func transferWriteError(err error) error {
 	var response *smithyhttp.ResponseError
 	if errors.As(err, &response) && (response.HTTPStatusCode() == 412 || response.HTTPStatusCode() == 409) {
-		return fmt.Errorf("%w: remote object exists or changed", ErrTransferConflict)
+		return fmt.Errorf("%w: remote object exists or changed", ErrConflict)
 	}
 	return err
 }
 
 // upload preserves overwrite=false at the S3 commit point, including multipart
 // uploads. HEAD followed by unconditional PUT would race another writer.
-func (o *s3obj) upload(ctx context.Context, key string, file *os.File, size int64, overwrite bool) (retErr error) {
+func (o *S3) Upload(ctx context.Context, key string, file *os.File, size int64, overwrite bool) (retErr error) {
 	var ifAbsent *string
 	if !overwrite {
 		value := "*"
@@ -81,7 +81,7 @@ func (o *s3obj) upload(ctx context.Context, key string, file *os.File, size int6
 			return
 		}
 		// A canceled request must still attempt to reclaim its incomplete upload.
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s3OpTimeout)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), OperationTimeout)
 		defer cancel()
 		_, err := o.client.AbortMultipartUpload(cleanupCtx, &s3.AbortMultipartUploadInput{Bucket: &o.bucket, Key: &key, UploadId: created.UploadId})
 		retErr = errors.Join(retErr, err)

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import (
 	"bytes"
@@ -44,11 +44,11 @@ func TestAutoDetectsExistingLayout(t *testing.T) {
 	ctx := context.Background()
 	for _, test := range []struct {
 		name string
-		new  func(objAPI) Store
+		new  func(objects) Store
 	}{
-		{name: "cas", new: func(obj objAPI) Store { return newCASStore(obj, "sandbox") }},
-		{name: "pack", new: func(obj objAPI) Store { return newPackStore(obj, "sandbox") }},
-		{name: "tar", new: func(obj objAPI) Store { return newTarStore(obj, "sandbox") }},
+		{name: "cas", new: func(obj objects) Store { return newCASStore(obj, "sandbox") }},
+		{name: "pack", new: func(obj objects) Store { return newPackStore(obj, "sandbox") }},
+		{name: "tar", new: func(obj objects) Store { return newTarStore(obj, "sandbox") }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			obj := newMemObj()
@@ -227,13 +227,13 @@ func TestSnapshotFileThresholdExcludesEphemeralPaths(t *testing.T) {
 
 // A policy change must neither hide the previous format nor reset its generation.
 func TestPoliciesReadAndReplaceOtherLayouts(t *testing.T) {
-	for _, previous := range []SyncKind{SyncCAS, SyncPack, SyncTar} {
-		for _, next := range []SyncKind{SyncAuto, SyncCAS, SyncPack, SyncTar} {
+	for _, previous := range []Kind{KindCAS, KindPack, KindTar} {
+		for _, next := range []Kind{KindAuto, KindCAS, KindPack, KindTar} {
 			t.Run(string(previous)+"_to_"+string(next), func(t *testing.T) {
 				ctx := t.Context()
 				automatic := newAutoStore(newMemObj(), "sandbox", 0)
-				before := automatic.withSync(previous)
-				after := automatic.withSync(next)
+				before := automatic.WithKind(previous)
+				after := automatic.WithKind(next)
 				src := t.TempDir()
 				writeAutoTree(t, src, 2)
 				if err := before.Persist(ctx, "bed", src, 7); err != nil {
@@ -263,7 +263,7 @@ func TestPoliciesReadAndReplaceOtherLayouts(t *testing.T) {
 				}
 				state, err := automatic.inspect(ctx, "bed")
 				wantLayout := storeLayout(next)
-				if next == SyncAuto {
+				if next == KindAuto {
 					wantLayout = storeLayout(previous)
 				}
 				if err != nil || state.selected == nil || state.selected.layout != wantLayout || state.selected.info.Generation != 8 {
@@ -286,5 +286,16 @@ func TestPoliciesReadAndReplaceOtherLayouts(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPoliciesShareObjectBackend(t *testing.T) {
+	obj := newMemObj()
+	automatic := newAutoStore(obj, "prefix", 0)
+	cas := automatic.WithKind(KindCAS)
+	pack := automatic.WithKind(KindPack)
+	tar := automatic.WithKind(KindTar)
+	if cas.cas.obj != obj || pack.pack.obj != obj || tar.tar.obj != obj {
+		t.Fatal("policies did not share the supplied object backend")
 	}
 }

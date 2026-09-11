@@ -18,22 +18,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/aws/smithy-go"
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/hostel/internal/bedfs"
+	storesync "github.com/qiankunli/hostel/internal/store/sync"
 	"github.com/qiankunli/hostel/internal/tracing"
 )
 
 var (
-	ErrTransferInvalid     = errors.New("invalid transfer")
-	ErrTransferUnavailable = errors.New("S3 transfer unavailable")
-	ErrTransferConflict    = errors.New("transfer conflict")
+	ErrTransferInvalid     = storesync.ErrTransferInvalid
+	ErrTransferUnavailable = storesync.ErrTransferUnavailable
+	ErrTransferConflict    = storesync.ErrTransferConflict
 	ErrTransferNotFound    = errors.New("transfer unknown or expired")
 	ErrTransferCapacity    = errors.New("transfer capacity exceeded")
 )
@@ -46,16 +44,9 @@ const (
 	MaxTransferTimeout     = 2 * time.Hour
 )
 
-var resticRefPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
 var transferIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
-type TransferEndpoint struct {
-	Ref  string
-	Type string
-	Path string
-	Key  string
-}
+type TransferEndpoint = storesync.TransferEndpoint
 
 type TransferRequest struct {
 	ParentRef   string
@@ -114,71 +105,27 @@ func newTransferRegistry() *transferRegistry {
 func (s *Manager) TransferInstanceID() string { return s.transfers.instanceID }
 func (s *Manager) TransfersConfigured() bool  { return s.cfg.Bucket != "" }
 
+func (r TransferRequest) syncOptions() storesync.TransferOptions {
+	return storesync.TransferOptions{Sync: r.Sync, Source: r.Source, Destination: r.Destination, ParentRef: r.ParentRef, Overwrite: r.Overwrite}
+}
+
 func validateTransfer(req TransferRequest) (TransferRequest, error) {
-	invalid := func(message string) (TransferRequest, error) {
-		return req, fmt.Errorf("%w: %s", ErrTransferInvalid, message)
+	// Operation validation belongs to the policy; task identity and lifetime belong here.
+	options, err := storesync.ValidateTransfer(req.syncOptions())
+	if err != nil {
+		return req, err
 	}
-	if req.Sync == "" {
-		req.Sync = SyncCopy
-	}
-	if req.Sync != SyncCopy && req.Sync != SyncRestic {
-		return invalid("sync must be copy or restic")
-	}
+	req.Sync = options.Sync
 	if !transferIDPattern.MatchString(req.ID) {
-		return invalid("id must be 1-128 safe identifier characters")
+		return req, fmt.Errorf("%w: id must be 1-128 safe identifier characters", ErrTransferInvalid)
 	}
 	if req.Timeout == 0 {
 		req.Timeout = DefaultTransferTimeout
 	}
 	if req.Timeout < time.Millisecond || req.Timeout > MaxTransferTimeout {
-		return invalid("timeout must be within 1ms and 2h")
-	}
-	if req.Source.Type == req.Destination.Type {
-		return invalid("one endpoint must be bed and the other s3")
-	}
-	for _, endpoint := range []TransferEndpoint{req.Source, req.Destination} {
-		switch endpoint.Type {
-		case "bed":
-			if endpoint.Path == "" || endpoint.Key != "" || endpoint.Ref != "" {
-				return invalid("bed endpoint requires path only")
-			}
-		case "s3":
-			if endpoint.Path != "" || !validTransferKey(endpoint.Key) {
-				return invalid("s3 endpoint requires a relative key without empty, dot or parent segments")
-			}
-		default:
-			return invalid("endpoint type must be bed or s3")
-		}
-	}
-	if req.Sync == SyncCopy {
-		if req.Source.Ref != "" || req.Destination.Ref != "" || req.ParentRef != "" {
-			return invalid("copy does not accept snapshot references")
-		}
-	} else {
-		if req.Destination.Ref != "" {
-			return invalid("destination ref is assigned by the transfer")
-		}
-		if req.Source.Type == "s3" {
-			if !resticRefPattern.MatchString(req.Source.Ref) || req.ParentRef != "" {
-				return invalid("restic download requires a full source ref and no parent_ref")
-			}
-		} else if req.ParentRef != "" && !resticRefPattern.MatchString(req.ParentRef) {
-			return invalid("parent_ref must be a full restic snapshot id")
-		}
+		return req, fmt.Errorf("%w: timeout must be within 1ms and 2h", ErrTransferInvalid)
 	}
 	return req, nil
-}
-
-func validTransferKey(key string) bool {
-	if key == "" || strings.ContainsAny(key, "\\\x00") {
-		return false
-	}
-	for _, part := range strings.Split(strings.TrimSuffix(key, "/"), "/") {
-		if part == "" || part == "." || part == ".." {
-			return false
-		}
-	}
-	return true
 }
 
 // StartTransfer admits a complete copy independently of the initiating HTTP
@@ -225,7 +172,7 @@ func (s *Manager) StartTransfer(ctx context.Context, bedID string, req TransferR
 		return Transfer{}, err
 	}
 	if req.Sync == SyncRestic {
-		if err := s.restic.available(ctx); err != nil {
+		if err := s.restic.Available(ctx); err != nil {
 			return Transfer{}, err
 		}
 	}
@@ -250,7 +197,7 @@ func (s *Manager) StartTransfer(ctx context.Context, bedID string, req TransferR
 		var err error
 		if req.Sync == SyncRestic {
 			var files, bytes int64
-			ref, files, bytes, err = s.resticTransfer(transferCtx, fs, req, completed)
+			ref, files, bytes, err = s.restic.Transfer(transferCtx, fs, req.syncOptions(), completed)
 			if err == nil && req.Source.Type == "bed" {
 				r.mu.Lock()
 				run.status.Files = files
@@ -258,7 +205,7 @@ func (s *Manager) StartTransfer(ctx context.Context, bedID string, req TransferR
 				r.mu.Unlock()
 			}
 		} else {
-			err = copyTransfer(transferCtx, remote, s.cfg.Prefix, fs, req, completed)
+			err = storesync.Copy(transferCtx, remote, s.cfg.Prefix, fs, req.syncOptions(), completed)
 		}
 		// BedFS and its activity watermark are released before terminal publication.
 		release()
@@ -267,7 +214,7 @@ func (s *Manager) StartTransfer(ctx context.Context, bedID string, req TransferR
 		run.status.State = TransferSucceeded
 		if err != nil {
 			run.status.State = TransferFailed
-			run.status.Error = transferFailure(err)
+			run.status.Error = storesync.Failure(err)
 			if errors.Is(err, context.Canceled) {
 				run.status.State = TransferCanceled
 			}
@@ -313,11 +260,11 @@ func (r *transferRegistry) makeRoomLocked() {
 
 func logTransferFinished(ctx context.Context, status Transfer, err error) {
 	args := []any{"bed", status.BedID, "transfer_id", status.ID, "state", status.State, "sync", status.Sync, "files", status.Files, "bytes", status.Bytes, "error", status.Error}
-	var failure *transferCopyError
+	var failure *storesync.OperationError
 	if errors.As(err, &failure) {
 		// Log only operation-relative paths and the public error category. Raw
 		// filesystem/SDK errors may contain carrier paths or signed URLs.
-		args = append(args, "stage", failure.stage, "relative_path", failure.relative)
+		args = append(args, "stage", failure.Stage, "relative_path", failure.Relative)
 	}
 	tracing.InfoContext(ctx, "hostel transfer finished", args...)
 }
@@ -376,38 +323,4 @@ func (s *Manager) StopTransfers(ctx context.Context, bedID string) error {
 		}
 	}
 	return nil
-}
-
-// Return actionable categories without exposing SDK URLs, credentials or
-// carrier paths from wrapped transport and filesystem errors.
-func transferFailure(err error) string {
-	switch {
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "deadline exceeded"
-	case errors.Is(err, ErrTransferConflict):
-		return "destination already exists"
-	case errors.Is(err, ErrTransferInvalid):
-		return "unsupported file or object path"
-	case errors.Is(err, os.ErrNotExist):
-		return "source or destination parent not found"
-	case errors.Is(err, os.ErrPermission):
-		return "file access denied"
-	}
-	var resticErr *resticCommandError
-	if errors.As(err, &resticErr) {
-		return resticErr.Error()
-	}
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
-		switch apiErr.ErrorCode() {
-		case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch":
-			return "S3 access denied"
-		case "NoSuchKey", "NoSuchBucket", "NotFound":
-			return "S3 source or bucket not found"
-		}
-		return "S3 request failed"
-	}
-	return "copy failed"
 }

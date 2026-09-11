@@ -16,11 +16,16 @@ func TestSelectionOverridesDefaultAndSharesObjectClient(t *testing.T) {
 			t.Fatalf("select %q = %v, %v", requested, got, err)
 		}
 	}
-	cas, _ := selection.forSync(t.Context(), SyncCAS)
-	pack, _ := selection.forSync(t.Context(), SyncPack)
-	tar, _ := selection.forSync(t.Context(), SyncTar)
-	if cas.(*autoStore).cas.obj != pack.(*autoStore).pack.obj || cas.(*autoStore).cas.obj != tar.(*autoStore).tar.obj {
-		t.Fatal("Store formats opened separate object clients")
+	remote := selection.remote
+	for _, kind := range []SyncKind{SyncCAS, SyncPack, SyncTar} {
+		first, err := selection.forSync(t.Context(), kind)
+		if err != nil {
+			t.Fatal(err)
+		}
+		again, err := selection.forSync(t.Context(), kind)
+		if err != nil || first != again || selection.remote != remote {
+			t.Fatalf("selection did not reuse store/client for %s: %v", kind, err)
+		}
 	}
 	cfg.Sync = "noop"
 	noop, err := NewManager(t.Context(), cfg)

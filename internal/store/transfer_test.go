@@ -29,6 +29,8 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bedfs"
+	"github.com/qiankunli/hostel/internal/store/backend"
+	storesync "github.com/qiankunli/hostel/internal/store/sync"
 )
 
 type transferMemory struct {
@@ -36,13 +38,13 @@ type transferMemory struct {
 	keys    []string
 }
 
-func (m *transferMemory) get(_ context.Context, key string) (io.ReadCloser, error) {
+func (m *transferMemory) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	if value, ok := m.objects[key]; ok {
 		return io.NopCloser(strings.NewReader(value)), nil
 	}
 	return nil, os.ErrNotExist
 }
-func (m *transferMemory) visit(_ context.Context, prefix string, visit func(string) error) error {
+func (m *transferMemory) Visit(_ context.Context, prefix string, visit func(string) error) error {
 	keys := m.keys
 	if keys == nil {
 		for key := range m.objects {
@@ -58,7 +60,7 @@ func (m *transferMemory) visit(_ context.Context, prefix string, visit func(stri
 	}
 	return nil
 }
-func (m *transferMemory) upload(_ context.Context, key string, f *os.File, _ int64, overwrite bool) error {
+func (m *transferMemory) Upload(_ context.Context, key string, f *os.File, _ int64, overwrite bool) error {
 	if _, ok := m.objects[key]; ok && !overwrite {
 		return ErrTransferConflict
 	}
@@ -82,7 +84,7 @@ func TestTransferCopyRoundTripAndNoDeletion(t *testing.T) {
 	remote := &transferMemory{objects: map[string]string{"prefix/export/extra": "keep"}}
 	request := TransferRequest{Source: TransferEndpoint{Type: "bed", Path: "/workspace/source"}, Destination: TransferEndpoint{Type: "s3", Key: "export/"}}
 	count := int64(0)
-	if err := copyTransfer(t.Context(), remote, "prefix", fs, request, func(n int64) { count += n }); err != nil {
+	if err := storesync.Copy(t.Context(), remote, "prefix", fs, request.syncOptions(), func(n int64) { count += n }); err != nil {
 		t.Fatal(err)
 	}
 	if count != 7 || remote.objects["prefix/export/nested/file"] != "payload" || remote.objects["prefix/export/extra"] != "keep" {
@@ -90,14 +92,14 @@ func TestTransferCopyRoundTripAndNoDeletion(t *testing.T) {
 	}
 	request.Source = TransferEndpoint{Type: "s3", Key: "export/"}
 	request.Destination = TransferEndpoint{Type: "bed", Path: "/workspace/destination"}
-	if err := copyTransfer(t.Context(), remote, "prefix", fs, request, func(int64) {}); err != nil {
+	if err := storesync.Copy(t.Context(), remote, "prefix", fs, request.syncOptions(), func(int64) {}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := fs.Read("/workspace/destination/nested/file")
 	if err != nil || string(data) != "payload" {
 		t.Fatalf("roundtrip: %q %v", data, err)
 	}
-	if err := copyTransfer(t.Context(), remote, "prefix", fs, request, func(int64) {}); !errors.Is(err, ErrTransferConflict) {
+	if err := storesync.Copy(t.Context(), remote, "prefix", fs, request.syncOptions(), func(int64) {}); !errors.Is(err, ErrTransferConflict) {
 		t.Fatalf("overwrite conflict: %v", err)
 	}
 }
@@ -112,7 +114,7 @@ func TestTransferRejectsRemoteTraversal(t *testing.T) {
 			defer fs.Close()
 			remote := &transferMemory{objects: map[string]string{}, keys: []string{"prefix/in/" + relative}}
 			req := TransferRequest{Source: TransferEndpoint{Type: "s3", Key: "in/"}, Destination: TransferEndpoint{Type: "bed", Path: "/workspace"}}
-			if err := copyTransfer(t.Context(), remote, "prefix", fs, req, func(int64) {}); !errors.Is(err, ErrTransferInvalid) {
+			if err := storesync.Copy(t.Context(), remote, "prefix", fs, req.syncOptions(), func(int64) {}); !errors.Is(err, ErrTransferInvalid) {
 				t.Fatalf("unsafe remote path: %v", err)
 			}
 		})
@@ -175,7 +177,7 @@ func TestStopCompletedTransfersDoesNotWaitOnCanceledContext(t *testing.T) {
 
 func TestTransferHistoryRollsWithoutBlockingAdmission(t *testing.T) {
 	s := NewManagerWithStores(Noop{})
-	s.remote = &s3obj{} // Empty directory copies perform no remote I/O.
+	s.remote = &backend.S3{} // Empty directory copies perform no remote I/O.
 	fs, err := bedfs.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -251,20 +253,20 @@ func TestTransferFailureLogsStageAndRelativePath(t *testing.T) {
 		{"scan", "nested/link", true, ErrTransferInvalid},
 	} {
 		req := TransferRequest{Source: TransferEndpoint{Type: "bed", Path: "/workspace/source"}, Destination: TransferEndpoint{Type: "s3", Key: "out/"}, Overwrite: tc.overwrite}
-		err := copyTransfer(t.Context(), remote, "private-prefix", fs, req, func(int64) {})
+		err := storesync.Copy(t.Context(), remote, "private-prefix", fs, req.syncOptions(), func(int64) {})
 		if !errors.Is(err, tc.want) {
 			t.Fatalf("%s: %v", tc.stage, err)
 		}
 		var output bytes.Buffer
 		previous := slog.Default()
 		slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
-		logTransferFinished(t.Context(), Transfer{BedID: "bed", ID: "transfer", State: TransferFailed, Error: transferFailure(err)}, err)
+		logTransferFinished(t.Context(), Transfer{BedID: "bed", ID: "transfer", State: TransferFailed, Error: storesync.Failure(err)}, err)
 		slog.SetDefault(previous)
 		var entry map[string]any
 		if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
 			t.Fatal(err)
 		}
-		if entry["stage"] != tc.stage || entry["relative_path"] != tc.relative || entry["bed"] != "bed" || entry["transfer_id"] != "transfer" || entry["error"] != transferFailure(err) {
+		if entry["stage"] != tc.stage || entry["relative_path"] != tc.relative || entry["bed"] != "bed" || entry["transfer_id"] != "transfer" || entry["error"] != storesync.Failure(err) {
 			t.Fatalf("log: %s", output.String())
 		}
 		if strings.Contains(output.String(), fs.Home()) || strings.Contains(output.String(), "private-prefix") {

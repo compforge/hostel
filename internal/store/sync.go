@@ -20,20 +20,6 @@ import (
 	"time"
 )
 
-// SyncKind selects how files are synchronized and organized remotely.
-// Bed Sync controls automatic persistence; Transfer Sync selects one explicit operation.
-type SyncKind string
-
-const (
-	SyncNoop   SyncKind = "noop"
-	SyncAuto   SyncKind = "auto"
-	SyncCAS    SyncKind = "cas"
-	SyncPack   SyncKind = "pack"
-	SyncTar    SyncKind = "tar"
-	SyncRestic SyncKind = "restic"
-	SyncCopy   SyncKind = "copy" // Explicit file transfers only.
-)
-
 const (
 	storeSyncRetryMin = time.Second
 	storeSyncRetryMax = 30 * time.Second

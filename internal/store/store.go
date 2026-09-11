@@ -12,72 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package store persists bed workspaces beyond the life of the process/pod
-// (docs/store.md): the durable identity of a bed is a snapshot in object
-// storage; the local workspace is just its working copy, synced at lifecycle
-// boundaries (create/resume ← restore, idle/delete/checkpoint → persist).
-// hostel does not solve multi-writer coordination — "one bedID live in one
-// hostel at a time" is the upstream scheduler's guarantee.
+// Package store manages automatic Bed persistence and explicit file transfers.
 package store
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"path"
-	"path/filepath"
-	"strings"
+	"github.com/qiankunli/hostel/internal/store/backend"
+	storesync "github.com/qiankunli/hostel/internal/store/sync"
 )
 
-// ErrConflict reports that the backend already holds a snapshot at least as
-// new as the one being persisted: another hostel instance has persisted this
-// bed since we initialized it (dual-initialization — the upstream scheduler's
-// single-writer guarantee was violated). First writer wins: overwriting would
-// silently drop the other instance's data, which is strictly worse than
-// failing loudly. Callers must not blindly retry; the bed needs re-initialization
-// from the newer snapshot (docs/store.md §3.5).
-var ErrConflict = errors.New("snapshot conflict: concurrent writer detected")
+// +why=`The manager exposes policy contracts; implementations never import their owner.`
+type Store = storesync.Store
+type SyncKind = storesync.Kind
+type SnapshotInfo = storesync.SnapshotInfo
+type Noop = storesync.Noop
 
-// SnapshotInfo describes a bed's durable snapshot without downloading it.
-type SnapshotInfo struct {
-	// Generation is the snapshot's persist counter (mirrors the bed meta's
-	// generation, carried in backend metadata so Stat stays cheap). A local
-	// copy with generation >= this is current and can skip Restore.
-	Generation int64
-	// Bytes is the packed snapshot size (0 when the backend can't tell).
-	Bytes int64
-}
+var ErrConflict = storesync.ErrConflict
 
-// Store implements a synchronization policy and remote snapshot layout for bed workspaces. Implementations must
-// treat Persist as atomic per bed (a reader never sees a half-written
-// snapshot) — a single commit-point object per bed gives this on S3.
-type Store interface {
-	// Name reports this implementation's canonical synchronization kind.
-	Name() SyncKind
-	// Stat describes the bed's snapshot, or nil when none exists. Must be
-	// cheap (S3: HEAD + user metadata, no download) — luggage freshness
-	// checks call it on every resume.
-	Stat(ctx context.Context, bedID string) (*SnapshotInfo, error)
-	// Restore unpacks the bed's snapshot into dir (an existing, usually empty
-	// workspace dir). Called on bed create/resume, before serving requests.
-	Restore(ctx context.Context, bedID, dir string) error
-	// Persist snapshots dir as the bed's durable copy, replacing any previous
-	// snapshot. Called on evict, explicit checkpoint, and the periodic safety
-	// net. dir is the bed dir; only portable meta.json and data/workspace are
-	// durable. Every other BedFS path is runtime-local by default. generation is
-	// the meta's persist counter, surfaced back through Stat.
-	Persist(ctx context.Context, bedID, dir string, generation int64) error
-	// Delete removes the bed's snapshot — the purge path: after this the bed
-	// identity no longer exists anywhere. Deleting a missing snapshot is not
-	// an error.
-	Delete(ctx context.Context, bedID string) error
-}
+const (
+	SyncNoop   = storesync.KindNoop
+	SyncAuto   = storesync.KindAuto
+	SyncCAS    = storesync.KindCAS
+	SyncPack   = storesync.KindPack
+	SyncTar    = storesync.KindTar
+	SyncRestic = storesync.KindRestic
+	SyncCopy   = storesync.KindCopy
+)
 
 // Config selects a synchronization policy and configures the optional S3 remote.
 type Config struct {
 	ResticBinary    string
 	ResticPassword  string
-	Sync            string // "auto" (default) | "noop" | "cas" | "pack" | "tar"
+	Sync            string // "auto" (default) | "noop" | "cas" | "pack" | "tar" | "restic"
 	Bucket          string
 	Prefix          string // key prefix inside the bucket, e.g. "hostel/prod"
 	Endpoint        string // non-AWS S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS
@@ -95,56 +60,8 @@ type Config struct {
 	PersistedPaths []string
 }
 
-type snapshotFilter struct {
-	roots []string // paths relative to the Bed directory, e.g. data/workspace
-}
-
-func newSnapshotFilter(persistedPaths []string) (snapshotFilter, error) {
-	if len(persistedPaths) == 0 {
-		persistedPaths = []string{"/workspace"}
-	}
-	filter := snapshotFilter{roots: make([]string, 0, len(persistedPaths))}
-	for _, configured := range persistedPaths {
-		clean := path.Clean(strings.TrimSpace(configured))
-		if !path.IsAbs(clean) || clean == "/" {
-			return snapshotFilter{}, fmt.Errorf("store: persist path %q must be absolute and non-root", configured)
-		}
-		root := filepath.ToSlash(filepath.Join("data", filepath.FromSlash(strings.TrimPrefix(clean, "/"))))
-		for _, previous := range filter.roots {
-			if pathWithin(root, previous) || pathWithin(previous, root) {
-				return snapshotFilter{}, fmt.Errorf("store: persist paths %q and %q overlap", previous, root)
-			}
-		}
-		filter.roots = append(filter.roots, root)
-	}
-	return filter, nil
-}
-
-func defaultSnapshotFilter() snapshotFilter {
-	filter, _ := newSnapshotFilter(nil)
-	return filter
-}
-
-// excluded is shared by every concrete snapshot format. The allowlist is
-// intentional: syncing arbitrary BedFS roots to S3 is both an accidental
-// durability contract and an unbounded data-transfer risk.
-func (f snapshotFilter) excluded(rel string) bool {
-	rel = strings.Trim(filepath.ToSlash(rel), "/")
-	if rel == "." || rel == "meta.json" {
-		return false
-	}
-	roots := f.roots
-	if len(roots) == 0 {
-		roots = []string{"data/workspace"}
-	}
-	for _, root := range roots {
-		if pathWithin(rel, root) || pathWithin(root, rel) {
-			return false
-		}
-	}
-	return true
-}
-
-func pathWithin(candidate, root string) bool {
-	return candidate == root || strings.HasPrefix(candidate, root+"/")
+func (c Config) remoteConfig() backend.Config {
+	return backend.Config{Bucket: c.Bucket, Prefix: c.Prefix, Endpoint: c.Endpoint,
+		PathStyle: c.PathStyle, Region: c.Region, AccessKeyID: c.AccessKeyID,
+		SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken}
 }

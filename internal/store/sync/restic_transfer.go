@@ -12,22 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import (
 	"context"
 	"errors"
-	"github.com/qiankunli/hostel/internal/tracing"
 	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/qiankunli/hostel/internal/bedfs"
+	"github.com/qiankunli/hostel/internal/tracing"
 )
 
-// resticTransfer owns the whole directory operation. The control plane only
-// submits, observes and cancels; it does not record intermediate process steps.
-func (s *Manager) resticTransfer(ctx context.Context, fs *bedfs.FS, req TransferRequest, completed func(int64)) (string, int64, int64, error) {
+// Transfer executes validated directory-transfer options, joining restic and
+// cleaning staging before returning so the caller can safely release its Bed pin.
+func (s *Restic) Transfer(ctx context.Context, fs *bedfs.FS, req TransferOptions, completed func(int64)) (string, int64, int64, error) {
 	staging, err := os.MkdirTemp("", "hostel-transfer-*")
 	if err != nil {
 		return "", 0, 0, transferErrorAt(err, "stage", ".")
@@ -37,13 +37,13 @@ func (s *Manager) resticTransfer(ctx context.Context, fs *bedfs.FS, req Transfer
 		if err := fs.ExportTransferTree(ctx, req.Source.Path, staging, nil); err != nil {
 			return "", 0, 0, resticTreeError(err, "scan")
 		}
-		summary, err := s.restic.upload(ctx, s.restic.repository(req.Destination.Key), staging, req.ParentRef)
+		summary, err := s.upload(ctx, s.repository(req.Destination.Key), staging, req.ParentRef)
 		if err != nil {
 			return "", 0, 0, err
 		}
 		return summary.SnapshotID, summary.Files, summary.Bytes, nil
 	}
-	if err := s.restic.download(ctx, s.restic.repository(req.Source.Key), req.Source.Ref, staging); err != nil {
+	if err := s.download(ctx, s.repository(req.Source.Key), req.Source.Ref, staging); err != nil {
 		return "", 0, 0, err
 	}
 	err = fs.ImportTransferTree(ctx, staging, req.Destination.Path, req.Overwrite, completed)
@@ -76,6 +76,6 @@ func cleanupResticTree(ctx context.Context, directory string) {
 		return nil
 	})
 	if err := os.RemoveAll(directory); err != nil {
-		tracing.WarnContext(ctx, "hostel transfer staging cleanup failed", "stage", "cleanup", "error", transferFailure(err))
+		tracing.WarnContext(ctx, "hostel transfer staging cleanup failed", "stage", "cleanup", "error", Failure(err))
 	}
 }

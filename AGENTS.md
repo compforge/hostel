@@ -92,7 +92,9 @@ internal/
 │   ├── shell.go       常驻 bash：CreateShell/ForegroundShell；持有 Executor View；Run 用 marker 分帧、单消费，RunAt 以独立控制步骤投影 cwd（状态跨 run 保持）
 │   └── command.go     一次性命令构建与启动；所有终态和观测事实归 execution.go
 ├── bedfs/             BedFS 数据域：bed_home/workspace、client/carrier/Executor 路径投影与文件操作；新建路径按属主 chown
-├── store/             全局 Store Manager：SyncKind 路由、共享客户端、同步调度与显式文件传输；Store 接口实现 noop/cas/pack/tar/restic 策略，S3 是可选远端 backend，auto 识别快照布局，Stage-in 旁路恢复后原子发布；见 docs/store.md
+├── store/             全局 Store Manager：策略组装、自动同步调度、Stage-in 发布与 Transfer 任务生命周期；见 docs/store.md
+│   ├── sync/          如何同步及组织数据：noop/auto/cas/pack/tar/copy/restic；不依赖 Manager 或 Transfer 任务状态
+│   └── backend/       存在哪里：S3 配置、共享客户端、对象读写与条件提交；不解释 Bed 或同步策略
 ├── network/            可选 per-bed netns：启动实测、IPv4 接线、DNS、Bed 网络策略与执行入口；见 docs/network.md
 ├── resource/          Bed 父组 / Executor 子组的 cgroup v2 记账 + carrier CPU/内存准入；只读准入不要求子树委派
 ├── amenity/           Amenity 接口(生命周期 State)+ Registry；chromium 实例(共享浏览器/每 bed BrowserContext)；见 docs/amenity.md

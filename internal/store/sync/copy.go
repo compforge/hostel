@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import (
 	"context"
@@ -26,14 +26,15 @@ import (
 )
 
 // transferObjects is the streaming, conditional-write subset used by copies.
-// Snapshot strategies continue to own their metadata and layout in objAPI.
+// Snapshot strategies continue to own their metadata and layout in objects.
 type transferObjects interface {
-	get(context.Context, string) (io.ReadCloser, error)
-	visit(context.Context, string, func(string) error) error
-	upload(context.Context, string, *os.File, int64, bool) error
+	Get(context.Context, string) (io.ReadCloser, error)
+	Visit(context.Context, string, func(string) error) error
+	Upload(context.Context, string, *os.File, int64, bool) error
 }
 
-func copyTransfer(ctx context.Context, obj transferObjects, prefix string, fs *bedfs.FS, req TransferRequest, completed func(int64)) error {
+// Copy executes validated transfer options; completed reports each fully published file.
+func Copy(ctx context.Context, obj transferObjects, prefix string, fs *bedfs.FS, req TransferOptions, completed func(int64)) error {
 	if req.Source.Type == "bed" {
 		info, err := fs.Stat(req.Source.Path)
 		if err != nil {
@@ -47,9 +48,9 @@ func copyTransfer(ctx context.Context, obj transferObjects, prefix string, fs *b
 			if relative != "." {
 				key = path.Join(key, relative)
 			}
-			callCtx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+			callCtx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 			defer cancel()
-			if err := obj.upload(callCtx, key, file, size, req.Overwrite); err != nil {
+			if err := obj.Upload(callCtx, key, file, size, req.Overwrite); err != nil {
 				return transferErrorAt(err, "upload", relative)
 			}
 			completed(size)
@@ -67,9 +68,9 @@ func copyTransfer(ctx context.Context, obj transferObjects, prefix string, fs *b
 	}
 	source := path.Join(prefix, req.Source.Key)
 	copyFile := func(key, destination, relative string) error {
-		callCtx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+		callCtx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 		defer cancel()
-		body, err := obj.get(callCtx, key)
+		body, err := obj.Get(callCtx, key)
 		if err != nil {
 			return transferErrorAt(err, "download", relative)
 		}
@@ -88,7 +89,7 @@ func copyTransfer(ctx context.Context, obj transferObjects, prefix string, fs *b
 		return copyFile(source, req.Destination.Path, ".")
 	}
 	source += "/"
-	err := obj.visit(ctx, source, func(key string) error {
+	err := obj.Visit(ctx, source, func(key string) error {
 		if !strings.HasPrefix(key, source) {
 			return ErrTransferInvalid
 		}
@@ -107,23 +108,23 @@ func copyTransfer(ctx context.Context, obj transferObjects, prefix string, fs *b
 	return transferErrorAt(err, "list", ".")
 }
 
-// transferCopyError carries only the stage and path relative to the requested
+// OperationError carries only the stage and path relative to the requested
 // directory. It preserves error identity for cancellation and API categories.
-type transferCopyError struct {
-	stage, relative string
+type OperationError struct {
+	Stage, Relative string
 	err             error
 }
 
-func (e *transferCopyError) Error() string { return e.err.Error() }
-func (e *transferCopyError) Unwrap() error { return e.err }
+func (e *OperationError) Error() string { return e.err.Error() }
+func (e *OperationError) Unwrap() error { return e.err }
 
 func transferErrorAt(err error, stage, relative string) error {
 	if err == nil {
 		return nil
 	}
-	var existing *transferCopyError
+	var existing *OperationError
 	if errors.As(err, &existing) {
 		return err
 	}
-	return &transferCopyError{stage: stage, relative: relative, err: err}
+	return &OperationError{Stage: stage, Relative: relative, err: err}
 }

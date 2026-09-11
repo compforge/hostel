@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/qiankunli/hostel/internal/store/backend"
+	storesync "github.com/qiankunli/hostel/internal/store/sync"
 )
 
 // Manager is the daemon-wide persistence component. Beds carry only a SyncKind;
@@ -14,15 +17,15 @@ type Manager struct {
 	mu            sync.Mutex
 	stores        map[SyncKind]Store
 	syncRequested chan struct{}
-	remote        *s3obj
+	remote        *backend.S3
 	transfers     *transferRegistry
-	restic        *resticCommand
+	restic        *storesync.Restic
 }
 
 func NewManager(ctx context.Context, cfg Config) (*Manager, error) {
 	s := NewManagerWithStores(Noop{})
 	s.cfg = cfg
-	s.restic = newResticCommand(cfg)
+	s.restic = storesync.NewRestic(storesync.ResticConfig{Config: cfg.remoteConfig(), Binary: cfg.ResticBinary, Password: cfg.ResticPassword})
 	requested := cfg.Sync
 	if requested == "" {
 		requested = string(SyncAuto)
@@ -62,7 +65,7 @@ func (s *Manager) Resolve(ctx context.Context, requested string) (SyncKind, erro
 		return "", fmt.Errorf("store: unknown sync kind %q", requested)
 	}
 	if kind == SyncRestic && s.cfg.Bucket != "" {
-		if err := s.restic.available(ctx); err != nil {
+		if err := s.restic.Available(ctx); err != nil {
 			return "", err
 		}
 	}
@@ -100,15 +103,13 @@ func (s *Manager) forSync(ctx context.Context, kind SyncKind) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	filter, err := newSnapshotFilter(s.cfg.PersistedPaths)
+	automatic, err := storesync.NewAuto(obj, s.cfg.Prefix, s.cfg.AutoPackFileThreshold, s.cfg.PersistedPaths, s.restic)
 	if err != nil {
 		return nil, err
 	}
-	automatic := newAutoStore(obj, s.cfg.Prefix, s.cfg.AutoPackFileThreshold, filter)
-	automatic.restic = &resticStore{obj: obj, prefix: s.cfg.Prefix, command: s.restic, filter: filter}
 	s.stores[SyncAuto] = automatic
 	for _, kind := range []SyncKind{SyncCAS, SyncPack, SyncTar, SyncRestic} {
-		s.stores[kind] = automatic.withSync(kind)
+		s.stores[kind] = automatic.WithKind(kind)
 	}
 	return s.stores[kind], nil
 }
@@ -147,17 +148,17 @@ func (s *Manager) StageInBedFS(ctx context.Context, kind SyncKind, request Stage
 
 // remoteLocked shares the same S3 client even when the default policy is noop.
 // The caller holds s.mu; connection setup never changes a Bed's policy.
-func (s *Manager) remoteLocked(ctx context.Context) (*s3obj, error) {
+func (s *Manager) remoteLocked(ctx context.Context) (*backend.S3, error) {
 	if s.remote != nil {
 		return s.remote, nil
 	}
 	if s.cfg.Bucket == "" {
 		return nil, ErrTransferUnavailable
 	}
-	client, err := newS3Client(ctx, s.cfg)
+	remote, err := backend.NewS3(ctx, s.cfg.remoteConfig())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrTransferUnavailable, err)
 	}
-	s.remote = &s3obj{client: client, bucket: s.cfg.Bucket}
+	s.remote = remote
 	return s.remote, nil
 }

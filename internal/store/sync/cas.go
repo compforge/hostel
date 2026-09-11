@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import (
 	"bytes"
@@ -44,7 +44,7 @@ import (
 // The blob space is per-bed (<prefix>/<bedID>/...), so GC remains a local diff
 // and does not require a cross-manifest, cross-instance sweep.
 type casStore struct {
-	obj    objAPI
+	obj    objects
 	prefix string
 	filter snapshotFilter
 }
@@ -72,19 +72,7 @@ var casConverters = desync.Converters{desync.Compressor{}}
 // ContentLength says nothing about the workspace.
 const casMetaBytes = "bytes"
 
-func newCAS(ctx context.Context, cfg Config) (Store, error) {
-	obj, err := newS3Obj(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	filter, err := newSnapshotFilter(cfg.PersistedPaths)
-	if err != nil {
-		return nil, err
-	}
-	return newCASStore(obj, cfg.Prefix, filter), nil
-}
-
-func newCASStore(obj objAPI, prefix string, filters ...snapshotFilter) *casStore {
+func newCASStore(obj objects, prefix string, filters ...snapshotFilter) *casStore {
 	filter := defaultSnapshotFilter()
 	if len(filters) > 0 {
 		filter = filters[0]
@@ -92,7 +80,7 @@ func newCASStore(obj objAPI, prefix string, filters ...snapshotFilter) *casStore
 	return &casStore{obj: obj, prefix: prefix, filter: filter}
 }
 
-func (s *casStore) Name() SyncKind { return SyncCAS }
+func (s *casStore) Name() Kind { return KindCAS }
 
 func (s *casStore) bedPrefix(bedID string) string {
 	return path.Join(s.prefix, bedID)
@@ -108,9 +96,9 @@ func (s *casStore) chunkPrefix(bedID string) string {
 }
 
 func (s *casStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 	defer cancel()
-	meta, _, exists, err := s.obj.head(ctx, s.indexKey(bedID))
+	meta, _, exists, err := s.obj.Head(ctx, s.indexKey(bedID))
 	if err != nil || !exists {
 		return nil, err
 	}
@@ -129,7 +117,7 @@ func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation in
 	// Fencing guard (docs/store.md §3.5): remote generation >= ours
 	// means another instance persisted this bed after our initialization —
 	// refuse rather than silently overwrite.
-	prevMeta, _, prevExists, err := s.obj.head(ctx, s.indexKey(bedID))
+	prevMeta, _, prevExists, err := s.obj.Head(ctx, s.indexKey(bedID))
 	if err != nil {
 		return fmt.Errorf("store: persist %s: pre-write stat: %w", bedID, err)
 	}
@@ -188,9 +176,9 @@ func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation in
 	if _, err := idx.WriteTo(&buf); err != nil {
 		return fmt.Errorf("store: persist %s: encode index: %w", bedID, err)
 	}
-	putCtx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+	putCtx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 	defer cancel()
-	err = s.obj.put(putCtx, s.indexKey(bedID), bytes.NewReader(buf.Bytes()), int64(buf.Len()), map[string]string{
+	err = s.obj.Put(putCtx, s.indexKey(bedID), bytes.NewReader(buf.Bytes()), int64(buf.Len()), map[string]string{
 		generationMetaKey: strconv.FormatInt(generation, 10),
 		casMetaBytes:      strconv.FormatInt(idx.Length(), 10),
 	})
@@ -211,7 +199,7 @@ func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation in
 	for _, c := range idx.Chunks {
 		keep[c.ID.String()] = struct{}{}
 	}
-	listed, err := s.obj.list(ctx, s.chunkPrefix(bedID))
+	listed, err := s.obj.List(ctx, s.chunkPrefix(bedID))
 	if err != nil {
 		return nil //nolint:nilerr // snapshot committed; GC is best-effort
 	}
@@ -222,7 +210,7 @@ func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation in
 		}
 	}
 	if len(garbage) > 0 {
-		_ = s.obj.del(ctx, garbage)
+		_ = s.obj.Delete(ctx, garbage)
 	}
 	return nil
 }
@@ -245,21 +233,21 @@ func (s *casStore) Restore(ctx context.Context, bedID, dir string) error {
 }
 
 func (s *casStore) Delete(ctx context.Context, bedID string) error {
-	keys, err := s.obj.list(ctx, s.chunkPrefix(bedID))
+	keys, err := s.obj.List(ctx, s.chunkPrefix(bedID))
 	if err != nil {
 		return fmt.Errorf("store: delete %s: list chunks: %w", bedID, err)
 	}
 	keys = append(keys, s.indexKey(bedID))
-	if err := s.obj.del(ctx, keys); err != nil {
+	if err := s.obj.Delete(ctx, keys); err != nil {
 		return fmt.Errorf("store: delete %s: %w", bedID, err)
 	}
 	return nil
 }
 
 func (s *casStore) loadIndex(ctx context.Context, bedID string) (desync.Index, error) {
-	ctx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 	defer cancel()
-	rc, err := s.obj.get(ctx, s.indexKey(bedID))
+	rc, err := s.obj.Get(ctx, s.indexKey(bedID))
 	if err != nil {
 		return desync.Index{}, fmt.Errorf("store: index %s: %w", bedID, err)
 	}
@@ -283,19 +271,19 @@ func sameChunks(a, b desync.Index) bool {
 	return true
 }
 
-// casObjStore adapts objAPI to desync's WriteStore for one bed's chunk space.
+// casObjStore adapts objects to desync's WriteStore for one bed's chunk space.
 // known is primed with the previous index's chunk IDs so unchanged chunks are
 // skipped without any request; it also absorbs duplicate chunks within one
 // stream. StoreChunk is called from ChunkStream's worker goroutines.
 type casObjStore struct {
 	ctx    context.Context
-	obj    objAPI
+	obj    objects
 	prefix string
 	mu     sync.Mutex
 	known  map[desync.ChunkID]struct{}
 }
 
-func newCASObjStore(ctx context.Context, obj objAPI, prefix string) *casObjStore {
+func newCASObjStore(ctx context.Context, obj objects, prefix string) *casObjStore {
 	return &casObjStore{ctx: ctx, obj: obj, prefix: prefix, known: make(map[desync.ChunkID]struct{})}
 }
 
@@ -312,9 +300,9 @@ func (s *casObjStore) StoreChunk(c *desync.Chunk) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(s.ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(s.ctx, objectOpTimeout)
 	defer cancel()
-	if err := s.obj.put(ctx, s.key(c.ID()), bytes.NewReader(data), int64(len(data)), nil); err != nil {
+	if err := s.obj.Put(ctx, s.key(c.ID()), bytes.NewReader(data), int64(len(data)), nil); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -324,9 +312,9 @@ func (s *casObjStore) StoreChunk(c *desync.Chunk) error {
 }
 
 func (s *casObjStore) GetChunk(id desync.ChunkID) (*desync.Chunk, error) {
-	ctx, cancel := context.WithTimeout(s.ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(s.ctx, objectOpTimeout)
 	defer cancel()
-	rc, err := s.obj.get(ctx, s.key(id))
+	rc, err := s.obj.Get(ctx, s.key(id))
 	if err != nil {
 		return nil, err
 	}
@@ -347,9 +335,9 @@ func (s *casObjStore) HasChunk(id desync.ChunkID) (bool, error) {
 		return true, nil
 	}
 	s.mu.Unlock()
-	ctx, cancel := context.WithTimeout(s.ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(s.ctx, objectOpTimeout)
 	defer cancel()
-	_, _, exists, err := s.obj.head(ctx, s.key(id))
+	_, _, exists, err := s.obj.Head(ctx, s.key(id))
 	return exists, err
 }
 

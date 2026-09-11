@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import (
 	"context"
@@ -47,11 +47,11 @@ type autoState struct {
 	byLayout map[storeLayout]inspectedBackend
 }
 
-// autoStore discovers the newest snapshot across all layouts. SyncKind controls
+// Auto discovers the newest snapshot across all layouts. Kind controls
 // subsequent writes, never which existing snapshots can be read. Changing
 // formats publishes a higher generation; old layouts remain until purge.
-type autoStore struct {
-	kind              SyncKind
+type Auto struct {
+	kind              Kind
 	cas               *casStore
 	pack              *packStore
 	tar               *tarStore
@@ -60,13 +60,13 @@ type autoStore struct {
 	filter            snapshotFilter
 }
 
-func newAutoStore(obj objAPI, prefix string, packFileThreshold int, filters ...snapshotFilter) *autoStore {
+func newAutoStore(obj objects, prefix string, packFileThreshold int, filters ...snapshotFilter) *Auto {
 	filter := defaultSnapshotFilter()
 	if len(filters) > 0 {
 		filter = filters[0]
 	}
-	return &autoStore{
-		kind:              SyncAuto,
+	return &Auto{
+		kind:              KindAuto,
 		cas:               newCASStore(obj, prefix, filter),
 		pack:              newPackStore(obj, prefix, filter),
 		tar:               newTarStore(obj, prefix, filter),
@@ -75,16 +75,16 @@ func newAutoStore(obj objAPI, prefix string, packFileThreshold int, filters ...s
 	}
 }
 
-// withSync shares the same clients and formats while selecting a write policy.
-func (s *autoStore) withSync(kind SyncKind) *autoStore {
+// WithKind shares the same clients and formats while selecting a write policy.
+func (s *Auto) WithKind(kind Kind) *Auto {
 	selected := *s
 	selected.kind = kind
 	return &selected
 }
 
-func (s *autoStore) Name() SyncKind { return s.kind }
+func (s *Auto) Name() Kind { return s.kind }
 
-func (s *autoStore) backends() []routedBackend {
+func (s *Auto) backends() []routedBackend {
 	backends := []routedBackend{
 		{layout: layoutCAS, store: s.cas},
 		{layout: layoutPack, store: s.pack},
@@ -96,7 +96,7 @@ func (s *autoStore) backends() []routedBackend {
 	return backends
 }
 
-func (s *autoStore) inspect(ctx context.Context, bedID string) (autoState, error) {
+func (s *Auto) inspect(ctx context.Context, bedID string) (autoState, error) {
 	backends := s.backends()
 	results := make(chan inspectedBackend, len(backends))
 	for _, backend := range backends {
@@ -140,7 +140,7 @@ func (s *autoStore) inspect(ctx context.Context, bedID string) (autoState, error
 	return state, nil
 }
 
-func (s *autoStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error) {
+func (s *Auto) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error) {
 	state, err := s.inspect(ctx, bedID)
 	if err != nil || state.selected == nil {
 		return nil, err
@@ -148,7 +148,7 @@ func (s *autoStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, erro
 	return state.selected.info, nil
 }
 
-func (s *autoStore) Restore(ctx context.Context, bedID, dir string) error {
+func (s *Auto) Restore(ctx context.Context, bedID, dir string) error {
 	state, err := s.inspect(ctx, bedID)
 	if err != nil {
 		return err
@@ -159,7 +159,7 @@ func (s *autoStore) Restore(ctx context.Context, bedID, dir string) error {
 	return state.selected.store.Restore(ctx, bedID, dir)
 }
 
-func (s *autoStore) Persist(ctx context.Context, bedID, dir string, generation int64) error {
+func (s *Auto) Persist(ctx context.Context, bedID, dir string, generation int64) error {
 	state, err := s.inspect(ctx, bedID)
 	if err != nil {
 		return err
@@ -176,7 +176,7 @@ func (s *autoStore) Persist(ctx context.Context, bedID, dir string, generation i
 	if state.selected != nil {
 		target = state.selected.routedBackend
 	}
-	if s.kind == SyncAuto && state.selected != nil && state.selected.layout == layoutCAS {
+	if s.kind == KindAuto && state.selected != nil && state.selected.layout == layoutCAS {
 		usePack, err := exceedsSnapshotFileThreshold(dir, s.packFileThreshold, s.filter)
 		if err != nil {
 			return fmt.Errorf("store: persist %s: count snapshot files: %w", bedID, err)
@@ -186,19 +186,19 @@ func (s *autoStore) Persist(ctx context.Context, bedID, dir string, generation i
 		}
 	}
 	switch s.kind {
-	case SyncCAS:
+	case KindCAS:
 		target = routedBackend{layout: layoutCAS, store: s.cas}
-	case SyncPack:
+	case KindPack:
 		target = routedBackend{layout: layoutPack, store: s.pack}
-	case SyncRestic:
+	case KindRestic:
 		target = routedBackend{layout: layoutRestic, store: s.restic}
-	case SyncTar:
+	case KindTar:
 		target = routedBackend{layout: layoutTar, store: s.tar}
 	}
 	return target.store.Persist(ctx, bedID, dir, generation)
 }
 
-func (s *autoStore) Delete(ctx context.Context, bedID string) error {
+func (s *Auto) Delete(ctx context.Context, bedID string) error {
 	var err error
 	for _, backend := range s.backends() {
 		if deleteErr := backend.store.Delete(ctx, bedID); deleteErr != nil {
@@ -249,4 +249,16 @@ func exceedsSnapshotFileThreshold(root string, threshold int, filters ...snapsho
 		return true, nil
 	}
 	return false, err
+}
+
+// NewAuto assembles snapshot layouts over one shared backend. Explicit kinds
+// choose subsequent writes while all layouts remain readable and purgeable.
+func NewAuto(obj objects, prefix string, threshold int, paths []string, restic *Restic) (*Auto, error) {
+	filter, err := newSnapshotFilter(paths)
+	if err != nil {
+		return nil, err
+	}
+	s := newAutoStore(obj, prefix, threshold, filter)
+	s.restic = &resticStore{obj: obj, prefix: prefix, command: restic, filter: filter}
+	return s, nil
 }

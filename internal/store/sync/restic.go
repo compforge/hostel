@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import (
 	"bytes"
@@ -28,9 +28,9 @@ import (
 )
 
 type resticStore struct {
-	obj     objAPI
+	obj     objects
 	prefix  string
-	command *resticCommand
+	command *Restic
 	filter  snapshotFilter
 }
 
@@ -40,7 +40,7 @@ type resticHead struct {
 	Bytes      int64  `json:"bytes"`
 }
 
-func (s *resticStore) Name() SyncKind             { return SyncRestic }
+func (s *resticStore) Name() Kind                 { return KindRestic }
 func (s *resticStore) bedPrefix(id string) string { return path.Join(s.prefix, "restic", id) + "/" }
 func (s *resticStore) headKey(id string) string   { return s.bedPrefix(id) + "head.json" }
 func (s *resticStore) repository(id string) string {
@@ -48,9 +48,9 @@ func (s *resticStore) repository(id string) string {
 }
 
 func (s *resticStore) Stat(ctx context.Context, id string) (*SnapshotInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 	defer cancel()
-	meta, _, exists, err := s.obj.head(ctx, s.headKey(id))
+	meta, _, exists, err := s.obj.Head(ctx, s.headKey(id))
 	if err != nil || !exists {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (s *resticStore) Stat(ctx context.Context, id string) (*SnapshotInfo, error
 }
 
 func (s *resticStore) readHead(ctx context.Context, id string) (resticHead, error) {
-	body, err := s.obj.get(ctx, s.headKey(id))
+	body, err := s.obj.Get(ctx, s.headKey(id))
 	if err != nil {
 		return resticHead{}, err
 	}
@@ -81,7 +81,7 @@ func (s *resticStore) readHead(ctx context.Context, id string) (resticHead, erro
 func (s *resticStore) Persist(ctx context.Context, id, dir string, generation int64) error {
 	ctx, cancel := context.WithTimeout(ctx, tarOpTimeout)
 	defer cancel()
-	if err := s.command.available(ctx); err != nil {
+	if err := s.command.Available(ctx); err != nil {
 		return err
 	}
 	info, err := s.Stat(ctx, id)
@@ -123,13 +123,13 @@ func (s *resticStore) Persist(ctx context.Context, id, dir string, generation in
 	if err != nil {
 		return err
 	}
-	return s.obj.put(ctx, s.headKey(id), bytes.NewReader(data), int64(len(data)), map[string]string{generationMetaKey: strconv.FormatInt(generation, 10), "bytes": strconv.FormatInt(summary.Bytes, 10)})
+	return s.obj.Put(ctx, s.headKey(id), bytes.NewReader(data), int64(len(data)), map[string]string{generationMetaKey: strconv.FormatInt(generation, 10), "bytes": strconv.FormatInt(summary.Bytes, 10)})
 }
 
 func (s *resticStore) Restore(ctx context.Context, id, dir string) error {
 	ctx, cancel := context.WithTimeout(ctx, tarOpTimeout)
 	defer cancel()
-	if err := s.command.available(ctx); err != nil {
+	if err := s.command.Available(ctx); err != nil {
 		return err
 	}
 	head, err := s.readHead(ctx, id)
@@ -140,11 +140,11 @@ func (s *resticStore) Restore(ctx context.Context, id, dir string) error {
 }
 
 func (s *resticStore) Delete(ctx context.Context, id string) error {
-	ctx, cancel := context.WithTimeout(ctx, s3OpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, objectOpTimeout)
 	defer cancel()
-	keys, err := s.obj.list(ctx, s.bedPrefix(id))
+	keys, err := s.obj.List(ctx, s.bedPrefix(id))
 	if err != nil {
 		return err
 	}
-	return s.obj.del(ctx, keys)
+	return s.obj.Delete(ctx, keys)
 }

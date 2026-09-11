@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package sync
 
 import (
 	"context"
@@ -28,7 +28,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bedfs"
 )
 
-func testRestic(t *testing.T) *resticCommand {
+func testRestic(t *testing.T) *Restic {
 	t.Helper()
 	binary := os.Getenv("HOSTEL_TEST_RESTIC_BINARY")
 	if binary == "" {
@@ -38,8 +38,8 @@ func testRestic(t *testing.T) *resticCommand {
 			t.Skip("restic executable unavailable; set HOSTEL_TEST_RESTIC_BINARY")
 		}
 	}
-	r := newResticCommand(Config{ResticBinary: binary})
-	if err := r.available(t.Context()); err != nil {
+	r := NewRestic(ResticConfig{Binary: binary})
+	if err := r.Available(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	return r
@@ -127,7 +127,7 @@ func TestResticCancellationJoinsProcess(t *testing.T) {
 	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r := newResticCommand(Config{ResticBinary: binary})
+	r := NewRestic(ResticConfig{Binary: binary})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -157,30 +157,30 @@ func TestResticCancellationJoinsProcess(t *testing.T) {
 }
 
 func TestResticTransferValidation(t *testing.T) {
-	req := TransferRequest{ID: "one", Sync: SyncRestic, Source: TransferEndpoint{Type: "bed", Path: "/workspace"}, Destination: TransferEndpoint{Type: "s3", Key: "repositories/one"}}
-	if _, err := validateTransfer(req); err != nil {
+	req := TransferOptions{Sync: KindRestic, Source: TransferEndpoint{Type: "bed", Path: "/workspace"}, Destination: TransferEndpoint{Type: "s3", Key: "repositories/one"}}
+	if _, err := ValidateTransfer(req); err != nil {
 		t.Fatal(err)
 	}
 	req.ParentRef = strings.Repeat("a", 64)
-	if _, err := validateTransfer(req); err != nil {
+	if _, err := ValidateTransfer(req); err != nil {
 		t.Fatal(err)
 	}
-	req.Sync = SyncCopy
-	if _, err := validateTransfer(req); !errors.Is(err, ErrTransferInvalid) {
+	req.Sync = KindCopy
+	if _, err := ValidateTransfer(req); !errors.Is(err, ErrTransferInvalid) {
 		t.Fatalf("copy accepted parent: %v", err)
 	}
-	req.Sync = SyncRestic
+	req.Sync = KindRestic
 	req.ParentRef = ""
 	req.Source, req.Destination = req.Destination, req.Source
-	if _, err := validateTransfer(req); !errors.Is(err, ErrTransferInvalid) {
+	if _, err := ValidateTransfer(req); !errors.Is(err, ErrTransferInvalid) {
 		t.Fatal("download accepted missing ref")
 	}
 	req.Source.Ref = strings.Repeat("b", 64)
-	if _, err := validateTransfer(req); err != nil {
+	if _, err := ValidateTransfer(req); err != nil {
 		t.Fatal(err)
 	}
-	req.Sync = SyncNoop
-	if _, err := validateTransfer(req); !errors.Is(err, ErrTransferInvalid) {
+	req.Sync = KindNoop
+	if _, err := ValidateTransfer(req); !errors.Is(err, ErrTransferInvalid) {
 		t.Fatal("explicit noop accepted")
 	}
 }

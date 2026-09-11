@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package backend
 
 import (
 	"errors"
@@ -71,14 +71,14 @@ func TestTransferMultipartCommitAndAbort(t *testing.T) {
 				}
 			}))
 			defer remote.Close()
-			cfg := testS3Config()
+			cfg := Config{Bucket: "b", Region: "us-east-1", AccessKeyID: "test-access-key", SecretAccessKey: "test-secret-key"}
 			cfg.Endpoint = remote.URL
 			cfg.PathStyle = true
 			client, err := newS3Client(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
-			object := &s3obj{client: client, bucket: "bucket"}
+			object := &S3{client: client, bucket: "bucket"}
 			file, err := os.CreateTemp(t.TempDir(), "source")
 			if err != nil {
 				t.Fatal(err)
@@ -88,7 +88,7 @@ func TestTransferMultipartCommitAndAbort(t *testing.T) {
 			if err := file.Truncate(size); err != nil {
 				t.Fatal(err)
 			}
-			err = object.upload(t.Context(), "object", file, size, false)
+			err = object.Upload(t.Context(), "object", file, size, false)
 			mu.Lock()
 			defer mu.Unlock()
 			switch outcome {
@@ -97,7 +97,7 @@ func TestTransferMultipartCommitAndAbort(t *testing.T) {
 					t.Fatalf("multipart: err=%v parts=%d bytes=%d commits=%d aborts=%d", err, parts, received, commits, aborts)
 				}
 			case "conflict":
-				if !errors.Is(err, ErrTransferConflict) || commits != 1 || aborts != 1 {
+				if !errors.Is(err, ErrConflict) || commits != 1 || aborts != 1 {
 					t.Fatalf("conflict err=%v commits=%d aborts=%d", err, commits, aborts)
 				}
 			case "part_failure":

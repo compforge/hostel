@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store
+package backend
 
 import (
 	"context"
@@ -25,16 +25,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
-
-// s3OpTimeout bounds a single object operation. Generous: chunk transfers can
-// ride slow links; lifecycle callers pass Background contexts.
-const s3OpTimeout = 5 * time.Minute
-
-// generationMetaKey is the S3 user-metadata key carrying the bed generation
-// (served back by HEAD, so Stat never downloads the snapshot). The SDK strips
-// the x-amz-meta- prefix and lowercases keys on read.
-const generationMetaKey = "generation"
 
 // newS3Client builds the shared S3-compatible client.
 func newS3Client(ctx context.Context, cfg Config) (*s3.Client, error) {
@@ -61,39 +53,13 @@ func newS3Client(ctx context.Context, cfg Config) (*s3.Client, error) {
 	}), nil
 }
 
-func newS3Obj(ctx context.Context, cfg Config) (objAPI, error) {
-	client, err := newS3Client(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &s3obj{client: client, bucket: cfg.Bucket}, nil
-}
-
-// objAPI is the minimal object-storage surface the S3 backends need. It
-// exists so persist/restore/GC logic — the part with actual room for
-// bugs — is unit-testable against an in-memory fake; s3obj is a thin adapter
-// with nothing to test beyond the SDK.
-type objAPI interface {
-	// head returns object user metadata and size; exists=false when missing.
-	head(ctx context.Context, key string) (meta map[string]string, size int64, exists bool, err error)
-	get(ctx context.Context, key string) (io.ReadCloser, error)
-	// PutObject may rewind the body for signing, checksums, and retries. Hostel's
-	// chunks, packs and indexes are bounded in memory, while full tar snapshots
-	// use a temporary file. Require a seekable body instead of weakening S3
-	// integrity for non-seekable streams.
-	put(ctx context.Context, key string, r io.ReadSeeker, size int64, meta map[string]string) error
-	// del removes keys; missing keys are not an error.
-	del(ctx context.Context, keys []string) error
-	// list returns all keys under prefix.
-	list(ctx context.Context, prefix string) ([]string, error)
-}
-
-type s3obj struct {
+// S3 adapts a shared S3-compatible client to snapshot and streaming object operations.
+type S3 struct {
 	client *s3.Client
 	bucket string
 }
 
-func (o *s3obj) head(ctx context.Context, key string) (map[string]string, int64, bool, error) {
+func (o *S3) Head(ctx context.Context, key string) (map[string]string, int64, bool, error) {
 	out, err := o.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &o.bucket, Key: &key})
 	if err != nil {
 		var nf *s3types.NotFound
@@ -109,7 +75,7 @@ func (o *s3obj) head(ctx context.Context, key string) (map[string]string, int64,
 	return out.Metadata, size, true, nil
 }
 
-func (o *s3obj) get(ctx context.Context, key string) (io.ReadCloser, error) {
+func (o *S3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	out, err := o.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &o.bucket, Key: &key})
 	if err != nil {
 		return nil, fmt.Errorf("store: get %s: %w", key, err)
@@ -117,7 +83,7 @@ func (o *s3obj) get(ctx context.Context, key string) (io.ReadCloser, error) {
 	return out.Body, nil
 }
 
-func (o *s3obj) put(ctx context.Context, key string, r io.ReadSeeker, size int64, meta map[string]string) error {
+func (o *S3) Put(ctx context.Context, key string, r io.ReadSeeker, size int64, meta map[string]string) error {
 	_, err := o.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: &o.bucket, Key: &key, Body: r, ContentLength: &size, Metadata: meta,
 	})
@@ -127,7 +93,7 @@ func (o *s3obj) put(ctx context.Context, key string, r io.ReadSeeker, size int64
 	return nil
 }
 
-func (o *s3obj) del(ctx context.Context, keys []string) error {
+func (o *S3) Delete(ctx context.Context, keys []string) error {
 	// DeleteObjects caps at 1000 keys per call.
 	for len(keys) > 0 {
 		n := min(len(keys), 1000)
@@ -145,7 +111,7 @@ func (o *s3obj) del(ctx context.Context, keys []string) error {
 	return nil
 }
 
-func (o *s3obj) list(ctx context.Context, prefix string) ([]string, error) {
+func (o *S3) List(ctx context.Context, prefix string) ([]string, error) {
 	var keys []string
 	p := s3.NewListObjectsV2Paginator(o.client, &s3.ListObjectsV2Input{Bucket: &o.bucket, Prefix: &prefix})
 	for p.HasMorePages() {
@@ -158,4 +124,47 @@ func (o *s3obj) list(ctx context.Context, prefix string) ([]string, error) {
 		}
 	}
 	return keys, nil
+}
+
+// Config describes where objects are stored; it contains no synchronization policy.
+type Config struct {
+	Bucket          string
+	Prefix          string
+	Endpoint        string
+	PathStyle       bool
+	Region          string
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
+}
+
+// NewS3 opens the object client shared by automatic persistence and explicit transfers.
+func NewS3(ctx context.Context, cfg Config) (*S3, error) {
+	client, err := newS3Client(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &S3{client: client, bucket: cfg.Bucket}, nil
+}
+
+// ErrConflict reports a failed conditional object write.
+var ErrConflict = errors.New("transfer conflict")
+
+// OperationTimeout bounds one remote object operation, including multipart cleanup.
+const OperationTimeout = 5 * time.Minute
+
+// Failure returns a safe S3 error category, or an empty string for non-S3 errors.
+// Raw transport errors may contain endpoints or signed URLs and must not be logged.
+func Failure(err error) string {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch":
+			return "S3 access denied"
+		case "NoSuchKey", "NoSuchBucket", "NotFound":
+			return "S3 source or bucket not found"
+		}
+		return "S3 request failed"
+	}
+	return ""
 }
