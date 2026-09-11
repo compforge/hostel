@@ -27,8 +27,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -38,6 +36,7 @@ import (
 	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/network"
+	"github.com/qiankunli/hostel/internal/privilege"
 	"github.com/qiankunli/hostel/internal/resource"
 	"github.com/qiankunli/hostel/internal/store"
 	"github.com/qiankunli/hostel/internal/supervisor"
@@ -50,15 +49,13 @@ import (
 var version = "dev"
 
 func main() {
-	// Isolation re-exec confiners (room mechanisms): before anything else, since
-	// the argv is `hostel <subcmd> ... -- <cmd>...`, not flags. The daemon must
-	// keep its privileges, so both mechanisms confine a self-re-exec, not hostel.
+	// The Landlock re-exec confiner must run before flag parsing because its argv
+	// is `hostel <subcmd> ... -- <cmd>...`. The daemon keeps its privileges; only
+	// this child applies the Bed file boundary before exec-ing the command.
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case isolation.ConfineArg: // landlock: __confine <dataDir> -- <cmd>...
 			os.Exit(runConfine(os.Args[2:]))
-		case isolation.AsUserArg: // uid: __asuser <uid> <dataDir> -- <cmd>...
-			os.Exit(runAsUser(os.Args[2:]))
 		case supervisor.Arg: // supervised Executor: __supervisor --socket S --bed B --executor E
 			os.Exit(supervisor.Run(os.Args[2:]))
 		}
@@ -109,6 +106,10 @@ func main() {
 	iso := isolation.New(cfg.IsolationMode, cfg.WorkspaceRoot,
 		isolation.WithPathProjections(pathProjections),
 	)
+	bedUser, err := privilege.NewBedUser(cfg.BedUID, cfg.BedGID)
+	if err != nil {
+		log.Fatalf("hostel: configure bed user: %v", err)
+	}
 
 	// Amenity manager: shared facilities light up per deployment. Chromium is
 	// registered when launch (binary) or attach (--chromium-cdp-url) is
@@ -146,7 +147,9 @@ func main() {
 		log.Fatalf("hostel: init store: %v", err)
 	}
 
-	mgr, err := bed.NewManager(cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st)
+	mgr, err := bed.NewManager(cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
+		bed.WithBedUser(bedUser),
+	)
 	if err != nil {
 		log.Fatalf("hostel: init bed manager: %v", err)
 	}
@@ -241,7 +244,10 @@ func main() {
 		cancelClose()
 		log.Fatalf("hostel: execution environment unavailable: %v", environmentErr)
 	}
-	log.Printf("hostel: execution environment verified (file=%s network=%s executor=%s)", iso.Name(), networks.Report().Backend, mgr.ExecutorBackend())
+	userReport := mgr.BedUserReport()
+	log.Printf("hostel: execution environment verified (file=%s network=%s executor=%s bed_user_strategy=%s bed_uid=%d bed_gid=%d bed_uid_min=%d bed_uid_max=%d)",
+		iso.Name(), networks.Report().Backend, mgr.ExecutorBackend(), userReport.Strategy,
+		userReport.UID, userReport.GID, userReport.UIDMin, userReport.UIDMax)
 
 	// Carrier pressure gates tenant work, not the startup capability probe.
 	mgr.SetResourceAdmission(resourceAdmission)
@@ -345,60 +351,6 @@ func runConfine(args []string) int {
 	}
 	if err := syscall.Exec(path, cmd, os.Environ()); err != nil {
 		fmt.Fprintf(os.Stderr, "hostel __confine: exec %s: %v\n", path, err)
-		return 126
-	}
-	return 0 // unreachable
-}
-
-// runAsUser implements `hostel __asuser <uid> <dataDir> -- <cmd> <args>...`:
-// drop THIS process to the bed uid (and no_new_privs), enter the data dir, then
-// exec the real command so it inherits the reduced identity. Returns a process
-// exit code (only on error; success replaces the process image).
-func runAsUser(args []string) int {
-	sep := -1
-	for i, a := range args {
-		if a == "--" {
-			sep = i
-			break
-		}
-	}
-	// Need at least <uid> <dataDir> before the "--", and a command after it.
-	if sep < 2 || sep+1 >= len(args) {
-		fmt.Fprintln(os.Stderr, "hostel __asuser: usage: __asuser <uid> <dataDir> -- <cmd>...")
-		return 2
-	}
-	uid, err := strconv.Atoi(args[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "hostel __asuser: bad uid %q: %v\n", args[0], err)
-		return 2
-	}
-	dataDir := args[1]
-	cmd := args[sep+1:]
-
-	if err := isolation.ApplyAsUser(uid, dataDir); err != nil {
-		fmt.Fprintf(os.Stderr, "hostel __asuser: %v\n", err)
-		return 1
-	}
-	path, err := exec.LookPath(cmd[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "hostel __asuser: %s: %v\n", cmd[0], err)
-		return 127
-	}
-	// The bed uid has no /etc/passwd entry; give tools a sane HOME (its own
-	// workspace) and USER so bash and friends don't choke on the unknown uid.
-	// Filter any inherited HOME/USER/LOGNAME first: appending would leave two
-	// copies, and a libc getenv() takes the FIRST (the daemon's) — bash happens
-	// to be last-wins, but don't rely on the exec target being a shell.
-	env := make([]string, 0, len(os.Environ())+3)
-	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "USER=") || strings.HasPrefix(kv, "LOGNAME=") {
-			continue
-		}
-		env = append(env, kv)
-	}
-	env = append(env, "HOME="+dataDir, "USER=hostel-bed", "LOGNAME=hostel-bed")
-	if err := syscall.Exec(path, cmd, env); err != nil {
-		fmt.Fprintf(os.Stderr, "hostel __asuser: exec %s: %v\n", path, err)
 		return 126
 	}
 	return 0 // unreachable

@@ -130,7 +130,7 @@ func (o *FS) relative(full string) (string, error) {
 // chownNew hands a path BedFS just created over to the workspace owner.
 // Best-effort: if the daemon lacks CAP_CHOWN the file stays daemon-owned,
 // which is the pre-invariant behavior (bed reads it, next Prepare re-chowns).
-// Same hardlink discipline as isolation's chownTree: a multiply-linked file is
+// Same hardlink discipline as privilege's ownership handoff: a multiply-linked file is
 // a second name for an inode possibly outside the workspace — rehoming it
 // would gift the bed ownership of a host file, so leave it alone. Lchown so a
 // symlink planted at the path can't redirect the chown to its referent.

@@ -293,6 +293,7 @@ func (s *Server) healthz(c *gin.Context) {
 		"isolator_ok":                    iso.Available(),
 		"workspace_mount":                iso.WorkspaceMounted(),
 		"workspace_view":                 workspaceView(iso),
+		"bed_user":                       s.mgr.BedUserReport(),
 		"executor_backend":               s.mgr.ExecutorBackend(),
 		"occupied_beds":                  s.mgr.OccupiedBedCount(),
 		"resident_beds":                  s.mgr.ResidentBedCount(),
@@ -331,6 +332,7 @@ func (s *Server) diagnostics(c *gin.Context) {
 			"probes":         map[string]isolation.ProbeReport{},
 			"isolation":      gin.H{"effective": iso.Level().String(), "mechanism": iso.Name()},
 			"workspace_view": workspaceView(iso),
+			"bed_user":       s.mgr.BedUserReport(),
 		})
 		return
 	}
@@ -346,6 +348,7 @@ func (s *Server) diagnostics(c *gin.Context) {
 			"mechanism": report.Mechanism(),
 		},
 		"workspace_view": report.WorkspaceView(),
+		"bed_user":       s.mgr.BedUserReport(),
 	})
 }
 

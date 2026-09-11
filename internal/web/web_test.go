@@ -114,12 +114,16 @@ func TestPingAndHealthz(t *testing.T) {
 	var h map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &h)
 	iso, _ := h["isolation"].(map[string]any)
+	bedUser, _ := h["bed_user"].(map[string]any)
 	accounting, _ := h["resource_accounting"].(map[string]any)
 	if h["ok"] != true || iso == nil || iso["level"] != "dorm" || iso["mechanism"] != "direct" {
 		t.Fatalf("/healthz body = %v", h)
 	}
 	if accounting == nil || accounting["backend"] != "noop" || accounting["available"] != false {
 		t.Fatalf("/healthz resource_accounting = %v", accounting)
+	}
+	if bedUser == nil || bedUser["strategy"] != "fixed" {
+		t.Fatalf("/healthz bed_user = %v", bedUser)
 	}
 	if h["occupied_beds"] != float64(0) || h["resident_beds"] != float64(0) {
 		t.Fatalf("/healthz bed counts = occupied:%v resident:%v, want 0/0", h["occupied_beds"], h["resident_beds"])
@@ -151,6 +155,7 @@ func TestDiagnostics(t *testing.T) {
 	ptraceFacts, _ := system["ptrace"].(map[string]any)
 	probes, _ := body["probes"].(map[string]any)
 	isolationFacts, _ := body["isolation"].(map[string]any)
+	bedUser, _ := body["bed_user"].(map[string]any)
 	if runtimeFacts["os"] == "" || runtimeFacts["arch"] == "" || process == nil ||
 		securityModules == nil || namespaceLimits == nil || kernelFeatures == nil || ptraceFacts == nil {
 		t.Fatalf("diagnostics system facts = %v", system)
@@ -195,6 +200,9 @@ func TestDiagnostics(t *testing.T) {
 	if isolationFacts["requested"] != "dorm" || isolationFacts["effective"] != "dorm" ||
 		isolationFacts["mechanism"] != "direct" {
 		t.Fatalf("diagnostics isolation = %v", isolationFacts)
+	}
+	if bedUser == nil || bedUser["strategy"] != "fixed" {
+		t.Fatalf("diagnostics bed_user = %v", bedUser)
 	}
 	for _, field := range []string{"ok", "status", "issues", "requirements", "remediation", "recommendations"} {
 		if _, exists := body[field]; exists {

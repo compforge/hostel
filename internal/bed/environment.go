@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
@@ -41,7 +44,18 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	if err := b.BedFS().EnsureDir(cwd); err != nil {
 		return err
 	}
-	const command = "test -w . && printf probe > marker && test -s marker"
+	// Use absolute core-tool paths: workspace helper tests may deliberately
+	// narrow PATH, but that must not disable the process-credential probe.
+	command := "test -w . && printf probe > marker && test -s marker" +
+		" && test \"$(/usr/bin/id -u)\" = " + strconv.Itoa(b.environment.BedUser().UID()) +
+		" && test \"$(/usr/bin/id -g)\" = " + strconv.Itoa(b.environment.BedUser().GID())
+	if runtime.GOOS == "linux" {
+		capabilitySets := "Inh|Prm|Eff|Amb"
+		if os.Geteuid() == 0 {
+			capabilitySets += "|Bnd"
+		}
+		command += " && /usr/bin/awk '$1 == \"NoNewPrivs:\" { n=$2 } $1 ~ /^Cap(" + capabilitySets + "):/ { if ($2 != \"0000000000000000\") exit 1 } END { exit n == 1 ? 0 : 1 }' /proc/self/status"
+	}
 	result, err := m.RunForeground(ctx, b, command, cwd, nil, 5*time.Second, nil)
 	if err != nil {
 		return err

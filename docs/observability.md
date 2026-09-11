@@ -140,7 +140,7 @@ running 都不能推导出完整隔离，语义由 [isolation.md](isolation.md) 
 进程 capability/seccomp、LSM label、namespace sysctl、kernel feature、ptrace Yama scope，以及模拟 PRoot
 启动序列的 `TRACEME → SETOPTIONS → SYSCALL` 探测。二进制 helper 先记录配置命令名、PATH 解析路径、是否存在和是否可执行；各探测再保留是否执行、退出码、stdout、stderr、
 错误和耗时。读取接口不重新执行探测。`system` 与 `probes` 保留观测值和读取错误，
-不推导部署要求或修复建议；`isolation`、`workspace_view`、`network` 另行给出已选择的能力
+不推导部署要求或修复建议；`isolation`、`workspace_view`、`network`、`bed_user` 另行给出已选择的能力
 与不可用原因。网络 probe 的作用域与字段见 [network.md](network.md)。
 不存在的内核节点以 `value: null` 和 `read_error`
 表达，与节点存在且值为 `0` 严格区分。

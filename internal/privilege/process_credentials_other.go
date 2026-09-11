@@ -14,10 +14,19 @@
 
 //go:build !linux
 
-package isolation
+package privilege
 
-// newUID: uid isolation relies on Linux setuid/setgid + /proc caps. Report room
-// as unavailable elsewhere.
-func newUID(HostFacts, string) (Isolator, ProbeReport) {
-	return unavailable{name: "uid", lvl: Room}, ProbeReport{}
+import (
+	"fmt"
+	"os"
+	"os/exec"
+)
+
+func wrapBedUser(_ *exec.Cmd, user BedUser) error {
+	if user.uid != os.Geteuid() || user.gid != os.Getegid() {
+		return fmt.Errorf("privilege: switching bed user is unsupported on this platform")
+	}
+	return nil
 }
+
+func chownTree(string, int, int) error { return nil }

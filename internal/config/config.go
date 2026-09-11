@@ -18,6 +18,7 @@ package config
 import (
 	"flag"
 	"fmt"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -94,6 +95,10 @@ type Config struct {
 	// Executor selects the Bed process realm: "auto" probes supervisor and falls
 	// back to local; explicit "supervisor" fails startup when unavailable.
 	Executor string
+	// BedUID / BedGID select the fixed Unix user for Bed processes. uid
+	// isolation replaces them with a stable dedicated identity for each Bed.
+	BedUID int
+	BedGID int
 
 	// Workspace synchronization (docs/store.md). Policy "auto" (default) is noop
 	// without a bucket; with a bucket it defaults new beds to pack and detects
@@ -141,6 +146,10 @@ type Config struct {
 func Load(args []string) *Config {
 	fs := flag.NewFlagSet("hostel", flag.ContinueOnError)
 	c := &Config{}
+	bedUID, bedGID := os.Geteuid(), os.Getegid()
+	if bedUID == 0 {
+		bedUID, bedGID = 1000, 1000
+	}
 	fs.StringVar(&c.Addr, "addr", osx.EnvStr("HOSTEL_ADDR", DefaultAddr), "HTTP listen address")
 	// Preflight flags handled by main (used by the image HEALTHCHECK); real
 	// flags so addr resolution stays identical to the running server.
@@ -163,6 +172,8 @@ func Load(args []string) *Config {
 	fs.IntVar(&c.AdmissionCPUThreshold, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.AdmissionMemoryThreshold, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
 	fs.StringVar(&c.Executor, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
+	fs.IntVar(&c.BedUID, "bed-uid", osx.EnvInt("HOSTEL_BED_UID", bedUID), "fixed non-root uid for Bed processes")
+	fs.IntVar(&c.BedGID, "bed-gid", osx.EnvInt("HOSTEL_BED_GID", bedGID), "fixed non-root gid for Bed processes")
 	fs.StringVar(&c.StoreSync, "sync", osx.EnvStr("HOSTEL_SYNC", "auto"), "workspace synchronization policy: auto (per-bed detection) | noop | cas | pack | tar | restic")
 	fs.StringVar(&c.ResticBinary, "restic-binary", osx.EnvStr("HOSTEL_RESTIC_BINARY", "restic"), "restic binary (requires 0.19.1)")
 	c.ResticPassword = osx.EnvStr("HOSTEL_RESTIC_PASSWORD", "")

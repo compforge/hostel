@@ -29,6 +29,7 @@ import (
 	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/network"
+	"github.com/qiankunli/hostel/internal/privilege"
 	"github.com/qiankunli/hostel/internal/resource"
 	"github.com/qiankunli/hostel/internal/store"
 )
@@ -38,6 +39,7 @@ type Manager struct {
 	root            string
 	defaultBed      string
 	iso             isolation.Isolator
+	bedUser         privilege.BedUser
 	shellPath       string
 	amenities       *amenity.Registry  // nil-safe; ReleaseAll on bed teardown
 	executions      *ExecutionRegistry // one-shot executions, daemon-global ids
@@ -93,9 +95,19 @@ var ErrResourcePressure = errors.New("bed: carrier resource admission threshold 
 // entry has already been removed.
 var ErrBedUnavailable = errors.New("bed: no longer resident")
 
+// ManagerOption fixes daemon-wide Bed policy during construction, before any
+// resident Bed can observe the Manager.
+type ManagerOption func(*Manager)
+
+// WithBedUser selects the fixed user inherited by ordinary Bed environments.
+// uid isolation resolves a dedicated user from the same policy per Bed.
+func WithBedUser(user privilege.BedUser) ManagerOption {
+	return func(m *Manager) { m.bedUser = user }
+}
+
 // NewManager creates the bed manager and ensures the workspace root exists.
 // amenities and st may be nil; maxBeds 0 = unlimited.
-func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Registry, maxBeds int, st *store.Manager) (*Manager, error) {
+func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Registry, maxBeds int, st *store.Manager, opts ...ManagerOption) (*Manager, error) {
 	processEnv, _ := newProcessEnv(os.Environ())
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, fmt.Errorf("bed: create workspace root %s: %w", root, err)
@@ -105,10 +117,11 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		st = store.NewManagerWithStores(store.Noop{})
 	}
 	resources := resource.Noop("resource tracker not configured")
-	return &Manager{
+	m := &Manager{
 		root:            root,
 		defaultBed:      defaultBed,
 		iso:             iso,
+		bedUser:         privilege.CurrentBedUser(),
 		shellPath:       shellPath,
 		amenities:       amenities,
 		executions:      newExecutionRegistry(),
@@ -127,7 +140,16 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		initializations: make(map[string]*bedInitialization),
 		purges:          make(map[string]*bedPurge),
 		retirements:     make(map[string]*Bed),
-	}, nil
+	}
+	for _, option := range opts {
+		option(m)
+	}
+	return m, nil
+}
+
+// BedUserReport exposes the configured assignment policy for diagnostics.
+func (m *Manager) BedUserReport() privilege.BedUserReport {
+	return isolation.DescribeBedUser(m.iso, m.bedUser)
 }
 
 // SetResourceTracker installs host resource accounting before any bed process

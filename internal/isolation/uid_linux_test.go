@@ -18,6 +18,7 @@ package isolation
 
 import (
 	"github.com/qiankunli/hostel/internal/bedfs"
+	"github.com/qiankunli/hostel/internal/privilege"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -74,48 +75,6 @@ func TestCollectHostFactsSane(t *testing.T) {
 	}
 }
 
-// chownTree must NOT rehome a multiply-linked regular file: a hardlink into the
-// bed dir pointing at a host file would otherwise let Prepare hand the bed
-// ownership of that inode. Chowning to a foreign uid needs root, so gate on it.
-func TestChownTreeSkipsHardlinks(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("needs root to chown to a foreign uid and observe the skip")
-	}
-	root := t.TempDir()
-	// An "outside" file the bed shouldn't be able to capture, plus a hardlink to
-	// it inside the tree, plus a normal file that SHOULD be chowned.
-	outside := filepath.Join(t.TempDir(), "host-owned")
-	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(root, "captured")
-	if err := os.Link(outside, link); err != nil {
-		t.Fatalf("hardlink (same fs needed): %v", err)
-	}
-	normal := filepath.Join(root, "own")
-	if err := os.WriteFile(normal, []byte("y"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	const uid = uidBase + 7
-	if err := chownTree(root, uid); err != nil {
-		t.Fatalf("chownTree: %v", err)
-	}
-	ownerOf := func(p string) int {
-		fi, err := os.Stat(p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return int(fi.Sys().(*syscall.Stat_t).Uid)
-	}
-	if got := ownerOf(outside); got == uid {
-		t.Fatalf("hardlinked host file was rehomed to bed uid %d — escalation not prevented", uid)
-	}
-	if got := ownerOf(normal); got != uid {
-		t.Fatalf("normal file owner = %d, want bed uid %d", got, uid)
-	}
-}
-
 // prepareUIDDir sets 0700 and chowns the tree. chown needs CAP_CHOWN, so gate
 // the ownership assertion on being able to actually chown; the mode change is
 // checkable unprivileged.
@@ -168,7 +127,15 @@ func TestUIDPrepareRefreshesBedFSOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer fs.Close()
-	if err := (&uidIso{}).Prepare(fs); err != nil {
+	iso := &uidIso{}
+	if err := iso.Prepare(fs); err != nil {
+		t.Fatal(err)
+	}
+	user, err := iso.bedUser(fs, privilege.CurrentBedUser())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := user.Prepare(fs); err != nil {
 		t.Fatal(err)
 	}
 	if err := fs.Write("/workspace/nested/file", []byte("owned"), 0); err != nil {

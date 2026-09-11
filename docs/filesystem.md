@@ -54,9 +54,10 @@ PRoot 的路径 syscall 覆盖更完整，但依赖 ptrace；pathshim 不依赖 
 仅展开文件视图与文件边界时，进程链保持以下职责顺序；网络及最终降权的组合约束见 [isolation.md](isolation.md)：
 
 ```text
-dorm: proot / pathshim → command
-room: __confine / __asuser → proot / pathshim → command
-suite: bwrap → command
+dorm: BedUser → proot / pathshim → command
+room (Landlock): fixed BedUser → __confine → proot / pathshim → command
+room (UID): per-Bed BedUser → proot / pathshim → command
+suite: BedUser → bwrap → command
 ```
 
 PRoot 与 pathshim 都把每项 projection 指向对应 BedFS source；它们没有 COW、whiteout 或 invocation 私有状态，因此多个 command/session 共享同一 source 时并发语义就是普通底层文件系统并发。二者都是用户态进程视图，不是真实 mount、安全边界或完整 guest root。
