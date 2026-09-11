@@ -79,25 +79,25 @@ func TestTransferCopyRoundTripAndNoDeletion(t *testing.T) {
 	if err := fs.Write("/workspace/source/nested/file", []byte("payload"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	remote := &transferMemory{objects: map[string]string{"prefix/.transfers/export/extra": "keep"}}
+	remote := &transferMemory{objects: map[string]string{"prefix/export/extra": "keep"}}
 	request := TransferRequest{Source: TransferEndpoint{Type: "bed", Path: "/workspace/source"}, Destination: TransferEndpoint{Type: "s3", Key: "export/"}}
 	count := int64(0)
-	if err := copyTransfer(t.Context(), remote, "prefix/.transfers", fs, request, func(n int64) { count += n }); err != nil {
+	if err := copyTransfer(t.Context(), remote, "prefix", fs, request, func(n int64) { count += n }); err != nil {
 		t.Fatal(err)
 	}
-	if count != 7 || remote.objects["prefix/.transfers/export/nested/file"] != "payload" || remote.objects["prefix/.transfers/export/extra"] != "keep" {
+	if count != 7 || remote.objects["prefix/export/nested/file"] != "payload" || remote.objects["prefix/export/extra"] != "keep" {
 		t.Fatalf("copy: %v bytes=%d", remote.objects, count)
 	}
 	request.Source = TransferEndpoint{Type: "s3", Key: "export/"}
 	request.Destination = TransferEndpoint{Type: "bed", Path: "/workspace/destination"}
-	if err := copyTransfer(t.Context(), remote, "prefix/.transfers", fs, request, func(int64) {}); err != nil {
+	if err := copyTransfer(t.Context(), remote, "prefix", fs, request, func(int64) {}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := fs.Read("/workspace/destination/nested/file")
 	if err != nil || string(data) != "payload" {
 		t.Fatalf("roundtrip: %q %v", data, err)
 	}
-	if err := copyTransfer(t.Context(), remote, "prefix/.transfers", fs, request, func(int64) {}); !errors.Is(err, ErrTransferConflict) {
+	if err := copyTransfer(t.Context(), remote, "prefix", fs, request, func(int64) {}); !errors.Is(err, ErrTransferConflict) {
 		t.Fatalf("overwrite conflict: %v", err)
 	}
 }

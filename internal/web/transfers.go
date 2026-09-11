@@ -24,16 +24,19 @@ import (
 )
 
 type transferEndpoint struct {
+	Ref  string `json:"ref,omitempty"`
 	Type string `json:"type"`
 	Path string `json:"path,omitempty"`
 	Key  string `json:"key,omitempty"`
 }
 
 func (e transferEndpoint) endpoint() store.TransferEndpoint {
-	return store.TransferEndpoint{Type: e.Type, Path: e.Path, Key: e.Key}
+	return store.TransferEndpoint{Ref: e.Ref, Type: e.Type, Path: e.Path, Key: e.Key}
 }
 
 type transferRequest struct {
+	ParentRef   string           `json:"parent_ref,omitempty"`
+	Sync        store.SyncKind   `json:"sync,omitempty"`
 	ID          string           `json:"id"`
 	InstanceID  string           `json:"instance_id,omitempty"`
 	Source      transferEndpoint `json:"source"`
@@ -43,6 +46,8 @@ type transferRequest struct {
 }
 
 type transferResponse struct {
+	Ref        string              `json:"ref,omitempty"`
+	Sync       store.SyncKind      `json:"sync"`
 	ID         string              `json:"id"`
 	BedID      string              `json:"bed_id"`
 	InstanceID string              `json:"instance_id"`
@@ -55,7 +60,7 @@ type transferResponse struct {
 }
 
 func transferPayload(t store.Transfer) transferResponse {
-	return transferResponse{ID: t.ID, BedID: t.BedID, InstanceID: t.InstanceID, State: t.State, Files: t.Files, Bytes: t.Bytes, Error: t.Error, StartedAt: t.StartedAt, FinishedAt: t.FinishedAt}
+	return transferResponse{Ref: t.Ref, Sync: t.Sync, ID: t.ID, BedID: t.BedID, InstanceID: t.InstanceID, State: t.State, Files: t.Files, Bytes: t.Bytes, Error: t.Error, StartedAt: t.StartedAt, FinishedAt: t.FinishedAt}
 }
 
 func (s *Server) startTransfer(c *gin.Context) {
@@ -71,7 +76,7 @@ func (s *Server) startTransfer(c *gin.Context) {
 		return
 	}
 	result, err := s.mgr.StartTransfer(c.Request.Context(), c.Param("bedId"), store.TransferRequest{
-		ID: req.ID, InstanceID: req.InstanceID, Source: req.Source.endpoint(), Destination: req.Destination.endpoint(), Overwrite: req.Overwrite, Timeout: time.Duration(req.TimeoutMs) * time.Millisecond,
+		ParentRef: req.ParentRef, Sync: req.Sync, ID: req.ID, InstanceID: req.InstanceID, Source: req.Source.endpoint(), Destination: req.Destination.endpoint(), Overwrite: req.Overwrite, Timeout: time.Duration(req.TimeoutMs) * time.Millisecond,
 	})
 	if err != nil {
 		transferError(c, err)

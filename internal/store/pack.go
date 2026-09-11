@@ -102,7 +102,7 @@ func newPackStore(obj objAPI, prefix string, filters ...snapshotFilter) *packSto
 	return &packStore{obj: obj, prefix: prefix, targetBytes: packTargetBytes, filter: filter}
 }
 
-func (s *packStore) Name() Kind { return KindPack }
+func (s *packStore) Name() SyncKind { return SyncPack }
 
 func (s *packStore) bedPrefix(bedID string) string {
 	return path.Join(s.prefix, "beds", bedID) + "/"

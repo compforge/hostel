@@ -34,7 +34,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 	// snapshot. A stale copy is replaced atomically, never merged. A restore
 	// failure leaves the orphan untouched and fails initialization rather than
 	// silently starting empty.
-	kind := initialization.status.Store
+	kind := initialization.status.Sync
 	local, localPresent := loadMeta(bedDir)
 	var staged store.StageInResult
 	if err := trace.stage("stage_in_bedfs", func() error {
@@ -84,13 +84,13 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 		var ok bool
 		meta, ok = loadMeta(bedDir)
 		if !ok {
-			meta = bedMeta{Version: 1, BedID: id, CreatedAt: now, Store: kind}
+			meta = bedMeta{Version: 1, BedID: id, CreatedAt: now, Sync: kind}
 			if err := saveMeta(bedDir, meta); err != nil {
 				return err
 			}
 		}
-		if meta.Store != kind {
-			meta.Store = kind
+		if meta.Sync != kind {
+			meta.Sync = kind
 			if err := saveMeta(bedDir, meta); err != nil {
 				return err
 			}
@@ -116,7 +116,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 			snapshotGeneration: meta.SnapshotGeneration,
 			snapshotBytes:      meta.SnapshotBytes,
 			localBytes:         filepathx.DirBytes(bedDir),
-			Store:              kind,
+			Sync:               kind,
 			shells:             make(map[string]*Shell),
 			sessions:           make(map[string]*Session),
 			inflightByKind:     make(map[OperationKind]int),

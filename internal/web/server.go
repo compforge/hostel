@@ -36,8 +36,8 @@ import (
 // respondBedError maps bed resolution/admission failures: a full or
 // resource-pressured instance is 429 backpressure, anything else is a bad id.
 func respondBedError(c *gin.Context, err error) {
-	if errors.Is(err, bed.ErrStoreConflict) {
-		respondError(c, http.StatusConflict, ErrBedStoreConflict, err.Error())
+	if errors.Is(err, bed.ErrSyncConflict) {
+		respondError(c, http.StatusConflict, ErrBedSyncConflict, err.Error())
 		return
 	}
 	if errors.Is(err, bed.ErrResourcePressure) {
@@ -301,7 +301,7 @@ func (s *Server) healthz(c *gin.Context) {
 		"max_pinned_beds":                s.mgr.MaxPinnedBeds(),
 		"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
 		"bed_pressure":                   s.mgr.BedPressure(),
-		"persistence":                    s.mgr.StoreName(),
+		"persistence":                    s.mgr.SyncName(),
 		"resource_accounting": gin.H{
 			"backend":   resources.Backend,
 			"available": resources.Available,

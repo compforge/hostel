@@ -101,7 +101,9 @@ type Config struct {
 	// "cas" stores one object per content-addressed chunk; "pack" groups chunks
 	// into larger objects; "tar" uploads one full tar.gz. S3 credentials are
 	// Hostel-owned configuration and never enter a bed process.
-	StoreKind         string
+	StoreSync         string
+	ResticBinary      string
+	ResticPassword    string
 	S3Bucket          string
 	S3Prefix          string
 	S3Endpoint        string // S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS
@@ -161,7 +163,9 @@ func Load(args []string) *Config {
 	fs.IntVar(&c.AdmissionCPUThreshold, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.AdmissionMemoryThreshold, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
 	fs.StringVar(&c.Executor, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
-	fs.StringVar(&c.StoreKind, "store", osx.EnvStr("HOSTEL_STORE", "auto"), "workspace synchronization policy: auto (per-bed detection) | noop | cas | pack | tar")
+	fs.StringVar(&c.StoreSync, "sync", osx.EnvStr("HOSTEL_SYNC", "auto"), "workspace synchronization policy: auto (per-bed detection) | noop | cas | pack | tar | restic")
+	fs.StringVar(&c.ResticBinary, "restic-binary", osx.EnvStr("HOSTEL_RESTIC_BINARY", "restic"), "restic binary (requires 0.19.1)")
+	c.ResticPassword = osx.EnvStr("HOSTEL_RESTIC_PASSWORD", "")
 	fs.StringVar(&c.S3Bucket, "s3-bucket", osx.EnvStr("HOSTEL_S3_BUCKET", ""), "S3 bucket for bed snapshots")
 	fs.StringVar(&c.S3Prefix, "s3-prefix", osx.EnvStr("HOSTEL_S3_PREFIX", "hostel"), "key prefix for bed snapshots")
 	fs.StringVar(&c.S3Endpoint, "s3-endpoint", osx.EnvStr("HOSTEL_S3_ENDPOINT", ""), "S3-compatible endpoint (empty = AWS)")
@@ -170,7 +174,7 @@ func Load(args []string) *Config {
 	c.S3AccessKeyID = osx.EnvStr("HOSTEL_S3_ACCESS_KEY_ID", "")
 	c.S3SecretAccessKey = osx.EnvStr("HOSTEL_S3_SECRET_ACCESS_KEY", "")
 	c.S3SessionToken = osx.EnvStr("HOSTEL_S3_SESSION_TOKEN", "")
-	fs.IntVar(&c.AutoPackFileThreshold, "store-auto-pack-file-threshold", osx.EnvInt("HOSTEL_STORE_AUTO_PACK_FILE_THRESHOLD", defaultAutoPackFileThreshold), "auto store: switch CAS to pack above this persistable file count, 0=disabled")
+	fs.IntVar(&c.AutoPackFileThreshold, "sync-auto-pack-file-threshold", osx.EnvInt("HOSTEL_SYNC_AUTO_PACK_FILE_THRESHOLD", defaultAutoPackFileThreshold), "auto store: switch CAS to pack above this persistable file count, 0=disabled")
 	persist := fs.Duration("persist-interval", osx.EnvDuration("HOSTEL_PERSIST_INTERVAL", 0), "periodic snapshot interval, 0=lifecycle boundaries only")
 	fs.Int64Var(&c.LuggageHighBytes, "luggage-high-bytes", osx.EnvInt64("HOSTEL_LUGGAGE_HIGH_BYTES", 0), "luggage disk high watermark in bytes, 0=no luggage GC")
 	fs.Int64Var(&c.LuggageLowBytes, "luggage-low-bytes", osx.EnvInt64("HOSTEL_LUGGAGE_LOW_BYTES", 0), "luggage GC target in bytes (default 80% of high)")

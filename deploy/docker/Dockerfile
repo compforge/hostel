@@ -107,6 +107,22 @@ RUN curl -fsSL -o bubblewrap.tar.xz \
     && meson compile -C _build \
     && meson install -C _build
 
+# --- restic: directory synchronization format tool ---------------------
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS restic-builder
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bzip2 \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) checksum=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c ;; \
+      arm64) checksum=a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465 ;; \
+      *) exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 --connect-timeout 15 --max-time 180 \
+      "https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_${TARGETARCH}.bz2" -o /tmp/restic.bz2; \
+    echo "$checksum  /tmp/restic.bz2" | sha256sum -c -; \
+    bzip2 -d /tmp/restic.bz2; chmod 0555 /tmp/restic
+
 # --- runtime stage --------------------------------------------------------
 # Debian (not distroless/alpine) because the optional facilities need a real
 # base: bubblewrap for --isolation suite, chromium for the browser amenity.
@@ -144,6 +160,8 @@ RUN proot --version
 # Keep the daemon itself in the read-only system image so a package install
 # cannot replace the binary used by future confiner re-execs or restarts.
 COPY --from=builder /out/hostel /usr/bin/hostel
+COPY --from=restic-builder /tmp/restic /usr/bin/restic
+RUN restic version
 
 # Runs as root by default (like execd): bwrap must mkdir the /workspace mount
 # point on the read-only root and needs user namespaces, and chromium runs with

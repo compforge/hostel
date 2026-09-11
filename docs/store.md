@@ -1,6 +1,9 @@
-# Store：bed 持久化与恢复
+# Store：Bed 与远端存储
 
-Store 是 Hostel 直管的组件，负责各个 bed workspace 的自动持久化与 Stage-in，也提供
+Store 统一负责 Bed 与远端 backend 之间的数据存储：backend 决定存在哪里（当前为 S3），
+sync kind 决定如何同步及组织数据。`store.Manager` 管理客户端、策略与执行生命周期，
+`store.Store` 承接自动持久化。组件与策略类型都位于 `internal/store`，不另建 sync 组件。
+Store 负责各个 bed workspace 的自动持久化与 Stage-in，也提供
 [显式文件传输](transfers.md)。本文描述自动持久化：bed 的
 workspace 是本地目录，pod 重启 / 换 pod 即丢；Store 把本地目录作为工作副本，把 durable
 snapshot 作为跨进程 / pod 的持久身份。上层调度系统只消费 Hostel 上报的同步与恢复成本事实，
@@ -31,36 +34,40 @@ evict 完成                ──→ 删除本地 Bed 目录（所有 Store 策
                                 └→ durable 下保留快照；noop 下不保留数据
 ```
 
-接入点（锚点）：`bed.Manager.InitializeBed`（异步初始化）、`store.StageInBedFS`（数据准备）、`Ensure`（原生 API 等待同一初始化）、Evict / idle GC（persist）、`POST /v1/beds/:id/checkpoint`（显式持久化）；capabilities 报 `persistence: noop|auto|cas|pack|tar`。
+接入点（锚点）：`bed.Manager.InitializeBed`（异步初始化）、`store.StageInBedFS`（数据准备）、`Ensure`（原生 API 等待同一初始化）、Evict / idle GC（persist）、`POST /v1/beds/:id/checkpoint`（显式持久化）；capabilities 报 `persistence: noop|auto|cas|pack|tar|restic`。
 
 ## 三、关键设计
 
 ### Bed 级选择与实例默认配置
 
-`HOSTEL_STORE` 定义实例默认同步策略。backend 表示远端存储位置，目前只有可选的 S3；
-S3 的连接参数由 Store Manager 统一管理和复用。CAS、Pack、Tar 决定如何同步及组织 S3 快照，
+`HOSTEL_SYNC` 定义实例默认同步策略。backend 表示远端存储位置，目前只有可选的 S3；
+S3 的连接参数由 Store Manager 统一管理和复用。CAS、Pack、Tar、Restic 决定如何同步及组织 S3 快照，
 不会改变 BedHome 的本地数据位置。未配置 S3 时所有有效策略都等效 noop；配了 S3 后，显式 noop 仍跳过自动同步。
-创建 Bed 时，API 的 `store` 参数优先于默认值，解析后的同步策略就是 `bed.store`。
+创建 Bed 时，API 的 `sync` 参数优先于默认值，解析后的同步策略就是 `bed.sync`。
 同一个 Hostel 可以同时管理 noop 和 durable Bed；Hostel 不解释调用方业务。
 
-Bed 的 `Store` 字段类型为 `store.Kind`，只保存已解析的策略名称；元数据中的
-`store` 是它的序列化形式。全局 Store Manager 统一持有 Store 实例和 S3 client。Restore、checkpoint、
+Bed 的 `Sync` 字段类型为 `store.SyncKind`，只保存已解析的策略名称；元数据中的
+`sync` 是它的序列化形式。全局 Store Manager 统一持有 Store 实例和 S3 client。Restore、checkpoint、
 周期同步、evict、luggage GC 和 purge 都使用该 Bed 的 Store。noop 不做远端读写，
 也不因待上传数据占用 durable pin，持久化由调用方自行管理。
 
-创建请求省略 Store 时复用正在使用的 Bed，或读取遗留本地目录的元数据；没有本地 Bed
+创建请求省略 sync 时复用正在使用的 Bed，或读取遗留本地目录的元数据；没有本地 Bed
 则使用实例默认。重复创建可以复用同一策略，但不能切换正在初始化或使用中的策略，
 因为创建接口不承担运行中数据迁移。
 
-正常 evict 删除本地目录及元数据。重建或跨 carrier 创建时，调用方必须重传 Store 覆盖值。
-无本地 Bed 的 purge 同样支持 `?purge=true&store=<kind>`，未传时取实例默认。
+正常 evict 删除本地目录及元数据。重建或跨 carrier 创建时，调用方必须重传 sync 覆盖值。
+无本地 Bed 的 purge 同样支持 `?purge=true&sync=<kind>`，未传时取实例默认。
 Store 的路由选择必须在 Restore 之前确定，因此不能依赖尚未读取的远端快照元数据。
 
-`capabilities.bed_store_selection=true` 声明此 API 能力。`instance.store` / capabilities
-的 `persistence` 仍是实例默认值；Bed 明细、初始化响应与 inventory 的 `store` 是实际
+`capabilities.bed_sync_selection=true` 声明此 API 能力。`instance.sync` / capabilities
+的 `persistence` 仍是实例默认值；Bed 明细、初始化响应与 inventory 的 `sync` 是实际
 同步策略。持久化脏状态与 pin 按 Bed 计算，noop Bed 不因待上传数据占用 durable pin。
 
 所有持久化策略读取时共用 auto 的布局识别：以最高 generation 的提交点恢复；后续写入使用当前显式策略，auto 则沿用其自动选择规则。切换格式不重置 generation，旧格式保留到 purge，purge 删除所有格式的快照。
+
+Restic 使用与显式 Transfer 共用的执行器和配置，见 [Restic 目录传输](transfers.md#restic-目录传输)。
+自动持久化仍只导出允许持久化的 BedFS 子树和 meta.json；`auto` 的新 Bed 默认保持 pack，
+已有 restic 布局会被识别并沿用。跨格式读取选择最高 generation，与其它策略一致。
 
 ### 1. Store Manager 与 Store 接口
 
@@ -88,13 +95,16 @@ luggage。Bed manager 只在 Stage-in 和所选运行环境准备全部成功后
 - `cas`：CAS 内容寻址增量。
 - `pack`：packfile 增量。
 - `tar`：全量 tar.gz。
+- `restic`：restic repository 格式与内容去重，支持按 ref 读取。自动模式的 repository 位于
+  `<prefix>/restic/<bedID>/repository/`，`head.json` 记录当前 ref 和 generation；purge 删除
+  该 Bed 的整个 restic 前缀。显式 Transfer 的 repository 由请求指定，不受这个 head 管理。
 
 AWS、MinIO、火山 TOS、Ceph 等 S3 兼容 API 共用以下配置：
 
 - `--s3-bucket`、`--s3-prefix`、`--s3-endpoint`：对象存储位置。
 - `--s3-path-style`：bucket addressing 默认 virtual-hosted，仅在 endpoint 要求时开启 path style。
 - `HOSTEL_S3_REGION`、`HOSTEL_S3_ACCESS_KEY_ID`、`HOSTEL_S3_SECRET_ACCESS_KEY`：Hostel 专属的 region 与静态凭据；临时凭据可额外设置 `HOSTEL_S3_SESSION_TOKEN`。这些值不会进入 bed 环境。
-- `--store-auto-pack-file-threshold`：默认 100，设为 0 关闭既有 CAS 自动切换。
+- `--sync-auto-pack-file-threshold`：默认 100，设为 0 关闭既有 CAS 自动切换。
 - `--persist-interval`：控制周期同步兜底。
 
 `auto` 的路由规则：
@@ -267,12 +277,12 @@ noop 只是 `Persist/Restore/Stat/Delete` 的空实现，不改变 lifecycle：B
 
 已实现（`internal/store/` + `bed.Manager` 生命周期钩子）：
 
-- `Store` 接口 + 独立 `noop` / `cas` / `pack` / `tar` 实现；`router.go` 只负责配置选择、按 bed 识别提交点和既有 CAS → pack 单向切换，S3 client 由三种远端布局复用
+- `Store` 接口 + 独立 `noop` / `cas` / `pack` / `tar` / `restic` 实现；`router.go` 只负责配置选择、按 bed 识别提交点和既有 CAS → pack 单向切换，S3 client 由Go 内部远端布局复用，restic 使用同一连接配置
 - 异步 initialization：`POST /v1/beds` 快速返回 phase/readiness；`Ensure` 加入同一 singleflight 并等待。Stage-in 失败保留原因且拒绝发布 resident——静默空启动等于数据丢失
 - 原子 Stage-in：快照恢复到 sibling staging 目录，完整后才替换 stale luggage；下载失败保留可用现场；**persist 失败中止 Evict**（毁掉唯一副本比留着 bed 重试更糟）、`POST /v1/beds/:id/checkpoint`
 - Store 同步循环：合并 lifecycle/pressure trigger，自主串行、周期兜底与失败退避；只传静默 dirty bed，并以 snapshot activity watermark 提交同步水位
 - **Bed 生命周期**（§四）：`BeginOperation` 统一 Exec/文件/浏览器/checkpoint 活跃度；`phase`、`readiness`、派生的 `activity: active|idle` 与 generation/expiry 正交；`Evict` 不杀 active operation，evicting 期间新 operation 取消驱逐；`Purge`（`DELETE ?purge=true`）终结身份
-- capabilities / healthz 报 `persistence: noop|auto|cas|pack|tar`
+- capabilities / healthz 报 `persistence: noop|auto|cas|pack|tar|restic`
 - **统一 evict + luggage 兼容**：成功 evict 在所有 Store 策略 下都删除本地目录；durable 可恢复，noop 从 fresh Bed 开始；异常/旧版 luggage 仍按 generation 判新鲜，并由 `--luggage-high/low-bytes` 水位 GC（stale 优先 → LRU）
 - **双活冲突探测**（§三.5）：`Persist` 写前 HEAD 比对 generation，远端更新则 `store.ErrConflict` 拒绝覆盖（first-writer-wins；evict 路径因 persist 失败自然中止，bed 留在本机继续服务）
 - **cas 后端**（§三.3，`internal/store/cas.go`，desync 库）：catar+CDC 流式切块上传（上代 index 做免传清单）、index 提交点带 generation/bytes metadata、块序列相同时零 chunk 上传但推进 index generation、提交后按"LIST − index 引用"做 per-bed GC、restore 经 `UnTarIndex` 并发拉块（块 ID 对解压数据复核，桶内损坏在 restore 报错而不是落进 workspace；desync `LocalFS` 为 `os.Root` 背书，自带 symlink 逃逸防护）；全流程在内存 objAPI fake 上有单测（roundtrip/增量/GC/no-op/冲突/purge）

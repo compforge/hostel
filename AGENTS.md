@@ -92,7 +92,7 @@ internal/
 │   ├── shell.go       常驻 bash：CreateShell/ForegroundShell；持有 Executor View；Run 用 marker 分帧、单消费，RunAt 以独立控制步骤投影 cwd（状态跨 run 保持）
 │   └── command.go     一次性命令构建与启动；所有终态和观测事实归 execution.go
 ├── bedfs/             BedFS 数据域：bed_home/workspace、client/carrier/Executor 路径投影与文件操作；新建路径按属主 chown
-├── store/             全局 Store Manager：Kind 路由、共享客户端、同步调度与显式文件传输；Store 接口实现 noop/cas/pack/tar 策略，S3 是可选远端 backend，auto 识别快照布局，Stage-in 旁路恢复后原子发布；见 docs/store.md
+├── store/             全局 Store Manager：SyncKind 路由、共享客户端、同步调度与显式文件传输；Store 接口实现 noop/cas/pack/tar/restic 策略，S3 是可选远端 backend，auto 识别快照布局，Stage-in 旁路恢复后原子发布；见 docs/store.md
 ├── network/            可选 per-bed netns：启动实测、IPv4 接线、DNS、Bed 网络策略与执行入口；见 docs/network.md
 ├── resource/          Bed 父组 / Executor 子组的 cgroup v2 记账 + carrier CPU/内存准入；只读准入不要求子树委派
 ├── amenity/           Amenity 接口(生命周期 State)+ Registry；chromium 实例(共享浏览器/每 bed BrowserContext)；见 docs/amenity.md
@@ -132,7 +132,7 @@ internal/
 
 ## References
 
-- 文件操作与传输：`docs/transfers.md`（files API 入口、Bed ↔ S3 Copy、操作状态与自动持久化边界）
+- 文件操作与传输：`docs/transfers.md`（files API 入口、Bed ↔ S3 Copy / Restic、操作状态与自动持久化边界）
 
 - 网络管理：`docs/network.md`（自动探测、命令作用域与诊断；共享 Chromium 代理待支持）
 

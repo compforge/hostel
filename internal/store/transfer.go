@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -47,15 +46,20 @@ const (
 	MaxTransferTimeout     = 2 * time.Hour
 )
 
+var resticRefPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 var transferIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 type TransferEndpoint struct {
+	Ref  string
 	Type string
 	Path string
 	Key  string
 }
 
 type TransferRequest struct {
+	ParentRef   string
+	Sync        SyncKind
 	ID          string
 	InstanceID  string
 	Source      TransferEndpoint
@@ -76,6 +80,8 @@ const (
 // Transfer is an instance-local observation, not a durable business record.
 // Completed counters include only fully published files, never in-flight bytes.
 type Transfer struct {
+	Ref        string
+	Sync       SyncKind
 	ID         string
 	BedID      string
 	InstanceID string
@@ -112,6 +118,12 @@ func validateTransfer(req TransferRequest) (TransferRequest, error) {
 	invalid := func(message string) (TransferRequest, error) {
 		return req, fmt.Errorf("%w: %s", ErrTransferInvalid, message)
 	}
+	if req.Sync == "" {
+		req.Sync = SyncCopy
+	}
+	if req.Sync != SyncCopy && req.Sync != SyncRestic {
+		return invalid("sync must be copy or restic")
+	}
 	if !transferIDPattern.MatchString(req.ID) {
 		return invalid("id must be 1-128 safe identifier characters")
 	}
@@ -127,7 +139,7 @@ func validateTransfer(req TransferRequest) (TransferRequest, error) {
 	for _, endpoint := range []TransferEndpoint{req.Source, req.Destination} {
 		switch endpoint.Type {
 		case "bed":
-			if endpoint.Path == "" || endpoint.Key != "" {
+			if endpoint.Path == "" || endpoint.Key != "" || endpoint.Ref != "" {
 				return invalid("bed endpoint requires path only")
 			}
 		case "s3":
@@ -136,6 +148,22 @@ func validateTransfer(req TransferRequest) (TransferRequest, error) {
 			}
 		default:
 			return invalid("endpoint type must be bed or s3")
+		}
+	}
+	if req.Sync == SyncCopy {
+		if req.Source.Ref != "" || req.Destination.Ref != "" || req.ParentRef != "" {
+			return invalid("copy does not accept snapshot references")
+		}
+	} else {
+		if req.Destination.Ref != "" {
+			return invalid("destination ref is assigned by the transfer")
+		}
+		if req.Source.Type == "s3" {
+			if !resticRefPattern.MatchString(req.Source.Ref) || req.ParentRef != "" {
+				return invalid("restic download requires a full source ref and no parent_ref")
+			}
+		} else if req.ParentRef != "" && !resticRefPattern.MatchString(req.ParentRef) {
+			return invalid("parent_ref must be a full restic snapshot id")
 		}
 	}
 	return req, nil
@@ -196,6 +224,11 @@ func (s *Manager) StartTransfer(ctx context.Context, bedID string, req TransferR
 	if err != nil {
 		return Transfer{}, err
 	}
+	if req.Sync == SyncRestic {
+		if err := s.restic.available(ctx); err != nil {
+			return Transfer{}, err
+		}
+	}
 	fs, release, err := acquire()
 	if err != nil {
 		return Transfer{}, err
@@ -203,19 +236,34 @@ func (s *Manager) StartTransfer(ctx context.Context, bedID string, req TransferR
 	// Only accepted new work evicts history; retries above retain their original result.
 	r.makeRoomLocked()
 	transferCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), req.Timeout)
-	run := &transferRun{request: req, status: Transfer{ID: req.ID, BedID: bedID, InstanceID: r.instanceID, State: TransferRunning, StartedAt: time.Now()}, cancel: cancel, done: make(chan struct{})}
+	run := &transferRun{request: req, status: Transfer{Sync: req.Sync, ID: req.ID, BedID: bedID, InstanceID: r.instanceID, State: TransferRunning, StartedAt: time.Now()}, cancel: cancel, done: make(chan struct{})}
 	r.runs[key] = run
-	tracing.InfoContext(ctx, "hostel transfer started", "bed", bedID, "transfer_id", req.ID, "source_type", req.Source.Type)
+	tracing.InfoContext(ctx, "hostel transfer started", "bed", bedID, "transfer_id", req.ID, "source_type", req.Source.Type, "sync", req.Sync)
 	go func() {
-		err := copyTransfer(transferCtx, remote, path.Join(s.cfg.Prefix, ".transfers"), fs, req, func(bytes int64) {
+		completed := func(bytes int64) {
 			r.mu.Lock()
 			run.status.Files++
 			run.status.Bytes += bytes
 			r.mu.Unlock()
-		})
+		}
+		var ref string
+		var err error
+		if req.Sync == SyncRestic {
+			var files, bytes int64
+			ref, files, bytes, err = s.resticTransfer(transferCtx, fs, req, completed)
+			if err == nil && req.Source.Type == "bed" {
+				r.mu.Lock()
+				run.status.Files = files
+				run.status.Bytes = bytes
+				r.mu.Unlock()
+			}
+		} else {
+			err = copyTransfer(transferCtx, remote, s.cfg.Prefix, fs, req, completed)
+		}
 		// BedFS and its activity watermark are released before terminal publication.
 		release()
 		r.mu.Lock()
+		run.status.Ref = ref
 		run.status.State = TransferSucceeded
 		if err != nil {
 			run.status.State = TransferFailed
@@ -264,7 +312,7 @@ func (r *transferRegistry) makeRoomLocked() {
 }
 
 func logTransferFinished(ctx context.Context, status Transfer, err error) {
-	args := []any{"bed", status.BedID, "transfer_id", status.ID, "state", status.State, "files", status.Files, "bytes", status.Bytes, "error", status.Error}
+	args := []any{"bed", status.BedID, "transfer_id", status.ID, "state", status.State, "sync", status.Sync, "files", status.Files, "bytes", status.Bytes, "error", status.Error}
 	var failure *transferCopyError
 	if errors.As(err, &failure) {
 		// Log only operation-relative paths and the public error category. Raw
@@ -346,6 +394,10 @@ func transferFailure(err error) string {
 		return "source or destination parent not found"
 	case errors.Is(err, os.ErrPermission):
 		return "file access denied"
+	}
+	var resticErr *resticCommandError
+	if errors.As(err, &resticErr) {
+		return resticErr.Error()
 	}
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {

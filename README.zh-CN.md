@@ -99,7 +99,7 @@ POST /v1/beds/:id/browser/close
 
 ## 配置
 
-Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isolation` / `--projected-paths` / `--persisted-paths` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` / `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` / `--executor` / `--store` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--s3-region` / `--persist-interval` / `--luggage-high-bytes` / `--luggage-low-bytes` / `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` / `--enable-tracing`。
+Flag（或 `HOSTEL_*` 环境变量）：`--addr` / `--workspace-root` / `--isolation` / `--projected-paths` / `--persisted-paths` / `--default-bed` / `--shell` / `--bed-idle-timeout` / `--max-beds` / `--max-pinned-beds` / `--admission-cpu-threshold` / `--admission-memory-threshold` / `--executor` / `--sync` / `--s3-bucket` / `--s3-prefix` / `--s3-endpoint` / `--s3-path-style` / `--s3-region` / `--persist-interval` / `--luggage-high-bytes` / `--luggage-low-bytes` / `--chromium-path` / `--chromium-cdp-url` / `--chromium-idle-stop` / `--chromium-debug-port` / `--enable-tracing`。
 
 OpenTelemetry Trace 默认关闭，通过 `HOSTEL_ENABLE_TRACING=true`（或 `--enable-tracing`）启用；出口使用 `HOSTEL_OTEL_TRACES_GRPC_ENDPOINT` 或 `HOSTEL_OTEL_TRACES_HTTP_ENDPOINT`，两者同时配置时优先 gRPC。
 
@@ -111,11 +111,11 @@ Bed 初始化在管理面异步执行：`POST /v1/beds` 返回 `202` 与 `status
 
 持久化在配置 `--s3-bucket` 后启用：
 
-- 默认 `--store auto` 将新 bed 保存为约 32 MiB 的 immutable pack。
+- 默认 `--sync auto` 将新 bed 保存为约 32 MiB 的 immutable pack。
 - auto 按 bed 识别已有提交点，以兼容老客户：
   - 既有 CAS bed 可继续读取，并可迁移到 pack。
   - 已有 pack / tar bed 保持原布局。
-- 显式 `--store cas|pack|tar` 读取时识别各布局的最新快照，后续写入所选格式；切换格式不重置 generation。
+- 显式 `--sync cas|pack|tar` 读取时识别各布局的最新快照，后续写入所选格式；切换格式不重置 generation。
 - `tar` 每次全量覆盖一个 tar.gz，让每张 bed 始终只有一个对象。
 - 未配置 bucket 时，所有有效策略都等效 noop；配置 S3 后，显式 noop 仍跳过自动持久化。
 

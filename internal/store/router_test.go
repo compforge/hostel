@@ -227,13 +227,13 @@ func TestSnapshotFileThresholdExcludesEphemeralPaths(t *testing.T) {
 
 // A policy change must neither hide the previous format nor reset its generation.
 func TestPoliciesReadAndReplaceOtherLayouts(t *testing.T) {
-	for _, previous := range []Kind{KindCAS, KindPack, KindTar} {
-		for _, next := range []Kind{KindAuto, KindCAS, KindPack, KindTar} {
+	for _, previous := range []SyncKind{SyncCAS, SyncPack, SyncTar} {
+		for _, next := range []SyncKind{SyncAuto, SyncCAS, SyncPack, SyncTar} {
 			t.Run(string(previous)+"_to_"+string(next), func(t *testing.T) {
 				ctx := t.Context()
 				automatic := newAutoStore(newMemObj(), "sandbox", 0)
-				before := automatic.withKind(previous)
-				after := automatic.withKind(next)
+				before := automatic.withSync(previous)
+				after := automatic.withSync(next)
 				src := t.TempDir()
 				writeAutoTree(t, src, 2)
 				if err := before.Persist(ctx, "bed", src, 7); err != nil {
@@ -263,7 +263,7 @@ func TestPoliciesReadAndReplaceOtherLayouts(t *testing.T) {
 				}
 				state, err := automatic.inspect(ctx, "bed")
 				wantLayout := storeLayout(next)
-				if next == KindAuto {
+				if next == SyncAuto {
 					wantLayout = storeLayout(previous)
 				}
 				if err != nil || state.selected == nil || state.selected.layout != wantLayout || state.selected.info.Generation != 8 {

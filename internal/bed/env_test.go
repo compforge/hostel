@@ -36,13 +36,13 @@ func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 	host := []string{
 		"PATH=/carrier/bin",
 		"LANG=C.UTF-8",
-		"HOSTEL_STORE=cas",
+		"HOSTEL_SYNC=cas",
 		"BED_FAKE=carrier-owned",
 		"PLAYWRIGHT_MCP_CDP_ENDPOINT=ws://carrier",
 		"AWS_SECRET_ACCESS_KEY=carrier-secret",
 	}
 	filtered := m.SetCarrierEnvironment(host)
-	wantFiltered := []string{"BED_FAKE", "HOSTEL_STORE", "PLAYWRIGHT_MCP_CDP_ENDPOINT"}
+	wantFiltered := []string{"BED_FAKE", "HOSTEL_SYNC", "PLAYWRIGHT_MCP_CDP_ENDPOINT"}
 	if !slices.Equal(filtered, wantFiltered) {
 		t.Fatalf("filtered = %v, want %v", filtered, wantFiltered)
 	}
@@ -71,7 +71,7 @@ func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
 	}
-	for _, name := range []string{"HOSTEL_STORE", "HOSTEL_BED_ID", "BED_FAKE", "PLAYWRIGHT_MCP_CDP_ENDPOINT"} {
+	for _, name := range []string{"HOSTEL_SYNC", "HOSTEL_BED_ID", "BED_FAKE", "PLAYWRIGHT_MCP_CDP_ENDPOINT"} {
 		if _, ok := env[name]; ok {
 			t.Errorf("daemon variable %s leaked into bed env", name)
 		}
@@ -93,7 +93,7 @@ func TestExecutorRejectsImplicitDaemonEnvironment(t *testing.T) {
 }
 
 func TestBedEnvNamespacesAreReserved(t *testing.T) {
-	for _, name := range []string{"HOSTEL_STORE", "BED_ID", "PLAYWRIGHT_MCP_CDP_ENDPOINT", "bad-name"} {
+	for _, name := range []string{"HOSTEL_SYNC", "BED_ID", "PLAYWRIGHT_MCP_CDP_ENDPOINT", "bad-name"} {
 		err := ValidateRequestEnv(map[string]string{name: "x"})
 		if !errors.Is(err, ErrInvalidEnvironment) {
 			t.Errorf("request variable %q error = %v", name, err)

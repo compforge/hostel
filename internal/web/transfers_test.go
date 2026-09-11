@@ -19,10 +19,15 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -36,7 +41,9 @@ import (
 type transferS3Fixture struct {
 	mu       sync.Mutex
 	objects  map[string][]byte
+	metadata map[string]map[string]string
 	writes   int
+	requests []string
 	blockKey string
 	entered  chan struct{}
 }
@@ -52,35 +59,90 @@ func (f *transferS3Fixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.requests = append(f.requests, r.Method+" "+r.URL.RequestURI())
 	switch r.Method {
+	case http.MethodHead:
+		if r.URL.Path == "/bucket/" || r.URL.Path == "/bucket" {
+			return
+		}
+		data, ok := f.objects[r.URL.Path]
+		if !ok {
+			w.WriteHeader(404)
+			return
+		}
+		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+		w.Header().Set("Last-Modified", time.Unix(1700000000, 0).UTC().Format(http.TimeFormat))
+		w.Header().Set("ETag", `"fixture"`)
+		for key, value := range f.metadata[r.URL.Path] {
+			w.Header().Set(key, value)
+		}
+	case http.MethodDelete:
+		delete(f.objects, r.URL.Path)
+		w.WriteHeader(204)
+	case http.MethodPost:
+		var request struct {
+			Objects []struct {
+				Key string `xml:"Key"`
+			} `xml:"Object"`
+		}
+		if err := xml.NewDecoder(r.Body).Decode(&request); err != nil {
+			w.WriteHeader(400)
+			return
+		}
+		for _, object := range request.Objects {
+			delete(f.objects, "/bucket/"+object.Key)
+		}
+		fmt.Fprint(w, "<DeleteResult/>")
 	case http.MethodPut:
 		if _, ok := f.objects[r.URL.Path]; ok && r.Header.Get("If-None-Match") == "*" {
 			w.WriteHeader(http.StatusPreconditionFailed)
 			fmt.Fprint(w, "<Error><Code>PreconditionFailed</Code></Error>")
 			return
 		}
-		data, err := io.ReadAll(r.Body)
+		var body io.Reader = r.Body
+		// MinIO's client signs streaming chunks inside the HTTP request body.
+		// Real S3 removes this framing before storing the object.
+		if strings.Contains(r.Header.Get("Content-Encoding"), "aws-chunked") || strings.HasPrefix(r.Header.Get("X-Amz-Content-Sha256"), "STREAMING-") {
+			body = httputil.NewChunkedReader(body)
+		}
+		data, err := io.ReadAll(body)
 		if err != nil {
 			w.WriteHeader(400)
 			return
 		}
 		f.objects[r.URL.Path] = data
+		if f.metadata == nil {
+			f.metadata = make(map[string]map[string]string)
+		}
+		f.metadata[r.URL.Path] = make(map[string]string)
+		for key := range r.Header {
+			if strings.HasPrefix(key, "X-Amz-Meta-") {
+				f.metadata[r.URL.Path][key] = r.Header.Get(key)
+			}
+		}
 		f.writes++
 		w.Header().Set("ETag", `"fixture"`)
 	case http.MethodGet:
+		if r.URL.Query().Has("location") {
+			fmt.Fprint(w, `<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">us-east-1</LocationConstraint>`)
+			return
+		}
 		if r.URL.Query().Get("list-type") == "2" {
 			type object struct {
-				Key string `xml:"Key"`
+				Key          string `xml:"Key"`
+				Size         int    `xml:"Size"`
+				LastModified string `xml:"LastModified"`
+				ETag         string `xml:"ETag"`
 			}
 			result := struct {
 				XMLName     xml.Name `xml:"ListBucketResult"`
 				IsTruncated bool     `xml:"IsTruncated"`
 				Contents    []object `xml:"Contents"`
 			}{}
-			for key := range f.objects {
+			for key, data := range f.objects {
 				key = strings.TrimPrefix(key, "/bucket/")
 				if strings.HasPrefix(key, r.URL.Query().Get("prefix")) {
-					result.Contents = append(result.Contents, object{Key: key})
+					result.Contents = append(result.Contents, object{Key: key, Size: len(data), LastModified: "2026-01-01T00:00:00Z", ETag: `"fixture"`})
 				}
 			}
 			w.Header().Set("Content-Type", "application/xml")
@@ -93,8 +155,7 @@ func (f *transferS3Fixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, "<Error><Code>NoSuchKey</Code></Error>")
 			return
 		}
-		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
-		_, _ = w.Write(data)
+		http.ServeContent(w, r, "object", time.Unix(1700000000, 0), bytes.NewReader(data))
 	default:
 		w.WriteHeader(405)
 	}
@@ -104,7 +165,7 @@ func newTransferTestServer(t *testing.T, fixture *transferS3Fixture) (*Server, *
 	t.Helper()
 	remote := httptest.NewServer(fixture)
 	t.Cleanup(remote.Close)
-	stores, err := store.NewManager(t.Context(), store.Config{Kind: "noop", Bucket: "bucket", Prefix: "hostel", Endpoint: remote.URL, PathStyle: true, Region: "us-east-1", AccessKeyID: "test", SecretAccessKey: "test"})
+	stores, err := store.NewManager(t.Context(), store.Config{Sync: "noop", ResticBinary: os.Getenv("HOSTEL_TEST_RESTIC_BINARY"), Bucket: "bucket", Prefix: "hostel", Endpoint: remote.URL, PathStyle: true, Region: "us-east-1", AccessKeyID: "test", SecretAccessKey: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +209,7 @@ func startTestTransfer(t *testing.T, s *Server, req transferRequest, want int) t
 
 func awaitTestTransfer(t *testing.T, s *Server, id string) transferResponse {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		response := do(t, s, http.MethodGet, "/v1/beds/one/transfers/"+id, nil, nil)
 		if response.Code != 200 {
@@ -169,6 +230,13 @@ func awaitTestTransfer(t *testing.T, s *Server, id string) transferResponse {
 
 func TestTransfersHTTPRoundTripNoopReplayAndScope(t *testing.T) {
 	fixture := &transferS3Fixture{objects: make(map[string][]byte)}
+	t.Cleanup(func() {
+		if t.Failed() {
+			fixture.mu.Lock()
+			defer fixture.mu.Unlock()
+			t.Logf("S3 requests: %v", fixture.requests)
+		}
+	})
 	s, b := newTransferTestServer(t, fixture)
 	if err := b.BedFS().Write("/workspace/source/nested/file", []byte("payload"), 0o644); err != nil {
 		t.Fatal(err)
@@ -176,8 +244,8 @@ func TestTransfersHTTPRoundTripNoopReplayAndScope(t *testing.T) {
 	req := transferRequest{ID: "upload", Source: transferEndpoint{Type: "bed", Path: "/workspace/source"}, Destination: transferEndpoint{Type: "s3", Key: "export/"}}
 	initial := startTestTransfer(t, s, req, 202)
 	result := awaitTestTransfer(t, s, req.ID)
-	if result.State != store.TransferSucceeded || result.Files != 1 || result.Bytes != 7 || b.Store != store.KindNoop {
-		t.Fatalf("upload: %+v store=%s", result, b.Store)
+	if result.State != store.TransferSucceeded || result.Files != 1 || result.Bytes != 7 || b.Sync != store.SyncNoop {
+		t.Fatalf("upload: %+v sync=%s", result, b.Sync)
 	}
 	req.InstanceID = initial.InstanceID
 	replay := startTestTransfer(t, s, req, 200)
@@ -228,7 +296,7 @@ func TestTransfersHTTPRoundTripNoopReplayAndScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture.mu.Lock()
-	uploaded := string(fixture.objects["/bucket/hostel/.transfers/export/nested/file"])
+	uploaded := string(fixture.objects["/bucket/hostel/export/nested/file"])
 	fixture.mu.Unlock()
 	if uploaded != "payload" {
 		t.Fatal("purge removed copied objects")
@@ -241,7 +309,7 @@ func TestTransfersHTTPRoundTripNoopReplayAndScope(t *testing.T) {
 func TestTransfersCancelAndPurgeJoinBeforeBedRemoval(t *testing.T) {
 	for _, action := range []string{"cancel", "purge", "shutdown", "timeout"} {
 		t.Run(action, func(t *testing.T) {
-			fixture := &transferS3Fixture{objects: make(map[string][]byte), blockKey: "/bucket/hostel/.transfers/block", entered: make(chan struct{}, 1)}
+			fixture := &transferS3Fixture{objects: make(map[string][]byte), blockKey: "/bucket/hostel/block", entered: make(chan struct{}, 1)}
 			s, b := newTransferTestServer(t, fixture)
 			req := transferRequest{ID: "blocked", Source: transferEndpoint{Type: "s3", Key: "block"}, Destination: transferEndpoint{Type: "bed", Path: "/workspace/result"}}
 			if action == "timeout" {
@@ -298,7 +366,7 @@ func TestTransfersWithoutS3AndInvalidTimeout(t *testing.T) {
 }
 
 func TestTransferConcurrentReplaySurvivesRequestCancellation(t *testing.T) {
-	fixture := &transferS3Fixture{objects: make(map[string][]byte), blockKey: "/bucket/hostel/.transfers/block", entered: make(chan struct{}, 10)}
+	fixture := &transferS3Fixture{objects: make(map[string][]byte), blockKey: "/bucket/hostel/block", entered: make(chan struct{}, 10)}
 	s, b := newTransferTestServer(t, fixture)
 	req := transferRequest{ID: "same", Source: transferEndpoint{Type: "s3", Key: "block"}, Destination: transferEndpoint{Type: "bed", Path: "/workspace/result"}}
 	data, _ := json.Marshal(req)
@@ -334,5 +402,150 @@ func TestTransferConcurrentReplaySurvivesRequestCancellation(t *testing.T) {
 	}
 	if len(fixture.entered) != 0 {
 		t.Fatal("concurrent requests launched multiple downloads")
+	}
+}
+
+func TestResticTransfersHTTPReferenceAndNoopBed(t *testing.T) {
+	if os.Getenv("HOSTEL_TEST_RESTIC_BINARY") == "" {
+		if _, err := exec.LookPath("restic"); err != nil {
+			t.Skip("restic executable unavailable")
+		}
+	}
+	fixture := &transferS3Fixture{objects: make(map[string][]byte)}
+	t.Cleanup(func() {
+		if t.Failed() {
+			fixture.mu.Lock()
+			defer fixture.mu.Unlock()
+			t.Logf("S3 requests: %v", fixture.requests)
+		}
+	})
+	s, b := newTransferTestServer(t, fixture)
+	if err := b.BedFS().Write("/workspace/source/run", []byte("first"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	req := transferRequest{Sync: store.SyncRestic, ID: "restic-upload", Source: transferEndpoint{Type: "bed", Path: "/workspace/source"}, Destination: transferEndpoint{Type: "s3", Key: "tenants/test/repositories/one"}}
+	first := startTestTransfer(t, s, req, 202)
+	result := awaitTestTransfer(t, s, req.ID)
+	if result.State != store.TransferSucceeded || len(result.Ref) != 64 || result.Sync != store.SyncRestic || b.Sync != store.SyncNoop {
+		t.Fatalf("restic upload: %+v", result)
+	}
+	firstRef := result.Ref
+	req.InstanceID = first.InstanceID
+	if replay := startTestTransfer(t, s, req, 200); replay.Ref != firstRef {
+		t.Fatal("replay lost result")
+	}
+	if err := b.BedFS().Write("/workspace/source/run", []byte("second"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	req.ID = "restic-incremental"
+	req.ParentRef = firstRef
+	startTestTransfer(t, s, req, 202)
+	second := awaitTestTransfer(t, s, req.ID)
+	if second.State != store.TransferSucceeded || second.Ref == firstRef {
+		t.Fatalf("incremental: %+v", second)
+	}
+	req = transferRequest{Sync: store.SyncRestic, ID: "restic-download", Source: transferEndpoint{Type: "s3", Key: "tenants/test/repositories/one", Ref: firstRef}, Destination: transferEndpoint{Type: "bed", Path: "/workspace/target"}}
+	startTestTransfer(t, s, req, 202)
+	result = awaitTestTransfer(t, s, req.ID)
+	if result.State != store.TransferSucceeded || result.Ref != firstRef {
+		t.Fatalf("download: %+v", result)
+	}
+	data, err := b.BedFS().Read("/workspace/target/run")
+	if err != nil || string(data) != "first" {
+		t.Fatalf("exact reference: %q %v", data, err)
+	}
+	info, err := b.BedFS().Stat("/workspace/target/run")
+	if err != nil || info.Mode != 0o755 {
+		t.Fatalf("metadata: %+v %v", info, err)
+	}
+	// Explicit repositories are addressed directly, so existing hictld layouts
+	// can be read without a hidden transfer-specific prefix.
+	fixture.mu.Lock()
+	_, exists := fixture.objects["/bucket/hostel/tenants/test/repositories/one/config"]
+	fixture.mu.Unlock()
+	if !exists {
+		t.Fatal("repository key was rewritten")
+	}
+}
+
+func TestResticAutomaticSyncAndFormatSwitch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
+	defer cancel()
+	binary := os.Getenv("HOSTEL_TEST_RESTIC_BINARY")
+	if binary == "" {
+		var err error
+		binary, err = exec.LookPath("restic")
+		if err != nil {
+			t.Skip("restic executable unavailable")
+		}
+	}
+	fixture := &transferS3Fixture{objects: make(map[string][]byte)}
+	remote := httptest.NewServer(fixture)
+	defer remote.Close()
+	t.Cleanup(func() {
+		if t.Failed() {
+			fixture.mu.Lock()
+			defer fixture.mu.Unlock()
+			t.Logf("S3 requests: %v", fixture.requests)
+		}
+	})
+	manager, err := store.NewManager(t.Context(), store.Config{Sync: "auto", ResticBinary: binary, Bucket: "bucket", Prefix: "hostel", Endpoint: remote.URL, PathStyle: true, Region: "us-east-1", AccessKeyID: "test", SecretAccessKey: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "data/workspace"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(`{"version":1,"bed_id":"automatic","sync":"restic"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "data/workspace/run"), []byte("first"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "data/tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "data/tmp/volatile"), []byte("skip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Persist(ctx, store.SyncRestic, "automatic", dir, 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []store.SyncKind{store.SyncCAS, store.SyncAuto, store.SyncRestic} {
+		target := filepath.Join(t.TempDir(), "restored")
+		result, err := manager.StageInBedFS(ctx, kind, store.StageInRequest{BedID: "automatic", BedDir: target})
+		if err != nil || !result.Restored || result.Snapshot.Generation != 1 {
+			t.Fatalf("restore %s: %+v %v", kind, result, err)
+		}
+		if data, err := os.ReadFile(filepath.Join(target, "data/workspace/run")); err != nil || string(data) != "first" {
+			t.Fatalf("restored: %q %v", data, err)
+		}
+		if _, err := os.Stat(filepath.Join(target, "data/tmp/volatile")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("volatile data persisted: %v", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "data/workspace/run"), []byte("second"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Persist(ctx, store.SyncTar, "automatic", dir, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Persist(ctx, store.SyncRestic, "automatic", dir, 2); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("generation conflict: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "newest")
+	result, err := manager.StageInBedFS(ctx, store.SyncRestic, store.StageInRequest{BedID: "automatic", BedDir: target})
+	if err != nil || result.Snapshot.Generation != 2 {
+		t.Fatalf("format switch: %+v %v", result, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(target, "data/workspace/run")); err != nil || string(data) != "second" {
+		t.Fatalf("newest: %q %v", data, err)
+	}
+	if err := manager.Delete(t.Context(), store.SyncAuto, "automatic"); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := manager.Stat(t.Context(), store.SyncAuto, "automatic"); err != nil || info != nil {
+		t.Fatalf("purge: %+v %v", info, err)
 	}
 }

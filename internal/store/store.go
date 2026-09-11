@@ -53,7 +53,7 @@ type SnapshotInfo struct {
 // snapshot) — a single commit-point object per bed gives this on S3.
 type Store interface {
 	// Name reports this implementation's canonical synchronization kind.
-	Name() Kind
+	Name() SyncKind
 	// Stat describes the bed's snapshot, or nil when none exists. Must be
 	// cheap (S3: HEAD + user metadata, no download) — luggage freshness
 	// checks call it on every resume.
@@ -75,7 +75,9 @@ type Store interface {
 
 // Config selects a synchronization policy and configures the optional S3 remote.
 type Config struct {
-	Kind            string // "auto" (default) | "noop" | "cas" | "pack" | "tar"
+	ResticBinary    string
+	ResticPassword  string
+	Sync            string // "auto" (default) | "noop" | "cas" | "pack" | "tar"
 	Bucket          string
 	Prefix          string // key prefix inside the bucket, e.g. "hostel/prod"
 	Endpoint        string // non-AWS S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS

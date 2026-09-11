@@ -37,7 +37,7 @@ import (
 // changing a small region uploads only the affected chunks. Its disadvantage
 // is operationally important on MinIO/filesystem-backed S3: every chunk is one
 // object/inode and one request, so small-file-heavy buckets can exhaust inodes
-// long before byte capacity. Keep it selectable as --store cas for workloads
+// long before byte capacity. Keep it selectable as --sync cas for workloads
 // that value minimum transferred bytes over object count; pack.go provides the
 // alternative object-count-optimized layout.
 //
@@ -92,7 +92,7 @@ func newCASStore(obj objAPI, prefix string, filters ...snapshotFilter) *casStore
 	return &casStore{obj: obj, prefix: prefix, filter: filter}
 }
 
-func (s *casStore) Name() Kind { return KindCAS }
+func (s *casStore) Name() SyncKind { return SyncCAS }
 
 func (s *casStore) bedPrefix(bedID string) string {
 	return path.Join(s.prefix, bedID)
