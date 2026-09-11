@@ -494,6 +494,9 @@ func (m *Manager) teardown(b *Bed) error {
 	if b.runtimeClosed {
 		return nil
 	}
+	if err := m.stopBedTransfers(b.ID); err != nil {
+		return fmt.Errorf("bed %s transfer cleanup: %w", b.ID, err)
+	}
 	m.executions.killBed(b.ID, CauseBedTeardown)
 	m.revokeSessions(b)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -526,6 +529,9 @@ func (m *Manager) teardown(b *Bed) error {
 func (m *Manager) Close(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := m.store.StopTransfers(ctx, ""); err != nil {
+		return err
 	}
 	m.cancelAllInitializations(ctx)
 	beds := m.List()

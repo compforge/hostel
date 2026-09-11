@@ -1,9 +1,10 @@
 # Store：bed 持久化与恢复
 
-Store 是 Hostel 直管的组件，统一负责各个 bed workspace 的持久化与 Stage-in。bed 的
+Store 是 Hostel 直管的组件，负责各个 bed workspace 的自动持久化与 Stage-in，也提供
+[显式文件传输](transfers.md)。本文描述自动持久化：bed 的
 workspace 是本地目录，pod 重启 / 换 pod 即丢；Store 把本地目录作为工作副本，把 durable
 snapshot 作为跨进程 / pod 的持久身份。上层调度系统只消费 Hostel 上报的同步与恢复成本事实，
-不直接驱动 Store。隔离目标与实际边界见 [isolation.md](isolation.md)，资源治理见 `resource.md`。
+不直接驱动自动同步的内部步骤；显式文件传输通过 API 独立触发。隔离目标与实际边界见 [isolation.md](isolation.md)，资源治理见 `resource.md`。
 
 对象前缀按 Bed 分开用于数据归属与独立回收，不是 S3 的租户授权边界；当前 S3 client 与
 凭据由实例共享。持久化策略、进程文件屏障与控制面授权必须分别判断。

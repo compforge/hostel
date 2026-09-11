@@ -25,6 +25,8 @@ type Manager struct {
 	mu            sync.Mutex
 	stores        map[Kind]Store
 	syncRequested chan struct{}
+	remote        *s3obj
+	transfers     *transferRegistry
 }
 
 func NewManager(ctx context.Context, cfg Config) (*Manager, error) {
@@ -45,7 +47,7 @@ func NewManager(ctx context.Context, cfg Config) (*Manager, error) {
 // NewManagerWithStores assembles a Manager from shared implementation instances. The first
 // implementation supplies the default; additional stores can be selected per Bed.
 func NewManagerWithStores(defaultStore Store, additional ...Store) *Manager {
-	s := &Manager{defaultKind: defaultStore.Name(), stores: map[Kind]Store{KindNoop: Noop{}}, syncRequested: make(chan struct{}, 1)}
+	s := &Manager{defaultKind: defaultStore.Name(), stores: map[Kind]Store{KindNoop: Noop{}}, syncRequested: make(chan struct{}, 1), transfers: newTransferRegistry()}
 	s.stores[defaultStore.Name()] = defaultStore
 	for _, implementation := range additional {
 		s.stores[implementation.Name()] = implementation
@@ -98,7 +100,7 @@ func (s *Manager) forKind(ctx context.Context, kind Kind) (Store, error) {
 		return s.stores[KindNoop], nil
 	}
 	// A noop default leaves S3 lazy. All durable formats share this one client.
-	obj, err := newS3Obj(ctx, s.cfg)
+	obj, err := s.remoteLocked(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -144,4 +146,21 @@ func (s *Manager) StageInBedFS(ctx context.Context, kind Kind, request StageInRe
 		return StageInResult{}, err
 	}
 	return StageInBedFS(ctx, implementation, request)
+}
+
+// remoteLocked shares the same S3 client even when the default policy is noop.
+// The caller holds s.mu; connection setup never changes a Bed's policy.
+func (s *Manager) remoteLocked(ctx context.Context) (*s3obj, error) {
+	if s.remote != nil {
+		return s.remote, nil
+	}
+	if s.cfg.Bucket == "" {
+		return nil, ErrTransferUnavailable
+	}
+	client, err := newS3Client(ctx, s.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrTransferUnavailable, err)
+	}
+	s.remote = &s3obj{client: client, bucket: s.cfg.Bucket}
+	return s.remote, nil
 }

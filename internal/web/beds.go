@@ -221,6 +221,8 @@ func (s *Server) bedList(c *gin.Context) {
 			"status":                         statusOfInstance(beds, s.mgr.DefaultBedOccupied(), time.Now()),
 			"store":                          s.mgr.StoreName(),
 			"bed_store_selection":            true,
+			"file_transfers":                 s.mgr.TransfersConfigured(),
+			"transfer_instance_id":           s.mgr.TransferInstanceID(),
 			"network":                        s.mgr.NetworkReport(),
 			"network_policy":                 true,
 			"isolation":                      s.mgr.Isolator().Level().String(),
@@ -415,6 +417,8 @@ func (s *Server) capabilities(c *gin.Context) {
 		"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
 		"persistence":                    s.mgr.StoreName(),
 		"bed_store_selection":            true,
+		"file_transfers":                 s.mgr.TransfersConfigured(),
+		"transfer_instance_id":           s.mgr.TransferInstanceID(),
 		"network":                        s.mgr.NetworkReport(),
 		"network_policy":                 true,
 		"resource_accounting": gin.H{

@@ -78,6 +78,7 @@ for required host capabilities and release-gate options.
 | Command | `POST /command` (SSE), `DELETE /command`, `GET /command/status/:id`, `GET /command/:id/logs` |
 | Session | `POST /session`, `POST /session/:id/run` (SSE), `DELETE /session/:id` |
 | Isolated session | `/v1/isolated/session(s)`, `run` (SSE), session-scoped files/directories, `capabilities` |
+| Transfers | `POST /v1/beds/:id/transfers`, `GET/DELETE /v1/beds/:id/transfers/:transfer_id` — direct Bed ↔ S3 file copies; [contract](docs/transfers.md) |
 | Beds | `GET/POST /v1/beds`, `GET/DELETE /v1/beds/:id`, `POST /v1/beds/:id/checkpoint`, `GET /v1/beds/capabilities` |
 | Scheduler | `GET /v1/beds` — instance capacity, state counts + every local bed's (resident + dormant) lifecycle, generation and retention |
 
@@ -242,6 +243,11 @@ for Ready, so they never observe a partial BedFS.
 The optional S3 backend defines where snapshots are stored (`--s3-bucket` and
 other S3 connection settings). `--store` chooses how to synchronize and organize
 those snapshots; local data remains in BedHome.
+
+For direct file copies between a Bed and S3, use the [transfers API](docs/transfers.md).
+It works with `store=noop`, supports progress and cancellation, and keeps copied objects
+separate from automatic Bed snapshots. The existing `/files/*` APIs handle file bytes
+passed through the HTTP client.
 
 - The default `--store auto` stores new beds as immutable ~32 MiB pack files.
 - Auto detects existing layouts for backward compatibility:
