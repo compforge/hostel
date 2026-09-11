@@ -14,27 +14,24 @@
 
 package isolation
 
-import (
-	"github.com/qiankunli/hostel/internal/bedfs"
-	"github.com/qiankunli/hostel/internal/privilege"
-)
+import "github.com/qiankunli/hostel/internal/privilege"
 
 const (
 	uidBase  = 200000
 	uidRange = 100000 // dedicated Bed users occupy 200000..299999
 )
 
-type bedUserProvider interface {
-	bedUser(*bedfs.FS, privilege.BedUser) (privilege.BedUser, error)
-}
-
-// BedUserFor resolves the final user once during Bed initialization. Keeping
-// the value on Environment makes command and session execution agree exactly.
-func BedUserFor(files Isolator, fs *bedfs.FS, configured privilege.BedUser) (privilege.BedUser, error) {
-	if provider, ok := files.(bedUserProvider); ok {
-		return provider.bedUser(fs, configured)
+// NewBedUserAllocator binds user allocation to the resolved isolation
+// mechanism without exposing mechanism details to the Bed manager.
+func NewBedUserAllocator(files Isolator, configured privilege.BedUser) *privilege.BedUserAllocator {
+	if provider, ok := files.(interface{ dedicatedBedUsers() bool }); ok && provider.dedicatedBedUsers() {
+		allocator, err := privilege.NewPerBedUserAllocator(uidBase, uidBase+uidRange-1)
+		if err != nil {
+			panic(err) // package constants define a valid range
+		}
+		return allocator
 	}
-	return configured, nil
+	return privilege.NewFixedBedUserAllocator(configured)
 }
 
 // DescribeBedUser reports the instance policy without inventing one concrete

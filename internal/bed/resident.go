@@ -21,14 +21,19 @@ import (
 // Store or filesystem I/O.
 func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bedInitialization) (resolved *Bed, retErr error) {
 	id := initialization.status.ID
+	bedDir := filepath.Join(m.root, id)
 	trace := beginLifecycle(ctx, id, lifecycleInitialize)
 	defer func() {
+		if retErr != nil {
+			if _, err := os.Stat(bedDir); os.IsNotExist(err) {
+				m.bedUsers.Release(id)
+			}
+		}
 		record := trace.finish(lifecycleResult(retErr), retErr)
 		if resolved != nil {
 			resolved.recordLifecycle(record)
 		}
 	}()
-	bedDir := filepath.Join(m.root, id)
 	dataDir := filepath.Join(bedDir, "data")
 	// Recovery: an orphaned local directory from an unclean shutdown or older
 	// version may be reused when its generation is at least as new as the
@@ -73,7 +78,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 				return err
 			}
 		}
-		bedUser, err = isolation.BedUserFor(m.iso, filesystem, m.bedUser)
+		bedUser, err = m.bedUsers.Acquire(id)
 		if err != nil {
 			return err
 		}

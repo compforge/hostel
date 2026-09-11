@@ -22,6 +22,25 @@ type Manager struct {
 	restic        *storesync.Restic
 }
 
+// Report is the safe operator view of persistence and explicit transfers. It
+// intentionally omits remote coordinates and credentials.
+type Report struct {
+	DefaultSync         SyncKind `json:"default_sync"`
+	Backend             string   `json:"backend"`
+	TransfersConfigured bool     `json:"transfers_configured"`
+}
+
+func (s *Manager) Report() Report {
+	if s == nil {
+		return Report{Backend: "none"}
+	}
+	backend := "none"
+	if s.cfg.Bucket != "" {
+		backend = "s3"
+	}
+	return Report{DefaultSync: s.defaultSync, Backend: backend, TransfersConfigured: s.cfg.Bucket != ""}
+}
+
 func NewManager(ctx context.Context, cfg Config) (*Manager, error) {
 	s := NewManagerWithStores(Noop{})
 	s.cfg = cfg

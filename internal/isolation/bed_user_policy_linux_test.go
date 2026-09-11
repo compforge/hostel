@@ -19,7 +19,6 @@ package isolation
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 
 	"github.com/qiankunli/hostel/internal/bedfs"
@@ -39,28 +38,20 @@ func (testFileBoundary) Wrap(cmd *exec.Cmd, _ *bedfs.FS, _ string) error {
 	return nil
 }
 
-func TestUIDIsolationResolvesDifferentBedUsers(t *testing.T) {
+func TestUIDIsolationSelectsPerBedAllocator(t *testing.T) {
 	configured, err := privilege.NewBedUser(1000, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolve := func(home string) privilege.BedUser {
-		if err := os.MkdirAll(home, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		fs, err := bedfs.New(home)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer fs.Close()
-		user, err := BedUserFor(&resolved{boundary: &uidIso{}}, fs, configured)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return user
+	allocator := NewBedUserAllocator(&resolved{boundary: &uidIso{}}, configured)
+	a, err := allocator.Acquire("a")
+	if err != nil {
+		t.Fatal(err)
 	}
-	a := resolve(filepath.Join(t.TempDir(), "a"))
-	b := resolve(filepath.Join(t.TempDir(), "b"))
+	b, err := allocator.Acquire("b")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if a.UID() == b.UID() {
 		t.Fatalf("sample beds resolved the same uid %d", a.UID())
 	}

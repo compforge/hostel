@@ -43,20 +43,20 @@ type AdmissionDecision struct {
 // is true when at least one configured dimension has a finite cgroup limit and
 // a usable sample.
 type AdmissionReport struct {
-	Enabled                bool
-	Available              bool
-	Accepting              bool
-	Reason                 string
-	CPUThresholdPercent    int
-	MemoryThresholdPercent int
-	CPULimitCores          float64
-	CPUUsagePercent        float64
-	CPUAvailable           bool
-	MemoryCurrentBytes     uint64
-	MemoryLimitBytes       uint64
-	MemoryUsagePercent     float64
-	MemoryAvailable        bool
-	SampledAt              time.Time
+	Enabled                bool      `json:"enabled"`
+	Available              bool      `json:"available"`
+	Accepting              bool      `json:"accepting"`
+	Reason                 string    `json:"reason,omitempty"`
+	CPUThresholdPercent    int       `json:"cpu_threshold_percent"`
+	MemoryThresholdPercent int       `json:"memory_threshold_percent"`
+	CPULimitCores          float64   `json:"cpu_limit_cores"`
+	CPUUsagePercent        float64   `json:"cpu_usage_percent"`
+	CPUAvailable           bool      `json:"cpu_available"`
+	MemoryCurrentBytes     uint64    `json:"memory_current_bytes"`
+	MemoryLimitBytes       uint64    `json:"memory_limit_bytes"`
+	MemoryUsagePercent     float64   `json:"memory_usage_percent"`
+	MemoryAvailable        bool      `json:"memory_available"`
+	SampledAt              time.Time `json:"sampled_at"`
 }
 
 // Admitter answers whether carrier pressure allows a new tenant Bed or an

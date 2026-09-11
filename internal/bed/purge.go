@@ -176,6 +176,7 @@ func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
 	if err := os.RemoveAll(filepath.Join(m.root, id)); err != nil {
 		return err
 	}
+	m.bedUsers.Release(id)
 	m.mu.Lock()
 	delete(m.retirements, id)
 	m.mu.Unlock()

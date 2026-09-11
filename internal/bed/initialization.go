@@ -183,13 +183,27 @@ func (m *Manager) beginInitialization(
 		ctx = context.Background()
 	}
 
-	// Resolve outside the manager lock; resident/in-flight Beds below remain
-	// authoritative when the request omits Sync.
-	selected, selectionErr := m.bedSync(ctx, id, requestedSync)
-	if requestedSync != "" && selectionErr != nil {
-		return nil, nil, selectionErr
+	// A luggage cleanup owns this Bed identity until its local tree is gone and
+	// the UID reservation has been released. Resolve Store state again after a
+	// wait because the deleted local metadata may have affected selection.
+	var selected store.SyncKind
+	var selectionErr error
+	for {
+		if err := m.waitForLuggageCleanup(ctx, id); err != nil {
+			return nil, nil, err
+		}
+		// Resolve outside the manager lock; resident/in-flight Beds below remain
+		// authoritative when the request omits Sync.
+		selected, selectionErr = m.bedSync(ctx, id, requestedSync)
+		if requestedSync != "" && selectionErr != nil {
+			return nil, nil, selectionErr
+		}
+		m.mu.Lock()
+		if m.luggageCleanups[id] == nil {
+			break
+		}
+		m.mu.Unlock()
 	}
-	m.mu.Lock()
 	m.pruneFailedInitializationsLocked(time.Now())
 	if _, purging := m.purges[id]; purging {
 		m.mu.Unlock()

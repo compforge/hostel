@@ -1,3 +1,5 @@
+//go:build !linux
+
 // Copyright 2026 Li Qiankun
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,25 +14,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !linux
-
 package privilege
 
-import (
-	"fmt"
-	"os"
-	"os/exec"
-)
-
-func ProcessCredentialHelper() (string, error) {
-	return "", fmt.Errorf("privilege: setpriv is unsupported on this platform")
-}
-
-func wrapBedUser(_ *exec.Cmd, user BedUser) error {
-	if user.uid != os.Geteuid() || user.gid != os.Getegid() {
-		return fmt.Errorf("privilege: switching bed user is unsupported on this platform")
-	}
-	return nil
-}
-
-func chownTree(string, int, int) error { return nil }
+func (a *BedUserAllocator) ReserveOwnedDirectory(string, string) error { return nil }

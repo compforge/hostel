@@ -370,7 +370,7 @@ func (s *Server) isolatedCapabilities(c *gin.Context) {
 		"isolator":          iso.Name(),
 		"message":           "Hostel bed adapter: balanced profile with an rw /workspace",
 		"network":           s.mgr.NetworkReport(),
-		"setpriv_available": s.mgr.NetworkReport().Enabled,
+		"setpriv_available": s.mgr.PrivilegeReport().Setpriv.Available,
 		"userns_available":  false,
 		"commit_supported":  false,
 		"diff_supported":    false,

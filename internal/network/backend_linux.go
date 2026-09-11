@@ -13,12 +13,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
 )
 
 type linuxBackend struct {
+	mu               sync.Mutex
 	ip, nft, setpriv string
 	prefix           string
 	resolvers        []string
@@ -27,6 +29,7 @@ type linuxBackend struct {
 }
 
 type linuxEndpoint struct {
+	mu                               sync.Mutex
 	owner                            *linuxBackend
 	name, link, peer                 string
 	gateway, address                 netip.Addr
@@ -116,7 +119,9 @@ func (b *linuxBackend) Create(ctx context.Context) (endpoint, error) {
 	}
 	suffix := randx.Hex(2)
 	ep := &linuxEndpoint{owner: b, name: b.prefix + suffix, link: b.prefix + suffix, peer: "np" + randx.Hex(4), gateway: gateway, address: address}
+	b.mu.Lock()
 	b.endpoints[ep.name] = ep
+	b.mu.Unlock()
 	if err = ep.create(ctx); err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		cleanupErr := ep.Close(cleanupCtx)
@@ -243,6 +248,8 @@ func (e *linuxEndpoint) Wrap(cmd *exec.Cmd) {
 func (e *linuxEndpoint) Gateway() string { return e.gateway.String() }
 
 func (e *linuxEndpoint) Close(ctx context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	var err error
 	if e.policy != nil {
 		e.policy.mu.Lock()
@@ -281,14 +288,22 @@ func (e *linuxEndpoint) Close(ctx context.Context) error {
 		}
 	}
 	if err == nil {
+		e.owner.mu.Lock()
 		delete(e.owner.endpoints, e.name)
+		e.owner.mu.Unlock()
 	}
 	return err
 }
 func (b *linuxBackend) Close(ctx context.Context) error {
+	b.mu.Lock()
+	endpoints := make([]*linuxEndpoint, 0, len(b.endpoints))
+	for _, endpoint := range b.endpoints {
+		endpoints = append(endpoints, endpoint)
+	}
+	b.mu.Unlock()
 	var err error
-	for _, e := range b.endpoints {
-		err = errors.Join(err, e.Close(ctx))
+	for _, endpoint := range endpoints {
+		err = errors.Join(err, endpoint.Close(ctx))
 	}
 	return err
 }

@@ -18,7 +18,6 @@ package isolation
 
 import (
 	"fmt"
-	"hash/fnv"
 	"log"
 	"os"
 	"os/exec"
@@ -29,32 +28,17 @@ import (
 	"github.com/qiankunli/hostel/internal/privilege"
 )
 
-// Bed uids live in a fixed high band, ASSUMED unused by the host — not
-// guaranteed: this range can overlap /etc/subuid userns mappings (the 2nd
-// default user gets 231072..) or LDAP/service accounts. Under our threat model
-// (a bed straying into another bed, not adversarial uid-squatting) that's
-// acceptable; a bed colliding with a real host identity is a deployment
-// concern, documented in docs/isolation.md. The uid is derived from the
-// data dir path (no registry), so Prepare (chown) and Wrap (setuid) agree with
-// no shared state and it stays stable across restarts. Two beds hashing to the
-// same uid is possible but rare; a colliding pair degrades to mutual access
-// (dorm between just those two) — never a crash.
-// bedUID derives a bed's dedicated uid from its data dir. gid == uid: each bed
-// gets a private primary group of the same number.
-func bedUID(dataDir string) int {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(dataDir))
-	return uidBase + int(h.Sum32()%uidRange)
-}
-
+// Dedicated Bed uids live in a fixed high band assumed unused by the host.
+// The privilege allocator prevents collisions between Beds owned by one
+// Manager; deployments still need to reserve the band from host identities.
 // uidIso is the room mechanism realized with classic Unix DAC: each bed's
 // processes run as a dedicated uid, its data dir owned 0700 by that uid. A bed
 // can't ACCESS another's data (EACCES) and — a bonus over landlock — can't
 // signal, ptrace, or read /proc/<pid> of another bed's processes either.
 // Siblings stay visible (dir names listable, /tmp and system paths shared): the
-// "private room, shared toilet" tier. Needs the daemon to hold
-// CAP_SETUID/SETGID/CHOWN (root, or a setcap'd binary) but no special kernel —
-// so it fills the room slot where Landlock is absent (old/custom kernels).
+// "private room, shared toilet" tier. The daemon needs the Bed identity
+// capabilities owned by package privilege, but no special kernel, so this fills
+// the room slot where Landlock is absent (old/custom kernels).
 type uidIso struct{}
 
 func newUID(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
@@ -83,25 +67,10 @@ func newUID(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
 	return &uidIso{}, report
 }
 
-// capsForUID: the effective capabilities the daemon needs to run beds under
-// dedicated uids — SETUID/SETGID to drop, CHOWN to hand the data dir over.
-var capsForUID = []struct {
-	bit  uint
-	name string
-}{
-	{capCHOWN, "CAP_CHOWN"}, {capSETGID, "CAP_SETGID"}, {capSETUID, "CAP_SETUID"},
-}
-
-// missingUIDCaps returns a comma-joined list of the required caps absent from
-// the host's effective set ("" = all present), read from the shared HostFacts.
+// missingUIDCaps uses the same requirements published by diagnostics, so the
+// selected mechanism and the operator verdict cannot disagree.
 func missingUIDCaps(facts HostFacts) string {
-	var miss []string
-	for _, c := range capsForUID {
-		if !facts.HasCap(c.bit) {
-			miss = append(miss, c.name)
-		}
-	}
-	return strings.Join(miss, ",")
+	return strings.Join(privilege.MissingBedIdentityCapabilities(facts.EffectiveCaps), ",")
 }
 
 // uidSmoke proves the mechanism bites, using the exact production form: prepare
@@ -133,10 +102,10 @@ func uidSmoke(workspaceRoot string) ProbeReport {
 	if err := os.WriteFile(secret, []byte("s"), 0o600); err != nil {
 		return ProbeReport{Error: "smoke test: " + err.Error()}
 	}
-	if err := prepareUIDDir(own, bedUID(own)); err != nil {
+	if err := prepareUIDDir(own, uidBase); err != nil {
 		return ProbeReport{Error: "smoke test: prepare own: " + err.Error()}
 	}
-	if err := prepareUIDDir(sibling, bedUID(sibling)); err != nil {
+	if err := prepareUIDDir(sibling, uidBase+1); err != nil {
 		return ProbeReport{Error: "smoke test: prepare sibling: " + err.Error()}
 	}
 
@@ -144,7 +113,7 @@ func uidSmoke(workspaceRoot string) ProbeReport {
 	cmd := exec.Command("/bin/sh", "-c", script)
 	// Production chdirs before dropping UID; the probe must exercise the same order.
 	cmd.Dir = own
-	user, err := privilege.NewBedUser(bedUID(own), bedUID(own))
+	user, err := privilege.NewBedUser(uidBase, uidBase)
 	if err != nil {
 		return ProbeReport{Error: "smoke test: " + err.Error()}
 	}
@@ -199,9 +168,4 @@ func prepareUIDDir(dir string, uid int) error {
 	}
 	return user.Prepare(filesystem)
 }
-func (u *uidIso) bedUser(fs *bedfs.FS, _ privilege.BedUser) (privilege.BedUser, error) {
-	uid := bedUID(fs.Home())
-	return privilege.NewBedUser(uid, uid)
-}
-
 func (*uidIso) dedicatedBedUsers() bool { return true }

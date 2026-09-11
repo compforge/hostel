@@ -29,7 +29,6 @@ import (
 	"os/exec"
 
 	"github.com/qiankunli/hostel/internal/bedfs"
-	"github.com/qiankunli/hostel/internal/privilege"
 )
 
 // Level is a data-isolation guarantee, ordered weakest→strongest.
@@ -177,13 +176,6 @@ func (r *resolved) Diagnostics() DiagnosticsReport {
 		probes[name] = probe
 	}
 	return DiagnosticsReport{System: r.diagnostics.System, Probes: probes}
-}
-
-func (r *resolved) bedUser(fs *bedfs.FS, configured privilege.BedUser) (privilege.BedUser, error) {
-	if provider, ok := r.boundary.(bedUserProvider); ok {
-		return provider.bedUser(fs, configured)
-	}
-	return configured, nil
 }
 
 func (r *resolved) dedicatedBedUsers() bool {

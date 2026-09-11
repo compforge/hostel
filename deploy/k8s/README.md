@@ -11,7 +11,7 @@ three permission layers separate:
 | Layer | Requirement |
 | --- | --- |
 | sandbox-server ServiceAccount | RBAC permission to create Pods in the carrier namespace; a narrowly scoped PSA/admission exception when the selected Pod security setting is otherwise denied. |
-| Created Hostel container | Request `appArmorProfile.type: Unconfined` for bubblewrap, or `capabilities.add: ["SYS_PTRACE"]` for PRoot. A Pod only needs the setting for the backend selected by its creator. |
+| Created Hostel container | When Hostel runs as root and Bed processes run as non-root, add the Bed identity capabilities reported by `/v1/diagnostics`: `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `KILL`, `SETGID`, `SETPCAP`, `SETUID`. Then request `appArmorProfile.type: Unconfined` for bubblewrap, or add `SYS_PTRACE` for PRoot. |
 | Carrier node/runtime | Actually support the requested operation: user namespaces and mount policy for bubblewrap, or ptrace for PRoot. |
 
 The sandbox-server container itself does not need either setting. Its
@@ -255,6 +255,11 @@ is already selected, PRoot remains discovered but is not smoke-tested, so
 
 ## 文件隔离机制的部署条件
 
+Bed identity 是所有文件隔离机制之前的基础层：当 daemon 以 root 运行、Bed 以不同非 root UID 运行时，
+Hostel 需要 `CHOWN`、`DAC_OVERRIDE`、`FOWNER`、`KILL`、`SETGID`、`SETPCAP`、`SETUID`。
+常见容器默认 capability 集通常包含 `KILL` 和 `SETPCAP`，但 `drop: ["ALL"]` 会移除它们，必须显式加回。
+`/v1/diagnostics` 的 `privilege.requirements` 是代码使用的同一份权威清单。
+
 本节只描述文件隔离机制的部署条件；网络 netns 有独立的权限与组合要求，见
 [网络设计](../../docs/network.md) 和 [隔离总览](../../docs/isolation.md)。
 
@@ -263,10 +268,10 @@ is already selected, PRoot remains discovered but is not smoke-tested, so
 
 | Level / 机制 | Hostel container 的要求 | 节点 / runtime 要求 | Pod Security Admission |
 |---|---|---|---|
-| `dorm` / direct | 无额外 capability、无需 privileged、无需 AppArmor 豁免；实际读写能力仍由 container UID、capability、只读根和 volume 权限决定 | 普通 Linux Pod 即可 | 可适配 Baseline/Restricted；是否能非 root 运行取决于镜像和 volume 属主，不是 Dorm 机制要求 |
-| `room` / Landlock | 无额外 capability、无需 privileged；可保持 `RuntimeDefault` AppArmor/seccomp，只要实际 smoke 通过 | Linux ≥5.13、内核编译并启用 Landlock LSM，seccomp 不得拦截所需 Landlock syscall | 机制本身可适配 Restricted；当前镜像/volume 若仍要求 root，需另行收敛运行用户 |
-| `room` / UID | daemon 以 root 运行，或至少具备 `CHOWN`、`SETUID`、`SETGID`；daemon 还需 `DAC_OVERRIDE`（非 root 形态可用 `DAC_READ_SEARCH`）读取归属不同 UID 的 BedFS | seccomp 必须允许 setgroups/setgid/setuid/chown；保持 `fs.protected_hardlinks=1`，并核对 UID 段 | 可适配 Baseline；不适配 Restricted（Restricted 只允许加回 `NET_BIND_SERVICE`，且要求非 root） |
-| `suite` / bwrap | 推荐 `privileged: false`、drop `ALL`、不加 `CAP_SYS_ADMIN`；AppArmor 必须为 `Unconfined`，或节点预装一个允许 bwrap userns/mount 操作的 `Localhost` profile；seccomp profile 也必须允许实际 smoke | bwrap 可执行；内核允许进程创建 user namespace，并允许其中的 mount namespace 操作 | `Unconfined` 不满足 Baseline/Restricted，需 namespace/runtimeClass/user 级豁免或自定义 admission；合适的 `Localhost` profile 可满足 AppArmor 这一项 |
+| `dorm` / direct | 除 Bed identity 基础权限外，无机制额外 capability、无需 privileged、无需 AppArmor 豁免 | 普通 Linux Pod 即可 | root daemon + 非 root Bed 不适配 Restricted；同 UID 运行时可另行评估 |
+| `room` / Landlock | 除 Bed identity 基础权限外，无机制额外 capability；可保持 `RuntimeDefault` AppArmor/seccomp，只要实际 smoke 通过 | Linux ≥5.13、内核编译并启用 Landlock LSM，seccomp 不得拦截所需 Landlock syscall | Landlock 本身可适配 Restricted；root daemon + 非 root Bed 的基础权限不适配 Restricted |
+| `room` / UID | 使用完整 Bed identity 基础权限：`CHOWN`、`DAC_OVERRIDE`、`FOWNER`、`KILL`、`SETGID`、`SETPCAP`、`SETUID` | seccomp 必须允许 setgroups/setgid/setuid/chown；保持 `fs.protected_hardlinks=1`，并核对 UID 段 | 可适配 Baseline；不适配 Restricted（Restricted 只允许加回 `NET_BIND_SERVICE`，且要求非 root） |
+| `suite` / bwrap | Bed identity 基础权限之外不加 `SYS_ADMIN`；AppArmor 必须为 `Unconfined`，或节点预装允许 bwrap userns/mount 的 `Localhost` profile；seccomp 也必须允许实际 smoke | bwrap 可执行；内核允许进程创建 user namespace，并允许其中的 mount namespace 操作 | `Unconfined` 不满足 Baseline/Restricted，需 namespace/runtimeClass/user 级豁免或自定义 admission；合适的 `Localhost` profile 可满足 AppArmor 这一项 |
 
 Suite 推荐的 container 片段（Kubernetes 1.30+ 原生 AppArmor 字段）：
 
@@ -276,6 +281,7 @@ securityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop: ["ALL"]
+    add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "KILL", "SETGID", "SETPCAP", "SETUID"]
   seccompProfile:
     type: RuntimeDefault
   appArmorProfile:
@@ -294,7 +300,7 @@ securityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop: ["ALL"]
-    add: ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"]
+    add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "KILL", "SETGID", "SETPCAP", "SETUID"]
   seccompProfile:
     type: RuntimeDefault
 ```

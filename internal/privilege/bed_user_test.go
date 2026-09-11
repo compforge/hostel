@@ -9,3 +9,22 @@ func TestBedUserRejectsRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestPrivilegeReportUsesBedIdentityRequirements(t *testing.T) {
+	report := NewReport(BedUserReport{Strategy: "per_bed", UIDMin: 200000, UIDMax: 299999}, 0)
+	want := RequiredBedIdentityCapabilities()
+	if len(report.Requirements.Capabilities) != len(want) || len(report.Requirements.MissingCapabilities) != len(want) {
+		t.Fatalf("requirements = %+v, want %d required and missing", report.Requirements, len(want))
+	}
+	if report.Requirements.Satisfied || report.PreconditionsSatisfied {
+		t.Fatalf("zero capabilities reported ready: %+v", report)
+	}
+	var all uint64
+	for _, capability := range want {
+		all |= uint64(1) << capability.Bit
+	}
+	report = NewReport(BedUserReport{Strategy: "per_bed", UIDMin: 200000, UIDMax: 299999}, all)
+	if !report.Requirements.Satisfied {
+		t.Fatalf("complete capabilities reported missing: %+v", report.Requirements)
+	}
+}

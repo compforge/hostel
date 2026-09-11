@@ -140,8 +140,11 @@ bwrap 使用 user namespace 完成挂载准备，并绑定已有 `/proc`，以�
 
 UID backend 的目录属主与进程身份保持一致，身份准备后刷新 BedFS 的属主记录，
 file API 新建文件及目录也交给该属主。
-当前 UID 从数据目录路径散列到固定高位范围，不保证全局唯一，也可能与宿主账号或 userns
-映射重叠；部署须核对该范围，碰撞会削弱相应 Bed 的隔离。属主交接跳过多硬链接普通文件，
+当前 UID 由 Manager 在固定高位范围内分配：先按 Bed ID 选择稳定起点，冲突时探测空闲 UID，
+同一进程管理的 Bed 不会因散列碰撞共享身份；启动时从冷 Bed 数据目录的 owner 恢复预留，
+只有本地 Bed 目录删除成功后才释放租约。luggage GC 删除期间保留 Bed ID 栅栏，同 ID 初始化等待
+目录清理和 UID 释放共同完成；清理失败继续保留 UID 占用。该范围仍可能与宿主账号或 userns
+映射重叠，部署须预留。属主交接跳过多硬链接普通文件，
 以免把 Bed 外的 inode 改属主；部署应保留 `fs.protected_hardlinks=1`。具体规则靠
 `internal/isolation/uid_linux.go` 选择 per-Bed 用户，`internal/privilege` 与 BedFS
 共同承接进程 credentials 和文件属主操作。

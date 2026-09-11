@@ -318,38 +318,12 @@ func (s *Server) healthz(c *gin.Context) {
 	})
 }
 
-// GET /v1/diagnostics returns the immutable facts and mechanism probe records
-// captured while isolation was resolved at boot.
+// GET /v1/diagnostics returns the versioned operator view assembled by the Bed
+// manager. Reading it does not rerun startup probes or perform remote I/O.
 //
-// +spec=`Instance diagnostics expose only cached boot-time facts and raw probe records; reading the endpoint never reruns probes or infers remediation.`
+// +spec=`Instance diagnostics expose cached facts and component reports; reading the endpoint never reruns probes.`
 func (s *Server) diagnostics(c *gin.Context) {
-	iso := s.mgr.Isolator()
-	report, ok := iso.(isolation.Report)
-	if !ok {
-		c.JSON(http.StatusOK, gin.H{
-			"network":        s.mgr.NetworkReport(),
-			"system":         isolation.SystemFacts{},
-			"probes":         map[string]isolation.ProbeReport{},
-			"isolation":      gin.H{"effective": iso.Level().String(), "mechanism": iso.Name()},
-			"workspace_view": workspaceView(iso),
-			"bed_user":       s.mgr.BedUserReport(),
-		})
-		return
-	}
-	diagnostics := report.Diagnostics()
-	c.JSON(http.StatusOK, gin.H{
-		"network": s.mgr.NetworkReport(),
-		"system":  diagnostics.System,
-		"probes":  diagnostics.Probes,
-		"isolation": gin.H{
-			"requested": report.Requested().String(),
-			"effective": report.Effective().String(),
-			"ceiling":   report.Ceiling().String(),
-			"mechanism": report.Mechanism(),
-		},
-		"workspace_view": report.WorkspaceView(),
-		"bed_user":       s.mgr.BedUserReport(),
-	})
+	c.JSON(http.StatusOK, s.mgr.Diagnostics())
 }
 
 func resourceAdmissionView(report resource.AdmissionReport) gin.H {
@@ -390,10 +364,6 @@ func isolationView(iso isolation.Isolator) gin.H {
 		v["requested"] = r.Requested().String()
 		v["effective"] = r.Effective().String()
 		v["ceiling"] = r.Ceiling().String()
-		// The host facts behind the ceiling, so an operator can see WHY a host
-		// tops out where it does (no Landlock? no setuid caps?) without shelling
-		// into it (docs/isolation.md).
-		v["host"] = r.Facts()
 	}
 	return v
 }

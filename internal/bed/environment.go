@@ -18,6 +18,9 @@ import (
 // command and session entry points used by clients. Run before HTTP admission.
 // A failed combination is a startup error, not permission to run unconfined.
 func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
+	started := time.Now()
+	m.startEnvironmentProbe(started)
+	defer func() { m.finishEnvironmentProbe(started, retErr) }()
 	id := "environment-probe-" + randx.Hex(6)
 	initialization, _, err := m.beginInitialization(ctx, id, CreateOptions{Sync: string(store.SyncNoop)})
 	if err != nil {

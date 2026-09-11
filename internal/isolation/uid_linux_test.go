@@ -25,24 +25,6 @@ import (
 	"testing"
 )
 
-// bedUID must be deterministic (Prepare and Wrap derive it independently and
-// must agree) and land in the reserved band.
-func TestBedUIDDeterministicAndRanged(t *testing.T) {
-	const p = "/ws/alice/data"
-	if bedUID(p) != bedUID(p) {
-		t.Fatal("bedUID not deterministic for the same path")
-	}
-	u := bedUID(p)
-	if u < uidBase || u >= uidBase+uidRange {
-		t.Fatalf("bedUID %d outside band [%d,%d)", u, uidBase, uidBase+uidRange)
-	}
-	if bedUID("/ws/alice/data") == bedUID("/ws/bob/data") {
-		// Not a failure — collisions are allowed and documented — but flag it so
-		// a hash change that suddenly collides common names is visible.
-		t.Log("note: two sample bed paths collided to the same uid")
-	}
-}
-
 // missingUIDCaps reads the shared HostFacts and names the absent caps — the
 // honest-degrade signal the resolver relies on. Cross-check it against the live
 // facts so the cap-bit wiring can't silently drift.
@@ -50,7 +32,7 @@ func TestMissingUIDCaps(t *testing.T) {
 	facts := collectHostFacts()
 	miss := missingUIDCaps(facts)
 	t.Logf("effective caps %#x, missing uid caps: %q", facts.EffectiveCaps, miss)
-	wantAllPresent := facts.HasCap(capCHOWN) && facts.HasCap(capSETGID) && facts.HasCap(capSETUID)
+	wantAllPresent := len(privilege.MissingBedIdentityCapabilities(facts.EffectiveCaps)) == 0
 	if wantAllPresent != (miss == "") {
 		t.Fatalf("missingUIDCaps=%q but HasCap(all)=%v — cap-bit wiring drifted", miss, wantAllPresent)
 	}
@@ -131,7 +113,7 @@ func TestUIDPrepareRefreshesBedFSOwner(t *testing.T) {
 	if err := iso.Prepare(fs); err != nil {
 		t.Fatal(err)
 	}
-	user, err := iso.bedUser(fs, privilege.CurrentBedUser())
+	user, err := privilege.NewBedUser(uidBase+42, uidBase+42)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +128,8 @@ func TestUIDPrepareRefreshesBedFSOwner(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := info.Sys().(*syscall.Stat_t).Uid; got != uint32(bedUID(home)) {
-			t.Fatalf("%s owner=%d, want %d", path, got, bedUID(home))
+		if got := info.Sys().(*syscall.Stat_t).Uid; got != uint32(uidBase+42) {
+			t.Fatalf("%s owner=%d, want %d", path, got, uidBase+42)
 		}
 	}
 }

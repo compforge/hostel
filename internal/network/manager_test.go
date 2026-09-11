@@ -6,16 +6,23 @@ import (
 	"os/exec"
 	"sync"
 	"testing"
+	"time"
 )
 
 type fakeBackend struct {
-	creates  int
-	err      error
-	endpoint *fakeEndpoint
+	creates       int
+	err           error
+	endpoint      *fakeEndpoint
+	createStarted chan struct{}
+	createRelease chan struct{}
 }
 
 func (b *fakeBackend) Create(context.Context) (endpoint, error) {
 	b.creates++
+	if b.createStarted != nil {
+		close(b.createStarted)
+		<-b.createRelease
+	}
 	if b.err != nil {
 		return nil, b.err
 	}
@@ -24,15 +31,25 @@ func (b *fakeBackend) Create(context.Context) (endpoint, error) {
 func (b *fakeBackend) Close(context.Context) error { return nil }
 
 type fakeEndpoint struct {
-	closed int
-	err    error
+	closed       int
+	err          error
+	closeStarted chan struct{}
+	closeRelease chan struct{}
+	closeOnce    sync.Once
 }
 
-func (e *fakeEndpoint) Wrap(cmd *exec.Cmd)          { cmd.Args = append([]string{"network"}, cmd.Args...) }
-func (e *fakeEndpoint) Gateway() string             { return "198.18.0.1" }
-func (e *fakeEndpoint) Close(context.Context) error { e.closed++; return e.err }
+func (e *fakeEndpoint) Wrap(cmd *exec.Cmd) { cmd.Args = append([]string{"network"}, cmd.Args...) }
+func (e *fakeEndpoint) Gateway() string    { return "198.18.0.1" }
+func (e *fakeEndpoint) Close(context.Context) error {
+	if e.closeStarted != nil {
+		e.closeOnce.Do(func() { close(e.closeStarted) })
+		<-e.closeRelease
+	}
+	e.closed++
+	return e.err
+}
 func testManager(b backend) *Manager {
-	return &Manager{report: Report{Enabled: true, Backend: "netns", Scope: "bed_processes"}, backend: b, beds: make(map[string]*attachment)}
+	return &Manager{report: Report{Enabled: true, Backend: "netns", Scope: "bed_processes"}, backend: b, beds: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 
 func TestDisabledDoesNotChangeCommands(t *testing.T) {
@@ -134,5 +151,94 @@ func TestOldAttachmentCannotReleaseReplacement(t *testing.T) {
 	}
 	if err := fresh.Enter(exec.Command("true")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSlowCreateDoesNotBlockExistingAttachment(t *testing.T) {
+	b := &fakeBackend{endpoint: &fakeEndpoint{}}
+	m := testManager(b)
+	existing, err := m.Acquire(context.Background(), "existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.createStarted = make(chan struct{})
+	b.createRelease = make(chan struct{})
+	created := make(chan error, 1)
+	go func() {
+		_, err := m.Acquire(context.Background(), "slow")
+		created <- err
+	}()
+	<-b.createStarted
+
+	entered := make(chan error, 1)
+	go func() { entered <- existing.Enter(exec.Command("true")) }()
+	select {
+	case err := <-entered:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("existing attachment was blocked by another Bed's create")
+	}
+	close(b.createRelease)
+	if err := <-created; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagerCloseRetriesFailedAttachmentCleanup(t *testing.T) {
+	ep := &fakeEndpoint{err: errors.New("busy")}
+	m := testManager(&fakeBackend{endpoint: ep})
+	if _, err := m.Acquire(context.Background(), "bed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Close(context.Background()); err == nil {
+		t.Fatal("expected first close to report cleanup failure")
+	}
+	ep.err = nil
+	if err := m.Close(context.Background()); err != nil {
+		t.Fatalf("retry close: %v", err)
+	}
+	if len(m.beds) != 0 {
+		t.Fatalf("retry left %d attachments", len(m.beds))
+	}
+}
+
+func TestManagerCloseWaitsForPendingCleanup(t *testing.T) {
+	ep := &fakeEndpoint{closeStarted: make(chan struct{}), closeRelease: make(chan struct{})}
+	b := &fakeBackend{
+		endpoint:      ep,
+		createStarted: make(chan struct{}),
+		createRelease: make(chan struct{}),
+	}
+	m := testManager(b)
+	acquired := make(chan error, 1)
+	go func() {
+		_, err := m.Acquire(context.Background(), "bed")
+		acquired <- err
+	}()
+	<-b.createStarted
+
+	closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	if err := m.Close(closeCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first close = %v, want deadline", err)
+	}
+	cancel()
+	close(b.createRelease)
+	<-ep.closeStarted
+
+	retried := make(chan error, 1)
+	go func() { retried <- m.Close(context.Background()) }()
+	select {
+	case err := <-retried:
+		t.Fatalf("retry returned before pending endpoint cleanup: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(ep.closeRelease)
+	if err := <-acquired; err == nil {
+		t.Fatal("acquire succeeded after manager close")
+	}
+	if err := <-retried; err != nil {
+		t.Fatalf("retry close: %v", err)
 	}
 }

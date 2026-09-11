@@ -136,14 +136,17 @@ purging / failed / resident / dormant luggage）的当前事实，不承载 time
 作用域、资源记账、容量准入和设施状态分别披露。`isolator_ok`、Bed Ready 或 amenity
 running 都不能推导出完整隔离，语义由 [isolation.md](isolation.md) 统一定义。
 
-`GET /v1/diagnostics` 返回 isolation 启动解析时缓存的系统事实和机制探测原始记录，包括 runtime、
-进程 capability/seccomp、LSM label、namespace sysctl、kernel feature、ptrace Yama scope，以及模拟 PRoot
-启动序列的 `TRACEME → SETOPTIONS → SYSCALL` 探测。二进制 helper 先记录配置命令名、PATH 解析路径、是否存在和是否可执行；各探测再保留是否执行、退出码、stdout、stderr、
-错误和耗时。读取接口不重新执行探测。`system` 与 `probes` 保留观测值和读取错误，
-不推导部署要求或修复建议；`isolation`、`workspace_view`、`network`、`bed_user` 另行给出已选择的能力
-与不可用原因。网络 probe 的作用域与字段见 [network.md](network.md)。
-不存在的内核节点以 `value: null` 和 `read_error`
-表达，与节点存在且值为 `0` 严格区分。
+`GET /v1/diagnostics` 是版本化的运维诊断快照，当前 `schema_version` 为 `1`。顶层按所有者分为
+`environment`、`isolation`、`privilege`、`network`、`executor`、`store`、`resource` 与 `amenities`，HTTP 层只负责序列化，
+不跨组件推导状态。`isolation.system` 和 `isolation.probes` 保存启动时缓存的系统事实与机制原始探测，
+包括 runtime、进程 capability/seccomp、LSM label、namespace sysctl、kernel feature、ptrace Yama scope，
+以及 PRoot 启动序列探测。二进制探测保留配置名、解析路径、可执行性、退出码、stdout、stderr、错误和耗时。
+`privilege` 给出 daemon 身份、Bed user 策略、setpriv 解析结果，以及 Bed 降权和清理所需与缺失的 capability；
+`preconditions_satisfied` 只表示这些静态前置条件满足。`environment.probe_status` 单独记录通过真实 Bed
+命令和 shell 验证完整组合的 `not_run|running|passed|failed` 状态、时间和错误。`store.transfers_configured`
+只表示 S3 transfer 配置存在，不推导远端连通或 restic 可执行。诊断接口不披露 bucket、endpoint 或凭据；
+读取接口不重新探测主机，也不访问远端存储。
+不存在的内核节点以 `value: null` 和 `read_error` 表达，与节点存在且值为 `0` 严格区分。
 
 所有 execution 进入同一个有界 registry。status 返回结构化终态，logs 返回带 stream 与单调
 sequence 的有界输出；游标落入已淘汰区间时显式返回 truncated。registry 只保留最近完成记录，

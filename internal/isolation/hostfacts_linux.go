@@ -26,13 +26,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Linux capability bit numbers the isolation mechanisms gate on.
-const (
-	capCHOWN  uint = 0
-	capSETGID uint = 6
-	capSETUID uint = 7
-)
-
 // osFacts fills the Linux-only host facts. Each probe degrades to a zero value
 // on error, which simply makes the dependent mechanism report unavailable — the
 // resolver then floors honestly.

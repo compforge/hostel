@@ -40,6 +40,10 @@ type Manager struct {
 	defaultBed      string
 	iso             isolation.Isolator
 	bedUser         privilege.BedUser
+	bedUsers        *privilege.BedUserAllocator
+	privilegeReport privilege.Report
+	diagnosticsMu   sync.RWMutex
+	environment     EnvironmentReport
 	shellPath       string
 	amenities       *amenity.Registry  // nil-safe; ReleaseAll on bed teardown
 	executions      *ExecutionRegistry // one-shot executions, daemon-global ids
@@ -75,6 +79,10 @@ type Manager struct {
 	// local and durable data have been deleted.
 	purges      map[string]*bedPurge
 	retirements map[string]*Bed // retains identity until destructive cleanup completes
+	// luggageCleanups fences a Bed identity while GC removes its cold local
+	// tree. The fence is per Bed, so slow filesystem cleanup does not block
+	// unrelated Beds.
+	luggageCleanups map[string]*luggageCleanup
 	// residentBeds tracks resident/evicting tenant beds for lock-free instance
 	// health reads. The compatibility default bed is deliberately excluded.
 	residentBeds atomic.Int64
@@ -140,17 +148,30 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		initializations: make(map[string]*bedInitialization),
 		purges:          make(map[string]*bedPurge),
 		retirements:     make(map[string]*Bed),
+		luggageCleanups: make(map[string]*luggageCleanup),
+		environment:     EnvironmentReport{ProbeStatus: EnvironmentProbeNotRun},
 	}
 	for _, option := range opts {
 		option(m)
 	}
+	var effectiveCaps uint64
+	if report, ok := iso.(isolation.Report); ok {
+		effectiveCaps = report.Facts().EffectiveCaps
+	}
+	m.bedUsers = isolation.NewBedUserAllocator(m.iso, m.bedUser)
+	if err := m.reserveBedUsers(); err != nil {
+		return nil, fmt.Errorf("bed: reserve existing users: %w", err)
+	}
+	m.privilegeReport = privilege.NewReport(isolation.DescribeBedUser(m.iso, m.bedUser), effectiveCaps)
 	return m, nil
 }
 
 // BedUserReport exposes the configured assignment policy for diagnostics.
 func (m *Manager) BedUserReport() privilege.BedUserReport {
-	return isolation.DescribeBedUser(m.iso, m.bedUser)
+	return m.privilegeReport.BedUser
 }
+
+func (m *Manager) PrivilegeReport() privilege.Report { return m.privilegeReport }
 
 // SetResourceTracker installs host resource accounting before any bed process
 // starts. cmd/hostel calls it once during assembly; keeping it out of
@@ -502,6 +523,7 @@ func (m *Manager) finishRetirement(b *Bed) (bool, error) {
 	if err := os.RemoveAll(b.Dir); err != nil {
 		return false, fmt.Errorf("bed: remove local copy %s: %w", b.ID, err)
 	}
+	m.bedUsers.Release(b.ID)
 	m.mu.Lock()
 	if m.retirements[b.ID] == b {
 		delete(m.retirements, b.ID)

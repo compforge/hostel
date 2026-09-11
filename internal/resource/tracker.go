@@ -31,9 +31,9 @@ type Usage struct {
 
 // Report describes whether exact per-bed accounting is active.
 type Report struct {
-	Backend   string
-	Available bool
-	Reason    string
+	Backend   string `json:"backend"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // Tracker prepares per-bed accounting groups and reads their cumulative usage.

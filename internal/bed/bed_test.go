@@ -30,6 +30,7 @@ import (
 	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/privilege"
 	"github.com/qiankunli/hostel/internal/store"
 )
 
@@ -1789,6 +1790,118 @@ func TestCollectLuggageWatermarks(t *testing.T) {
 	}
 	if got := m.ListLuggage(); len(got) != 1 || got[0].BedID != "conv-new" {
 		t.Fatalf("survivors = %+v, want conv-new", got)
+	}
+}
+
+func TestLuggageCleanupFencesBedUserReuse(t *testing.T) {
+	m := newTestManager(t)
+	allocator, err := privilege.NewPerBedUserAllocator(200000, 200000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.bedUsers = allocator
+	old, err := allocator.Acquire("same")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup := &luggageCleanup{done: make(chan struct{}), running: true}
+	m.mu.Lock()
+	m.luggageCleanups["same"] = cleanup
+	m.mu.Unlock()
+
+	reacquired := make(chan privilege.BedUser, 1)
+	waitErr := make(chan error, 1)
+	go func() {
+		if err := m.waitForLuggageCleanup(context.Background(), "same"); err != nil {
+			waitErr <- err
+			return
+		}
+		user, err := allocator.Acquire("same")
+		if err != nil {
+			waitErr <- err
+			return
+		}
+		reacquired <- user
+	}()
+	select {
+	case user := <-reacquired:
+		t.Fatalf("same-ID allocation escaped cleanup fence with uid %d", user.UID())
+	case err := <-waitErr:
+		t.Fatal(err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	m.finishLuggageCleanup("same", cleanup, nil)
+	select {
+	case err := <-waitErr:
+		t.Fatal(err)
+	case user := <-reacquired:
+		if user.UID() != old.UID() {
+			t.Fatalf("same bed uid = %d, want %d", user.UID(), old.UID())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("same-ID allocation did not resume after cleanup")
+	}
+	if _, err := allocator.Acquire("other"); err == nil {
+		t.Fatal("released UID was assigned to another Bed while same ID owns it")
+	}
+}
+
+func TestLuggageCleanupFailureKeepsFenceUntilRetry(t *testing.T) {
+	m := newTestManager(t)
+	allocator, err := privilege.NewPerBedUserAllocator(200000, 200000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.bedUsers = allocator
+	if _, err := allocator.Acquire("same"); err != nil {
+		t.Fatal(err)
+	}
+	cleanup := &luggageCleanup{done: make(chan struct{}), running: true}
+	m.mu.Lock()
+	m.luggageCleanups["same"] = cleanup
+	m.mu.Unlock()
+	m.finishLuggageCleanup("same", cleanup, errors.New("busy"))
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	if err := m.waitForLuggageCleanup(waitCtx, "same"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wait after failed cleanup = %v, want deadline", err)
+	}
+	cancel()
+	if _, err := allocator.Acquire("other"); err == nil {
+		t.Fatal("failed cleanup released its UID")
+	}
+
+	if err := os.MkdirAll(filepath.Join(m.root, gcTmpPrefix+"same", "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m.sweepGCLeftovers()
+	if err := m.waitForLuggageCleanup(context.Background(), "same"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := allocator.Acquire("other"); err != nil {
+		t.Fatalf("successful retry did not release UID: %v", err)
+	}
+}
+
+func TestGCLeftoverDoesNotReleaseNewerColdBedUser(t *testing.T) {
+	m := newTestManager(t)
+	allocator, err := privilege.NewPerBedUserAllocator(200000, 200000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.bedUsers = allocator
+	if _, err := allocator.Acquire("same"); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"same", gcTmpPrefix + "same"} {
+		if err := os.MkdirAll(filepath.Join(m.root, dir, "data"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.sweepGCLeftovers()
+	if _, err := allocator.Acquire("other"); err == nil {
+		t.Fatal("GC debris cleanup released UID still owned by the newer cold Bed")
 	}
 }
 

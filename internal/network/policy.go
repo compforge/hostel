@@ -211,9 +211,15 @@ func (m *Manager) NetworkPolicy(ctx context.Context, bedID string, mutation Poli
 		return PolicyStatus{}, ErrUnavailable
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	lease, ok := m.beds[bedID]
-	if !ok || !lease.active || m.closed {
+	lease := m.beds[bedID]
+	closed := m.closed
+	m.mu.Unlock()
+	if lease == nil || closed {
+		return PolicyStatus{}, ErrUnavailable
+	}
+	lease.mu.Lock()
+	defer lease.mu.Unlock()
+	if !lease.active || !lease.current() {
 		return PolicyStatus{}, ErrUnavailable
 	}
 	provider, ok := lease.endpoint.(interface{ Policy() *policyControl })
