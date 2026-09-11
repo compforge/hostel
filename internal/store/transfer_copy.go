@@ -17,7 +17,6 @@ package store
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path"
@@ -38,10 +37,10 @@ func copyTransfer(ctx context.Context, obj transferObjects, prefix string, fs *b
 	if req.Source.Type == "bed" {
 		info, err := fs.Stat(req.Source.Path)
 		if err != nil {
-			return err
+			return transferErrorAt(err, "scan", ".")
 		}
 		if info.Type != "directory" && strings.HasSuffix(req.Destination.Key, "/") {
-			return ErrTransferInvalid
+			return transferErrorAt(ErrTransferInvalid, "scan", ".")
 		}
 		err = fs.WalkTransferFiles(ctx, req.Source.Path, func(relative string, file *os.File, size int64) error {
 			key := path.Join(prefix, req.Destination.Key)
@@ -51,40 +50,45 @@ func copyTransfer(ctx context.Context, obj transferObjects, prefix string, fs *b
 			callCtx, cancel := context.WithTimeout(ctx, s3OpTimeout)
 			defer cancel()
 			if err := obj.upload(callCtx, key, file, size, req.Overwrite); err != nil {
-				return err
+				return transferErrorAt(err, "upload", relative)
 			}
 			completed(size)
 			return nil
 		})
-		if errors.Is(err, bedfs.ErrTransferFileType) {
-			return fmt.Errorf("%w: %v", ErrTransferInvalid, err)
+		relative := "."
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) && pathErr.Op == "scan" {
+			relative = pathErr.Path
 		}
-		return err
+		if errors.Is(err, bedfs.ErrTransferFileType) {
+			err = ErrTransferInvalid
+		}
+		return transferErrorAt(err, "scan", relative)
 	}
 	source := path.Join(prefix, req.Source.Key)
-	copyFile := func(key, destination string) error {
+	copyFile := func(key, destination, relative string) error {
 		callCtx, cancel := context.WithTimeout(ctx, s3OpTimeout)
 		defer cancel()
 		body, err := obj.get(callCtx, key)
 		if err != nil {
-			return err
+			return transferErrorAt(err, "download", relative)
 		}
 		bytes, err := fs.WriteTransferFile(callCtx, destination, body, req.Overwrite)
 		err = errors.Join(err, body.Close())
 		if errors.Is(err, os.ErrExist) {
-			return ErrTransferConflict
+			err = ErrTransferConflict
 		}
 		if err != nil {
-			return err
+			return transferErrorAt(err, "download", relative)
 		}
 		completed(bytes)
 		return nil
 	}
 	if !strings.HasSuffix(req.Source.Key, "/") {
-		return copyFile(source, req.Destination.Path)
+		return copyFile(source, req.Destination.Path, ".")
 	}
 	source += "/"
-	return obj.visit(ctx, source, func(key string) error {
+	err := obj.visit(ctx, source, func(key string) error {
 		if !strings.HasPrefix(key, source) {
 			return ErrTransferInvalid
 		}
@@ -98,6 +102,28 @@ func copyTransfer(ctx context.Context, obj transferObjects, prefix string, fs *b
 		if strings.HasSuffix(relative, "/") {
 			return nil
 		}
-		return copyFile(key, path.Join(req.Destination.Path, relative))
+		return copyFile(key, path.Join(req.Destination.Path, relative), relative)
 	})
+	return transferErrorAt(err, "list", ".")
+}
+
+// transferCopyError carries only the stage and path relative to the requested
+// directory. It preserves error identity for cancellation and API categories.
+type transferCopyError struct {
+	stage, relative string
+	err             error
+}
+
+func (e *transferCopyError) Error() string { return e.err.Error() }
+func (e *transferCopyError) Unwrap() error { return e.err }
+
+func transferErrorAt(err error, stage, relative string) error {
+	if err == nil {
+		return nil
+	}
+	var existing *transferCopyError
+	if errors.As(err, &existing) {
+		return err
+	}
+	return &transferCopyError{stage: stage, relative: relative, err: err}
 }

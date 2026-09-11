@@ -40,7 +40,13 @@ func (o *FS) WalkTransferFiles(ctx context.Context, source string, visit func(re
 	if err != nil {
 		return err
 	}
-	return fs.WalkDir(o.root.FS(), filepath.ToSlash(rel), func(name string, entry fs.DirEntry, walkErr error) error {
+	return fs.WalkDir(o.root.FS(), filepath.ToSlash(rel), func(name string, entry fs.DirEntry, walkErr error) (result error) {
+		defer func() {
+			if result != nil {
+				relative, _ := filepath.Rel(rel, name)
+				result = &os.PathError{Op: "scan", Path: filepath.ToSlash(relative), Err: result}
+			}
+		}()
 		if walkErr != nil {
 			return walkErr
 		}
@@ -103,8 +109,19 @@ func (o *FS) WriteTransferFile(ctx context.Context, destination string, body io.
 	}
 	defer o.root.Remove(temp)
 	written, copyErr := io.Copy(file, transferReader{ctx: ctx, reader: body})
+	mode := os.FileMode(0o644)
+	if copyErr == nil && overwrite {
+		// Preserve the existing regular file's access mode when replacing its
+		// contents; Lstat avoids inheriting permissions from a symlink target.
+		info, statErr := o.root.Lstat(rel)
+		if statErr == nil && info.Mode().IsRegular() {
+			mode = info.Mode().Perm()
+		} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			copyErr = statErr
+		}
+	}
 	if copyErr == nil {
-		copyErr = file.Chmod(0o644)
+		copyErr = file.Chmod(mode)
 	}
 	closeErr := file.Close()
 	if err := errors.Join(copyErr, closeErr, ctx.Err()); err != nil {

@@ -187,8 +187,7 @@ func (s *Manager) StartTransfer(ctx context.Context, bedID string, req TransferR
 			active++
 		}
 	}
-	// Reject admission rather than evict history inside its advertised retry window.
-	if active >= transferLimit || len(r.runs) >= transferHistoryLimit {
+	if active >= transferLimit {
 		return Transfer{}, ErrTransferCapacity
 	}
 	s.mu.Lock()
@@ -201,6 +200,8 @@ func (s *Manager) StartTransfer(ctx context.Context, bedID string, req TransferR
 	if err != nil {
 		return Transfer{}, err
 	}
+	// Only accepted new work evicts history; retries above retain their original result.
+	r.makeRoomLocked()
 	transferCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), req.Timeout)
 	run := &transferRun{request: req, status: Transfer{ID: req.ID, BedID: bedID, InstanceID: r.instanceID, State: TransferRunning, StartedAt: time.Now()}, cancel: cancel, done: make(chan struct{})}
 	r.runs[key] = run
@@ -230,7 +231,7 @@ func (s *Manager) StartTransfer(ctx context.Context, bedID string, req TransferR
 		run.cancel = nil // Do not retain the initiating request context with history.
 		close(run.done)
 		r.mu.Unlock()
-		tracing.InfoContext(transferCtx, "hostel transfer finished", "bed", bedID, "transfer_id", req.ID, "state", status.State, "files", status.Files, "bytes", status.Bytes, "error", status.Error)
+		logTransferFinished(transferCtx, status, err)
 	}()
 	return run.status, nil
 }
@@ -241,6 +242,36 @@ func (r *transferRegistry) pruneLocked() {
 			delete(r.runs, key)
 		}
 	}
+}
+
+// Running work is never evicted. Admission has already checked the active limit,
+// so a full registry always contains a completed record we can remove.
+func (r *transferRegistry) makeRoomLocked() {
+	for len(r.runs) >= transferHistoryLimit {
+		var oldestKey string
+		var oldest *time.Time
+		for key, run := range r.runs {
+			finished := run.status.FinishedAt
+			if finished != nil && (oldest == nil || finished.Before(*oldest)) {
+				oldestKey, oldest = key, finished
+			}
+		}
+		if oldest == nil {
+			return
+		}
+		delete(r.runs, oldestKey)
+	}
+}
+
+func logTransferFinished(ctx context.Context, status Transfer, err error) {
+	args := []any{"bed", status.BedID, "transfer_id", status.ID, "state", status.State, "files", status.Files, "bytes", status.Bytes, "error", status.Error}
+	var failure *transferCopyError
+	if errors.As(err, &failure) {
+		// Log only operation-relative paths and the public error category. Raw
+		// filesystem/SDK errors may contain carrier paths or signed URLs.
+		args = append(args, "stage", failure.stage, "relative_path", failure.relative)
+	}
+	tracing.InfoContext(ctx, "hostel transfer finished", args...)
 }
 
 // TransferStatus and CancelTransfer never create or reinitialize a Bed.

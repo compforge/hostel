@@ -108,3 +108,55 @@ func TestTransferWalkRejectsSymlinkAndPreservesRelativePaths(t *testing.T) {
 		t.Fatalf("canceled file published: %v", err)
 	}
 }
+
+func TestTransferOverwritePreservesPermissions(t *testing.T) {
+	for _, mode := range []os.FileMode{0o600, 0o755} {
+		t.Run(mode.String(), func(t *testing.T) {
+			home := t.TempDir()
+			fs, err := New(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer fs.Close()
+			const target = "/workspace/file"
+			if err := fs.Write(target, []byte("original"), int(mode)); err != nil {
+				t.Fatal(err)
+			}
+			for _, interrupted := range []bool{true, false} {
+				var body io.Reader = strings.NewReader("replacement")
+				if interrupted {
+					body = failingTransferReader{}
+				}
+				_, err := fs.WriteTransferFile(t.Context(), target, body, true)
+				if (err != nil) != interrupted {
+					t.Fatalf("interrupted=%v: %v", interrupted, err)
+				}
+				info, err := os.Stat(filepath.Join(home, "workspace/file"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if info.Mode().Perm() != mode {
+					t.Fatalf("mode=%o want=%o", info.Mode().Perm(), mode)
+				}
+				data, err := fs.Read(target)
+				want := "replacement"
+				if interrupted {
+					want = "original"
+				}
+				if err != nil || string(data) != want {
+					t.Fatalf("data=%q error=%v", data, err)
+				}
+			}
+			if _, err := fs.WriteTransferFile(t.Context(), "/workspace/new", strings.NewReader("new"), true); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(filepath.Join(home, "workspace/new"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0o644 {
+				t.Fatalf("new mode=%o", info.Mode().Perm())
+			}
+		})
+	}
+}

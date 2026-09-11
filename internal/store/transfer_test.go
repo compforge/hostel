@@ -15,10 +15,15 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -165,5 +170,105 @@ func TestStopCompletedTransfersDoesNotWaitOnCanceledContext(t *testing.T) {
 	}
 	if _, err := s.CancelTransfer("bed", "done", ""); err != nil {
 		t.Fatalf("cancel terminal: %v", err)
+	}
+}
+
+func TestTransferHistoryRollsWithoutBlockingAdmission(t *testing.T) {
+	s := NewManagerWithStores(Noop{})
+	s.remote = &s3obj{} // Empty directory copies perform no remote I/O.
+	fs, err := bedfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	if err := os.MkdirAll(filepath.Join(fs.Home(), "workspace/empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for i := 0; i < transferHistoryLimit-1; i++ {
+		finished := now.Add(-time.Hour + time.Duration(i)*time.Millisecond)
+		s.transfers.runs[fmt.Sprintf("bed\x00old-%d", i)] = &transferRun{status: Transfer{State: TransferSucceeded, FinishedAt: &finished}}
+	}
+	// This older running record must survive even as terminal history rolls.
+	s.transfers.runs["bed\x00active"] = &transferRun{status: Transfer{State: TransferRunning, StartedAt: now.Add(-2 * time.Hour)}}
+	acquired := 0
+	acquire := func() (*bedfs.FS, func(), error) { acquired++; return fs, func() {}, nil }
+	for i := 0; i < 3; i++ {
+		req := TransferRequest{ID: fmt.Sprintf("new-%d", i), Source: TransferEndpoint{Type: "bed", Path: "/workspace/empty"}, Destination: TransferEndpoint{Type: "s3", Key: "out/"}}
+		if _, err := s.StartTransfer(t.Context(), "bed", req, acquire); err != nil {
+			t.Fatal(err)
+		}
+		s.transfers.mu.Lock()
+		done := s.transfers.runs["bed\x00"+req.ID].done
+		s.transfers.mu.Unlock()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("transfer did not finish")
+		}
+		status, err := s.StartTransfer(t.Context(), "bed", req, acquire)
+		if err != nil || status.State != TransferSucceeded {
+			t.Fatalf("replay: %+v %v", status, err)
+		}
+	}
+	if acquired != 3 {
+		t.Fatalf("replays reacquired Bed: %d", acquired)
+	}
+	if len(s.transfers.runs) != transferHistoryLimit {
+		t.Fatalf("history size=%d", len(s.transfers.runs))
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := s.TransferStatus("bed", fmt.Sprintf("old-%d", i)); !errors.Is(err, ErrTransferNotFound) {
+			t.Fatalf("old record retained: %v", err)
+		}
+	}
+	for _, id := range []string{"active", "old-3", "new-0", "new-2"} {
+		if _, err := s.TransferStatus("bed", id); err != nil {
+			t.Fatalf("lost %s: %v", id, err)
+		}
+	}
+}
+
+func TestTransferFailureLogsStageAndRelativePath(t *testing.T) {
+	fs, err := bedfs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	if err := fs.Write("/workspace/source/nested/file", []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("file", filepath.Join(fs.Home(), "workspace/source/nested/link")); err != nil {
+		t.Fatal(err)
+	}
+	remote := &transferMemory{objects: map[string]string{"private-prefix/out/nested/file": "existing"}}
+	for _, tc := range []struct {
+		stage, relative string
+		overwrite       bool
+		want            error
+	}{
+		{"upload", "nested/file", false, ErrTransferConflict},
+		{"scan", "nested/link", true, ErrTransferInvalid},
+	} {
+		req := TransferRequest{Source: TransferEndpoint{Type: "bed", Path: "/workspace/source"}, Destination: TransferEndpoint{Type: "s3", Key: "out/"}, Overwrite: tc.overwrite}
+		err := copyTransfer(t.Context(), remote, "private-prefix", fs, req, func(int64) {})
+		if !errors.Is(err, tc.want) {
+			t.Fatalf("%s: %v", tc.stage, err)
+		}
+		var output bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+		logTransferFinished(t.Context(), Transfer{BedID: "bed", ID: "transfer", State: TransferFailed, Error: transferFailure(err)}, err)
+		slog.SetDefault(previous)
+		var entry map[string]any
+		if err := json.Unmarshal(output.Bytes(), &entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry["stage"] != tc.stage || entry["relative_path"] != tc.relative || entry["bed"] != "bed" || entry["transfer_id"] != "transfer" || entry["error"] != transferFailure(err) {
+			t.Fatalf("log: %s", output.String())
+		}
+		if strings.Contains(output.String(), fs.Home()) || strings.Contains(output.String(), "private-prefix") {
+			t.Fatalf("log exposed carrier location: %s", output.String())
+		}
 	}
 }
