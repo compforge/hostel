@@ -80,14 +80,11 @@ workspace backend 共同实现 BedFS 的进程视图。流程细节由 [lifecycl
   同 ID 的重新初始化不得复用残缺资源，也不得被上一轮清理回收。
 
 `isolation.Environment` 绑定一个 resident Bed 的文件视图、具体网络 allocation 和最终
-`BedUser`，命令和 shell 都通过它组装。普通文件房型采用实例配置的固定 BedUser：root
-daemon 默认使用 1000:1000，非 root daemon 默认沿用自身身份。UID 房型按 Bed 目录稳定派生
-专属的高位 UID/GID，并以同一个 BedUser 值驱动目录 ownership 和进程身份，不维护第二套
-执行路径。执行顺序为网络进入 → 身份切换与最终降权 → 文件边界和进程视图 → 用户程序：
-Network 先使用 daemon 权限完成 netns entry，UID 切换和 capability 丢弃交给同一个
-`setpriv` 操作，bwrap/Landlock/路径 helper 再以 BedUser 运行。Store、Network 和 Executor
-仍各自提供能力，Bed 协调其生命周期。共享 Chromium
-位于 Bed 进程树之外，不从某个 BedUser 派生运行身份。
+`BedUser`，命令和 shell 都通过它组装。Network 先使用 daemon 权限完成 netns entry，随后切换
+身份并最终降权，文件边界、路径 helper 和用户程序都在 Bed 身份下运行。BedUser 的选择、UID
+租约、capability 要求与回收契约由 [privilege.md](privilege.md) 统一定义。Store、Network 和
+Executor 仍各自提供能力，Bed 协调其生命周期。共享 Chromium 位于 Bed 进程树之外，不从某个
+BedUser 派生运行身份。
 
 实例选定能力后，以临时 Bed 走真实命令和常驻 shell 的子目录读写路径，并核对 file API
 可见同一产物，同时核对最终 UID/GID、实际 capability 集合与 `NoNewPrivs`；root daemon
@@ -138,16 +135,9 @@ bwrap 使用 user namespace 完成挂载准备，并绑定已有 `/proc`，以�
 切换身份；daemon 必须继续服务所有 Bed，不能对自身套用某个 Bed 的边界。两者都必须在
 用户代码开始前生效，已有描述符和公共路径的可达性不能仅靠路径名称推断。
 
-UID backend 的目录属主与进程身份保持一致，身份准备后刷新 BedFS 的属主记录，
-file API 新建文件及目录也交给该属主。
-当前 UID 由 Manager 在固定高位范围内分配：先按 Bed ID 选择稳定起点，冲突时探测空闲 UID，
-同一进程管理的 Bed 不会因散列碰撞共享身份；启动时从冷 Bed 数据目录的 owner 恢复预留，
-只有本地 Bed 目录删除成功后才释放租约。luggage GC 删除期间保留 Bed ID 栅栏，同 ID 初始化等待
-目录清理和 UID 释放共同完成；清理失败继续保留 UID 占用。该范围仍可能与宿主账号或 userns
-映射重叠，部署须预留。属主交接跳过多硬链接普通文件，
-以免把 Bed 外的 inode 改属主；部署应保留 `fs.protected_hardlinks=1`。具体规则靠
-`internal/isolation/uid_linux.go` 选择 per-Bed 用户，`internal/privilege` 与 BedFS
-共同承接进程 credentials 和文件属主操作。
+UID backend 以独立进程身份兑现 room 的数据访问边界，目录属主、进程身份和 UID 租约必须保持
+一致。具体的分配、重启恢复、失败清理和硬链接约束见 [privilege.md](privilege.md)；
+`internal/isolation/uid_linux.go` 只负责选择该文件机制，不拥有通用身份生命周期。
 
 ### 软件共享与敏感信息
 
@@ -191,7 +181,7 @@ capability 当成隔离成功。不同机制分别通过，还需要检验它们
 - 某个 API 明确不支持的请求应返回不支持，不能借“尽量”把参数忽略。
 
 调用方据实际能力决定接受边界还是改选 Carrier。Hostel 不自行获得额外部署权限，也不把
-缺席能力伪装成成功隔离。
+缺席能力伪装成成功隔离。权限前提与降权失败语义见 [privilege.md](privilege.md)。
 
 ## 四、能力披露与验证
 

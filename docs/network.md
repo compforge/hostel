@@ -21,10 +21,9 @@ netns、veth、路由、nft 表与 DNS 转发入口，执行真实的 namespace 
 
 Bed 初始化完成数据准备后获取具体 `Attachment`，保存到 resident Bed 的
 `isolation.Environment`，准备完成后才发布 Ready。命令和 shell 共用这个组合入口：
-先进入 netns，再准备文件视图，最后切换 UID（如需要）、清空 capability bounding /
-inheritable / ambient sets 并设置 `no_new_privs`，然后启动用户程序。Network Manager
-只负责网络进入，不自行决定文件边界前后的降权时机。实例在 HTTP 启动前还会实测选中的
-完整命令与 shell 组合；组合失败明确阻止启动。
+网络进入发生在最终降权之前；Network Manager 只负责进入所分配的 netns，完整的身份切换、
+文件视图与用户程序启动顺序由 [权限模型](privilege.md#特权操作顺序) 统一定义。
+实例在 HTTP 启动前还会实测选中的完整命令与 shell 组合；组合失败明确阻止启动。
 
 回收先停止 Bed 的命令和 shell、释放 amenity 与资源组，再删除网络。关闭失败的
 Attachment 保留清理 owner，但立即失去执行资格；同 ID Acquire 必须先清理残留才能
@@ -36,9 +35,9 @@ Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspac
 
 ## 实现约束与诊断
 
-- 当前 Linux backend 使用 iproute2 的 named netns，要求能完成 netns 创建/进入所需的
-  `SYS_ADMIN`、veth/路由/nft 所需的 `NET_ADMIN`，以及相应 mount/seccomp/LSM 操作。
-  单独 `NET_ADMIN` 不等于可用；当前 backend 不实现 userns 辅助创建路径。
+- 当前 Linux backend 使用 iproute2 的 named netns，要求 namespace 管理和网络管理能力，以及
+  相应 mount/seccomp/LSM 操作；完整权限矩阵见 [privilege.md](privilege.md)。单独
+  `NET_ADMIN` 不等于可用；当前 backend 不实现 userns 辅助创建路径。
 - 需要 carrier 已开启 IPv4 forwarding；Hostel 不修改全局转发 sysctl。官方镜像包含所需
   工具，自定义镜像缺工具会在诊断中显示具体缺项。
 - 从 `198.18.0.0/15` 选择与现有非默认路由不重叠的 `/30`，每 Bed 一对 veth。nft 规则

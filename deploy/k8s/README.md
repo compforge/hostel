@@ -11,7 +11,7 @@ three permission layers separate:
 | Layer | Requirement |
 | --- | --- |
 | sandbox-server ServiceAccount | RBAC permission to create Pods in the carrier namespace; a narrowly scoped PSA/admission exception when the selected Pod security setting is otherwise denied. |
-| Created Hostel container | When Hostel runs as root and Bed processes run as non-root, add the Bed identity capabilities reported by `/v1/diagnostics`: `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `KILL`, `SETGID`, `SETPCAP`, `SETUID`. Then request `appArmorProfile.type: Unconfined` for bubblewrap, or add `SYS_PTRACE` for PRoot. |
+| Created Hostel container | Apply the Bed identity and selected feature requirements defined in [`privilege.md`](../../docs/privilege.md), using `/v1/diagnostics` as the runtime verdict. |
 | Carrier node/runtime | Actually support the requested operation: user namespaces and mount policy for bubblewrap, or ptrace for PRoot. |
 
 The sandbox-server container itself does not need either setting. Its
@@ -253,25 +253,12 @@ for `proot` and `workspace_view={"mode":"proot","available":true}`. If suite
 is already selected, PRoot remains discovered but is not smoke-tested, so
 `attempted: false` is expected.
 
-## 文件隔离机制的部署条件
+## Apply the Hostel privilege profile
 
-Bed identity 是所有文件隔离机制之前的基础层：当 daemon 以 root 运行、Bed 以不同非 root UID 运行时，
-Hostel 需要 `CHOWN`、`DAC_OVERRIDE`、`FOWNER`、`KILL`、`SETGID`、`SETPCAP`、`SETUID`。
-常见容器默认 capability 集通常包含 `KILL` 和 `SETPCAP`，但 `drop: ["ALL"]` 会移除它们，必须显式加回。
-`/v1/diagnostics` 的 `privilege.requirements` 是代码使用的同一份权威清单。
-
-本节只描述文件隔离机制的部署条件；网络 netns 有独立的权限与组合要求，见
-[网络设计](../../docs/network.md) 和 [隔离总览](../../docs/isolation.md)。
-
-
-先区分两类权限：Hostel/Bedbox **运行时隔离依赖 Pod securityContext、节点内核、容器运行时和准入策略**；ServiceAccount 的 RBAC 只决定 sandbox-server 能否创建/管理 Pod，不能单独授权某个 AppArmor profile。
-
-| Level / 机制 | Hostel container 的要求 | 节点 / runtime 要求 | Pod Security Admission |
-|---|---|---|---|
-| `dorm` / direct | 除 Bed identity 基础权限外，无机制额外 capability、无需 privileged、无需 AppArmor 豁免 | 普通 Linux Pod 即可 | root daemon + 非 root Bed 不适配 Restricted；同 UID 运行时可另行评估 |
-| `room` / Landlock | 除 Bed identity 基础权限外，无机制额外 capability；可保持 `RuntimeDefault` AppArmor/seccomp，只要实际 smoke 通过 | Linux ≥5.13、内核编译并启用 Landlock LSM，seccomp 不得拦截所需 Landlock syscall | Landlock 本身可适配 Restricted；root daemon + 非 root Bed 的基础权限不适配 Restricted |
-| `room` / UID | 使用完整 Bed identity 基础权限：`CHOWN`、`DAC_OVERRIDE`、`FOWNER`、`KILL`、`SETGID`、`SETPCAP`、`SETUID` | seccomp 必须允许 setgroups/setgid/setuid/chown；保持 `fs.protected_hardlinks=1`，并核对 UID 段 | 可适配 Baseline；不适配 Restricted（Restricted 只允许加回 `NET_BIND_SERVICE`，且要求非 root） |
-| `suite` / bwrap | Bed identity 基础权限之外不加 `SYS_ADMIN`；AppArmor 必须为 `Unconfined`，或节点预装允许 bwrap userns/mount 的 `Localhost` profile；seccomp 也必须允许实际 smoke | bwrap 可执行；内核允许进程创建 user namespace，并允许其中的 mount namespace 操作 | `Unconfined` 不满足 Baseline/Restricted，需 namespace/runtimeClass/user 级豁免或自定义 admission；合适的 `Localhost` profile 可满足 AppArmor 这一项 |
+The authority for daemon/Bed identity, capability requirements and feature-specific runtime
+preconditions is [`docs/privilege.md`](../../docs/privilege.md). This section only translates that
+contract into Kubernetes configuration. ServiceAccount RBAC cannot grant a Linux capability or an
+AppArmor profile to the Hostel container.
 
 Suite 推荐的 container 片段（Kubernetes 1.30+ 原生 AppArmor 字段）：
 
@@ -305,6 +292,6 @@ securityContext:
     type: RuntimeDefault
 ```
 
-Hostel carrier 本身不调用 Kubernetes API，建议 `automountServiceAccountToken: false`。负责创建 carrier Pod 的 sandbox-server ServiceAccount 只需要目标 namespace 中 Pod 生命周期所需的普通 RBAC（如 create/get/list/watch/delete）；Pod 能否声明 `Unconfined` 或额外 capability 最终由 Pod Security Admission、ValidatingAdmissionPolicy/Gatekeeper/Kyverno 等准入层决定，而不是由 RBAC verb 决定。
+Hostel carrier 本身不调用 Kubernetes API，建议 `automountServiceAccountToken: false`。负责创建 carrier Pod 的 sandbox-server ServiceAccount 只需要目标 namespace 中 Pod 生命周期所需的普通 RBAC（如 create/get/list/watch/delete）；Pod 能否声明 `Unconfined` 或额外 capability 最终由 Pod Security Admission、ValidatingAdmissionPolicy/Gatekeeper/Kyverno 等准入层决定，而不是由 RBAC verb 决定。各房型、workspace view 和 network backend 的完整前提及缺失行为不在本部署示例中重复，统一见 [`privilege.md`](../../docs/privilege.md)。
 
 参考 Kubernetes 官方文档：[AppArmor](https://kubernetes.io/docs/tutorials/security/apparmor/)、[Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)、[Security Context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)。

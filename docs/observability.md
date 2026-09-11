@@ -136,13 +136,25 @@ purging / failed / resident / dormant luggage）的当前事实，不承载 time
 作用域、资源记账、容量准入和设施状态分别披露。`isolator_ok`、Bed Ready 或 amenity
 running 都不能推导出完整隔离，语义由 [isolation.md](isolation.md) 统一定义。
 
+实例诊断沿 domain owner 汇总，而不是在 HTTP 层重新解释组件状态：
+
+```text
+domain component → 提供自己的 Report
+Bed Manager      → 组合版本化 Diagnostics，不跨 domain 推导
+HTTP             → 序列化响应
+```
+
+Report 同时是组件内部事实到运维协议的边界。新增或修改诊断项时，由拥有该事实的组件定义语义和
+快照方式；聚合层只决定顶层结构与 schema 版本，web 层不读取组件内部状态。
+
 `GET /v1/diagnostics` 是版本化的运维诊断快照，当前 `schema_version` 为 `1`。顶层按所有者分为
 `environment`、`isolation`、`privilege`、`network`、`executor`、`store`、`resource` 与 `amenities`，HTTP 层只负责序列化，
 不跨组件推导状态。`isolation.system` 和 `isolation.probes` 保存启动时缓存的系统事实与机制原始探测，
 包括 runtime、进程 capability/seccomp、LSM label、namespace sysctl、kernel feature、ptrace Yama scope，
 以及 PRoot 启动序列探测。二进制探测保留配置名、解析路径、可执行性、退出码、stdout、stderr、错误和耗时。
 `privilege` 给出 daemon 身份、Bed user 策略、setpriv 解析结果，以及 Bed 降权和清理所需与缺失的 capability；
-`preconditions_satisfied` 只表示这些静态前置条件满足。`environment.probe_status` 单独记录通过真实 Bed
+`preconditions_satisfied` 只表示这些静态前置条件满足，字段的判断边界见
+[privilege.md](privilege.md)。`environment.probe_status` 单独记录通过真实 Bed
 命令和 shell 验证完整组合的 `not_run|running|passed|failed` 状态、时间和错误。`store.transfers_configured`
 只表示 S3 transfer 配置存在，不推导远端连通或 restic 可执行。诊断接口不披露 bucket、endpoint 或凭据；
 读取接口不重新探测主机，也不访问远端存储。
