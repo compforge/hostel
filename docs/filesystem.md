@@ -22,6 +22,20 @@ isolation 根据环境能力尽量兑现进程侧的访问屏障。Dorm 没有�
 与路径映射；Room 增加访问控制，Suite 使用私有 mount 视图。降级不能改变同一 Client path
 的主映射。Store 另行选择需要持久化的 BedFS 子树。
 
+### 文件操作入口
+
+调用方根据数据从哪里来、到哪里去选择 API；这些入口共享 BedFS 的路径归属与文件访问边界。
+
+| 场景 | 入口 | 数据流与生命周期 |
+|---|---|---|
+| 查询、修改 Bed 内文件 | `/files/info`、`/files/search`、`/files/mv`、`/files/replace`、`/files/permissions`、`DELETE /files`；目录走 `/directories` | 直接操作所选 Bed，结果随请求返回 |
+| 客户端上传、下载文件 | `POST /files/upload`、`GET /files/download` | 文件字节通过 HTTP 客户端与 Bed 之间传递 |
+| Bed 与 S3 直接复制文件 | `/v1/beds/:id/transfers` | Hostel 后台传输；客户端提交源、目标，查询进度或取消，详见 [文件传输](transfers.md) |
+
+`/files/*` 与 `/directories` 通过 `X-Hostel-Bed` 选择 Bed，Transfer 通过 URL 中的 Bed ID
+选择。两类入口都使用 Client path，不要求调用方知道 carrier 上的实际目录。
+自动持久化由 Store 的同步与生命周期策略触发，独立于这些显式文件操作，详见 [Store](store.md)。
+
 ## 二、三个路径空间
 
 | 空间 | 示例 | 所有者 |

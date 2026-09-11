@@ -1,10 +1,11 @@
-# 文件传输
+# 文件传输：Bed ↔ S3
 
 ## 概念与边界
 
 Transfer 是一次 Bed 内文件与 S3 对象之间的单向复制。Hostel 只认识源、目标和传输选项，
 不解释数据是否用于备份、恢复、素材导入或产物导出。`/files/*` 用于 HTTP 客户端与 Bed
 之间的文件操作；`/v1/beds/:id/transfers` 让 Hostel 直接搬运数据，客户端只控制操作。
+文件操作入口总览及共同路径规则见 [BedFS：文件操作入口](filesystem.md#文件操作入口)。
 
 Store Manager 同时拥有自动持久化和显式传输。两者共用 S3 client，但具有不同的生命周期：
 自动持久化由 `bed.store` 与 Bed 生命周期驱动；Transfer 由调用方触发，不读写 Bed generation、
