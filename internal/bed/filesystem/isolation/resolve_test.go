@@ -36,25 +36,14 @@ func (m fakeMech) View(fs *bedfs.FS) bedfs.View            { return bedfs.HostVi
 func (m fakeMech) WorkspaceMounted() bool                  { return false }
 func (m fakeMech) Wrap(*exec.Cmd, *bedfs.FS, string) error { return nil }
 
-// resolveMechs mirrors New's selection over an injected candidate set, so the
-// "effective = highest achievable ≤ requested" rule is tested without a real
-// kernel. Kept in lockstep with New.
-func resolveMechs(req Level, candidates []Isolator) (chosen Isolator, eff, ceiling Level) {
-	chosen = direct{}
-	eff, ceiling = Dorm, Dorm
-	for _, m := range candidates {
-		if !m.Available() {
-			continue
-		}
-		if m.Level() > ceiling {
-			ceiling = m.Level()
-		}
-		if m.Level() <= req && m.Level() > eff {
-			chosen = m
-			eff = m.Level()
-		}
+// resolveMechs adapts test candidates to the production selector.
+func resolveMechs(req Level, candidates []Isolator) (Isolator, Level, Level) {
+	boundaries := make([]Boundary, len(candidates))
+	for i, candidate := range candidates {
+		boundaries[i] = candidate
 	}
-	return
+	chosen, ceiling := selectBoundary(Config{Level: req.String()}, boundaries)
+	return chosen.(Isolator), chosen.Level(), ceiling
 }
 
 func TestResolveEffectiveLevel(t *testing.T) {

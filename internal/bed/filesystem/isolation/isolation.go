@@ -27,8 +27,10 @@ package isolation
 import (
 	"log"
 	"os/exec"
+	"slices"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	"github.com/qiankunli/hostel/internal/feature"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 )
@@ -174,7 +176,14 @@ func (r *resolved) Diagnostics() DiagnosticsReport {
 	for name, probe := range r.diagnostics.Probes {
 		probes[name] = probe
 	}
-	return DiagnosticsReport{Probes: probes}
+	features := make(map[string]feature.Status, len(r.diagnostics.Features))
+	for name, report := range r.diagnostics.Features {
+		report.Requirements.Capabilities = slices.Clone(report.Requirements.Capabilities)
+		report.Requirements.Tools = slices.Clone(report.Requirements.Tools)
+		report.Requirements.Conditions = slices.Clone(report.Requirements.Conditions)
+		features[name] = report
+	}
+	return DiagnosticsReport{Probes: probes, Features: features}
 }
 
 func (r *resolved) dedicatedBedUsers() bool {
@@ -205,83 +214,90 @@ func (r *resolved) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	return wrapRuntimeCommand(r.boundary, r.workspace, cmd, fs, cwd)
 }
 
-// New resolves the requested isolation level and workspace view against what
-// the environment can deliver. The returned runtime also implements Report and
-// is always usable — worst case it degrades to dorm/direct with carrier paths,
-// which is logged honestly.
+// New is the default-policy constructor for valid room levels. Call Resolve
+// when accepting external configuration or requiring individual features.
 //
 // +spec=`effective isolation is the strongest available level not exceeding the request, and requested/effective/ceiling remain observable.`
 // +case:id=isolation_level_boundaries,desc=`Run the same sibling-path probe under dorm, room, and suite requests`,expect=`dorm shares, room denies, suite hides, and unavailable levels degrade honestly`
 func New(facts hostfacts.Snapshot, requested, workspaceRoot string, opts ...Option) Isolator {
+	iso, err := Resolve(facts, Config{Level: requested}, workspaceRoot, opts...)
+	if err != nil {
+		panic(err) // Invalid programmer-supplied level; external config uses Resolve.
+	}
+	return iso
+}
+
+// Resolve selects features once. Off excludes probes; Required constrains selection
+// rather than merely asserting availability. Runtime failures never reopen selection.
+// +spec=`Feature policies restrict selection without inventing host facts; every Required feature must be selected before readiness.`
+func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string, opts ...Option) (Isolator, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
 	cfg := options{}
 	for _, option := range opts {
 		option(&cfg)
 	}
-	req := parseRequest(requested)
-
-	// The daemon supplies one host snapshot; each mechanism owns its execution probe.
-
-	// Candidate mechanisms, strongest first; within a level, preferred first
-	// (the selection below keeps the first available at each level). direct
-	// (dorm) is the always-available floor. Two mechanisms serve room: landlock
-	// (kernel LSM, no privilege — preferred) and uid (Unix DAC, needs setuid
-	// caps — the fallback where Landlock is absent, e.g. old/custom kernels).
-	ptraceProbe := hostfs.ProbePtrace()
-	bwrapCandidate, bwrapProbe := newBwrap(facts, workspaceRoot, cfg.projections)
-	landlockCandidate, landlockProbe := newLandlock(facts, workspaceRoot)
-	uidCandidate, uidProbe := newUID(facts, workspaceRoot)
-	probes := map[string]hostfacts.ProbeReport{
-		"bwrap":    bwrapProbe,
-		"landlock": landlockProbe,
-		"ptrace":   ptraceProbe,
-		"uid":      uidProbe,
+	req := parseRequest(config.Level)
+	policies := config.policies()
+	probes := map[string]hostfacts.ProbeReport{}
+	reports := map[string]feature.Status{}
+	ptraceProbe := hostfacts.ProbeReport{}
+	if config.PRoot.Effective() != feature.Off {
+		ptraceProbe = hostfs.ProbePtrace()
 	}
-	candidates := []Boundary{
-		bwrapCandidate,    // suite
-		landlockCandidate, // room — preferred
-		uidCandidate,      // room — fallback
-		direct{},          // dorm
-	}
-
-	ceiling := Dorm
-	var chosen Boundary = direct{}
-	eff := Dorm
-	for _, m := range candidates {
-		if !m.Available() {
+	probes["ptrace"] = ptraceProbe
+	candidates := []Boundary{}
+	for _, name := range []string{"bwrap", "landlock", "uid"} {
+		policy := policies[name]
+		if policy == feature.Off {
+			reports[name] = feature.Describe(policy, requirements(name), false, false, false, "")
+			probes[name] = hostfacts.ProbeReport{}
 			continue
 		}
-		if m.Level() > ceiling {
-			ceiling = m.Level()
+		var candidate Isolator
+		var probe hostfacts.ProbeReport
+		switch name {
+		case "bwrap":
+			candidate, probe = newBwrap(facts, workspaceRoot, cfg.projections)
+		case "landlock":
+			candidate, probe = newLandlock(facts, workspaceRoot)
+		case "uid":
+			candidate, probe = newUID(facts, workspaceRoot)
 		}
-		// Highest available level that does not exceed the request; among
-		// equal-level mechanisms the FIRST-listed wins (strict >), so the
-		// preferred realization of a level takes precedence over its fallback.
-		if m.Level() <= req && m.Level() > eff {
-			chosen = m
-			eff = m.Level()
+		probes[name] = probe
+		reports[name] = feature.Describe(policy, requirements(name), true, candidate.Available(), false, probe.Error)
+		candidates = append(candidates, candidate)
+	}
+	chosen, ceiling := selectBoundary(config, candidates)
+	for _, name := range []string{"bwrap", "landlock", "uid"} {
+		report := reports[name]
+		report.Selected = chosen.Name() == name
+		reports[name] = report
+		if err := report.CheckRequired("filesystem." + name); err != nil {
+			return nil, err
 		}
 	}
-
-	if eff < req {
-		log.Printf("isolation: requested %s but environment ceiling is %s — using %s (mechanism=%s)",
-			req, ceiling, eff, chosen.Name())
-	} else {
-		log.Printf("isolation: level=%s mechanism=%s (requested=%s, ceiling=%s)",
-			eff, chosen.Name(), req, ceiling)
+	workspace, view := resolveWorkspaceViewWithConfig(chosen, workspaceRoot, cfg.projections, ptraceProbe, probes, config)
+	for _, name := range []string{"proot", "pathshim"} {
+		probe := probes[name]
+		reason := probe.Error
+		if name == "proot" && view.Mode != "mount" && !ptraceProbe.Succeeded() && reason == "" {
+			reason = rawProbeFailure(ptraceProbe)
+		}
+		reports[name] = feature.Describe(policies[name], requirements(name), probe.Attempted || reason != "", probe.Succeeded(), view.Mode == name, reason)
+		if err := reports[name].CheckRequired("filesystem." + name); err != nil {
+			return nil, err
+		}
 	}
-	workspace, workspaceView := resolveWorkspaceView(chosen, workspaceRoot, cfg.projections, ptraceProbe, probes)
-	return &resolved{
-		boundary:      chosen,
-		workspace:     workspace,
-		req:           req,
-		eff:           eff,
-		ceil:          ceiling,
-		workspaceView: workspaceView,
-		diagnostics: DiagnosticsReport{
-			Probes: probes,
-		},
-		projections: append([]bedfs.PathProjection(nil), cfg.projections...),
+	log.Printf("isolation: requested=%s effective=%s observed_ceiling=%s feature=%s workspace_view=%s", req, chosen.Level(), ceiling, chosen.Name(), view.Mode)
+	for name, report := range reports {
+		if report.Policy != feature.Auto {
+			log.Printf("filesystem: feature=%s policy=%s selected=%t reason=%s", name, report.Policy, report.Selected, report.Reason)
+		}
 	}
+	return &resolved{boundary: chosen, workspace: workspace, req: req, eff: chosen.Level(), ceil: ceiling, workspaceView: view,
+		diagnostics: DiagnosticsReport{Probes: probes, Features: reports}, projections: append([]bedfs.PathProjection(nil), cfg.projections...)}, nil
 }
 
 // unavailable is a mechanism that probed as not usable on this host. It keeps
@@ -326,4 +342,36 @@ func commandCwd(fs *bedfs.FS, cwd string) string {
 		return fs.Workspace()
 	}
 	return cwd
+}
+
+// selectBoundary owns priority and mutual exclusion. Required means adoption,
+// even when an automatically preferred boundary also works.
+func selectBoundary(config Config, candidates []Boundary) (Boundary, Level) {
+	req := parseRequest(config.Level)
+	policies := config.policies()
+	ceiling := Dorm
+	var chosen Boundary = direct{}
+	var forced Boundary
+	for _, m := range candidates {
+		if policies[m.Name()] == feature.Off || !m.Available() {
+			continue
+		}
+		if m.Level() > ceiling {
+			ceiling = m.Level()
+		}
+		if policies[m.Name()] == feature.Required {
+			forced = m
+		}
+		// A required user-space view excludes bwrap's mutually exclusive mount view.
+		if m.Name() == "bwrap" && (config.PRoot == feature.Required || config.Pathshim == feature.Required) {
+			continue
+		}
+		if m.Level() <= req && m.Level() > chosen.Level() {
+			chosen = m
+		}
+	}
+	if forced != nil {
+		chosen = forced
+	}
+	return chosen, ceiling
 }

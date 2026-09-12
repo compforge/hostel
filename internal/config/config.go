@@ -25,6 +25,7 @@ import (
 
 	"github.com/qiankunli/go-stdx/osx"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	"github.com/qiankunli/hostel/internal/feature"
 )
 
 // Config is the hostel runtime configuration. hostel is a generic sandbox
@@ -40,6 +41,7 @@ const defaultBedPressureThresholdPercent = 80
 const defaultAutoPackFileThreshold = 100
 
 type Config struct {
+	Bed         BedConfig
 	ShowVersion bool
 	HealthCheck bool
 	// EnableTracing exports W3C-propagated HTTP and domain traces over OTLP.
@@ -52,24 +54,6 @@ type Config struct {
 	// WorkspaceRoot is the parent dir under which each bed gets its workspace
 	// (<root>/<bedID>). In a pod this is typically a bind of shared network FS.
 	WorkspaceRoot string
-	// IsolationMode is the requested data-isolation level (room type):
-	//   "dorm" | "room" | "suite" | "auto" (= environment ceiling, default).
-	// Levels resolve to mechanisms (direct/landlock/bwrap) in internal/isolation;
-	// effective = min(requested, ceiling), over-asks degrade honestly.
-	IsolationMode string
-	// ProjectedPaths gives additional BedFS subtrees stable Executor paths.
-	// Hostel applies /workspace -> /workspace through the same projection model
-	// as a built-in contract, so it is intentionally absent from this setting.
-	// Comma-separated BED_PATH=PROCESS_PATH pairs are parsed after Load so an
-	// invalid deployment fails startup instead of silently dropping a mapping.
-	ProjectedPaths string
-	// PersistedPaths is the comma-separated set of BedFS paths included in Store
-	// snapshots. Identity metadata is always durable and is not configured here.
-	PersistedPaths string
-	// DormReadFallbackRoot optionally exposes an exclusive dorm Executor's
-	// process root through read-only file APIs after a BedFS miss. Empty is the
-	// safe default for shared carriers; mutation APIs never use this root.
-	DormReadFallbackRoot string
 	// DefaultBed is the bed id used when a request omits one — lets simple
 	// single-tenant callers ignore the bed concept entirely.
 	DefaultBed string
@@ -87,40 +71,7 @@ type Config struct {
 	// BedPressureThresholdPercent is the shared high-watermark percentage for
 	// occupied/max-beds and pinned/max-pinned-beds. Zero disables the signal.
 	BedPressureThresholdPercent int
-	// AdmissionCPUThreshold / AdmissionMemoryThreshold reject an idle tenant
-	// bed's first operation when aggregate carrier usage reaches the configured
-	// percentage. Zero disables that resource dimension.
-	AdmissionCPUThreshold    int
-	AdmissionMemoryThreshold int
-	// Executor selects the Bed process realm: "auto" probes supervisor and falls
-	// back to local; explicit "supervisor" fails startup when unavailable.
-	Executor string
-	// BedUID / BedGID select the fixed Unix user for Bed processes. uid
-	// isolation replaces them with a stable dedicated identity for each Bed.
-	BedUID int
-	BedGID int
 
-	// Workspace synchronization (docs/store.md). Policy "auto" (default) is noop
-	// without a bucket; with a bucket it defaults new beds to pack and detects
-	// existing beds for backward compatibility.
-	// "cas" stores one object per content-addressed chunk; "pack" groups chunks
-	// into larger objects; "tar" uploads one full tar.gz. S3 credentials are
-	// Hostel-owned configuration and never enter a bed process.
-	StoreSync         string
-	ResticBinary      string
-	ResticPassword    string
-	S3Bucket          string
-	S3Prefix          string
-	S3Endpoint        string // S3-compatible endpoint (MinIO/TOS/Ceph); "" = AWS
-	S3PathStyle       bool   // force path-style bucket addressing (for example MinIO)
-	S3Region          string
-	S3AccessKeyID     string
-	S3SecretAccessKey string
-	S3SessionToken    string
-	// AutoPackFileThreshold switches an auto-routed bed from CAS to pack once
-	// its persistable non-directory entry count exceeds this value. Zero
-	// disables automatic switching.
-	AutoPackFileThreshold int
 	// PersistInterval is the periodic snapshot safety net (0 = only at
 	// lifecycle boundaries). Bounds how much work a crash can lose.
 	PersistInterval time.Duration
@@ -142,10 +93,12 @@ type Config struct {
 	ShellPath string
 }
 
-// Load builds Config from flags, with env fallbacks (HOSTEL_*).
-func Load(args []string) *Config {
+// Load resolves explicit options > CLI flags > HOSTEL_* environment > defaults.
+// Components receive this snapshot and never re-read the startup environment.
+func Load(args []string, explicit Options) (*Config, error) {
 	fs := flag.NewFlagSet("hostel", flag.ContinueOnError)
 	c := &Config{}
+	var persistedPaths string
 	bedUID, bedGID := os.Geteuid(), os.Getegid()
 	if bedUID == 0 {
 		bedUID, bedGID = 1000, 1000
@@ -159,33 +112,33 @@ func Load(args []string) *Config {
 	fs.StringVar(&c.OTLPTracesGRPCEndpoint, "otel-traces-grpc-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_GRPC_ENDPOINT", ""), "OTLP gRPC traces endpoint")
 	fs.StringVar(&c.OTLPTracesHTTPEndpoint, "otel-traces-http-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_HTTP_ENDPOINT", ""), "OTLP HTTP traces endpoint")
 	fs.StringVar(&c.WorkspaceRoot, "workspace-root", osx.EnvStr("HOSTEL_WORKSPACE_ROOT", "/workspace"), "parent dir for per-bed workspaces")
-	fs.StringVar(&c.IsolationMode, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "data-isolation level: dorm | room | suite | auto (auto=env ceiling)")
-	fs.StringVar(&c.ProjectedPaths, "projected-paths", osx.EnvStr("HOSTEL_PROJECTED_PATHS", ""), "comma-separated additional BedFS-to-process path projections; /workspace=/workspace is built in")
-	fs.StringVar(&c.PersistedPaths, "persisted-paths", osx.EnvStr("HOSTEL_PERSISTED_PATHS", "/workspace"), "comma-separated BedFS paths included in Store snapshots")
-	fs.StringVar(&c.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")
+	fs.StringVar(&c.Bed.Filesystem.Level, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "data-isolation level: dorm | room | suite | auto (auto=env ceiling)")
+	fs.StringVar(&c.Bed.Filesystem.ProjectedPaths, "projected-paths", osx.EnvStr("HOSTEL_PROJECTED_PATHS", ""), "comma-separated additional BedFS-to-process path projections; /workspace=/workspace is built in")
+	fs.StringVar(&persistedPaths, "persisted-paths", osx.EnvStr("HOSTEL_PERSISTED_PATHS", "/workspace"), "comma-separated BedFS paths included in Store snapshots")
+	fs.StringVar(&c.Bed.Filesystem.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")
 	fs.StringVar(&c.DefaultBed, "default-bed", osx.EnvStr("HOSTEL_DEFAULT_BED", "default"), "bed id used when a request omits one")
 	fs.StringVar(&c.ShellPath, "shell", osx.EnvStr("HOSTEL_SHELL", "/bin/bash"), "shell for bed sessions")
 	idle := fs.Duration("bed-idle-timeout", osx.EnvDuration("HOSTEL_BED_IDLE_TIMEOUT", 30*time.Minute), "reap a bed after this idle duration (0=never)")
 	fs.IntVar(&c.MaxBeds, "max-beds", osx.EnvInt("HOSTEL_MAX_BEDS", 0), "max concurrent beds, 0=unlimited (default bed exempt)")
 	fs.IntVar(&c.MaxPinnedBeds, "max-pinned-beds", osx.EnvInt("HOSTEL_MAX_PINNED_BEDS", 0), "pinned-bed pressure reference, 0=inherit max-beds (default bed exempt)")
 	fs.IntVar(&c.BedPressureThresholdPercent, "bed-pressure-threshold-percent", osx.EnvInt("HOSTEL_BED_PRESSURE_THRESHOLD_PERCENT", defaultBedPressureThresholdPercent), "occupied/pinned bed pressure threshold percent, 0=disabled")
-	fs.IntVar(&c.AdmissionCPUThreshold, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
-	fs.IntVar(&c.AdmissionMemoryThreshold, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
-	fs.StringVar(&c.Executor, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
-	fs.IntVar(&c.BedUID, "bed-uid", osx.EnvInt("HOSTEL_BED_UID", bedUID), "fixed non-root uid for Bed processes")
-	fs.IntVar(&c.BedGID, "bed-gid", osx.EnvInt("HOSTEL_BED_GID", bedGID), "fixed non-root gid for Bed processes")
-	fs.StringVar(&c.StoreSync, "sync", osx.EnvStr("HOSTEL_SYNC", "auto"), "workspace synchronization policy: auto (per-bed detection) | noop | cas | pack | tar | restic")
-	fs.StringVar(&c.ResticBinary, "restic-binary", osx.EnvStr("HOSTEL_RESTIC_BINARY", "restic"), "restic binary (requires 0.19.1)")
-	c.ResticPassword = osx.EnvStr("HOSTEL_RESTIC_PASSWORD", "")
-	fs.StringVar(&c.S3Bucket, "s3-bucket", osx.EnvStr("HOSTEL_S3_BUCKET", ""), "S3 bucket for bed snapshots")
-	fs.StringVar(&c.S3Prefix, "s3-prefix", osx.EnvStr("HOSTEL_S3_PREFIX", "hostel"), "key prefix for bed snapshots")
-	fs.StringVar(&c.S3Endpoint, "s3-endpoint", osx.EnvStr("HOSTEL_S3_ENDPOINT", ""), "S3-compatible endpoint (empty = AWS)")
-	fs.BoolVar(&c.S3PathStyle, "s3-path-style", osx.EnvBool("HOSTEL_S3_PATH_STYLE", false), "use path-style S3 bucket addressing (default virtual-hosted style)")
-	fs.StringVar(&c.S3Region, "s3-region", osx.EnvStr("HOSTEL_S3_REGION", ""), "S3 region")
-	c.S3AccessKeyID = osx.EnvStr("HOSTEL_S3_ACCESS_KEY_ID", "")
-	c.S3SecretAccessKey = osx.EnvStr("HOSTEL_S3_SECRET_ACCESS_KEY", "")
-	c.S3SessionToken = osx.EnvStr("HOSTEL_S3_SESSION_TOKEN", "")
-	fs.IntVar(&c.AutoPackFileThreshold, "sync-auto-pack-file-threshold", osx.EnvInt("HOSTEL_SYNC_AUTO_PACK_FILE_THRESHOLD", defaultAutoPackFileThreshold), "auto store: switch CAS to pack above this persistable file count, 0=disabled")
+	fs.IntVar(&c.Bed.Resource.Admission.CPUThresholdPercent, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
+	fs.IntVar(&c.Bed.Resource.Admission.MemoryThresholdPercent, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
+	fs.StringVar(&c.Bed.Executor.Backend, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
+	fs.IntVar(&c.Bed.Privilege.UID, "bed-uid", osx.EnvInt("HOSTEL_BED_UID", bedUID), "fixed non-root uid for Bed processes")
+	fs.IntVar(&c.Bed.Privilege.GID, "bed-gid", osx.EnvInt("HOSTEL_BED_GID", bedGID), "fixed non-root gid for Bed processes")
+	fs.StringVar(&c.Bed.Store.Sync, "sync", osx.EnvStr("HOSTEL_SYNC", "auto"), "workspace synchronization policy: auto (per-bed detection) | noop | cas | pack | tar | restic")
+	fs.StringVar(&c.Bed.Store.ResticBinary, "restic-binary", osx.EnvStr("HOSTEL_RESTIC_BINARY", "restic"), "restic binary (requires 0.19.1)")
+	c.Bed.Store.ResticPassword = osx.EnvStr("HOSTEL_RESTIC_PASSWORD", "")
+	fs.StringVar(&c.Bed.Store.Bucket, "s3-bucket", osx.EnvStr("HOSTEL_S3_BUCKET", ""), "S3 bucket for bed snapshots")
+	fs.StringVar(&c.Bed.Store.Prefix, "s3-prefix", osx.EnvStr("HOSTEL_S3_PREFIX", "hostel"), "key prefix for bed snapshots")
+	fs.StringVar(&c.Bed.Store.Endpoint, "s3-endpoint", osx.EnvStr("HOSTEL_S3_ENDPOINT", ""), "S3-compatible endpoint (empty = AWS)")
+	fs.BoolVar(&c.Bed.Store.PathStyle, "s3-path-style", osx.EnvBool("HOSTEL_S3_PATH_STYLE", false), "use path-style S3 bucket addressing (default virtual-hosted style)")
+	fs.StringVar(&c.Bed.Store.Region, "s3-region", osx.EnvStr("HOSTEL_S3_REGION", ""), "S3 region")
+	c.Bed.Store.AccessKeyID = osx.EnvStr("HOSTEL_S3_ACCESS_KEY_ID", "")
+	c.Bed.Store.SecretAccessKey = osx.EnvStr("HOSTEL_S3_SECRET_ACCESS_KEY", "")
+	c.Bed.Store.SessionToken = osx.EnvStr("HOSTEL_S3_SESSION_TOKEN", "")
+	fs.IntVar(&c.Bed.Store.AutoPackFileThreshold, "sync-auto-pack-file-threshold", osx.EnvInt("HOSTEL_SYNC_AUTO_PACK_FILE_THRESHOLD", defaultAutoPackFileThreshold), "auto store: switch CAS to pack above this persistable file count, 0=disabled")
 	persist := fs.Duration("persist-interval", osx.EnvDuration("HOSTEL_PERSIST_INTERVAL", 0), "periodic snapshot interval, 0=lifecycle boundaries only")
 	fs.Int64Var(&c.LuggageHighBytes, "luggage-high-bytes", osx.EnvInt64("HOSTEL_LUGGAGE_HIGH_BYTES", 0), "luggage disk high watermark in bytes, 0=no luggage GC")
 	fs.Int64Var(&c.LuggageLowBytes, "luggage-low-bytes", osx.EnvInt64("HOSTEL_LUGGAGE_LOW_BYTES", 0), "luggage GC target in bytes (default 80% of high)")
@@ -193,17 +146,46 @@ func Load(args []string) *Config {
 	fs.StringVar(&c.ChromiumCDPURL, "chromium-cdp-url", osx.EnvStr("HOSTEL_CHROMIUM_CDP_URL", ""), "attach to an existing Chromium CDP endpoint instead of launching")
 	idleStop := fs.Duration("chromium-idle-stop", osx.EnvDuration("HOSTEL_CHROMIUM_IDLE_STOP", 5*time.Minute), "stop a launched Chromium this long after its last tenant, 0=never")
 	fs.IntVar(&c.ChromiumDebugPort, "chromium-debug-port", osx.EnvInt("HOSTEL_CHROMIUM_DEBUG_PORT", 9222), "fixed remote-debugging-port for a launched Chromium so the per-bed CDP proxy has a stable upstream, 0=disable proxy")
-	// Ignore parse errors for unknown flags in tests; flag prints usage itself.
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if fs.NArg() != 0 {
+		return nil, fmt.Errorf("unexpected arguments: %v", fs.Args())
+	}
 	c.BedIdleTTL = *idle
 	c.PersistInterval = *persist
 	c.ChromiumIdleStop = *idleStop
+	explicit.apply(c)
+	var paths []string
+	if explicit.Bed.Store.PersistedPaths != nil {
+		paths = *explicit.Bed.Store.PersistedPaths
+	} else {
+		paths = strings.Split(persistedPaths, ",")
+	}
+	var err error
+	c.Bed.Store.PersistedPaths, err = normalizePersistedPaths(paths)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, p := range []*feature.Policy{&c.Bed.Filesystem.Bwrap, &c.Bed.Filesystem.Landlock, &c.Bed.Filesystem.UID, &c.Bed.Filesystem.PRoot, &c.Bed.Filesystem.Pathshim, &c.Bed.Network.NetNS, &c.Bed.Resource.Cgroup} {
+		*p = p.Effective()
+	}
 	// Low defaults to 80% of high so a bare --luggage-high-bytes works; a low
 	// above high would make GC loop uselessly, so clamp it.
 	if c.LuggageHighBytes > 0 && (c.LuggageLowBytes <= 0 || c.LuggageLowBytes > c.LuggageHighBytes) {
 		c.LuggageLowBytes = c.LuggageHighBytes * 8 / 10
 	}
-	return c
+	if err := c.Bed.Filesystem.Validate(); err != nil {
+		return nil, err
+	}
+	if err := c.Bed.Network.Validate(); err != nil {
+		return nil, fmt.Errorf("network: %w", err)
+	}
+	if err := c.Bed.Resource.Validate(); err != nil {
+		return nil, fmt.Errorf("resource: %w", err)
+	}
+	return c, nil
 }
 
 // ParseProjectedPaths converts the deployment string into Hostel's generic
@@ -236,7 +218,12 @@ func ParseProjectedPaths(raw string) ([]bedfs.PathProjection, error) {
 // ParsePersistedPaths validates the business-neutral BedFS durability allowlist.
 // Root would make every caller-created path durable again, so it is rejected.
 func ParsePersistedPaths(raw string) ([]string, error) {
-	parts := strings.Split(raw, ",")
+	return normalizePersistedPaths(strings.Split(raw, ","))
+}
+func normalizePersistedPaths(parts []string) ([]string, error) {
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("store persisted paths must contain at least one path")
+	}
 	paths := make([]string, 0, len(parts))
 	for _, part := range parts {
 		persistPath := path.Clean(strings.TrimSpace(part))

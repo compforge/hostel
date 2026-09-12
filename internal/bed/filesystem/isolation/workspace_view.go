@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	"github.com/qiankunli/hostel/internal/feature"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
@@ -81,10 +82,25 @@ func wrapRuntimeCommand(boundary Boundary, workspace workspaceBackend, cmd *exec
 // +spec=`Below suite, Hostel discovers pathshim and PRoot through PATH, probes every candidate whose prerequisites are satisfied, then resolves the process view in PRoot → pathshim → carrier order without changing the selected isolation level.`
 // +case:id=workspace_view_fallback,desc=`Vary helper discovery, ptrace, pathshim, and PRoot probe outcomes independently`,expect=`Diagnostics preserve discovery facts; PRoot wins when usable, pathshim is next, and carrier is the final fallback`
 func resolveWorkspaceView(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport) (workspaceBackend, WorkspaceViewReport) {
-	pathshimDiscovery := hostfacts.DiscoverExecutable(pathshimCommand)
-	prootDiscovery := hostfacts.DiscoverExecutable(prootCommand)
+	return resolveWorkspaceViewWithConfig(base, workspaceRoot, projections, ptraceProbe, probes, Config{})
+}
+func resolveWorkspaceViewWithConfig(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport, config Config) (workspaceBackend, WorkspaceViewReport) {
+	pathshimDiscovery := hostfacts.ProbeReport{Error: "disabled_by_config"}
+	prootDiscovery := hostfacts.ProbeReport{Error: "disabled_by_config"}
+	if config.Pathshim.Effective() != feature.Off {
+		pathshimDiscovery = hostfacts.DiscoverExecutable(pathshimCommand)
+	}
+	if config.PRoot.Effective() != feature.Off {
+		prootDiscovery = hostfacts.DiscoverExecutable(prootCommand)
+	}
 	probes["pathshim"] = pathshimDiscovery
 	probes["proot"] = prootDiscovery
+	if config.Pathshim.Effective() == feature.Off {
+		probes["pathshim"] = hostfacts.ProbeReport{}
+	}
+	if config.PRoot.Effective() == feature.Off {
+		probes["proot"] = hostfacts.ProbeReport{}
+	}
 
 	if mounter, ok := base.(workspaceMounter); ok && mounter.WorkspaceMounted() {
 		workspace := mountedWorkspace{view: mounter.View}
@@ -121,7 +137,7 @@ func resolveWorkspaceView(base Boundary, workspaceRoot string, projections []bed
 		}
 	}
 
-	if prootCandidate != nil {
+	if prootCandidate != nil && config.Pathshim != feature.Required {
 		log.Printf("isolation: workspace view selected mode=proot")
 		return prootCandidate, prootReport
 	}
