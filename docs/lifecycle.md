@@ -171,6 +171,29 @@ resident Bed 的网络资源不属于某一次 Executor：Executor 替换保留�
 在此期间不能接管目录。初始化回滚失败也遵循同一规则。具体 owner 见
 [network.md](network.md) 和 [amenity.md](amenity.md)。
 
+### 组件参与生命周期
+
+Bed Manager 通过 `Lifecycle` 驱动绑定到具体 allocation 的参与者；参与者持有该次分配的资源句柄，
+不能在释放时仅凭可复用的 Bed ID 查找资源。`Component[R]` 在此基础上增加 `Diagnostics() R`，
+报告由领域组件拥有，聚合层保留类型。组件可以嵌入 `Noop` 留空不参与的阶段。
+
+| Hook | Bed Manager 驱动时机与完成条件 |
+|---|---|
+| Recover | 启动准入前恢复已有本地身份；Privilege 根据目录 owner 保留 UID |
+| Prepare | 初始化时按 Store、BedFS/权限、网络、资源的依赖顺序准备；全部成功后才发布 Ready |
+| Stop | 已停止数据面准入后终止 Transfer 与 Executor，阻止继续使用资源 |
+| Release | Stop 成功后依次释放设施、资源组、网络、BedFS；不释放 UID |
+| Forget | 运行资源和本地 Bed / `.gc-*` 目录全部清理后，由 Privilege 释放身份 |
+
+Stop / Release 保存每个参与者的完成进度，失败重试从未完成的 hook 继续；已成功的 hook 不重复执行。
+Prepare 的失败保留已有冷数据；若资源回滚失败，原 allocation 进入待清理集合。
+Executor 的实际创建与替换仍按需进行，Store 的 Persist / Delete 仍是领域动作，不扩成通用 hook。
+
+本地删除由统一身份 owner 串行执行。删除前重命名为 `.gc-*`，使中断后的残留可以在重启时恢复为
+清理占位；同 ID 的创建等待正在执行的清理，已失败或待重试则返回不可用，不等待下一次定时任务。
+启动、定时任务和关闭都会尝试完成已认领的冷目录清理，不受 luggage 磁盘水位开关控制。
+同 ID 仍有完整冷目录时，只删除残留并保留 UID，之后允许重新初始化。
+
 ### 为什么终结权必须在上一层
 
 数据面组件自行了断会破坏调度语义：bed 自杀会让 manager 的 placement 出现幽灵，hostel 自杀会让 sandctl 失去对 carrier 的控制，且 noop store 下自杀就是数据丢失。各层只持有"自己能否被安全终结"的事实并推导成 status 暴露，终结动作留给上一层。

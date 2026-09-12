@@ -77,7 +77,7 @@ func New(ctx context.Context) *Manager {
 	return &Manager{report: report, backend: b, beds: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 
-func (m *Manager) Report() Report {
+func (m *Manager) Diagnostics() Report {
 	if m == nil {
 		return Report{Backend: "shared", Scope: "carrier", Reason: "network manager not configured"}
 	}

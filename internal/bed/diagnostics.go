@@ -17,6 +17,7 @@ package bed
 import (
 	"time"
 
+	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/network"
 	"github.com/qiankunli/hostel/internal/privilege"
@@ -27,12 +28,13 @@ import (
 // Diagnostics is the versioned operator view of one Hostel instance. Each
 // section has one owning component; the HTTP layer only serializes this value.
 type Diagnostics struct {
+	LocalCleanups []LocalCleanupReport `json:"local_cleanups"`
 	SchemaVersion int                  `json:"schema_version"`
 	Environment   EnvironmentReport    `json:"environment"`
 	Isolation     IsolationDiagnostics `json:"isolation"`
 	Privilege     privilege.Report     `json:"privilege"`
 	Network       network.Report       `json:"network"`
-	Executor      ExecutorDiagnostics  `json:"executor"`
+	Executor      executor.Report      `json:"executor"`
 	Store         store.Report         `json:"store"`
 	Resource      ResourceDiagnostics  `json:"resource"`
 	Amenities     map[string]string    `json:"amenities"`
@@ -66,10 +68,6 @@ type IsolationDiagnostics struct {
 	Probes        map[string]isolation.ProbeReport `json:"probes"`
 }
 
-type ExecutorDiagnostics struct {
-	Backend string `json:"backend"`
-}
-
 type ResourceDiagnostics struct {
 	Accounting resource.Report          `json:"accounting"`
 	Admission  resource.AdmissionReport `json:"admission"`
@@ -100,23 +98,20 @@ func (m *Manager) Diagnostics() Diagnostics {
 		view.System = details.System
 		view.Probes = details.Probes
 	}
-	amenities := make(map[string]string)
-	for _, item := range m.amenities.List() {
-		amenities[item.Name()] = item.State()
-	}
 	return Diagnostics{
+		LocalCleanups: m.localCleanupReports(),
 		SchemaVersion: 1,
 		Environment:   environment,
 		Isolation:     view,
-		Privilege:     m.privilegeReport,
-		Network:       m.network.Report(),
-		Executor:      ExecutorDiagnostics{Backend: m.executorFactory.Backend()},
-		Store:         m.store.Report(),
+		Privilege:     m.privileges.Diagnostics(),
+		Network:       m.network.Diagnostics(),
+		Executor:      executor.Describe(m.executorFactory),
+		Store:         m.store.Diagnostics(),
 		Resource: ResourceDiagnostics{
 			Accounting: m.resources.Report(),
 			Admission:  m.admission.Report(),
 		},
-		Amenities: amenities,
+		Amenities: m.amenities.Diagnostics(),
 	}
 }
 

@@ -74,13 +74,16 @@ internal/
 ├── config/            flags + HOSTEL_* env
 ├── tracing/           OpenTelemetry 进程初始化：OTLP exporter、W3C propagation 与日志 trace/span 关联
 ├── isolation/         执行环境组装：Boundary 解析 direct/landlock/uid/bwrap 隔离档，workspace backend 独立解析 mount/PRoot/pathshim/carrier 进程视图
-├── privilege/         Bed 操作系统权限：BedUser、文件 ownership、进程 credentials（UID/GID/groups/capabilities/no_new_privs）；见 docs/privilege.md
+├── lifecycle/         allocation-bound Lifecycle hooks 与类型化 Component 诊断契约；Bed Manager 显式编排
+├── privilege/         Manager 统一拥有 BedUser 分配、UID 租约与权限诊断；ownership / credentials 见 docs/privilege.md
 ├── executor/          Executor 抽象与 local / supervisor backend；进程 identity、幂等 Start、终态与整域 Shutdown
 ├── supervisor/        supervisor backend 的可重连 IPC 协议与 Linux supervisor/reaper 实现
 ├── bed/               ★核心。bed=隔离单元=对外一个 sandbox
 │   ├── bed.go         Bed：隔离单元本体 + Status（phase/readiness/activity + generation/retained_until）+ touch/accessor
 │   ├── manager.go     Manager：resident / 待清理 bed 集合、回收(Evict→revoke→persist→原子复核→teardown/Purge/CollectExpired)、持久化(persistBed/Checkpoint/PersistDirty)
 │   ├── resident.go    初始化后的 BedFS、文件边界、网络 allocation 和资源记账父组准备
+│   ├── component_lifecycle.go  按 resident allocation 编排 Stop/Release，并保存重试进度
+│   ├── local_identity.go  本地身份、重启恢复与删除占位；目录清理完成后驱动 Forget
 │   ├── environment.go  启动时通过真实 Bed 命令 / shell 验证选定执行环境
 │   ├── initialization.go InitializeBed singleflight、phase/readiness、后台 Stage-in、容量预占与 Ready 发布；Ensure 复用并等待
 │   ├── store_sync.go  将 Bed 同步诉求与安全遍历入口接到全局 Store Manager 的唯一同步循环

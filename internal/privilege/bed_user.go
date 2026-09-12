@@ -68,6 +68,7 @@ type Requirements struct {
 
 // Report is the cached, operator-facing privilege configuration and verdict.
 type Report struct {
+	ReservedUsers          int           `json:"reserved_users"`
 	PreconditionsSatisfied bool          `json:"preconditions_satisfied"`
 	Daemon                 Identity      `json:"daemon"`
 	BedUser                BedUserReport `json:"bed_user"`

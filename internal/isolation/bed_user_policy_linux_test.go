@@ -17,6 +17,7 @@
 package isolation
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"testing"
@@ -43,12 +44,15 @@ func TestUIDIsolationSelectsPerBedAllocator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allocator := NewBedUserAllocator(&resolved{boundary: &uidIso{}}, configured)
-	a, err := allocator.Acquire("a")
+	manager, err := privilege.NewManager(DescribeBedUser(&resolved{boundary: &uidIso{}}, configured), configured, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := allocator.Acquire("b")
+	a, err := acquireTestUser(manager, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := acquireTestUser(manager, "b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,4 +93,10 @@ func TestEnvironmentDropsUserOutsideFileBoundary(t *testing.T) {
 	if separator < 0 || separator+1 >= len(cmd.Args) || cmd.Args[separator+1] != "/file-helper" {
 		t.Fatalf("wrapped args = %q", cmd.Args)
 	}
+}
+
+func acquireTestUser(manager *privilege.Manager, id string) (privilege.BedUser, error) {
+	binding := manager.Bind(id, nil)
+	err := binding.Prepare(context.Background())
+	return binding.User(), err
 }

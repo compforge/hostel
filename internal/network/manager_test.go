@@ -63,7 +63,7 @@ func TestDisabledDoesNotChangeCommands(t *testing.T) {
 	if lease != nil {
 		t.Fatal("disabled manager returned an allocation")
 	}
-	if cmd.String() != before || m.Report().Enabled {
+	if cmd.String() != before || m.Diagnostics().Enabled {
 		t.Fatal("disabled manager changed execution")
 	}
 }
@@ -95,7 +95,7 @@ func TestAcquireSingleFlightAndNoSilentFallback(t *testing.T) {
 	if _, err := m.Acquire(context.Background(), "bed"); !errors.Is(err, b.err) {
 		t.Fatalf("runtime failure: %v", err)
 	}
-	if !m.Report().Enabled {
+	if !m.Diagnostics().Enabled {
 		t.Fatal("runtime failure silently disabled manager")
 	}
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bedfs"
 	"github.com/qiankunli/hostel/internal/executor"
 	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/lifecycle"
 	"github.com/qiankunli/hostel/internal/network"
 	"github.com/qiankunli/hostel/internal/store"
 )
@@ -48,6 +49,7 @@ func ShortID(id string) string {
 
 // Bed is one isolation unit.
 type Bed struct {
+	local         *localIdentity
 	initialPolicy *network.Policy // creation identity only; effective policy belongs to NetworkManager
 	ID            string
 	// Dir is the bed's dir: meta.json + data/ (docs/store.md §4).
@@ -57,10 +59,12 @@ type Bed struct {
 
 	// filesystem is the Bed's durable data realm. Executor replacement changes
 	// only its process View; bed_home and file identity stay here with the Bed.
-	filesystem    *bedfs.FS
-	environment   *isolation.Environment
-	cleanupMu     sync.Mutex // serializes teardown retries for this allocation
-	runtimeClosed bool
+	filesystem      *bedfs.FS
+	environment     *isolation.Environment
+	cleanupMu       sync.Mutex // serializes teardown retries for this allocation
+	runtimeClosed   bool
+	stopSequence    *lifecycle.Sequence
+	releaseSequence *lifecycle.Sequence
 	// Sync is resolved at creation and immutable while resident. Store
 	// instances and clients belong to the daemon-wide Store component.
 	Sync store.SyncKind

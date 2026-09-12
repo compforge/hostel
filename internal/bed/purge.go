@@ -18,8 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -110,6 +108,9 @@ func (m *Manager) finishPurge(id string, purge *bedPurge, err error) {
 }
 
 func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
+	m.mu.Lock()
+	local := m.localIdentityLocked(id)
+	m.mu.Unlock()
 	kind, err := m.bedSync(ctx, id, requested)
 	if err != nil {
 		return err
@@ -173,10 +174,9 @@ func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
 	if err := m.store.Delete(deleteCtx, kind, id); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(filepath.Join(m.root, id)); err != nil {
+	if err := m.cleanLocalIdentity(deleteCtx, local, true); err != nil {
 		return err
 	}
-	m.bedUsers.Release(id)
 	m.mu.Lock()
 	delete(m.retirements, id)
 	m.mu.Unlock()

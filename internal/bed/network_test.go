@@ -26,7 +26,7 @@ type initializationNetwork struct {
 	released     atomic.Int32
 }
 
-func (n *initializationNetwork) Report() network.Report {
+func (n *initializationNetwork) Diagnostics() network.Report {
 	return network.Report{Enabled: true}
 }
 
@@ -63,6 +63,7 @@ func TestInitializationRollsBackNetworkBeforeCompletion(t *testing.T) {
 			}
 			defer cancel()
 			initialization := &bedInitialization{
+				local:  m.localIdentityLocked("rollback"),
 				status: InitializationStatus{ID: "rollback", Sync: store.SyncNoop, BedStatus: BedStatus{Phase: PhaseInitializing}},
 				done:   make(chan struct{}), cancel: cancel,
 			}
@@ -189,7 +190,9 @@ type policyInitializationNetwork struct {
 	fail    bool
 }
 
-func (n *policyInitializationNetwork) Report() network.Report { return network.Report{Enabled: true} }
+func (n *policyInitializationNetwork) Diagnostics() network.Report {
+	return network.Report{Enabled: true}
+}
 func (n *policyInitializationNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	return nil, nil
 }

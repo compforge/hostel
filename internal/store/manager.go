@@ -30,7 +30,7 @@ type Report struct {
 	TransfersConfigured bool     `json:"transfers_configured"`
 }
 
-func (s *Manager) Report() Report {
+func (s *Manager) Diagnostics() Report {
 	if s == nil {
 		return Report{Backend: "none"}
 	}

@@ -12,7 +12,7 @@ capability、设置 `no_new_privs`。
 `privileged: true`、`hostPID` 或无边界的宿主权限替代具体要求。
 
 `internal/privilege` 是 Bed 操作系统身份的 owner：它负责 `BedUser`、目录 ownership、进程
-credentials 和 UID 租约。文件隔离策略由 `internal/isolation` 选择，网络与资源权限分别由对应
+credentials 和 UID 租约；`privilege.Manager` 统一拥有分配器与权限报告。文件隔离策略由 `internal/isolation` 选择，网络与资源权限分别由对应
 组件使用；权限层不决定房型、网络策略或资源配额。
 
 ## Daemon 与 BedUser
@@ -28,9 +28,11 @@ Hostel 只能使用该身份实际具备的管理能力。
 - **per_bed**：UID room 为每个 Bed 分配独立的高位 UID/GID。相同 Bed ID 从稳定槽位开始，冲突时
   在预留范围内寻找空闲值，不能因散列碰撞让两个 Bed 共享身份。
 
-per-Bed UID 是本地数据身份的一部分。Hostel 启动时根据已有 Bed 数据目录的 owner 恢复租约；只有
-本地目录成功删除后才释放 UID。luggage 或失败清理仍占用原 UID，同 ID 初始化等待清理完成，避免旧
-进程或旧目录与新 Bed 共享身份。UID 范围须由部署侧预留，避免与宿主账号或 user namespace 映射重叠。
+per-Bed UID 是本地数据身份的一部分。Bed Manager 识别本地目录及 `.gc-*` 清理占位，
+通过绑定到本地身份的 Recover / Prepare / Forget 驱动 Privilege Manager；权限组件不推测磁盘目录布局。
+启动先根据目录 owner 恢复租约，资源与本地目录全部清理后才调用 Forget。luggage 和失败清理继续
+保留 UID，具体重试与准入契约见 [lifecycle.md](lifecycle.md#组件参与生命周期)。
+UID 范围须由部署侧预留，避免与宿主账号或 user namespace 映射重叠。
 
 Bed 数据交接给新属主时跳过多硬链接的普通文件，防止改变 Bed 外共享 inode 的 owner；Linux 部署应
 保持 `fs.protected_hardlinks=1`。BedFS 在 daemon 通过 file API 新建文件后继续把 owner 交还给同一

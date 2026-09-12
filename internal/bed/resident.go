@@ -12,6 +12,7 @@ import (
 	"github.com/qiankunli/hostel/internal/isolation"
 	"github.com/qiankunli/hostel/internal/network"
 	"github.com/qiankunli/hostel/internal/privilege"
+	"github.com/qiankunli/hostel/internal/resource"
 	"github.com/qiankunli/hostel/internal/store"
 )
 
@@ -24,11 +25,6 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 	bedDir := filepath.Join(m.root, id)
 	trace := beginLifecycle(ctx, id, lifecycleInitialize)
 	defer func() {
-		if retErr != nil {
-			if _, err := os.Stat(bedDir); os.IsNotExist(err) {
-				m.bedUsers.Release(id)
-			}
-		}
 		record := trace.finish(lifecycleResult(retErr), retErr)
 		if resolved != nil {
 			resolved.recordLifecycle(record)
@@ -42,26 +38,22 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 	// silently starting empty.
 	kind := initialization.status.Sync
 	local, localPresent := loadMeta(bedDir)
-	var staged store.StageInResult
+	storage := m.store.Bind(kind, store.StageInRequest{
+		BedID: id, BedDir: bedDir, LocalPresent: localPresent, LocalGeneration: local.Generation,
+		OnStep: func(step store.StageInStep) { m.updateInitializationStageIn(initialization, step) },
+	})
 	if err := trace.stage("stage_in_bedfs", func() error {
-		var err error
-		staged, err = m.store.StageInBedFS(ctx, kind, store.StageInRequest{
-			BedID:           id,
-			BedDir:          bedDir,
-			LocalPresent:    localPresent,
-			LocalGeneration: local.Generation,
-			OnStep: func(step store.StageInStep) {
-				m.updateInitializationStageIn(initialization, step)
-			},
-		})
-		trace.source = string(staged.Source)
+		err := storage.Prepare(ctx)
+		trace.source = string(storage.Result().Source)
 		return err
 	}); err != nil {
 		return nil, fmt.Errorf("bed: stage in BedFS %s: %w", id, err)
 	}
+	staged := storage.Result()
 	wsDir := filepath.Join(dataDir, "workspace")
 	m.updateInitialization(initialization, "PreparingBedFS", "preparing BedFS and isolation")
 	var filesystem *bedfs.FS
+	var files *isolation.FilesBinding
 	var bedUser privilege.BedUser
 	if err := trace.stage("prepare_bedfs", func() error {
 		if err := os.MkdirAll(wsDir, 0o755); err != nil {
@@ -72,13 +64,13 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 		if err != nil {
 			return err
 		}
-		// Prepare after restore repopulates the tree and before the bed serves.
-		if p, ok := m.iso.(isolation.Preparer); ok {
-			if err := p.Prepare(filesystem); err != nil {
-				return err
-			}
+		files = isolation.BindFiles(m.iso, filesystem)
+		if err := files.Prepare(ctx); err != nil {
+			return err
 		}
-		bedUser, err = m.bedUsers.Acquire(id)
+
+		err = initialization.local.privilege.Prepare(ctx)
+		bedUser = initialization.local.privilege.User()
 		if err != nil {
 			return err
 		}
@@ -123,7 +115,8 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 			retainUntil = now.Add(m.bedIdleTTL)
 		}
 		b = &Bed{
-			ID: id, Dir: bedDir,
+			local: initialization.local,
+			ID:    id, Dir: bedDir,
 			CreatedAt: meta.CreatedAt, lastActiveAt: now, retainUntil: retainUntil,
 			generation: meta.Generation, persistedAt: persistedAt, usage: usage,
 			snapshotGeneration: meta.SnapshotGeneration,
@@ -148,33 +141,27 @@ func (m *Manager) initializeResidentBed(ctx context.Context, initialization *bed
 		_ = filesystem.Close()
 		return nil, fmt.Errorf("bed: write meta %s: %w", id, err)
 	}
-	var attachment network.Attachment
-	if m.network.Report().Enabled {
+	net := network.Bind(m.network, id)
+	resources := resource.Bind(m.resources, id)
+	m.bindRuntimeLifecycle(b, storage, files, net, resources)
+	// Bind before acquisition so any partially prepared resident keeps a
+	// complete cleanup owner, including a resource preparation that fails.
+	if m.network.Diagnostics().Enabled {
 		m.updateInitialization(initialization, "PreparingNetwork", "preparing Bed network")
-		if err := trace.stage("prepare_network", func() error {
-			var err error
-			attachment, err = m.network.Acquire(ctx, id)
-			return err
-		}); err != nil {
-			_ = filesystem.Close()
+		if err := trace.stage("prepare_network", func() error { return net.Prepare(ctx) }); err != nil {
+			m.mu.Lock()
+			m.retirements[id] = b
+			m.mu.Unlock()
 			return nil, err
 		}
 	}
-
-	environment := isolation.Bind(m.iso, filesystem, attachment, bedUser)
-	b.environment = environment
-	// Prepare the accounting parent with the Bed; Executor children are lazy.
+	b.environment = isolation.Bind(m.iso, filesystem, net.Attachment(), bedUser)
 	m.updateInitialization(initialization, "PreparingResources", "preparing Bed accounting group")
-	group, err := m.resources.OpenGroup(id)
-	if err == nil && group != nil {
-		err = group.Close()
-	}
-	if err != nil {
+	if err := resources.Prepare(ctx); err != nil {
 		m.mu.Lock()
 		m.retirements[id] = b
 		m.mu.Unlock()
 		return nil, fmt.Errorf("bed: prepare resources: %w", err)
 	}
-
 	return b, nil
 }

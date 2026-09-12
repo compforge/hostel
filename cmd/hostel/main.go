@@ -234,6 +234,10 @@ func main() {
 		log.Fatalf("hostel: invalid executor backend %q", cfg.Executor)
 	}
 
+	if err := mgr.RetryLocalCleanups(context.Background()); err != nil {
+		log.Printf("hostel: startup local cleanup pending: %v", err)
+	}
+
 	// Individual backend probes cannot prove that privilege ordering composes.
 	probeCtx, cancelEnvironmentProbe := context.WithTimeout(context.Background(), 30*time.Second)
 	environmentErr := mgr.ProbeEnvironment(probeCtx)
@@ -246,7 +250,7 @@ func main() {
 	}
 	userReport := mgr.BedUserReport()
 	log.Printf("hostel: execution environment verified (file=%s network=%s executor=%s bed_user_strategy=%s bed_uid=%d bed_gid=%d bed_uid_min=%d bed_uid_max=%d)",
-		iso.Name(), networks.Report().Backend, mgr.ExecutorBackend(), userReport.Strategy,
+		iso.Name(), networks.Diagnostics().Backend, mgr.ExecutorBackend(), userReport.Strategy,
 		userReport.UID, userReport.GID, userReport.UIDMin, userReport.UIDMax)
 
 	// Carrier pressure gates tenant work, not the startup capability probe.
@@ -273,24 +277,22 @@ func main() {
 		}()
 	}
 
-	// Luggage GC bounds orphaned Bed directories left by an unclean shutdown or
-	// older version. Normal eviction removes its local directory immediately.
-	if cfg.LuggageHighBytes > 0 {
-		go func() {
-			t := time.NewTicker(time.Minute)
-			defer t.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					if reaped := mgr.CollectLuggage(ctx); len(reaped) > 0 {
-						log.Printf("hostel: reaped luggage: %v", reaped)
-					}
+	// Retry claimed local cleanups even when the luggage watermark is disabled.
+	// Configured watermarks additionally bound intact cold Bed directories.
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if reaped := mgr.CollectLuggage(ctx); len(reaped) > 0 {
+					log.Printf("hostel: reaped luggage: %v", reaped)
 				}
 			}
-		}()
-	}
+		}
+	}()
 
 	// Store synchronization owns lifecycle requests, periodic cadence and
 	// retry/backoff. A zero interval disables only the periodic safety net.

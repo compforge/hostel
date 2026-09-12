@@ -16,12 +16,9 @@ package bed
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/qiankunli/go-stdx/filepathx"
@@ -38,35 +35,6 @@ import (
 // are swept on the next tick. It can never collide with a bed id (validBedID
 // rejects a leading dot).
 const gcTmpPrefix = ".gc-"
-
-type luggageCleanup struct {
-	done    chan struct{}
-	running bool
-}
-
-// reserveBedUsers maps every on-disk tree back to its Bed identity before new
-// work is admitted. The Bed manager owns workspace naming, including .gc-*;
-// the privilege component only owns UID reservations.
-func (m *Manager) reserveBedUsers() error {
-	entries, err := os.ReadDir(m.root)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		id := strings.TrimPrefix(entry.Name(), gcTmpPrefix)
-		if validBedID(id) != nil {
-			continue
-		}
-		dataDir := filepath.Join(m.root, entry.Name(), "data")
-		if err := m.bedUsers.ReserveOwnedDirectory(id, dataDir); err != nil {
-			return fmt.Errorf("reserve bed %s user: %w", id, err)
-		}
-	}
-	return nil
-}
 
 // LuggageEntry describes one cold local copy for GC and inventory reporting.
 type LuggageEntry struct {
@@ -104,6 +72,11 @@ func (m *Manager) ListLuggage() []LuggageEntry {
 	}
 	for id := range m.retirements {
 		active[id] = true
+	}
+	for id, local := range m.localIdentities {
+		if local.cleanup != nil {
+			active[id] = true
+		}
 	}
 	for id := range m.purges {
 		active[id] = true
@@ -160,10 +133,10 @@ func (m *Manager) LuggageLimits() (high, low int64) {
 // recency): stale-generation copies first — the snapshot is newer, so they
 // are pure garbage — then least recently used.
 func (m *Manager) CollectLuggage(ctx context.Context) []string {
+	_ = m.RetryLocalCleanups(ctx)
 	if m.luggageHigh <= 0 {
 		return nil
 	}
-	m.sweepGCLeftovers()
 	luggage := m.ListLuggage()
 	var total int64
 	for _, l := range luggage {
@@ -198,130 +171,22 @@ func (m *Manager) CollectLuggage(ctx context.Context) []string {
 	return reaped
 }
 
-// removeLuggage deletes one cold copy. Its per-ID fence remains until both the
-// directory and UID reservation are gone, so same-ID initialization cannot
-// race a previous local identity's cleanup.
-// +spec=`A Bed UID remains reserved until its local tree has been deleted; same-ID initialization waits for luggage cleanup.`
+// removeLuggage claims a cold identity; all deletion and UID release use the
+// same local-identity cleanup path as Purge and retirement.
 func (m *Manager) removeLuggage(id string) bool {
-	dir := filepath.Join(m.root, id)
-	tmp := filepath.Join(m.root, gcTmpPrefix+id)
 	m.mu.Lock()
-	if _, ok := m.beds[id]; ok {
+	if m.bedIdentityInUseLocked(id) {
 		m.mu.Unlock()
 		return false
 	}
-	if _, ok := m.initializations[id]; ok {
+	local := m.localIdentityLocked(id)
+	if local.cleanup != nil {
 		m.mu.Unlock()
 		return false
 	}
-	if m.retirements[id] != nil {
-		m.mu.Unlock()
-		return false
-	}
-	if _, ok := m.purges[id]; ok {
-		m.mu.Unlock()
-		return false
-	}
-	if m.luggageCleanups[id] != nil {
-		m.mu.Unlock()
-		return false
-	}
-	cleanup := &luggageCleanup{done: make(chan struct{}), running: true}
-	m.luggageCleanups[id] = cleanup
-	if err := os.Rename(dir, tmp); err != nil {
-		delete(m.luggageCleanups, id)
-		close(cleanup.done)
-		m.mu.Unlock()
-		return false
-	}
+	local.cleanup = &localCleanup{removeRoot: true}
 	m.mu.Unlock()
-	if err := os.RemoveAll(tmp); err != nil {
-		m.finishLuggageCleanup(id, cleanup, err)
-		return false
-	}
-	m.finishLuggageCleanup(id, cleanup, nil)
-	return true
-}
-
-// sweepGCLeftovers removes rename-then-crash debris from earlier GC runs.
-func (m *Manager) sweepGCLeftovers() {
-	entries, err := os.ReadDir(m.root)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), gcTmpPrefix) {
-			continue
-		}
-		id := strings.TrimPrefix(e.Name(), gcTmpPrefix)
-		if validBedID(id) != nil {
-			continue
-		}
-		m.mu.Lock()
-		if m.bedIdentityInUseLocked(id) {
-			m.mu.Unlock()
-			continue
-		}
-		cleanup := m.luggageCleanups[id]
-		if cleanup != nil {
-			if cleanup.running {
-				m.mu.Unlock()
-				continue
-			}
-			cleanup.running = true
-		} else {
-			cleanup = &luggageCleanup{done: make(chan struct{}), running: true}
-			m.luggageCleanups[id] = cleanup
-		}
-		m.mu.Unlock()
-		err := os.RemoveAll(filepath.Join(m.root, e.Name()))
-		m.finishLuggageCleanup(id, cleanup, err)
-	}
-}
-
-func (m *Manager) waitForLuggageCleanup(ctx context.Context, id string) error {
-	for {
-		m.mu.Lock()
-		cleanup := m.luggageCleanups[id]
-		m.mu.Unlock()
-		if cleanup == nil {
-			return nil
-		}
-		select {
-		case <-cleanup.done:
-		case <-ctx.Done():
-			return fmt.Errorf("bed: wait for luggage cleanup %s: %w", id, ctx.Err())
-		}
-	}
-}
-
-func (m *Manager) bedIdentityInUseLocked(id string) bool {
-	return m.beds[id] != nil || m.initializations[id] != nil || m.retirements[id] != nil || m.purges[id] != nil
-}
-
-func (m *Manager) finishLuggageCleanup(id string, cleanup *luggageCleanup, err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.luggageCleanups[id] != cleanup {
-		return
-	}
-	if err == nil {
-		// A crash-recovery .gc-* tree can coexist with a newer cold tree for the
-		// same Bed. Only release the UID when no local identity remains.
-		if _, statErr := os.Stat(filepath.Join(m.root, id)); os.IsNotExist(statErr) {
-			m.bedUsers.Release(id)
-		} else if statErr != nil {
-			log.Printf("hostel luggage owner check failed: bed=%s err=%v", id, statErr)
-		}
-	} else {
-		// Keep the fence and UID reservation. The next luggage sweep retries the
-		// same claimed tree; waiters can time out but cannot reuse the identity.
-		cleanup.running = false
-		log.Printf("hostel luggage cleanup failed: bed=%s err=%v", id, err)
-		return
-	}
-	delete(m.luggageCleanups, id)
-	close(cleanup.done)
+	return m.cleanLocalIdentity(context.Background(), local, true) == nil
 }
 
 // InventoryBed is one row of the scheduler-facing inventory: every bed this

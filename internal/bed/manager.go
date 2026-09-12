@@ -40,8 +40,7 @@ type Manager struct {
 	defaultBed      string
 	iso             isolation.Isolator
 	bedUser         privilege.BedUser
-	bedUsers        *privilege.BedUserAllocator
-	privilegeReport privilege.Report
+	privileges      *privilege.Manager
 	diagnosticsMu   sync.RWMutex
 	environment     EnvironmentReport
 	shellPath       string
@@ -79,10 +78,10 @@ type Manager struct {
 	// local and durable data have been deleted.
 	purges      map[string]*bedPurge
 	retirements map[string]*Bed // retains identity until destructive cleanup completes
-	// luggageCleanups fences a Bed identity while GC removes its cold local
-	// tree. The fence is per Bed, so slow filesystem cleanup does not block
-	// unrelated Beds.
-	luggageCleanups map[string]*luggageCleanup
+	// localIdentities covers resident, cold and pending-deletion identities.
+	localIdentities map[string]*localIdentity
+	// Single filesystem deletion boundary, replaceable by fault-injection tests.
+	removeLocalTree func(string) error
 	// residentBeds tracks resident/evicting tenant beds for lock-free instance
 	// health reads. The compatibility default bed is deliberately excluded.
 	residentBeds atomic.Int64
@@ -148,7 +147,8 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		initializations: make(map[string]*bedInitialization),
 		purges:          make(map[string]*bedPurge),
 		retirements:     make(map[string]*Bed),
-		luggageCleanups: make(map[string]*luggageCleanup),
+		localIdentities: make(map[string]*localIdentity),
+		removeLocalTree: os.RemoveAll,
 		environment:     EnvironmentReport{ProbeStatus: EnvironmentProbeNotRun},
 	}
 	for _, option := range opts {
@@ -158,20 +158,23 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 	if report, ok := iso.(isolation.Report); ok {
 		effectiveCaps = report.Facts().EffectiveCaps
 	}
-	m.bedUsers = isolation.NewBedUserAllocator(m.iso, m.bedUser)
-	if err := m.reserveBedUsers(); err != nil {
+	var err error
+	m.privileges, err = privilege.NewManager(isolation.DescribeBedUser(m.iso, m.bedUser), m.bedUser, effectiveCaps)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.recoverLocalIdentities(); err != nil {
 		return nil, fmt.Errorf("bed: reserve existing users: %w", err)
 	}
-	m.privilegeReport = privilege.NewReport(isolation.DescribeBedUser(m.iso, m.bedUser), effectiveCaps)
 	return m, nil
 }
 
 // BedUserReport exposes the configured assignment policy for diagnostics.
 func (m *Manager) BedUserReport() privilege.BedUserReport {
-	return m.privilegeReport.BedUser
+	return m.privileges.Diagnostics().BedUser
 }
 
-func (m *Manager) PrivilegeReport() privilege.Report { return m.privilegeReport }
+func (m *Manager) PrivilegeReport() privilege.Report { return m.privileges.Diagnostics() }
 
 // SetResourceTracker installs host resource accounting before any bed process
 // starts. cmd/hostel calls it once during assembly; keeping it out of
@@ -429,7 +432,7 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 	retiring := m.retirements[id]
 	m.mu.Unlock()
 	if retiring != nil {
-		return m.finishRetirement(retiring)
+		return m.finishRetirement(ctx, retiring)
 	}
 	if !ok {
 		canceled, err := m.cancelInitialization(ctx, id)
@@ -502,13 +505,13 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 	}
 	b.mu.Unlock()
 	m.mu.Unlock()
-	return m.finishRetirement(b)
+	return m.finishRetirement(ctx, b)
 }
 
 // finishRetirement releases the identity only after its resources and directory
 // are gone. A failed attempt stays observable and can be retried with Evict.
 // +spec=`Same-ID initialization cannot overlap destructive cleanup from an earlier resident Bed.`
-func (m *Manager) finishRetirement(b *Bed) (bool, error) {
+func (m *Manager) finishRetirement(ctx context.Context, b *Bed) (bool, error) {
 	b.cleanupMu.Lock()
 	defer b.cleanupMu.Unlock()
 	m.mu.Lock()
@@ -520,52 +523,15 @@ func (m *Manager) finishRetirement(b *Bed) (bool, error) {
 	if err := m.teardown(b); err != nil {
 		return false, err
 	}
-	if err := os.RemoveAll(b.Dir); err != nil {
-		return false, fmt.Errorf("bed: remove local copy %s: %w", b.ID, err)
+	if err := m.cleanLocalIdentity(ctx, b.local, true); err != nil {
+		return false, err
 	}
-	m.bedUsers.Release(b.ID)
 	m.mu.Lock()
 	if m.retirements[b.ID] == b {
 		delete(m.retirements, b.ID)
 	}
 	m.mu.Unlock()
 	return true, nil
-}
-
-// teardown is retryable. Do not destroy files or networking while a process
-// domain may still be using them. Caller serializes retries with cleanupMu.
-func (m *Manager) teardown(b *Bed) error {
-	if b.runtimeClosed {
-		return nil
-	}
-	if err := m.stopBedTransfers(b.ID); err != nil {
-		return fmt.Errorf("bed %s transfer cleanup: %w", b.ID, err)
-	}
-	m.executions.killBed(b.ID, CauseBedTeardown)
-	m.revokeSessions(b)
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	err := b.shutdownExecutor(shutdownCtx)
-	cancel()
-	if err != nil {
-		return fmt.Errorf("bed %s executor cleanup: %w", b.ID, err)
-	}
-	if err := m.amenities.ReleaseAll(b.ID); err != nil {
-		return fmt.Errorf("bed %s amenity cleanup: %w", b.ID, err)
-	}
-	if err := m.resources.Release(b.ID); err != nil {
-		return fmt.Errorf("bed %s resource cleanup: %w", b.ID, err)
-	}
-	networkCtx, cancelNetwork := context.WithTimeout(context.Background(), 5*time.Second)
-	err = b.environment.Close(networkCtx)
-	cancelNetwork()
-	if err != nil {
-		return err
-	}
-	if err := b.BedFS().Close(); err != nil {
-		return err
-	}
-	b.runtimeClosed = true
-	return nil
 }
 
 // Close is called after HTTP admission stops. Pending retirements retain the
@@ -586,6 +552,14 @@ func (m *Manager) Close(ctx context.Context) error {
 	m.mu.Unlock()
 	var closeErr error
 	for _, b := range beds {
+		m.mu.Lock()
+		retiring := m.retirements[b.ID] == b
+		m.mu.Unlock()
+		if retiring {
+			_, err := m.finishRetirement(ctx, b)
+			closeErr = errors.Join(closeErr, err)
+			continue
+		}
 		m.executions.killBed(b.ID, CauseDaemonShutdown)
 		b.cleanupMu.Lock()
 		closeErr = errors.Join(closeErr, m.teardown(b))
@@ -594,7 +568,7 @@ func (m *Manager) Close(ctx context.Context) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	closeErr = errors.Join(m.network.Close(ctx), m.executorFactory.Close())
+	closeErr = errors.Join(m.RetryLocalCleanups(ctx), m.network.Close(ctx), m.executorFactory.Close())
 	return closeErr
 }
 

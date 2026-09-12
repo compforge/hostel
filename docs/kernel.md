@@ -23,6 +23,10 @@ Hostel 负责实例内 Bed 生命周期、执行、文件、持久化、可选�
 Bed 是上层路由与归属的单位，不等于某个 OS 进程。Executor 丢失后可为同一 Bed 重建，
 不会替换其 BedFS；resident Bed 的网络身份也独立于 Executor。Store Manager 与
 Network Manager 是实例级组件，分别拥有持久化与网络资源的实现和调度。
+Privilege Manager 拥有权限策略、UID 分配与诊断。组件为具体 allocation 绑定生命周期参与者，
+Bed Manager 通过统一的 `Lifecycle` hooks 驱动它们；`Component[R]` 另外提供类型化诊断。
+Bed Manager 决定执行顺序与何时发布 Ready、释放身份，各组件实现自己的资源动作。
+本地身份覆盖 resident、luggage 和待删除目录，寿命可以长于一次 resident allocation。
 
 ## 三、主流程
 

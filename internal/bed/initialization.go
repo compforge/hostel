@@ -60,6 +60,7 @@ type InitializationStatus struct {
 }
 
 type bedInitialization struct {
+	local         *localIdentity
 	initialPolicy *network.Policy
 	status        InitializationStatus
 	done          chan struct{}
@@ -168,7 +169,7 @@ func (m *Manager) beginInitialization(
 		if err != nil {
 			return nil, nil, err
 		}
-		if !m.network.Report().Enabled {
+		if !m.network.Diagnostics().Enabled {
 			return nil, nil, network.ErrUnavailable
 		}
 		options.NetworkPolicy = &normalized
@@ -189,7 +190,7 @@ func (m *Manager) beginInitialization(
 	var selected store.SyncKind
 	var selectionErr error
 	for {
-		if err := m.waitForLuggageCleanup(ctx, id); err != nil {
+		if err := m.waitForLocalCleanup(ctx, id); err != nil {
 			return nil, nil, err
 		}
 		// Resolve outside the manager lock; resident/in-flight Beds below remain
@@ -199,7 +200,7 @@ func (m *Manager) beginInitialization(
 			return nil, nil, selectionErr
 		}
 		m.mu.Lock()
-		if m.luggageCleanups[id] == nil {
+		if local := m.localIdentities[id]; local == nil || local.cleanup == nil {
 			break
 		}
 		m.mu.Unlock()
@@ -246,6 +247,7 @@ func (m *Manager) beginInitialization(
 	now := time.Now()
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), initializationTimeout)
 	initialization := &bedInitialization{
+		local:         m.localIdentityLocked(id),
 		initialPolicy: options.NetworkPolicy,
 		status: InitializationStatus{
 			ID:   id,
@@ -343,6 +345,18 @@ func (m *Manager) publishInitializedBed(initialization *bedInitialization, resid
 
 func (m *Manager) finishInitialization(initialization *bedInitialization, resident *Bed, err error) {
 	initialization.cancel()
+	if err != nil {
+		m.mu.Lock()
+		retiring := m.retirements[initialization.status.ID] != nil
+		m.mu.Unlock()
+		if !retiring {
+			// A failed Stage-in may never create local data. Forget that empty
+			// identity before waking retries, but retain any surviving cold copy.
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err = errors.Join(err, m.cleanLocalIdentity(cleanupCtx, initialization.local, false))
+			cancel()
+		}
+	}
 	m.mu.Lock()
 	initialization.bed = resident
 	initialization.err = err

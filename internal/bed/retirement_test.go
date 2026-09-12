@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/executor"
+	"github.com/qiankunli/hostel/internal/network"
 )
 
 type failingRelease struct {
+	calls   int
 	err     error
 	revoked bool
 }
@@ -19,7 +22,7 @@ type failingRelease struct {
 func (*failingRelease) Name() string                                         { return "cleanup-test" }
 func (*failingRelease) State() string                                        { return amenity.StateRunning }
 func (*failingRelease) AcquireTenant(string, string) (amenity.Tenant, error) { return nil, nil }
-func (f *failingRelease) ReleaseTenant(string) error                         { return f.err }
+func (f *failingRelease) ReleaseTenant(string) error                         { f.calls++; return f.err }
 func (f *failingRelease) RevokeBedSecrets(string)                            { f.revoked = true }
 
 func TestFailedRetirementKeepsIdentityAndDataUntilRetry(t *testing.T) {
@@ -108,3 +111,52 @@ func TestExecutorReplacementWaitsForCleanup(t *testing.T) {
 		t.Fatalf("retry replacement: %v creates=%d", err, factory.created)
 	}
 }
+
+// The first network release fails after amenity cleanup succeeds. A retry must
+// continue at network, retaining the filesystem until that attachment is gone.
+type retryReleaseNetwork struct {
+	*network.Manager
+	err   error
+	calls int
+}
+
+func (*retryReleaseNetwork) Diagnostics() network.Report { return network.Report{Enabled: true} }
+func (n *retryReleaseNetwork) Acquire(context.Context, string) (network.Attachment, error) {
+	return n, nil
+}
+func (n *retryReleaseNetwork) Close(context.Context) error { n.calls++; return n.err }
+
+func TestRetirementResumesAtFailedComponent(t *testing.T) {
+	m := newTestManager(t)
+	facility := &failingRelease{}
+	m.amenities = amenity.NewRegistry()
+	m.amenities.Register(facility)
+	net := &retryReleaseNetwork{err: errors.New("network busy")}
+	m.network = net
+	b, err := m.Ensure(t.Context(), "retry-components")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Evict(t.Context(), b.ID); !errors.Is(err, net.err) {
+		t.Fatalf("evict: %v", err)
+	}
+	if facility.calls != 1 || net.calls != 1 {
+		t.Fatalf("calls: amenity=%d network=%d", facility.calls, net.calls)
+	}
+	if _, err := os.Stat(b.Dir); err != nil {
+		t.Fatalf("local identity removed before Release: %v", err)
+	}
+	net.err = nil
+	if _, err := m.Evict(t.Context(), b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if facility.calls != 1 || net.calls != 2 {
+		t.Fatalf("replayed successful hooks: amenity=%d network=%d", facility.calls, net.calls)
+	}
+	if _, err := os.Stat(b.Dir); !os.IsNotExist(err) {
+		t.Fatalf("local identity retained after Release: %v", err)
+	}
+}
+
+func (*retryReleaseNetwork) Enter(*exec.Cmd) error { return nil }
+func (*retryReleaseNetwork) Gateway() string       { return "" }

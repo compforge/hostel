@@ -139,13 +139,15 @@ running 都不能推导出完整隔离，语义由 [isolation.md](isolation.md) 
 实例诊断沿 domain owner 汇总，而不是在 HTTP 层重新解释组件状态：
 
 ```text
-domain component → 提供自己的 Report
+domain component → Diagnostics() 返回自己定义的 Report
 Bed Manager      → 组合版本化 Diagnostics，不跨 domain 推导
 HTTP             → 序列化响应
 ```
 
 Report 同时是组件内部事实到运维协议的边界。新增或修改诊断项时，由拥有该事实的组件定义语义和
 快照方式；聚合层只决定顶层结构与 schema 版本，web 层不读取组件内部状态。
+`Component[R]` 将这一读取契约与 Lifecycle 放在同一个组件协议下；报告保持领域类型，
+不通过通用 map 或类型断言组装。Diagnostics 只观察，不执行生命周期 hook。
 
 `GET /v1/diagnostics` 是版本化的运维诊断快照，当前 `schema_version` 为 `1`。顶层按所有者分为
 `environment`、`isolation`、`privilege`、`network`、`executor`、`store`、`resource` 与 `amenities`，HTTP 层只负责序列化，
@@ -158,6 +160,8 @@ Report 同时是组件内部事实到运维协议的边界。新增或修改诊�
 命令和 shell 验证完整组合的 `not_run|running|passed|failed` 状态、时间和错误。`store.transfers_configured`
 只表示 S3 transfer 配置存在，不推导远端连通或 restic 可执行。诊断接口不披露 bucket、endpoint 或凭据；
 读取接口不重新探测主机，也不访问远端存储。
+Bed Manager 的 `local_cleanups` 报告已认领本地目录的清理状态和最近失败，供区分运行中、等待重试与完成。
+Privilege 的 `reserved_users` 表示 per-Bed UID 池中保留的租约数，包括冷数据与待清理身份；fixed 策略不占池。
 不存在的内核节点以 `value: null` 和 `read_error` 表达，与节点存在且值为 `0` 严格区分。
 
 所有 execution 进入同一个有界 registry。status 返回结构化终态，logs 返回带 stream 与单调

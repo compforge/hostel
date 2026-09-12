@@ -10,14 +10,14 @@ import (
 
 // bedNetwork supplies allocations; a Bed retains the returned handle.
 type bedNetwork interface {
-	Report() network.Report
+	Diagnostics() network.Report
 	Acquire(context.Context, string) (network.Attachment, error)
 	NetworkPolicy(context.Context, string, network.PolicyMutation) (network.PolicyStatus, error)
 	Close(context.Context) error
 }
 
 func (m *Manager) SetNetworkManager(manager *network.Manager) { m.network = manager }
-func (m *Manager) NetworkReport() network.Report              { return m.network.Report() }
+func (m *Manager) NetworkReport() network.Report              { return m.network.Diagnostics() }
 
 // The shared browser remains outside the Bed namespace. Its Bed-scoped API
 // is reached via the veth gateway, never the Bed's now-private loopback.

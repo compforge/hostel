@@ -21,19 +21,6 @@ const (
 	uidRange = 100000 // dedicated Bed users occupy 200000..299999
 )
 
-// NewBedUserAllocator binds user allocation to the resolved isolation
-// mechanism without exposing mechanism details to the Bed manager.
-func NewBedUserAllocator(files Isolator, configured privilege.BedUser) *privilege.BedUserAllocator {
-	if provider, ok := files.(interface{ dedicatedBedUsers() bool }); ok && provider.dedicatedBedUsers() {
-		allocator, err := privilege.NewPerBedUserAllocator(uidBase, uidBase+uidRange-1)
-		if err != nil {
-			panic(err) // package constants define a valid range
-		}
-		return allocator
-	}
-	return privilege.NewFixedBedUserAllocator(configured)
-}
-
 // DescribeBedUser reports the instance policy without inventing one concrete
 // UID for the per-Bed strategy.
 func DescribeBedUser(files Isolator, configured privilege.BedUser) privilege.BedUserReport {
