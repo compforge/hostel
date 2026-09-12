@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/qiankunli/go-stdx/randx"
+	stdxuuid "github.com/qiankunli/go-stdx/uuid"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	storesync "github.com/qiankunli/hostel/internal/bed/store/sync"
 	"github.com/qiankunli/hostel/internal/tracing"
@@ -99,7 +99,8 @@ type transferRegistry struct {
 }
 
 func newTransferRegistry() *transferRegistry {
-	return &transferRegistry{instanceID: "transfer-" + randx.Hex(16), runs: make(map[string]*transferRun)}
+	// Keep the fencing token interoperable with consumers that persist UUID-sized identities.
+	return &transferRegistry{instanceID: stdxuuid.V7Hex(), runs: make(map[string]*transferRun)}
 }
 
 func (s *Manager) TransferInstanceID() string { return s.transfers.instanceID }
