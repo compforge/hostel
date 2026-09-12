@@ -13,7 +13,9 @@ const (
 	PhaseFailed       LifecyclePhase = "failed"
 )
 
-// Status contains observations, never live resources, clients or goroutines.
+// Status contains observations for one Bed, never live resources, clients or
+// goroutines. Each domain owns its section; instance-wide Component Status is
+// reported separately through Component.Status().
 type Status struct {
 	Lifecycle  LifecycleStatus
 	Filesystem FilesystemStatus
@@ -22,44 +24,44 @@ type Status struct {
 	Store      StoreStatus
 	Executor   ExecutorStatus
 	Resource   ResourceStatus
-	Amenity    AmenityStatus
 }
 type LifecycleStatus struct {
-	Phase     LifecyclePhase
-	Ready     bool
-	Reason    string
-	Message   string
-	UpdatedAt time.Time
+	Phase     LifecyclePhase `json:"phase"`
+	Ready     bool           `json:"ready"`
+	Reason    string         `json:"reason"`
+	Message   string         `json:"message"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 type FilesystemStatus struct {
-	Home      string
-	Workspace string
-	Prepared  bool
+	Home      string `json:"-"`
+	Workspace string `json:"-"`
+	Prepared  bool   `json:"prepared"`
 }
 type PrivilegeStatus struct {
-	UID      uint32
-	GID      uint32
-	Assigned bool
+	UID      uint32 `json:"uid"`
+	GID      uint32 `json:"gid"`
+	Assigned bool   `json:"assigned"`
 }
 type NetworkStatus struct {
-	Enabled bool
-	Gateway string
-	Policy  *NetworkPolicy
+	Enabled bool           `json:"enabled"`
+	Gateway string         `json:"gateway"`
+	Policy  *NetworkPolicy `json:"policy"`
 }
 type StoreStatus struct {
-	Source             string
-	Restored           bool
-	SnapshotGeneration int64
-	SnapshotBytes      int64
-	LocalBytes         int64
+	Source             string `json:"source"`
+	Restored           bool   `json:"restored"`
+	SnapshotGeneration int64  `json:"snapshot_generation"`
+	SnapshotBytes      int64  `json:"snapshot_bytes"`
+	LocalBytes         int64  `json:"local_bytes"`
 }
 type ExecutorStatus struct {
-	ID      string
-	Backend string
-	State   string
+	ID      string `json:"id"`
+	Backend string `json:"backend"`
+	State   string `json:"state"`
 }
-type ResourceStatus struct{ Accounting bool }
-type AmenityStatus struct{ Released bool }
+type ResourceStatus struct {
+	Accounting bool `json:"accounting"`
+}
 
 func cloneStatus(s Status) Status { s.Network.Policy = clonePolicy(s.Network.Policy); return s }
 
@@ -93,7 +95,6 @@ type Owners struct {
 	Store      StatusWriter[StoreStatus]
 	Executor   StatusWriter[ExecutorStatus]
 	Resource   StatusWriter[ResourceStatus]
-	Amenity    StatusWriter[AmenityStatus]
 }
 
 func NewOwners() Owners {
@@ -107,6 +108,5 @@ func NewOwners() Owners {
 		Store:      writer(func(s *Status) *StoreStatus { return &s.Store }),
 		Executor:   writer(func(s *Status) *ExecutorStatus { return &s.Executor }),
 		Resource:   writer(func(s *Status) *ResourceStatus { return &s.Resource }),
-		Amenity:    writer(func(s *Status) *AmenityStatus { return &s.Amenity }),
 	}
 }

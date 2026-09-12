@@ -57,7 +57,7 @@ evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史�
 |------|-----------|
 | `POST /v1/beds` | 接受 Bed 初始化；新任务返回 `202` 与 initializing readiness，已 Ready 返回 `200` |
 | `GET /v1/beds` | hostel 什么状态（`instance.status`）+ 全部 bed 概要（含 initializing / failed / dormant） |
-| `GET /v1/beds/:id` | 这个 bed 为什么是这个状态：`phase/readiness`；resident 时再给 activity / lifecycle / executor |
+| `GET /v1/beds/:id` | `status.lifecycle` 表达 Bed 生命周期，`status.components` 与 `status.amenities` 分别表达 Bed 分域和关联 Tenant 状态 |
 | `GET /healthz` | 实例可服务性（探活/调度用） |
 
 bed 明细只进 `/v1/beds/:id`；`/v1/beds` 的 bed 条目保持概要。上游读到的任何字段都是 stale-tolerant hint——正确性由准入/回收点的原子复核兜底，不靠上报实时性。
@@ -149,34 +149,41 @@ purging / failed / resident / dormant luggage）的当前事实，不承载 time
 作用域、资源记账、容量准入和设施状态分别披露。`isolator_ok`、Bed Ready 或 amenity
 running 都不能推导出完整隔离，语义由 [isolation.md](isolation.md) 统一定义。
 
-实例诊断沿 domain owner 汇总，而不是在 HTTP 层重新解释组件状态：
+状态沿领域所有者汇总，Web 只序列化：
 
 ```text
-domain component → Status() 返回自己定义的 Status
-Bed Manager      → 聚合领域 Status，并推导 Bed inventory / 实例容量状态
-HTTP             → 序列化响应
+Component → 全局 Status → Bed Manager ─────┐
+Amenity   → 全局 Status → Amenity Manager ─┤
+Host      → 启动时的系统事实快照 ──────────┴→ Hostel 实例聚合 → /v1/status
+
+Bed 分域 Status ───────────────────────────┐
+Tenant 领域 Status → Bed/Tenant 绑定查询 ───┴→ Bed 详情组合 → /v1/beds/:id
 ```
 
-Status 同时是组件内部事实到运维协议的边界。新增或修改诊断项时，由拥有该事实的组件定义语义和
-快照方式；聚合层只决定顶层结构与 schema 版本，web 层不读取组件内部状态。
-`Component[S]` 将这一读取契约与 daemon、Bed 两层 Lifecycle 放在同一个组件协议下；报告保持领域类型，
-不通过通用 map 或类型断言组装。Status 只观察，不执行生命周期 hook。
+**Component Status** 表示领域的实例级报告，是粒度约定，不另抽跨领域公共类型。
+各领域定义自己的具体 Status，通过组件的 `Status()` 提供，Bed Manager 聚合所属组件。
+Amenity Manager 聚合独立设施的状态；Hostel 实例层组合两个 Manager 与 Host 快照，并拥有对外 schema。
+`Component[S]` 将读取契约与 daemon、Bed 两层 Lifecycle 放在同一个组件协议下；
+Amenity Manager 只通过适配器参与 Bed 回收，其设施全局生命周期仍直属 daemon。
 
-Bed 的分域 Status 是单 Bed 的实际准备结果；组件 Status 是领域的实例级报告，两者粒度不同。
-Filesystem 自己提供文件隔离报告，Resource 自己提供 accounting/admission，Bed Manager 只聚合；
-HTTP 不重做探测、不读取领域内部句柄。
+| 分区 | `/v1/status` | `/v1/beds/:id` 的 `status` |
+|---|---|---|
+| `host` | 宿主系统事实，不代表领域已启用某项能力 | 不重复返回 |
+| `components` | 各领域 Component Status | 各领域在此 Bed 上的实际状态 |
+| `amenities` | 各设施全局状态 | 已绑定 Tenant 的 ID 和设施自定义状态 |
 
-`GET /v1/status` 是版本化的运维诊断快照，当前 `schema_version` 为 `1`。顶层按所有者分为
-`environment`、`isolation`、`privilege`、`network`、`executor`、`store`、`resource` 与 `amenities`，HTTP 层只负责序列化，
-不跨组件推导状态。`isolation.system` 和 `isolation.probes` 保存启动时缓存的系统事实与机制原始探测，
-包括 runtime、进程 capability/seccomp、LSM label、namespace sysctl、kernel feature、ptrace Yama scope，
-以及 PRoot 启动序列探测。二进制探测保留配置名、解析路径、可执行性、退出码、stdout、stderr、错误和耗时。
-`privilege` 给出 daemon 身份、Bed user 策略、setpriv 解析结果，以及 Bed 降权和清理所需与缺失的 capability；
-`preconditions_satisfied` 只表示这些静态前置条件满足，字段的判断边界见
-[privilege.md](privilege.md)。`environment.probe_status` 单独记录通过真实 Bed
-命令和 shell 验证完整组合的 `not_run|running|passed|failed` 状态、时间和错误。`store.transfers_configured`
-只表示 S3 transfer 配置存在，不推导远端连通或 restic 可执行。诊断接口不披露 bucket、endpoint 或凭据；
-读取接口不重新探测主机，也不访问远端存储。
+Bed 详情的 `status.lifecycle` 由 Bed Manager 提供；Tenant 状态由设施持有，查询时组合，
+不复制进 Bed。Tenant Status 的字段跟随设施领域：浏览器就绪和 MCP 连接池不是同一种状态。
+接口不根据 Status 推导更强的隔离保证，也不执行生命周期 hook、探测或远端 I/O。
+
+`GET /v1/status` 的 `schema_version` 为 `2`。`host` 报告 runtime、process、security_modules、
+namespace_limits、kernel_features 与 ptrace 等启动事实；状态读取复用快照，不重新探测。
+`components.filesystem` 报告文件隔离和
+启动探测，`components.privilege` 报告 daemon/Bed 用户前置条件；Network、Executor、Store、
+Resource 分别拥有网络、执行、同步和资源报告。`environment` 保留实例组合探测结果，
+与各组件独立前置条件区分。Bed inventory 与容量是摘要，不展开 Bed 或 Tenant 详情。
+状态报告不披露凭据、远端存储地址或可操作其他 Tenant 的资源句柄。
+
 `instance` 与 `beds` 由 Bed Manager 的 `InventoryStatus()` 一次聚合，`/v1/beds` 使用同一入口。
 phase/activity、occupied/resident/pinned 计数与本次返回的行一致，不再分别读取原子计数器。
 `retained/draining/releasable` 由 Bed Manager 推导；HTTP 只序列化。冷目录大小在锁外采样，

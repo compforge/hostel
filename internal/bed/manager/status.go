@@ -17,6 +17,8 @@ package manager
 import (
 	"time"
 
+	model "github.com/qiankunli/hostel/internal/bed"
+
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem"
 	"github.com/qiankunli/hostel/internal/bed/network"
@@ -25,20 +27,20 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
-// Status is the versioned operator view of one Hostel instance. Each
-// section has one owning component; the HTTP layer only serializes this value.
+// Status aggregates Bed inventory and domain-owned Component Status. Amenity
+// facilities are peers and are composed separately by the Hostel instance.
 type Status struct {
 	InventoryStatus
 	LocalCleanups []LocalCleanupReport `json:"local_cleanups"`
-	SchemaVersion int                  `json:"schema_version"`
 	Environment   EnvironmentReport    `json:"environment"`
-	Isolation     filesystem.Status    `json:"isolation"`
-	Privilege     privilege.Status     `json:"privilege"`
-	Network       network.Status       `json:"network"`
-	Executor      executor.Status      `json:"executor"`
-	Store         store.Status         `json:"store"`
-	Resource      resource.Status      `json:"resource"`
-	Amenities     map[string]string    `json:"amenities"`
+	Components    struct {
+		Filesystem filesystem.Status `json:"filesystem"`
+		Privilege  privilege.Status  `json:"privilege"`
+		Network    network.Status    `json:"network"`
+		Executor   executor.Status   `json:"executor"`
+		Store      store.Status      `json:"store"`
+		Resource   resource.Status   `json:"resource"`
+	} `json:"components"`
 }
 
 const (
@@ -65,19 +67,14 @@ func (m *Manager) Status() Status {
 	m.diagnosticsMu.RLock()
 	environment := m.environment
 	m.diagnosticsMu.RUnlock()
-	return Status{
-		InventoryStatus: m.InventoryStatus(),
-		LocalCleanups:   m.localCleanupReports(),
-		SchemaVersion:   1,
-		Environment:     environment,
-		Isolation:       m.files.Status(),
-		Privilege:       m.privileges.Status(),
-		Network:         m.network.Status(),
-		Executor:        m.executorManager.Status(),
-		Store:           m.store.Status(),
-		Resource:        m.resourceManager.Status(),
-		Amenities:       m.amenities.Status(),
-	}
+	report := Status{InventoryStatus: m.InventoryStatus(), LocalCleanups: m.localCleanupReports(), Environment: environment}
+	report.Components.Filesystem = m.files.Status()
+	report.Components.Privilege = m.privileges.Status()
+	report.Components.Network = m.network.Status()
+	report.Components.Executor = m.executorManager.Status()
+	report.Components.Store = m.store.Status()
+	report.Components.Resource = m.resourceManager.Status()
+	return report
 }
 
 func (m *Manager) startEnvironmentProbe(started time.Time) {
@@ -101,4 +98,24 @@ func (m *Manager) finishEnvironmentProbe(started time.Time, err error) {
 	m.diagnosticsMu.Lock()
 	m.environment = report
 	m.diagnosticsMu.Unlock()
+}
+
+// BedModel returns an observation handle, never an admitted operation. It also
+// covers initializing and retiring identities so detail queries keep one shape.
+func (m *Manager) BedModel(name string) *model.Bed {
+	if name == "" {
+		name = m.defaultBed
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if b := m.beds[name]; b != nil {
+		return b.Bed
+	}
+	if b := m.retirements[name]; b != nil {
+		return b.Bed
+	}
+	if init := m.initializations[name]; init != nil {
+		return init.model
+	}
+	return nil
 }

@@ -3,11 +3,13 @@
 package manager
 
 import (
+	"os/exec"
+	"testing"
+
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"github.com/qiankunli/hostel/internal/bed/privilege"
-	"os/exec"
-	"testing"
+	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 )
 
 type testFileBoundary struct{}
@@ -24,7 +26,7 @@ func (testFileBoundary) Wrap(cmd *exec.Cmd, _ *bedfs.FS, _ string) error {
 }
 
 func TestEnvironmentDropsUserOutsideFileBoundary(t *testing.T) {
-	setpriv, err := privilege.ProcessCredentialHelper()
+	setpriv, err := hostprivilege.ProcessCredentialHelper()
 	if err != nil {
 		t.Skip("setpriv is not installed")
 	}

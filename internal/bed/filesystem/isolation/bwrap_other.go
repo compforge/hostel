@@ -16,17 +16,20 @@
 
 package isolation
 
-import "github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+import (
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+)
 
 // newBwrap on non-Linux falls back to direct: bubblewrap is Linux-only, and
 // hostel's dev target (macOS) has no namespaces. Keeps `--isolation suite`
 // from failing to boot during local development.
-func newBwrap(facts HostFacts, _ string, _ []bedfs.PathProjection) (Isolator, ProbeReport) {
-	return direct{}, ProbeReport{
+func newBwrap(facts hostfacts.Snapshot, _ string, _ []bedfs.PathProjection) (Isolator, hostfacts.ProbeReport) {
+	return direct{}, hostfacts.ProbeReport{
 		ConfiguredPath: "bwrap",
 		ResolvedPath:   facts.BwrapPath,
 		Exists:         facts.BwrapPath != "",
 		Executable:     facts.BwrapPath != "",
-		Error:          facts.bwrapLookupError,
+		Error:          facts.BwrapLookupError,
 	}
 }

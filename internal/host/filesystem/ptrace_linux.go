@@ -14,7 +14,7 @@
 
 //go:build linux
 
-package isolation
+package filesystem
 
 import (
 	"errors"
@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	"golang.org/x/sys/unix"
 )
 
@@ -43,13 +44,13 @@ const prootPtraceOptions = unix.PTRACE_O_TRACESYSGOOD |
 	unix.PTRACE_O_TRACECLONE |
 	unix.PTRACE_O_TRACEEXIT
 
-// runPtraceProbe exercises the minimum tracer/tracee handshake PRoot relies
+// ProbePtrace exercises the minimum tracer/tracee handshake PRoot relies
 // on. SysProcAttr.Ptrace makes the child call PTRACE_TRACEME before exec; the
 // parent then installs PRoot's baseline options and advances one syscall stop.
 // Keeping this as a real smoke probe captures seccomp, Yama, capability and
 // container-runtime policy together without guessing which policy denied it.
-func runPtraceProbe() (report ProbeReport) {
-	report = discoverExecutable(ptraceProbeTracee)
+func ProbePtrace() (report hostfacts.ProbeReport) {
+	report = hostfacts.DiscoverExecutable(ptraceProbeTracee)
 	if report.Error != "" {
 		return report
 	}

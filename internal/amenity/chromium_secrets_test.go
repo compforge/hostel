@@ -16,35 +16,48 @@ package amenity
 
 import "testing"
 
-// The bed-level CDP secret must survive tenant recycling (browser/close lands
-// in ReleaseTenant while the bed lives on, and long-running shells keep the
-// env-injected endpoint) and die only with the bed (RevokeBedSecrets, wired
-// into Registry.ReleaseAll).
+// Browser resources may be recycled without replacing Hostel's Tenant identity.
 func TestCDPSecretLifecycle(t *testing.T) {
-	c := &chromium{cfg: ChromiumConfig{DebugPort: 9222}, state: StateIdle,
-		tenants: map[string]*chromiumTenant{}, cdpSecrets: map[string]string{}}
-
-	tok, err := c.CDPToken("b1")
-	if err != nil || tok == "" {
-		t.Fatalf("mint: tok=%q err=%v", tok, err)
+	c := NewChromium(ChromiumConfig{DebugPort: 9222})
+	c.state = StateIdle // token operations do not require a browser executable
+	reg := NewManager()
+	if err := reg.Register(c); err != nil {
+		t.Fatal(err)
 	}
-	if again, _ := c.CDPToken("b1"); again != tok {
-		t.Fatalf("re-mint changed the secret: %q != %q", again, tok)
+	if err := reg.AdmitBed("local-bed-id"); err != nil {
+		t.Fatal(err)
 	}
-
-	// browser/close path: tenant released, secret must survive.
-	if err := c.ReleaseTenant("b1"); err != nil {
-		t.Fatalf("ReleaseTenant: %v", err)
+	tenant, err := reg.Browser(t.Context(), "local-bed-id")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if after, _ := c.CDPToken("b1"); after != tok {
-		t.Fatalf("ReleaseTenant revoked the bed secret: %q != %q", after, tok)
+	token, err := tenant.CDPToken()
+	if err != nil || token == "" {
+		t.Fatalf("mint: %v", err)
 	}
-
-	// Bed teardown path: Registry.ReleaseAll revokes via BedScopedSecrets.
-	reg := NewRegistry()
-	reg.Register(c)
-	reg.ReleaseAll("b1")
-	if fresh, _ := c.CDPToken("b1"); fresh == tok {
-		t.Fatalf("bed teardown did not revoke the secret")
+	if err := tenant.CloseContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := tenant.CDPToken(); again != token {
+		t.Fatal("context close revoked tenant credential")
+	}
+	if err := reg.ReleaseBed(t.Context(), "local-bed-id"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tenant.CDPToken(); err == nil {
+		t.Fatal("closed tenant re-minted credential")
+	}
+	if len(reg.BedStatus("local-bed-id")) != 0 {
+		t.Fatal("released binding remains")
+	}
+	if err := reg.AdmitBed("new-local-id"); err != nil {
+		t.Fatal(err)
+	}
+	next, err := reg.Browser(t.Context(), "new-local-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ID() == tenant.ID() {
+		t.Fatal("replacement reused tenant identity")
 	}
 }

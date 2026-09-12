@@ -26,9 +26,9 @@ import (
 )
 
 // proxyCDP bridges an already-upgraded client websocket (conn) to the shared
-// browser's CDP websocket (upstreamWS), presenting only bedID's own
+// browser's CDP websocket (upstreamWS), presenting only tenantID's own
 // BrowserContext. This is the mechanism behind "pod-level shared Chromium,
-// per-bed slice": the browser PROCESS is shared, but a bed's playwright — via
+// per-tenant slice": the browser PROCESS is shared, but a bed's playwright — via
 // this proxy — sees and drives only targets in its own context.
 //
 // Enforcement (grey-list, not an exhaustive white-list, so the CDP surface can
@@ -48,7 +48,7 @@ import (
 // ctx is the caller's revocation handle: canceling it (evict) closes both
 // conns, which unblocks the two copy loops. onActivity, when non-nil, is
 // invoked per client message — client traffic is what keeps the bed alive.
-func proxyCDP(ctx context.Context, conn net.Conn, upstreamWS, bedID, contextID string, onActivity func()) error {
+func proxyCDP(ctx context.Context, conn net.Conn, upstreamWS, tenantID, contextID string, onActivity func()) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -111,7 +111,7 @@ func proxyCDP(ctx context.Context, conn net.Conn, upstreamWS, bedID, contextID s
 	return nil
 }
 
-// cdpFilter holds the per-bed pinning state for one proxied connection.
+// cdpFilter holds the per-tenant pinning state for one proxied connection.
 type cdpFilter struct {
 	contextID string // the bed's own BrowserContextId
 

@@ -12,7 +12,9 @@ this boundary.
 make e2e
 ```
 
-The core profile also covers remote MCP configuration, list/call, metadata,
+The core profile verifies global Component/Amenity reports, per-Bed component
+and bound Tenant reports, read-only status polling, and new Tenant identity
+after recreating a same-name Bed. It also covers remote MCP configuration, list/call, metadata,
 call-scoped overrides and cross-bed isolation over SSE and Streamable HTTP.
 
 The core profile covers health and capability reporting, asynchronous bed

@@ -15,14 +15,13 @@
 package manager
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
 	"slices"
 	"strings"
-
-	"github.com/qiankunli/hostel/internal/amenity"
 )
 
 // ErrInvalidEnvironment marks a caller- or deployment-supplied environment
@@ -157,12 +156,7 @@ func (m *Manager) bedCDPEndpoint(b *managedBed) string {
 	if m.cdpAdvertise == "" || m.amenities == nil {
 		return ""
 	}
-	a := m.amenities.Find("chromium")
-	br, ok := a.(amenity.Browser)
-	if a == nil || !ok {
-		return ""
-	}
-	token, err := br.CDPToken(b.ID.String())
+	token, err := m.amenities.CDPToken(context.Background(), b.ID)
 	if err != nil {
 		// Honest absence: tooling may fall back to its own browser.
 		return ""

@@ -38,17 +38,22 @@ type closeTestAmenity struct {
 	revoked  []string
 }
 
-func (*closeTestAmenity) Name() string  { return "close-test" }
-func (*closeTestAmenity) State() string { return amenity.StateIdle }
-func (*closeTestAmenity) AcquireTenant(string, string) (amenity.Tenant, error) {
-	return nil, nil
+func (*closeTestAmenity) Name() string                { return "close-test" }
+func (*closeTestAmenity) Start(context.Context) error { return nil }
+func (*closeTestAmenity) Close(context.Context) error { return nil }
+func (*closeTestAmenity) Status() amenity.Status      { return amenity.MCPStatus{State: amenity.StateIdle} }
+func (a *closeTestAmenity) NewTenant(context.Context) (amenity.Tenant, error) {
+	return &closeTestTenant{owner: a}, nil
 }
-func (a *closeTestAmenity) ReleaseTenant(bedID string) error {
-	a.released = append(a.released, bedID)
+
+type closeTestTenant struct{ owner *closeTestAmenity }
+
+func (*closeTestTenant) ID() amenity.TenantID         { return "close-tenant" }
+func (*closeTestTenant) Status() amenity.TenantStatus { return amenity.MCPTenantStatus{} }
+func (t *closeTestTenant) Close(context.Context) error {
+	t.owner.released = append(t.owner.released, t.ID().String())
+	t.owner.revoked = append(t.owner.revoked, t.ID().String())
 	return nil
-}
-func (a *closeTestAmenity) RevokeBedSecrets(bedID string) {
-	a.revoked = append(a.revoked, bedID)
 }
 
 func newTestManager(t *testing.T) *Manager {
@@ -102,7 +107,7 @@ func TestResolveDefaultBedAndValidation(t *testing.T) {
 
 func TestManagerCloseReleasesBedAmenityState(t *testing.T) {
 	root := t.TempDir()
-	registry := amenity.NewRegistry()
+	registry := amenity.NewManager()
 	facility := &closeTestAmenity{}
 	registry.Register(facility)
 	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), registry, 0, nil)
@@ -113,13 +118,16 @@ func TestManagerCloseReleasesBedAmenityState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := registry.Acquire(t.Context(), b.ID, facility.Name()); err != nil {
+		t.Fatal(err)
+	}
 	if err := m.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(facility.released) != 1 || facility.released[0] != b.ID.String() {
+	if len(facility.released) != 1 || facility.released[0] != "close-tenant" {
 		t.Fatalf("released tenants = %v", facility.released)
 	}
-	if len(facility.revoked) != 1 || facility.revoked[0] != b.ID.String() {
+	if len(facility.revoked) != 1 || facility.revoked[0] != "close-tenant" {
 		t.Fatalf("revoked secrets = %v", facility.revoked)
 	}
 }

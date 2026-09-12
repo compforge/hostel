@@ -3,62 +3,69 @@ package amenity
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
+
 	"github.com/qiankunli/hostel/internal/bed"
 )
 
-// Bed hooks only release a Bed slice. The daemon owns the shared facilities.
-func (r *Registry) Release(_ context.Context, b *bed.Bed) error {
-	if r == nil {
+func (m *Manager) Start(ctx context.Context) error {
+	if m == nil {
 		return nil
 	}
-	r.mu.RLock()
-	owned := r.beds[b]
-	r.mu.RUnlock()
-	if !owned {
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return errors.New("amenity: manager closed")
+	}
+	if m.started {
+		m.mu.Unlock()
 		return nil
 	}
-	if err := r.ReleaseAll(b.ID.String()); err != nil {
-		return err
-	}
-	r.mu.Lock()
-	delete(r.beds, b)
-	r.mu.Unlock()
-	if r != nil {
-		r.status.Set(b, bed.AmenityStatus{Released: true})
+	m.started = true
+	facilities := append([]Amenity(nil), m.amenities...)
+	m.mu.Unlock()
+	for i, a := range facilities {
+		if err := a.Start(ctx); err != nil {
+			result := fmt.Errorf("amenity %s: start: %w", a.Name(), err)
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			for j := i; j >= 0; j-- {
+				result = errors.Join(result, facilities[j].Close(cleanup))
+			}
+			cancel()
+			m.mu.Lock()
+			m.closed = true
+			m.mu.Unlock()
+			return result
+		}
 	}
 	return nil
 }
-func (r *Registry) SetStatusWriter(status bed.StatusWriter[bed.AmenityStatus]) {
-	if r != nil {
-		r.status = status
+
+func (m *Manager) Close(ctx context.Context) error {
+	if m == nil {
+		return nil
 	}
-}
-func (r *Registry) Start(context.Context) error { return nil }
-func (r *Registry) Close(ctx context.Context) error {
+	m.lifecycle.Lock()
+	defer m.lifecycle.Unlock()
+	m.mu.Lock()
+	m.closed = true
+	ids := make([]bed.ID, 0, len(m.beds))
+	for id := range m.beds {
+		ids = append(ids, id)
+	}
+	m.mu.Unlock()
 	var result error
-	for _, a := range r.List() {
-		if closer, ok := a.(interface{ Close(context.Context) error }); ok {
-			result = errors.Join(result, closer.Close(ctx))
+	for _, id := range ids {
+		result = errors.Join(result, m.ReleaseBed(ctx, id))
+	}
+	facilities := m.List()
+	for i := len(facilities) - 1; i >= 0; i-- {
+		if err := facilities[i].Close(ctx); err != nil {
+			result = errors.Join(result, fmt.Errorf("amenity %s: close: %w", facilities[i].Name(), err))
 		}
 	}
 	return result
-}
-func (r *Registry) Status() map[string]string {
-	report := make(map[string]string)
-	for _, item := range r.List() {
-		report[item.Name()] = item.State()
-	}
-	return report
-}
-
-var _ bed.Component[map[string]string] = (*Registry)(nil)
-
-func (r *Registry) Prepare(_ context.Context, b *bed.Bed) error {
-	if r == nil {
-		return nil
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.beds[b] = true
-	return nil
 }

@@ -48,34 +48,34 @@ func (e *fakeEndpoint) Close(context.Context) error {
 	e.closed++
 	return e.err
 }
-func testManager(b backend) *Manager {
-	return &Manager{report: Status{Enabled: true, Backend: "netns", Scope: "bed_processes"}, backend: b, beds: make(map[string]*attachment), pending: make(map[string]*acquisition)}
+func testPool(b backend) *Pool {
+	return &Pool{report: Status{Available: true, Backend: "netns"}, backend: b, allocations: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 
 func TestDisabledDoesNotChangeCommands(t *testing.T) {
-	var m *Manager
+	var m *Pool
 	cmd := exec.Command("/bin/sh", "-c", "echo hi")
 	before := cmd.String()
 	lease, err := m.Acquire(context.Background(), "a")
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("disabled pool: %v", err)
 	}
 	if lease != nil {
 		t.Fatal("disabled manager returned an allocation")
 	}
-	if cmd.String() != before || m.Status().Enabled {
+	if cmd.String() != before || m.Status().Available {
 		t.Fatal("disabled manager changed execution")
 	}
 }
 func TestAcquireSingleFlightAndNoSilentFallback(t *testing.T) {
 	b := &fakeBackend{endpoint: &fakeEndpoint{}}
-	m := testManager(b)
+	m := testPool(b)
 	var wg sync.WaitGroup
 	for range 20 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := m.Acquire(context.Background(), "bed"); err != nil {
+			if _, err := m.Acquire(context.Background(), "allocation"); err != nil {
 				t.Error(err)
 			}
 		}()
@@ -84,7 +84,7 @@ func TestAcquireSingleFlightAndNoSilentFallback(t *testing.T) {
 	if b.creates != 1 {
 		t.Fatalf("created %d networks", b.creates)
 	}
-	lease := m.beds["bed"]
+	lease := m.allocations["allocation"]
 	if err := lease.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -92,27 +92,27 @@ func TestAcquireSingleFlightAndNoSilentFallback(t *testing.T) {
 		t.Fatal("released network reused")
 	}
 	b.err = errors.New("permission revoked")
-	if _, err := m.Acquire(context.Background(), "bed"); !errors.Is(err, b.err) {
+	if _, err := m.Acquire(context.Background(), "allocation"); !errors.Is(err, b.err) {
 		t.Fatalf("runtime failure: %v", err)
 	}
-	if !m.Status().Enabled {
+	if !m.Status().Available {
 		t.Fatal("runtime failure silently disabled manager")
 	}
 }
 func TestCleanupFailureRetainsOwnership(t *testing.T) {
 	ep := &fakeEndpoint{err: errors.New("busy")}
-	m := testManager(&fakeBackend{endpoint: ep})
-	if _, err := m.Acquire(context.Background(), "bed"); err != nil {
+	m := testPool(&fakeBackend{endpoint: ep})
+	if _, err := m.Acquire(context.Background(), "allocation"); err != nil {
 		t.Fatal(err)
 	}
-	lease := m.beds["bed"]
+	lease := m.allocations["allocation"]
 	if err := lease.Close(context.Background()); err == nil {
 		t.Fatal("lost cleanup error")
 	}
 	if err := lease.Enter(exec.Command("true")); err == nil {
 		t.Fatal("partially released network reused")
 	}
-	if _, err := m.Acquire(context.Background(), "bed"); err == nil {
+	if _, err := m.Acquire(context.Background(), "allocation"); err == nil {
 		t.Fatal("failed cleanup accepted as usable")
 	}
 	ep.err = nil
@@ -122,21 +122,21 @@ func TestCleanupFailureRetainsOwnership(t *testing.T) {
 	if ep.closed != 3 {
 		t.Fatalf("cleanup not retried: %d", ep.closed)
 	}
-	if _, err := m.Acquire(context.Background(), "bed"); err == nil {
+	if _, err := m.Acquire(context.Background(), "allocation"); err == nil {
 		t.Fatal("closed manager accepted network")
 	}
 }
 
 func TestOldAttachmentCannotReleaseReplacement(t *testing.T) {
 	b := &fakeBackend{endpoint: &fakeEndpoint{}}
-	m := testManager(b)
-	old, _ := m.Acquire(context.Background(), "bed")
+	m := testPool(b)
+	old, _ := m.Acquire(context.Background(), "allocation")
 	if err := old.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	next := &fakeEndpoint{}
 	b.endpoint = next
-	fresh, err := m.Acquire(context.Background(), "bed")
+	fresh, err := m.Acquire(context.Background(), "allocation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestOldAttachmentCannotReleaseReplacement(t *testing.T) {
 
 func TestSlowCreateDoesNotBlockExistingAttachment(t *testing.T) {
 	b := &fakeBackend{endpoint: &fakeEndpoint{}}
-	m := testManager(b)
+	m := testPool(b)
 	existing, err := m.Acquire(context.Background(), "existing")
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestSlowCreateDoesNotBlockExistingAttachment(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("existing attachment was blocked by another Bed's create")
+		t.Fatal("existing attachment was blocked by another allocation's create")
 	}
 	close(b.createRelease)
 	if err := <-created; err != nil {
@@ -188,8 +188,8 @@ func TestSlowCreateDoesNotBlockExistingAttachment(t *testing.T) {
 
 func TestManagerCloseRetriesFailedAttachmentCleanup(t *testing.T) {
 	ep := &fakeEndpoint{err: errors.New("busy")}
-	m := testManager(&fakeBackend{endpoint: ep})
-	if _, err := m.Acquire(context.Background(), "bed"); err != nil {
+	m := testPool(&fakeBackend{endpoint: ep})
+	if _, err := m.Acquire(context.Background(), "allocation"); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Close(context.Background()); err == nil {
@@ -199,8 +199,8 @@ func TestManagerCloseRetriesFailedAttachmentCleanup(t *testing.T) {
 	if err := m.Close(context.Background()); err != nil {
 		t.Fatalf("retry close: %v", err)
 	}
-	if len(m.beds) != 0 {
-		t.Fatalf("retry left %d attachments", len(m.beds))
+	if len(m.allocations) != 0 {
+		t.Fatalf("retry left %d attachments", len(m.allocations))
 	}
 }
 
@@ -211,10 +211,10 @@ func TestManagerCloseWaitsForPendingCleanup(t *testing.T) {
 		createStarted: make(chan struct{}),
 		createRelease: make(chan struct{}),
 	}
-	m := testManager(b)
+	m := testPool(b)
 	acquired := make(chan error, 1)
 	go func() {
-		_, err := m.Acquire(context.Background(), "bed")
+		_, err := m.Acquire(context.Background(), "allocation")
 		acquired <- err
 	}()
 	<-b.createStarted

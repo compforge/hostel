@@ -1,5 +1,7 @@
 # Filesystem：BedFS、进程视图与文件隔离
 
+通用挂载、Landlock、pathshim/PRoot 和 ptrace 机制位于 `internal/host/filesystem`；BedFS 路径语义、房型选择与组合探测由 Bed Filesystem 负责。分层边界见 [核心架构](kernel.md#领域与-host-机制)。
+
 > 状态：当前实现。隔离目标与实际边界见 [isolation.md](isolation.md)，持久化与恢复见 `store.md`。
 
 ## 一、定位

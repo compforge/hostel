@@ -29,7 +29,7 @@ import (
 
 func TestMCPBedConfigurationLifecycle(t *testing.T) {
 	root := t.TempDir()
-	registry := amenity.NewRegistry()
+	registry := amenity.NewManager()
 	facility := amenity.NewMCP(mcpproxy.Options{})
 	registry.Register(facility)
 	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), registry, 0, nil)
@@ -54,7 +54,11 @@ func TestMCPBedConfigurationLifecycle(t *testing.T) {
 	}
 	// Real bed teardown releases the configured pool, including its secrets.
 	b, _ := mgr.Get("a")
-	previous := facility.Proxy(b.ID.String())
+	tenant, err := registry.MCP(t.Context(), b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := tenant.Proxy()
 	out = do(t, s, http.MethodDelete, "/v1/beds/a", nil, nil)
 	if out.Code != 200 {
 		t.Fatalf("delete %d %s", out.Code, out.Body.String())

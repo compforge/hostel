@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/host/cgroup"
 )
 
 type cgroupCarrier struct {
@@ -49,7 +51,7 @@ func newCgroupCarrier(mount, selfCgroupFile string) (*cgroupCarrier, error) {
 // delegated child groups, hostel itself lives in hostel-system while aggregate
 // usage remains on the parent alongside all bed groups.
 func carrierRoot(mount, selfCgroupFile string) (string, error) {
-	root, err := currentCgroupPath(mount, selfCgroupFile)
+	root, err := cgroup.CurrentPath(mount, selfCgroupFile)
 	if err != nil {
 		return "", err
 	}
@@ -57,18 +59,6 @@ func carrierRoot(mount, selfCgroupFile string) (string, error) {
 		root = filepath.Dir(root)
 	}
 	return root, nil
-}
-
-func currentCgroupPath(mount, selfCgroupFile string) (string, error) {
-	raw, err := os.ReadFile(selfCgroupFile)
-	if err != nil {
-		return "", fmt.Errorf("read cgroup membership: %w", err)
-	}
-	relative, err := unifiedCgroupPath(string(raw))
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(mount, strings.TrimPrefix(relative, "/")), nil
 }
 
 func (c *cgroupCarrier) Snapshot() (CarrierSnapshot, error) {
@@ -89,7 +79,7 @@ func (c *cgroupCarrier) Snapshot() (CarrierSnapshot, error) {
 		return CarrierSnapshot{}, fmt.Errorf("read carrier memory.max: %w", err)
 	}
 
-	usageMicros, err := cpuUsageMicros(string(cpuStat))
+	usageMicros, err := cgroup.CPUUsageMicros(string(cpuStat))
 	if err != nil {
 		return CarrierSnapshot{}, fmt.Errorf("parse carrier CPU usage: %w", err)
 	}

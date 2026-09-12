@@ -16,14 +16,18 @@
 
 package isolation
 
-import "fmt"
+import (
+	"fmt"
+
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+)
 
 // ConfineArg exists on all platforms so main can dispatch it uniformly.
 const ConfineArg = "__confine"
 
 // newLandlock: Landlock is Linux-only. Report room as unavailable elsewhere.
-func newLandlock(HostFacts, string) (Isolator, ProbeReport) {
-	return unavailable{name: "landlock", lvl: Room}, ProbeReport{}
+func newLandlock(hostfacts.Snapshot, string) (Isolator, hostfacts.ProbeReport) {
+	return unavailable{name: "landlock", lvl: Room}, hostfacts.ProbeReport{}
 }
 
 // ApplyConfine should never run off Linux (no landlock isolator can be chosen).

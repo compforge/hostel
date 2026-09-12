@@ -175,27 +175,29 @@ func TestPathshimProbeFailureFallsBackToProot(t *testing.T) {
 		t.Fatalf("proot fallback workspace view = %+v", health.WorkspaceView)
 	}
 	var diagnostics struct {
-		Isolation struct {
-			Probes map[string]struct {
-				Exists     bool   `json:"exists"`
-				Executable bool   `json:"executable"`
-				Attempted  bool   `json:"attempted"`
-				ExitCode   *int   `json:"exit_code"`
-				Error      string `json:"error"`
-			} `json:"probes"`
-		} `json:"isolation"`
+		Components struct {
+			Filesystem struct {
+				Probes map[string]struct {
+					Exists     bool   `json:"exists"`
+					Executable bool   `json:"executable"`
+					Attempted  bool   `json:"attempted"`
+					ExitCode   *int   `json:"exit_code"`
+					Error      string `json:"error"`
+				} `json:"probes"`
+			} `json:"filesystem"`
+		} `json:"components"`
 	}
 	result, err = c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
 	if err != nil || result.Status != http.StatusOK {
 		t.Fatalf("diagnostics: status=%d err=%v body=%s", result.Status, err, result.Body)
 	}
 	for _, name := range []string{"ptrace", "proot"} {
-		probe := diagnostics.Isolation.Probes[name]
+		probe := diagnostics.Components.Filesystem.Probes[name]
 		if !probe.Exists || !probe.Executable || !probe.Attempted || probe.ExitCode == nil || *probe.ExitCode != 0 || probe.Error != "" {
 			t.Fatalf("%s probe = %+v", name, probe)
 		}
 	}
-	pathshimProbe := diagnostics.Isolation.Probes["pathshim"]
+	pathshimProbe := diagnostics.Components.Filesystem.Probes["pathshim"]
 	if !pathshimProbe.Exists || !pathshimProbe.Executable || !pathshimProbe.Attempted || pathshimProbe.Error == "" {
 		t.Fatalf("pathshim failure probe = %+v", pathshimProbe)
 	}

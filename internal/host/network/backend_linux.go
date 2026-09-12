@@ -83,7 +83,7 @@ func probeBackend(ctx context.Context) (backend, Probe) {
 	ep, err := b.Create(ctx)
 	if err == nil {
 		probe.Stage = "execution"
-		// Exercise the SAME namespace entry and capability drop as Bed executions.
+		// Exercise the SAME namespace entry and capability drop as wrapped commands.
 		cmd := exec.Command(b.setpriv, "--bounding-set=-all", "--inh-caps=-all", "--ambient-caps=-all", "--no-new-privs", "--", "/bin/sh", "-c", "readlink /proc/self/ns/net; cat /proc/self/status")
 		ep.Wrap(cmd)
 		out, e := run(ctx, "", cmd.Path, cmd.Args[1:]...)
@@ -106,6 +106,9 @@ func probeBackend(ctx context.Context) (backend, Probe) {
 	err = errors.Join(err, cleanupErr)
 	if err != nil {
 		probe.Error = err.Error()
+		if cleanupErr != nil {
+			return b, probe
+		}
 		return nil, probe
 	}
 	probe.Stage = "ready"
@@ -351,7 +354,7 @@ func probeConnectivity(ctx context.Context, ep endpoint) error {
 		served <- e
 	}()
 	port := listener.Addr().(*net.TCPAddr).Port
-	// Only generated IP/port values enter this shell; no Bed or API input does.
+	// Only generated IP/port values enter this shell; no caller input does.
 	cmd := exec.Command("/bin/bash", "-c", fmt.Sprintf("exec 3<>/dev/tcp/%s/%d; IFS= read -r result <&3; test \"$result\" = hostel-network", ep.Gateway(), port))
 	ep.Wrap(cmd)
 	_, err = run(ctx, "", cmd.Path, cmd.Args[1:]...)

@@ -185,7 +185,7 @@ func (p *policyControl) update(ctx context.Context, mutation PolicyMutation) (Po
 			return PolicyStatus{}, err
 		}
 		if err := p.apply(ctx, normalized); err != nil {
-			return PolicyStatus{}, fmt.Errorf("apply bed network policy: %w", err)
+			return PolicyStatus{}, fmt.Errorf("apply network policy: %w", err)
 		}
 		p.current = normalized
 		p.revision++
@@ -201,20 +201,17 @@ func (p *policyControl) update(ctx context.Context, mutation PolicyMutation) (Po
 			mode = "deny_all"
 		}
 	}
-	return PolicyStatus{Status: "ok", Mode: mode, EnforcementMode: "dns+nft", Scope: "bed_processes", Policy: policy}, nil
+	return PolicyStatus{Status: "ok", Mode: mode, EnforcementMode: "dns+nft", Scope: "processes", Policy: policy}, nil
 }
 
-// NetworkPolicy only operates an already acquired Bed namespace; it never
+// NetworkPolicy only operates an already acquired namespace; it never
 // allocates networking or silently accepts a policy on a shared network.
-func (m *Manager) NetworkPolicy(ctx context.Context, bedID string, mutation PolicyMutation) (PolicyStatus, error) {
-	if m != nil && m.provider != nil {
-		return m.provider.NetworkPolicy(ctx, bedID, mutation)
-	}
-	if m == nil || !m.report.Enabled {
+func (m *Pool) NetworkPolicy(ctx context.Context, key string, mutation PolicyMutation) (PolicyStatus, error) {
+	if m == nil || !m.Status().Available {
 		return PolicyStatus{}, ErrUnavailable
 	}
 	m.mu.Lock()
-	lease := m.beds[bedID]
+	lease := m.allocations[key]
 	closed := m.closed
 	m.mu.Unlock()
 	if lease == nil || closed {

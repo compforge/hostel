@@ -1,5 +1,7 @@
 # Hostel 权限模型
 
+`internal/host/privilege` 提供凭据切换与 ownership 操作；Bed Privilege Manager 决定用户、UID 租约与执行顺序。系统事实由 `host/facts` 提供。分层边界见 [核心架构](kernel.md#领域与-host-机制)。
+
 ## 理念与信任边界
 
 Hostel 在同一 Carrier 内同时承担两类职责：daemon 管理所有 Bed 的文件、进程、网络和持久化资源，
@@ -134,7 +136,7 @@ capability 清理和 `NoNewPrivs` 的完整组合。组合探测失败会阻止�
 
 - `privilege`：daemon 身份、Bed user 策略、`setpriv` 解析结果、身份切换所需与缺失的 capability；
   `preconditions_satisfied` 只表示这些静态前提满足。
-- `isolation.system` 与 `isolation.probes`：capability/seccomp/LSM、namespace、内核功能、ptrace 及
+- `components.filesystem.system` 与 `components.filesystem.probes`：capability/seccomp/LSM、namespace、内核功能、ptrace 及
   各文件机制的启动探测。
 - `environment.probe_status`：真实 Bed command 与 shell 的完整组合是否通过。
 

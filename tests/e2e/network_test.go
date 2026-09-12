@@ -28,19 +28,21 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var diagnostics struct {
-		Network struct {
-			Enabled bool   `json:"enabled"`
-			Scope   string `json:"scope"`
-			Reason  string `json:"reason"`
-		} `json:"network"`
+		Components struct {
+			Network struct {
+				Enabled bool   `json:"enabled"`
+				Scope   string `json:"scope"`
+				Reason  string `json:"reason"`
+			} `json:"network"`
+		} `json:"components"`
 	}
 	response, err := c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
 	if err != nil {
 		t.Fatal(err)
 	}
 	must2xx(t, "diagnostics", response)
-	if !diagnostics.Network.Enabled || diagnostics.Network.Scope != "bed_processes" {
-		t.Fatalf("network: %+v", diagnostics.Network)
+	if !diagnostics.Components.Network.Enabled || diagnostics.Components.Network.Scope != "bed_processes" {
+		t.Fatalf("network: %+v", diagnostics.Components.Network)
 	}
 	var health healthView
 	response, err = c.json(ctx, "GET", "/healthz", "", nil, &health)

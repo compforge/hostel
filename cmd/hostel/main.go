@@ -111,19 +111,16 @@ func main() {
 		log.Fatalf("hostel: configure bed user: %v", err)
 	}
 
-	// Amenity manager: shared facilities light up per deployment. Chromium is
-	// registered when launch (binary) or attach (--chromium-cdp-url) is
-	// possible; otherwise the facility is honestly absent.
-	amenities := amenity.NewRegistry()
-	amenities.Register(amenity.NewMCP(mcpproxy.Options{}))
-	if br, ok := amenity.NewChromium(amenity.ChromiumConfig{
-		ExecPath:  cfg.ChromiumPath,
-		CDPURL:    cfg.ChromiumCDPURL,
-		IdleStop:  cfg.ChromiumIdleStop,
-		DebugPort: cfg.ChromiumDebugPort,
-	}); ok {
-		amenities.Register(br.(amenity.Amenity))
-		log.Printf("hostel: amenity chromium registered (attach=%v)", cfg.ChromiumCDPURL != "")
+	// Facilities remain registered when unavailable; Start reports the reason.
+	amenities := amenity.NewManager()
+	if err := amenities.Register(amenity.NewMCP(mcpproxy.Options{})); err != nil {
+		log.Fatal(err)
+	}
+	if err := amenities.Register(amenity.NewChromium(amenity.ChromiumConfig{
+		ExecPath: cfg.ChromiumPath, CDPURL: cfg.ChromiumCDPURL,
+		IdleStop: cfg.ChromiumIdleStop, DebugPort: cfg.ChromiumDebugPort,
+	})); err != nil {
+		log.Fatal(err)
 	}
 
 	// Fail fast on a misconfigured store: booting with silent noop while the
@@ -234,11 +231,14 @@ func main() {
 		log.Fatalf("hostel: invalid executor backend %q", cfg.Executor)
 	}
 
-	if err := mgr.Start(context.Background()); err != nil {
-		log.Fatalf("hostel: start bed manager: %v", err)
-	}
 	if err := amenities.Start(context.Background()); err != nil {
 		log.Fatalf("hostel: start amenities: %v", err)
+	}
+	if err := mgr.Start(context.Background()); err != nil {
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = amenities.Close(cleanup)
+		cancel()
+		log.Fatalf("hostel: start bed manager: %v", err)
 	}
 	if err := mgr.RetryLocalCleanups(context.Background()); err != nil {
 		log.Printf("hostel: startup local cleanup pending: %v", err)

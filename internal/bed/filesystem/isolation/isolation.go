@@ -29,6 +29,9 @@ import (
 	"os/exec"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
+
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 // Level is a data-isolation guarantee, ordered weakest→strongest.
@@ -118,7 +121,7 @@ type Report interface {
 	Effective() Level
 	Ceiling() Level
 	Mechanism() string
-	Facts() HostFacts
+	Facts() hostfacts.Snapshot
 	WorkspaceView() WorkspaceViewReport
 	Diagnostics() DiagnosticsReport
 }
@@ -153,7 +156,7 @@ type resolved struct {
 	boundary       Boundary
 	workspace      workspaceBackend
 	req, eff, ceil Level
-	facts          HostFacts
+	facts          hostfacts.Snapshot
 	workspaceView  WorkspaceViewReport
 	diagnostics    DiagnosticsReport
 	projections    []bedfs.PathProjection
@@ -168,14 +171,14 @@ func (r *resolved) Requested() Level                   { return r.req }
 func (r *resolved) Effective() Level                   { return r.eff }
 func (r *resolved) Ceiling() Level                     { return r.ceil }
 func (r *resolved) Mechanism() string                  { return r.boundary.Name() }
-func (r *resolved) Facts() HostFacts                   { return r.facts }
+func (r *resolved) Facts() hostfacts.Snapshot          { return r.facts }
 func (r *resolved) WorkspaceView() WorkspaceViewReport { return r.workspaceView }
 func (r *resolved) Diagnostics() DiagnosticsReport {
-	probes := make(map[string]ProbeReport, len(r.diagnostics.Probes))
+	probes := make(map[string]hostfacts.ProbeReport, len(r.diagnostics.Probes))
 	for name, probe := range r.diagnostics.Probes {
 		probes[name] = probe
 	}
-	return DiagnosticsReport{System: r.diagnostics.System, Probes: probes}
+	return DiagnosticsReport{Probes: probes}
 }
 
 func (r *resolved) dedicatedBedUsers() bool {
@@ -220,20 +223,20 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 	}
 	req := parseRequest(requested)
 
-	// One host probe shared by every mechanism (see HostFacts): they read it for
+	// One host probe shared by every mechanism (see hostfacts.Snapshot): they read it for
 	// the cheap pre-check and keep their own boot smoke for the verdict.
-	facts := collectHostFacts()
+	facts := hostfacts.Collect()
 
 	// Candidate mechanisms, strongest first; within a level, preferred first
 	// (the selection below keeps the first available at each level). direct
 	// (dorm) is the always-available floor. Two mechanisms serve room: landlock
 	// (kernel LSM, no privilege — preferred) and uid (Unix DAC, needs setuid
 	// caps — the fallback where Landlock is absent, e.g. old/custom kernels).
-	ptraceProbe := runPtraceProbe()
+	ptraceProbe := hostfs.ProbePtrace()
 	bwrapCandidate, bwrapProbe := newBwrap(facts, workspaceRoot, cfg.projections)
 	landlockCandidate, landlockProbe := newLandlock(facts, workspaceRoot)
 	uidCandidate, uidProbe := newUID(facts, workspaceRoot)
-	probes := map[string]ProbeReport{
+	probes := map[string]hostfacts.ProbeReport{
 		"bwrap":    bwrapProbe,
 		"landlock": landlockProbe,
 		"ptrace":   ptraceProbe,
@@ -282,7 +285,6 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 		facts:         facts,
 		workspaceView: workspaceView,
 		diagnostics: DiagnosticsReport{
-			System: facts.diagnostics,
 			Probes: probes,
 		},
 		projections: append([]bedfs.PathProjection(nil), cfg.projections...),

@@ -1,5 +1,7 @@
 # Hostel 资源治理：采集、汇报、策略与隔离
 
+`internal/host/cgroup` 提供通用组和用量机制；Bed Resource 负责 Bed → Executor 的组组织、记账、采样与准入。分层边界见 [核心架构](kernel.md#领域与-host-机制)。
+
 > **状态：carrier 资源采集、资源汇报、容量准入与 per-bed 记账已落地；per-bed 硬限额尚未实现。**
 
 Hostel 的资源治理分成四层：**采集事实 → 汇报事实 → 执行策略 → 内核硬隔离**。前三层已经可以帮助 Hostel 判断自己

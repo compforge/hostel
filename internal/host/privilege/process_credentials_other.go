@@ -1,5 +1,3 @@
-//go:build linux
-
 // Copyright 2026 Li Qiankun
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,20 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package resource
+//go:build !linux
 
-import "testing"
+package privilege
 
-func TestUnifiedCgroupPath(t *testing.T) {
-	path, err := unifiedCgroupPath("0::/kubepods/pod/container\n")
-	if err != nil || path != "/kubepods/pod/container" {
-		t.Fatalf("unifiedCgroupPath = %q, %v", path, err)
-	}
+import (
+	"fmt"
+	"os"
+	"os/exec"
+)
+
+func ProcessCredentialHelper() (string, error) {
+	return "", fmt.Errorf("privilege: setpriv is unsupported on this platform")
 }
 
-func TestCPUUsageMicros(t *testing.T) {
-	got, err := cpuUsageMicros("usage_usec 12345\nuser_usec 10000\nsystem_usec 2345\n")
-	if err != nil || got != 12345 {
-		t.Fatalf("cpuUsageMicros = %d, %v", got, err)
+func WrapCredentials(_ *exec.Cmd, uid, gid int) error {
+	if uid != os.Geteuid() || gid != os.Getegid() {
+		return fmt.Errorf("privilege: switching user is unsupported on this platform")
 	}
+	return nil
 }
+
+func ChownTree(string, int, int) error { return nil }

@@ -21,7 +21,17 @@ func TestNetworkDiagnosticsWithoutManager(t *testing.T) {
 				Reason  string `json:"reason"`
 			} `json:"network"`
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		payload := rec.Body.Bytes()
+		if path == "/v1/status" {
+			var envelope struct {
+				Components json.RawMessage `json:"components"`
+			}
+			if err := json.Unmarshal(payload, &envelope); err != nil {
+				t.Fatal(err)
+			}
+			payload = envelope.Components
+		}
+		if err := json.Unmarshal(payload, &body); err != nil {
 			t.Fatal(err)
 		}
 		if body.Network.Enabled || body.Network.Backend != "shared" || body.Network.Reason == "" {

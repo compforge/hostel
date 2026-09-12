@@ -80,15 +80,22 @@ internal/
 │   │   └── local_identity.go 本地身份与清理占位；目录删除完成后才 Forget
 │   ├── filesystem/    BedFS 与文件隔离的 owner，提供文件领域诊断
 │   │   ├── bedfs/     数据根、路径投影及文件 API 的实现
-│   │   └── isolation/ 文件边界和进程文件视图的机制、探测与降级
-│   ├── privilege/     BedUser、UID 租约、ownership、降权与权限报告
+│   │   └── isolation/ Bed 文件边界、进程视图的组合探测与降级
+│   ├── privilege/     BedUser、UID 租约、ownership 策略、降权顺序与权限报告
 │   ├── network/       可选 per-Bed netns、出站策略与精确 allocation 句柄
 │   ├── store/         Stage-in、持久化、Transfer 及自动同步循环
 │   │   ├── sync/      noop/auto/cas/pack/tar/copy/restic 同步策略
 │   │   └── backend/   S3 位置、共享客户端和对象操作
 │   ├── executor/      可替换进程域的 Manager、local / supervisor backend
 │   └── resource/      cgroup accounting、carrier admission 与采样循环；未施加 per-Bed limits
-├── amenity/           daemon 直属共享设施；Bed Manager 只驱动 Bed 切片 hook
+├── amenity/           daemon 直属独立设施；Manager 维护 Bed ID 到 Tenant ID 的绑定，设施隐藏资源实现
+├── host/              通用宿主能力；不依赖 Bed/Amenity 模型，不预设使用方
+│   ├── network/       namespace、地址、DNS、出站规则与 allocation 池
+│   ├── filesystem/    mount、Landlock、pathshim/PRoot 进程视图与 ptrace 探测
+│   ├── cgroup/        组层次、放置句柄、用量与释放；无 Bed/Executor 组织策略
+│   ├── privilege/     UID/GID、capability 清除与 ownership 操作
+│   └── facts/         只读系统事实与执行探测记录
+├── instance/          组合 Host 事实及 Bed Component / Amenity 两级状态；HTTP 只序列化
 ├── supervisor/        Linux executor 的 IPC、进程派生与收尸
 ├── config/            flags + HOSTEL_* env
 ├── tracing/           OpenTelemetry 与 trace/log 关联
@@ -102,7 +109,7 @@ internal/
 - **bed = 客人单元 = 对外一个 sandbox**（workspace + 常驻 shell，状态跨命令保持）；**房型(dorm/room/suite)是这张床的文件隔离档、与 bed 正交**——bed 是跨档不变的基本单位，房型只描述"床周围的墙"有多严，不替代 bed 命名（见 `docs/isolation.md`）。
   - **默认 bed 兜底**：不带 bed 的原生请求落 `default`，单租户调用方可无视 bed 概念；default bed 不暴露为 isolated session，永不被清数据、不可 purge、不占任何 bed 数量名额。
   - **生命周期事实分维度**：
-    - `status.phase=initializing|resident|evicting|purging|dormant|failed` 表达 Bed 所处阶段，`status.readiness` 表达能否服务。
+    - inventory 的 `status.phase=initializing|resident|evicting|purging|dormant|failed` 表达 Bed 所处阶段，`status.readiness` 表达能否服务；Bed 详情将这组事实置于 `status.lifecycle`。
     - resident / evicting Bed 的 `status.activity=active|idle` 由 operation 数量派生。
     - 容量讨论把正交事实组合成互斥的具体状态，再投影为 `pinned_beds ⊆ resident_beds ⊆ occupied_beds`；不把 initializing 混入 `activity_counts`。
     - `generation` 表达数据版本，`retained_until` 表达最早安全回收期限。

@@ -2,8 +2,9 @@ package resource
 
 import (
 	"context"
-	"github.com/qiankunli/hostel/internal/bed"
 	"sync"
+
+	"github.com/qiankunli/hostel/internal/bed"
 )
 
 // Manager owns accounting and the carrier admission sampler. Resource limits
@@ -70,5 +71,14 @@ func (m *Manager) Run(ctx context.Context) error {
 		return runnable.Run(ctx)
 	}
 	<-ctx.Done()
+	return nil
+}
+
+// Close releases tracker-owned descriptors after Bed teardown. Trackers with
+// no daemon resources need not implement io.Closer.
+func (m *Manager) Close(context.Context) error {
+	if closer, ok := m.tracker.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
 	return nil
 }

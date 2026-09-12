@@ -18,14 +18,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	model "github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bed/filesystem"
-	"golang.org/x/sync/semaphore"
 	"log"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	model "github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/filesystem"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/qiankunli/go-stdx/filepathx"
 	"github.com/qiankunli/hostel/internal/amenity"
@@ -62,7 +63,7 @@ type Manager struct {
 	diagnosticsMu   sync.RWMutex
 	environment     EnvironmentReport
 	shellPath       string
-	amenities       *amenity.Registry  // nil-safe; ReleaseAll on bed teardown
+	amenities       *amenity.Manager   // nil-safe; releases bound Tenants on Bed teardown
 	executions      *ExecutionRegistry // one-shot executions, daemon-global ids
 	executorFactory executor.Factory   // creates each managedBed's replaceable process realm
 	resources       resource.Tracker   // per-bed cgroup accounting; noop when unavailable
@@ -132,7 +133,7 @@ func WithBedUser(user privilege.BedUser) ManagerOption {
 
 // NewManager creates the bed manager and ensures the workspace root exists.
 // amenities and st may be nil; maxBeds 0 = unlimited.
-func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Registry, maxBeds int, st *store.Manager, opts ...ManagerOption) (*Manager, error) {
+func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Manager, maxBeds int, st *store.Manager, opts ...ManagerOption) (*Manager, error) {
 	processEnv, _ := newProcessEnv(os.Environ())
 	shellPath = resolveShellPath(shellPath)
 	if st == nil {
@@ -178,7 +179,6 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 	m.resourceManager = resource.NewManager(m.resources, m.owners.Resource)
 	m.network.SetStatusWriter(m.owners.Network)
 	m.store.SetStatusWriter(m.owners.Store)
-	m.amenities.SetStatusWriter(m.owners.Amenity)
 	var effectiveCaps uint64
 	if report, ok := iso.(isolation.Report); ok {
 		effectiveCaps = report.Facts().EffectiveCaps
@@ -253,7 +253,7 @@ func (m *Manager) ResourceAdmissionReport() resource.AdmissionReport {
 func (m *Manager) Isolator() isolation.Isolator { return m.iso }
 
 // Amenities exposes the amenity manager (for capabilities + web adapters).
-func (m *Manager) Amenities() *amenity.Registry { return m.amenities }
+func (m *Manager) Amenities() *amenity.Manager { return m.amenities }
 
 // Executions exposes the bounded one-shot execution registry. IDs are daemon
 // global because status/log endpoints do not carry a bed dimension.

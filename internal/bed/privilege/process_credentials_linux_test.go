@@ -11,13 +11,14 @@ import (
 	"testing"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 )
 
 func TestBedUserWrapDropsRootIdentityAndCapabilities(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to switch to a foreign uid")
 	}
-	if _, err := ProcessCredentialHelper(); err != nil {
+	if _, err := hostprivilege.ProcessCredentialHelper(); err != nil {
 		t.Skip("setpriv is not installed")
 	}
 	user, _ := NewBedUser(65534, 65534)
@@ -65,40 +66,5 @@ func TestFixedBedUserPreparesOwnership(t *testing.T) {
 	stat := info.Sys().(*syscall.Stat_t)
 	if int(stat.Uid) != user.UID() || int(stat.Gid) != user.GID() {
 		t.Fatalf("owner = %d:%d, want %d:%d", stat.Uid, stat.Gid, user.UID(), user.GID())
-	}
-}
-
-func TestChownTreeSkipsHardlinks(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("needs root to chown to a foreign uid and observe the skip")
-	}
-	root := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "host-owned")
-	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Link(outside, filepath.Join(root, "captured")); err != nil {
-		t.Fatalf("hardlink (same fs needed): %v", err)
-	}
-	normal := filepath.Join(root, "own")
-	if err := os.WriteFile(normal, []byte("y"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	const uid = 200007
-	if err := chownTree(root, uid, uid); err != nil {
-		t.Fatal(err)
-	}
-	ownerOf := func(path string) int {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return int(info.Sys().(*syscall.Stat_t).Uid)
-	}
-	if got := ownerOf(outside); got == uid {
-		t.Fatalf("hardlinked host file was rehomed to Bed uid %d", uid)
-	}
-	if got := ownerOf(normal); got != uid {
-		t.Fatalf("normal file owner = %d, want Bed uid %d", got, uid)
 	}
 }

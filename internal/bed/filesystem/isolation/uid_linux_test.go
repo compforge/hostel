@@ -17,19 +17,21 @@
 package isolation
 
 import (
-	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
-	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	"github.com/qiankunli/hostel/internal/bed/privilege"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
-// missingUIDCaps reads the shared HostFacts and names the absent caps — the
+// missingUIDCaps reads the shared hostfacts.Snapshot and names the absent caps — the
 // honest-degrade signal the resolver relies on. Cross-check it against the live
 // facts so the cap-bit wiring can't silently drift.
 func TestMissingUIDCaps(t *testing.T) {
-	facts := collectHostFacts()
+	facts := hostfacts.Collect()
 	miss := missingUIDCaps(facts)
 	t.Logf("effective caps %#x, missing uid caps: %q", facts.EffectiveCaps, miss)
 	wantAllPresent := len(privilege.MissingBedIdentityCapabilities(facts.EffectiveCaps)) == 0
@@ -38,10 +40,10 @@ func TestMissingUIDCaps(t *testing.T) {
 	}
 }
 
-// collectHostFacts must probe without panicking and yield self-consistent facts
+// hostfacts.Collect must probe without panicking and yield self-consistent facts
 // on any Linux host (root or not).
 func TestCollectHostFactsSane(t *testing.T) {
-	f := collectHostFacts()
+	f := hostfacts.Collect()
 	t.Logf("host facts: %+v", f)
 	if f.KernelRelease == "" {
 		t.Error("KernelRelease empty on Linux (uname should populate it)")

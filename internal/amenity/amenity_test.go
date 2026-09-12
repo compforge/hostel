@@ -23,49 +23,21 @@ import (
 	"time"
 )
 
-type fakeAmenity struct {
-	name     string
-	released []string
-}
-
-func (f *fakeAmenity) Name() string  { return f.name }
-func (f *fakeAmenity) State() string { return StateIdle }
-func (f *fakeAmenity) AcquireTenant(bedID, ws string) (Tenant, error) {
-	return nil, nil
-}
-func (f *fakeAmenity) ReleaseTenant(bedID string) error {
-	f.released = append(f.released, bedID)
-	return nil
-}
-
-func TestRegistryFindAndReleaseAll(t *testing.T) {
-	r := NewRegistry()
-	a := &fakeAmenity{name: "x"}
-	r.Register(a)
-	if r.Find("x") == nil || r.Find("nope") != nil {
-		t.Fatal("Find broken")
-	}
-	r.ReleaseAll("bed-1")
-	if len(a.released) != 1 || a.released[0] != "bed-1" {
-		t.Fatalf("ReleaseAll: %v", a.released)
-	}
-	// nil registry is inert.
-	var nilReg *Registry
-	nilReg.Register(a)
-	nilReg.ReleaseAll("z")
-	if nilReg.List() != nil {
-		t.Fatal("nil registry should list nothing")
-	}
-}
-
 // TestChromiumEndToEnd runs against a real browser when one is present
 // (macOS dev machines usually have Chrome; CI without one skips).
 func TestChromiumEndToEnd(t *testing.T) {
-	br, ok := NewChromium(ChromiumConfig{IdleStop: 200 * time.Millisecond, ActionTimeout: 20 * time.Second})
-	if !ok {
+	br := NewChromium(ChromiumConfig{IdleStop: 200 * time.Millisecond, ActionTimeout: 20 * time.Second})
+	if err := br.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if br.State() == StateUnavailable {
 		t.Skip("no chromium/chrome available on this host")
 	}
-	c := br.(*chromium)
+	c := br
+	t.Cleanup(func() { _ = c.Close(context.Background()) })
+	a, _ := c.NewTenant(t.Context())
+	b, _ := c.NewTenant(t.Context())
+	last, _ := c.NewTenant(t.Context())
 	ctx := context.Background()
 	wsA, wsB := t.TempDir(), t.TempDir()
 
@@ -74,7 +46,7 @@ func TestChromiumEndToEnd(t *testing.T) {
 		t.Fatalf("initial state = %s", c.State())
 	}
 
-	title, _, err := br.Goto(ctx, "bedA", wsA, `data:text/html,<title>hello-a</title><body>alpha content</body>`)
+	title, _, err := br.Goto(ctx, a.ID().String(), wsA, `data:text/html,<title>hello-a</title><body>alpha content</body>`)
 	if err != nil {
 		t.Fatalf("Goto A: %v", err)
 	}
@@ -85,25 +57,25 @@ func TestChromiumEndToEnd(t *testing.T) {
 		t.Fatalf("state after demand = %s", c.State())
 	}
 
-	text, err := br.Text(ctx, "bedA", wsA)
+	text, err := br.Text(ctx, a.ID().String(), wsA)
 	if err != nil || !strings.Contains(text, "alpha content") {
 		t.Fatalf("Text A: %q err=%v", text, err)
 	}
 
 	// Second bed gets its own context — its page is independent.
-	if _, _, err := br.Goto(ctx, "bedB", wsB, `data:text/html,<body>beta content</body>`); err != nil {
+	if _, _, err := br.Goto(ctx, b.ID().String(), wsB, `data:text/html,<body>beta content</body>`); err != nil {
 		t.Fatalf("Goto B: %v", err)
 	}
-	textB, _ := br.Text(ctx, "bedB", wsB)
+	textB, _ := br.Text(ctx, b.ID().String(), wsB)
 	if !strings.Contains(textB, "beta") || strings.Contains(textB, "alpha") {
 		t.Fatalf("bed contexts not independent: %q", textB)
 	}
-	if len(c.tenants) != 2 {
-		t.Fatalf("tenants = %d, want 2", len(c.tenants))
+	if len(c.contexts) != 2 {
+		t.Fatalf("tenants = %d, want 2", len(c.contexts))
 	}
 
 	// Screenshot lands in the right bed's workspace, virtual path returned.
-	saved, err := br.Screenshot(ctx, "bedA", wsA, "")
+	saved, err := br.Screenshot(ctx, a.ID().String(), wsA, "")
 	if err != nil {
 		t.Fatalf("Screenshot: %v", err)
 	}
@@ -115,7 +87,7 @@ func TestChromiumEndToEnd(t *testing.T) {
 		t.Fatalf("screenshot file: %v", err)
 	}
 	// Escaping paths refused.
-	if _, err := br.Screenshot(ctx, "bedA", wsA, "../evil.png"); err == nil {
+	if _, err := br.Screenshot(ctx, a.ID().String(), wsA, "../evil.png"); err == nil {
 		t.Fatal("escaping screenshot path not rejected")
 	}
 
@@ -124,41 +96,41 @@ func TestChromiumEndToEnd(t *testing.T) {
 		`<input id="in"><button id="btn" onclick="document.getElementById('out').innerText=document.getElementById('in').value">go</button>` +
 		`<div id="out"></div><div id="late" style="display:none">shown</div>` +
 		`<script>document.getElementById('in').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('out').innerText='ENTER:'+e.target.value})</script>`
-	if _, _, err := br.Goto(ctx, "bedA", wsA, form); err != nil {
+	if _, _, err := br.Goto(ctx, a.ID().String(), wsA, form); err != nil {
 		t.Fatalf("Goto form: %v", err)
 	}
-	if err := br.Wait(ctx, "bedA", wsA, "#in"); err != nil {
+	if err := br.Wait(ctx, a.ID().String(), wsA, "#in"); err != nil {
 		t.Fatalf("Wait #in: %v", err)
 	}
-	if err := br.Type(ctx, "bedA", wsA, "#in", "hello", true); err != nil {
+	if err := br.Type(ctx, a.ID().String(), wsA, "#in", "hello", true); err != nil {
 		t.Fatalf("Type: %v", err)
 	}
-	if err := br.Click(ctx, "bedA", wsA, "#btn"); err != nil {
+	if err := br.Click(ctx, a.ID().String(), wsA, "#btn"); err != nil {
 		t.Fatalf("Click: %v", err)
 	}
-	out, _ := br.Text(ctx, "bedA", wsA)
+	out, _ := br.Text(ctx, a.ID().String(), wsA)
 	if !strings.Contains(out, "hello") {
 		t.Fatalf("after type+click, out = %q", out)
 	}
 	// Press Enter in the focused input triggers the keydown handler.
-	if err := br.Type(ctx, "bedA", wsA, "#in", "world", true); err != nil {
+	if err := br.Type(ctx, a.ID().String(), wsA, "#in", "world", true); err != nil {
 		t.Fatalf("Type 2: %v", err)
 	}
-	if err := br.Press(ctx, "bedA", wsA, "Enter"); err != nil {
+	if err := br.Press(ctx, a.ID().String(), wsA, "Enter"); err != nil {
 		t.Fatalf("Press Enter: %v", err)
 	}
-	out2, _ := br.Text(ctx, "bedA", wsA)
+	out2, _ := br.Text(ctx, a.ID().String(), wsA)
 	if !strings.Contains(out2, "ENTER:world") || strings.Contains(out2, "helloworld") {
 		t.Fatalf("after Enter, out = %q", out2)
 	}
 	// Scroll doesn't error on a short page.
-	if err := br.Scroll(ctx, "bedA", wsA, 0, 100); err != nil {
+	if err := br.Scroll(ctx, a.ID().String(), wsA, 0, 100); err != nil {
 		t.Fatalf("Scroll: %v", err)
 	}
 
 	// Release both tenants → idle-stop kicks in.
-	_ = br.ReleaseTenant("bedA")
-	_ = br.ReleaseTenant("bedB")
+	_ = br.ReleaseTenant(a.ID().String())
+	_ = br.ReleaseTenant(b.ID().String())
 	deadline := time.Now().Add(5 * time.Second)
 	for c.State() != StateIdle && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
@@ -168,10 +140,10 @@ func TestChromiumEndToEnd(t *testing.T) {
 	}
 
 	// And the facility restarts on new demand.
-	if _, _, err := br.Goto(ctx, "bedC", t.TempDir(), `data:text/html,<title>again</title>`); err != nil {
+	if _, _, err := br.Goto(ctx, last.ID().String(), t.TempDir(), `data:text/html,<title>again</title>`); err != nil {
 		t.Fatalf("Goto after idle-stop: %v", err)
 	}
-	_ = br.ReleaseTenant("bedC")
+	_ = br.ReleaseTenant(last.ID().String())
 	c.mu.Lock()
 	c.stopLocked()
 	c.mu.Unlock()

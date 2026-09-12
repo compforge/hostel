@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/qiankunli/hostel/internal/amenity"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/tracing"
 	"github.com/qiankunli/hostel/pkg/mcpproxy"
@@ -32,11 +31,6 @@ import (
 // authentication credential. Do not expose them as an untrusted MCP server.
 func (s *Server) mcpRequest(next func(*gin.Context, *mcpproxy.Proxy) error) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		a, ok := s.mgr.Amenities().Find("mcp").(*amenity.MCP)
-		if !ok {
-			respondError(c, http.StatusServiceUnavailable, ErrServiceUnavailable, "MCP amenity unavailable")
-			return
-		}
 		b := s.bedOf(c)
 		if b == nil {
 			return
@@ -51,8 +45,13 @@ func (s *Server) mcpRequest(next func(*gin.Context, *mcpproxy.Proxy) error) gin.
 		}
 		defer finish()
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+		t, err := s.mgr.Amenities().MCP(ctx, b.ID)
+		if err != nil {
+			respondError(c, http.StatusServiceUnavailable, ErrServiceUnavailable, err.Error())
+			return
+		}
 		start := time.Now()
-		err = next(c, a.Proxy(b.ID.String()))
+		err = next(c, t.Proxy())
 		if err != nil {
 			respondMCPError(c, err)
 		}

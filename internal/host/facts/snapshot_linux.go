@@ -14,7 +14,7 @@
 
 //go:build linux
 
-package isolation
+package facts
 
 import (
 	"fmt"
@@ -29,8 +29,8 @@ import (
 // osFacts fills the Linux-only host facts. Each probe degrades to a zero value
 // on error, which simply makes the dependent mechanism report unavailable — the
 // resolver then floors honestly.
-func osFacts() HostFacts {
-	var f HostFacts
+func osFacts() Snapshot {
+	var f Snapshot
 	landlockABI := ObservedInt{}
 	if v, err := lls.LandlockGetABIVersion(); err == nil {
 		f.LandlockABI = int(v)
@@ -46,7 +46,7 @@ func osFacts() HostFacts {
 	f.UnprivilegedUserns = unprivilegedUsernsClone.Value != nil && *unprivilegedUsernsClone.Value == 1
 	f.CgroupV2 = cgroupV2()
 	f.AppArmorProfile = apparmorProfile()
-	f.diagnostics = SystemFacts{
+	f.System = SystemFacts{
 		Process: process,
 		SecurityModules: SecurityModuleFacts{
 			LSMList:         readObservedString("/sys/kernel/security/lsm"),

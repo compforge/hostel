@@ -1,17 +1,3 @@
-// Copyright 2026 Li Qiankun
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package amenity
 
 import (
@@ -19,70 +5,101 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/hostel/pkg/mcpproxy"
 )
 
-// MCP owns a remote connection pool per bed. Its idle connections do not
-// pin beds; web requests hold bed operations and teardown calls ReleaseAll.
 type MCP struct {
 	mu      sync.Mutex
 	options mcpproxy.Options
-	tenants map[string]*mcpproxy.Proxy
+	tenants map[TenantID]*MCPTenant
+	closed  bool
+}
+
+type MCPTenant struct {
+	id     TenantID
+	owner  *MCP
+	proxy  *mcpproxy.Proxy
+	closed bool // protected by owner.mu
 }
 
 func NewMCP(options mcpproxy.Options) *MCP {
-	return &MCP{options: options, tenants: map[string]*mcpproxy.Proxy{}}
+	return &MCP{options: options, tenants: make(map[TenantID]*MCPTenant)}
 }
-func (a *MCP) Name() string { return "mcp" }
-func (a *MCP) State() string {
+func (a *MCP) Name() string                    { return "mcp" }
+func (a *MCP) Start(ctx context.Context) error { return ctx.Err() }
+func (a *MCP) Status() Status {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if len(a.tenants) == 0 {
-		return StateIdle
+	state := StateIdle
+	if len(a.tenants) > 0 {
+		state = StateRunning
 	}
-	return StateRunning
+	if a.closed {
+		state = StateClosed
+		if len(a.tenants) > 0 {
+			state = StateClosing
+		}
+	}
+	return MCPStatus{State: state, Tenants: len(a.tenants)}
 }
-func (a *MCP) AcquireTenant(bedID, workspace string) (Tenant, error) {
-	return a.Proxy(bedID), nil
-}
-
-// Proxy requires an admitted operation for a live bed. The operation prevents
-// a concurrent eviction from recreating a tenant after ReleaseTenant.
-func (a *MCP) Proxy(bedID string) *mcpproxy.Proxy {
+func (a *MCP) NewTenant(ctx context.Context) (Tenant, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if p := a.tenants[bedID]; p != nil {
-		return p
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	p := mcpproxy.New(a.options)
-	a.tenants[bedID] = p
-	return p
+	if a.closed {
+		return nil, errors.New("mcp: facility closed")
+	}
+	t := &MCPTenant{id: TenantID(randx.Hex(16)), owner: a, proxy: mcpproxy.New(a.options)}
+	a.tenants[t.id] = t
+	return t, nil
 }
-func (a *MCP) ReleaseTenant(bedID string) error {
-	a.mu.Lock()
-	p := a.tenants[bedID]
-	delete(a.tenants, bedID)
-	a.mu.Unlock()
-	if p != nil {
-		return p.Close()
+func (t *MCPTenant) ID() TenantID           { return t.id }
+func (t *MCPTenant) Proxy() *mcpproxy.Proxy { return t.proxy }
+func (t *MCPTenant) Status() TenantStatus   { return MCPTenantStatus{t.proxy.Status()} }
+func (t *MCPTenant) Close(ctx context.Context) error {
+	t.owner.mu.Lock()
+	defer t.owner.mu.Unlock()
+	if t.closed {
+		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := t.proxy.Close(); err != nil {
+		return err
+	}
+	t.closed = true
+	delete(t.owner.tenants, t.id)
 	return nil
 }
-
-// Close stops every remaining connection pool at daemon shutdown.
 func (a *MCP) Close(ctx context.Context) error {
 	a.mu.Lock()
-	ids := make([]string, 0, len(a.tenants))
-	for id := range a.tenants {
-		ids = append(ids, id)
+	a.closed = true
+	tenants := make([]*MCPTenant, 0, len(a.tenants))
+	for _, t := range a.tenants {
+		tenants = append(tenants, t)
 	}
 	a.mu.Unlock()
 	var result error
-	for _, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return errors.Join(result, err)
-		}
-		result = errors.Join(result, a.ReleaseTenant(id))
+	for _, t := range tenants {
+		result = errors.Join(result, t.Close(ctx))
 	}
 	return result
 }
+
+// MCPStatus describes the facility's tenant pools, not remote reachability.
+type MCPStatus struct {
+	State   string `json:"state"`
+	Tenants int    `json:"tenants"`
+}
+
+func (s MCPStatus) lifecycleState() string { return s.State }
+
+// MCPTenantStatus reports this tenant's proxy lifecycle. Configuration and
+// connection facts are supplied by the proxy's own reporting API.
+type MCPTenantStatus struct{ mcpproxy.Status }
+
+func (MCPTenantStatus) tenantStatus() {}

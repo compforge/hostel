@@ -11,7 +11,7 @@ import (
 )
 
 // dnsForwarder preserves the carrier's DNS (including Docker's loopback DNS)
-// without exposing its network namespace to Bed processes. All requests are
+// without exposing its network namespace to isolated processes. All requests are
 // bounded by a common concurrency limit and timeout; this is not a DNS cache.
 type dnsForwarder struct {
 	policy    *policyControl

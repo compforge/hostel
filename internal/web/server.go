@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/qiankunli/hostel/internal/instance"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
@@ -64,6 +65,7 @@ const BedHeader = "X-Hostel-Bed"
 
 // Server wires the bed manager into gin routes.
 type Server struct {
+	observer             instance.Observer
 	mgr                  *bed.Manager
 	engine               *gin.Engine
 	metricSampleInterval time.Duration
@@ -102,6 +104,7 @@ func NewServer(mgr *bed.Manager, options ...ServerOption) *Server {
 	e.Use(gin.Recovery())
 	s := &Server{
 		mgr:                  mgr,
+		observer:             instance.NewObserver(mgr, mgr.Amenities()),
 		engine:               e,
 		metricSampleInterval: time.Second,
 		dormReadFallbackRoot: cfg.dormReadFallbackRoot,
@@ -318,12 +321,12 @@ func (s *Server) healthz(c *gin.Context) {
 	})
 }
 
-// GET /v1/status returns the versioned operator view assembled by the Bed
-// manager. Reading it does not rerun startup probes or perform remote I/O.
+// GET /v1/status serializes the instance-level Component and Amenity view.
+// The instance observer composes the Bed and Amenity Managers. Reading it does not rerun startup probes or perform remote I/O.
 //
 // +spec=`Instance diagnostics expose cached facts and component reports; reading the endpoint never reruns probes.`
 func (s *Server) status(c *gin.Context) {
-	c.JSON(http.StatusOK, s.mgr.Status())
+	c.JSON(http.StatusOK, s.observer.Status())
 }
 
 func resourceAdmissionView(report resource.AdmissionReport) gin.H {
