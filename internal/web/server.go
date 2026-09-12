@@ -27,10 +27,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bedfs"
-	"github.com/qiankunli/hostel/internal/isolation"
-	"github.com/qiankunli/hostel/internal/resource"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	"github.com/qiankunli/hostel/internal/bed/resource"
 )
 
 // respondBedError maps bed resolution/admission failures: a full or
@@ -227,9 +227,9 @@ const resolvedBedContextKey = "hostel.resolved-bed"
 // creating it on first use. Adapters that require an existing bed may inject a
 // pre-resolved value, which also prevents their read paths from creating one.
 // On invalid id it writes an error and returns nil.
-func (s *Server) bedOf(c *gin.Context) *bed.Bed {
+func (s *Server) bedOf(c *gin.Context) *bed.Resident {
 	if resolved, ok := c.Get(resolvedBedContextKey); ok {
-		if b, ok := resolved.(*bed.Bed); ok {
+		if b, ok := resolved.(*bed.Resident); ok {
 			return b
 		}
 	}
@@ -247,11 +247,11 @@ func (s *Server) bedOf(c *gin.Context) *bed.Bed {
 
 // withOp wraps a request-scoped handler in one operation of the given kind:
 // the bed is resolved, held for the handler's lifetime and released on return
-// (docs/lifecycle.md: an operation's span is one request). Explicit
+// (docs/kernel.md: an operation's span is one request). Explicit
 // BeginOperation is reserved for work whose span is NOT the request —
 // background /command outlives it, foreground runs take their timeout from
 // the request body, isolatedCreate creates the bed it then holds.
-func (s *Server) withOp(kind bed.OperationKind, next func(*gin.Context, *bed.Bed)) gin.HandlerFunc {
+func (s *Server) withOp(kind bed.OperationKind, next func(*gin.Context, *bed.Resident)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		b := s.bedOf(c)
 		if b == nil {
@@ -269,7 +269,7 @@ func (s *Server) withOp(kind bed.OperationKind, next func(*gin.Context, *bed.Bed
 
 // opsOf returns filesystem ops rooted at the request's bed and holds one
 // operation reference until finish is called.
-func (s *Server) opsOf(c *gin.Context) (*bed.Bed, *bedfs.FS, func()) {
+func (s *Server) opsOf(c *gin.Context) (*bed.Resident, *bedfs.FS, func()) {
 	b := s.bedOf(c)
 	if b == nil {
 		return nil, nil, nil
@@ -318,38 +318,12 @@ func (s *Server) healthz(c *gin.Context) {
 	})
 }
 
-// GET /v1/diagnostics returns the immutable facts and mechanism probe records
-// captured while isolation was resolved at boot.
+// GET /v1/diagnostics returns the versioned operator view assembled by the Bed
+// manager. Reading it does not rerun startup probes or perform remote I/O.
 //
-// +spec=`Instance diagnostics expose only cached boot-time facts and raw probe records; reading the endpoint never reruns probes or infers remediation.`
+// +spec=`Instance diagnostics expose cached facts and component reports; reading the endpoint never reruns probes.`
 func (s *Server) diagnostics(c *gin.Context) {
-	iso := s.mgr.Isolator()
-	report, ok := iso.(isolation.Report)
-	if !ok {
-		c.JSON(http.StatusOK, gin.H{
-			"network":        s.mgr.NetworkReport(),
-			"system":         isolation.SystemFacts{},
-			"probes":         map[string]isolation.ProbeReport{},
-			"isolation":      gin.H{"effective": iso.Level().String(), "mechanism": iso.Name()},
-			"workspace_view": workspaceView(iso),
-			"bed_user":       s.mgr.BedUserReport(),
-		})
-		return
-	}
-	diagnostics := report.Diagnostics()
-	c.JSON(http.StatusOK, gin.H{
-		"network": s.mgr.NetworkReport(),
-		"system":  diagnostics.System,
-		"probes":  diagnostics.Probes,
-		"isolation": gin.H{
-			"requested": report.Requested().String(),
-			"effective": report.Effective().String(),
-			"ceiling":   report.Ceiling().String(),
-			"mechanism": report.Mechanism(),
-		},
-		"workspace_view": report.WorkspaceView(),
-		"bed_user":       s.mgr.BedUserReport(),
-	})
+	c.JSON(http.StatusOK, s.mgr.Diagnostics())
 }
 
 func resourceAdmissionView(report resource.AdmissionReport) gin.H {
@@ -390,10 +364,6 @@ func isolationView(iso isolation.Isolator) gin.H {
 		v["requested"] = r.Requested().String()
 		v["effective"] = r.Effective().String()
 		v["ceiling"] = r.Ceiling().String()
-		// The host facts behind the ceiling, so an operator can see WHY a host
-		// tops out where it does (no Landlock? no setuid caps?) without shelling
-		// into it (docs/isolation.md).
-		v["host"] = r.Facts()
 	}
 	return v
 }

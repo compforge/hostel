@@ -619,3 +619,20 @@ var (
 	_ Amenity = (*chromium)(nil)
 	_ Browser = (*chromium)(nil)
 )
+
+// Close cancels local browser ownership after Bed slices have been released.
+// An attached remote browser is not owned by Hostel; only its contexts close.
+func (c *chromium) Close(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.idleTimer != nil {
+		c.idleTimer.Stop()
+		c.idleTimer = nil
+	}
+	c.stopLocked()
+	clear(c.cdpSecrets)
+	return nil
+}

@@ -31,14 +31,14 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/amenity"
-	"github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/executor"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	"github.com/qiankunli/hostel/internal/bed/network"
+	"github.com/qiankunli/hostel/internal/bed/privilege"
+	"github.com/qiankunli/hostel/internal/bed/resource"
+	"github.com/qiankunli/hostel/internal/bed/store"
 	"github.com/qiankunli/hostel/internal/config"
-	"github.com/qiankunli/hostel/internal/executor"
-	"github.com/qiankunli/hostel/internal/isolation"
-	"github.com/qiankunli/hostel/internal/network"
-	"github.com/qiankunli/hostel/internal/privilege"
-	"github.com/qiankunli/hostel/internal/resource"
-	"github.com/qiankunli/hostel/internal/store"
 	"github.com/qiankunli/hostel/internal/supervisor"
 	"github.com/qiankunli/hostel/internal/tracing"
 	"github.com/qiankunli/hostel/internal/web"
@@ -234,6 +234,16 @@ func main() {
 		log.Fatalf("hostel: invalid executor backend %q", cfg.Executor)
 	}
 
+	if err := mgr.Start(context.Background()); err != nil {
+		log.Fatalf("hostel: start bed manager: %v", err)
+	}
+	if err := amenities.Start(context.Background()); err != nil {
+		log.Fatalf("hostel: start amenities: %v", err)
+	}
+	if err := mgr.RetryLocalCleanups(context.Background()); err != nil {
+		log.Printf("hostel: startup local cleanup pending: %v", err)
+	}
+
 	// Individual backend probes cannot prove that privilege ordering composes.
 	probeCtx, cancelEnvironmentProbe := context.WithTimeout(context.Background(), 30*time.Second)
 	environmentErr := mgr.ProbeEnvironment(probeCtx)
@@ -246,7 +256,7 @@ func main() {
 	}
 	userReport := mgr.BedUserReport()
 	log.Printf("hostel: execution environment verified (file=%s network=%s executor=%s bed_user_strategy=%s bed_uid=%d bed_gid=%d bed_uid_min=%d bed_uid_max=%d)",
-		iso.Name(), networks.Report().Backend, mgr.ExecutorBackend(), userReport.Strategy,
+		iso.Name(), networks.Diagnostics().Backend, mgr.ExecutorBackend(), userReport.Strategy,
 		userReport.UID, userReport.GID, userReport.UIDMin, userReport.UIDMax)
 
 	// Carrier pressure gates tenant work, not the startup capability probe.
@@ -255,61 +265,36 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Idle bed reaper.
-	if cfg.BedIdleTTL > 0 {
-		go func() {
-			t := time.NewTicker(cfg.BedIdleTTL / 2)
-			defer t.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					if reaped := mgr.CollectExpired(ctx, time.Now()); len(reaped) > 0 {
-						log.Printf("hostel: reaped idle beds: %v", reaped)
-					}
-				}
-			}
-		}()
-	}
-
-	// Luggage GC bounds orphaned Bed directories left by an unclean shutdown or
-	// older version. Normal eviction removes its local directory immediately.
-	if cfg.LuggageHighBytes > 0 {
-		go func() {
-			t := time.NewTicker(time.Minute)
-			defer t.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					if reaped := mgr.CollectLuggage(ctx); len(reaped) > 0 {
-						log.Printf("hostel: reaped luggage: %v", reaped)
-					}
-				}
-			}
-		}()
-	}
-
-	// Store synchronization owns lifecycle requests, periodic cadence and
-	// retry/backoff. A zero interval disables only the periodic safety net.
-	go mgr.RunStoreSync(ctx, cfg.PersistInterval)
+	// The composite owns loop startup, cancellation and join. Domain managers
+	// retain their own cadence and retries; main only drives daemon lifetime.
+	mgr.SetPersistInterval(cfg.PersistInterval)
+	workerDone := make(chan error, 1)
+	go func() { workerDone <- mgr.Run(ctx) }()
 
 	srv := &http.Server{Addr: cfg.Addr, Handler: web.NewServer(
 		mgr,
 		web.WithTracing(cfg.EnableTracing),
 		web.WithDormReadFallbackRoot(cfg.DormReadFallbackRoot),
 	).Handler()}
+	serverDone := make(chan error, 1)
 	go func() {
 		log.Printf("hostel: listening on %s (isolation=%s, workspace-root=%s, default-bed=%s)",
 			cfg.Addr, iso.Name(), cfg.WorkspaceRoot, cfg.DefaultBed)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("hostel: server error: %v", err)
+			serverDone <- err
 		}
 	}()
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case err := <-workerDone:
+		if err != nil {
+			log.Printf("hostel: background controller failed: %v", err)
+		}
+	case err := <-serverDone:
+		log.Printf("hostel: server failed: %v", err)
+	}
+	stop()
 	log.Printf("hostel: shutting down")
 	httpShutdownCtx, cancelHTTPShutdown := context.WithTimeout(context.Background(), 5*time.Second)
 	_ = srv.Shutdown(httpShutdownCtx)
@@ -317,7 +302,10 @@ func main() {
 	executorShutdownCtx, cancelExecutorShutdown := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelExecutorShutdown()
 	if err := mgr.Close(executorShutdownCtx); err != nil {
-		log.Printf("hostel: executor shutdown: %v", err)
+		log.Printf("hostel: bed manager shutdown: %v", err)
+	}
+	if err := amenities.Close(executorShutdownCtx); err != nil {
+		log.Printf("hostel: amenity shutdown: %v", err)
 	}
 }
 

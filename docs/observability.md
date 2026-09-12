@@ -49,6 +49,19 @@ hostel 需要从三个层面回答同一组问题：
 resident bed 只保留最近一次 initialization 和 persist。它们是有界诊断摘要，不是历史库；
 evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史由日志与 Trace 承担。
 
+### 生命周期接口投影
+
+生命周期模型和准入、回收契约由 [kernel.md](kernel.md) 统一定义，HTTP 只投影事实。
+
+| 接口 | 回答的问题 |
+|------|-----------|
+| `POST /v1/beds` | 接受 Bed 初始化；新任务返回 `202` 与 initializing readiness，已 Ready 返回 `200` |
+| `GET /v1/beds` | hostel 什么状态（`instance.status`）+ 全部 bed 概要（含 initializing / failed / dormant） |
+| `GET /v1/beds/:id` | 这个 bed 为什么是这个状态：`phase/readiness`；resident 时再给 activity / lifecycle / executor |
+| `GET /healthz` | 实例可服务性（探活/调度用） |
+
+bed 明细只进 `/v1/beds/:id`；`/v1/beds` 的 bed 条目保持概要。上游读到的任何字段都是 stale-tolerant hint——正确性由准入/回收点的原子复核兜底，不靠上报实时性。
+
 ## 主流程
 
 ```text
@@ -136,14 +149,37 @@ purging / failed / resident / dormant luggage）的当前事实，不承载 time
 作用域、资源记账、容量准入和设施状态分别披露。`isolator_ok`、Bed Ready 或 amenity
 running 都不能推导出完整隔离，语义由 [isolation.md](isolation.md) 统一定义。
 
-`GET /v1/diagnostics` 返回 isolation 启动解析时缓存的系统事实和机制探测原始记录，包括 runtime、
-进程 capability/seccomp、LSM label、namespace sysctl、kernel feature、ptrace Yama scope，以及模拟 PRoot
-启动序列的 `TRACEME → SETOPTIONS → SYSCALL` 探测。二进制 helper 先记录配置命令名、PATH 解析路径、是否存在和是否可执行；各探测再保留是否执行、退出码、stdout、stderr、
-错误和耗时。读取接口不重新执行探测。`system` 与 `probes` 保留观测值和读取错误，
-不推导部署要求或修复建议；`isolation`、`workspace_view`、`network`、`bed_user` 另行给出已选择的能力
-与不可用原因。网络 probe 的作用域与字段见 [network.md](network.md)。
-不存在的内核节点以 `value: null` 和 `read_error`
-表达，与节点存在且值为 `0` 严格区分。
+实例诊断沿 domain owner 汇总，而不是在 HTTP 层重新解释组件状态：
+
+```text
+domain component → Diagnostics() 返回自己定义的 Report
+Bed Manager      → 组合版本化 Diagnostics，不跨 domain 推导
+HTTP             → 序列化响应
+```
+
+Report 同时是组件内部事实到运维协议的边界。新增或修改诊断项时，由拥有该事实的组件定义语义和
+快照方式；聚合层只决定顶层结构与 schema 版本，web 层不读取组件内部状态。
+`Component[R]` 将这一读取契约与 daemon、Bed 两层 Lifecycle 放在同一个组件协议下；报告保持领域类型，
+不通过通用 map 或类型断言组装。Diagnostics 只观察，不执行生命周期 hook。
+
+Bed 的分域 Status 是单 Bed 的实际准备结果；Diagnostics 是领域的实例级报告，两者粒度不同。
+Filesystem 自己提供文件隔离报告，Resource 自己提供 accounting/admission，Bed Manager 只聚合；
+HTTP 不重做探测、不读取领域内部句柄。
+
+`GET /v1/diagnostics` 是版本化的运维诊断快照，当前 `schema_version` 为 `1`。顶层按所有者分为
+`environment`、`isolation`、`privilege`、`network`、`executor`、`store`、`resource` 与 `amenities`，HTTP 层只负责序列化，
+不跨组件推导状态。`isolation.system` 和 `isolation.probes` 保存启动时缓存的系统事实与机制原始探测，
+包括 runtime、进程 capability/seccomp、LSM label、namespace sysctl、kernel feature、ptrace Yama scope，
+以及 PRoot 启动序列探测。二进制探测保留配置名、解析路径、可执行性、退出码、stdout、stderr、错误和耗时。
+`privilege` 给出 daemon 身份、Bed user 策略、setpriv 解析结果，以及 Bed 降权和清理所需与缺失的 capability；
+`preconditions_satisfied` 只表示这些静态前置条件满足，字段的判断边界见
+[privilege.md](privilege.md)。`environment.probe_status` 单独记录通过真实 Bed
+命令和 shell 验证完整组合的 `not_run|running|passed|failed` 状态、时间和错误。`store.transfers_configured`
+只表示 S3 transfer 配置存在，不推导远端连通或 restic 可执行。诊断接口不披露 bucket、endpoint 或凭据；
+读取接口不重新探测主机，也不访问远端存储。
+Bed Manager 的 `local_cleanups` 报告已认领本地目录的清理状态和最近失败，供区分运行中、等待重试与完成。
+Privilege 的 `reserved_users` 表示 per-Bed UID 池中保留的租约数，包括冷数据与待清理身份；fixed 策略不占池。
+不存在的内核节点以 `value: null` 和 `read_error` 表达，与节点存在且值为 `0` 严格区分。
 
 所有 execution 进入同一个有界 registry。status 返回结构化终态，logs 返回带 stream 与单调
 sequence 的有界输出；游标落入已淘汰区间时显式返回 truncated。registry 只保留最近完成记录，

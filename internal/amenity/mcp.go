@@ -15,6 +15,8 @@
 package amenity
 
 import (
+	"context"
+	"errors"
 	"sync"
 
 	"github.com/qiankunli/hostel/pkg/mcpproxy"
@@ -65,4 +67,22 @@ func (a *MCP) ReleaseTenant(bedID string) error {
 		return p.Close()
 	}
 	return nil
+}
+
+// Close stops every remaining connection pool at daemon shutdown.
+func (a *MCP) Close(ctx context.Context) error {
+	a.mu.Lock()
+	ids := make([]string, 0, len(a.tenants))
+	for id := range a.tenants {
+		ids = append(ids, id)
+	}
+	a.mu.Unlock()
+	var result error
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(result, err)
+		}
+		result = errors.Join(result, a.ReleaseTenant(id))
+	}
+	return result
 }

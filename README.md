@@ -358,7 +358,8 @@ policy; PRoot depends on usable ptrace. Without either, Hostel logs the degrade
 and keeps serving through the next supported workspace view. The
 image daemon runs as root by default (bwrap mount setup + chromium
 `--no-sandbox`); grant only the capabilities required by the selected
-deployment features.
+deployment features. The daemon/Bed identity model and capability matrix are
+defined in [`docs/privilege.md`](docs/privilege.md).
 
 ## License & acknowledgements
 

@@ -22,7 +22,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/hostel/internal/amenity"
-	"github.com/qiankunli/hostel/internal/bed"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/tracing"
 	"github.com/qiankunli/hostel/pkg/mcpproxy"
 )

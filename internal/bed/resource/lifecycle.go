@@ -1,0 +1,74 @@
+package resource
+
+import (
+	"context"
+	"github.com/qiankunli/hostel/internal/bed"
+	"sync"
+)
+
+// Manager owns accounting and the carrier admission sampler. Resource limits
+// can be added here without changing Bed Manager's lifecycle contract.
+type Manager struct {
+	bed.Noop
+	tracker     Tracker
+	mu          sync.Mutex
+	allocations map[*bed.Bed]bool
+	admission   Admitter
+	status      bed.StatusWriter[bed.ResourceStatus]
+}
+
+func NewManager(tracker Tracker, status bed.StatusWriter[bed.ResourceStatus]) *Manager {
+	return &Manager{tracker: tracker, status: status, allocations: make(map[*bed.Bed]bool), admission: NoopAdmission("resource admission not configured")}
+}
+func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
+	m.mu.Lock()
+	m.allocations[b] = true
+	m.mu.Unlock()
+	group, err := m.tracker.OpenGroup(b.ID)
+	if err != nil {
+		return err
+	}
+	if group != nil {
+		if err := group.Close(); err != nil {
+			return err
+		}
+	}
+	m.status.Set(b, bed.ResourceStatus{Accounting: m.tracker.Report().Available})
+	return nil
+}
+func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
+	m.mu.Lock()
+	owned := m.allocations[b]
+	m.mu.Unlock()
+	if !owned {
+		return nil
+	}
+	if err := m.tracker.Release(b.ID); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	delete(m.allocations, b)
+	m.mu.Unlock()
+	m.status.Set(b, bed.ResourceStatus{})
+	return nil
+}
+
+type Diagnostics struct {
+	Accounting Report          `json:"accounting"`
+	Admission  AdmissionReport `json:"admission"`
+}
+
+func (m *Manager) Diagnostics() Diagnostics {
+	return Diagnostics{Accounting: m.tracker.Report(), Admission: m.admission.Report()}
+}
+
+var _ bed.Component[Diagnostics] = (*Manager)(nil)
+
+func (m *Manager) SetAdmission(a Admitter) { m.admission = a }
+func (m *Manager) Run(ctx context.Context) error {
+	if runnable, ok := m.admission.(bed.Runnable); ok {
+		return runnable.Run(ctx)
+	}
+	<-ctx.Done()
+	return nil
+}

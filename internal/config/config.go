@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/osx"
-	"github.com/qiankunli/hostel/internal/bedfs"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 )
 
 // Config is the hostel runtime configuration. hostel is a generic sandbox

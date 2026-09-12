@@ -32,9 +32,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/executor"
-	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/bed/executor"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
 
 func newTestServer(t *testing.T) *Server {
@@ -146,16 +146,21 @@ func TestDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode diagnostics: %v", err)
 	}
-	system, _ := body["system"].(map[string]any)
+	if body["schema_version"] != float64(1) {
+		t.Fatalf("diagnostics schema_version = %v", body["schema_version"])
+	}
+	isolationFacts, _ := body["isolation"].(map[string]any)
+	system, _ := isolationFacts["system"].(map[string]any)
 	runtimeFacts, _ := system["runtime"].(map[string]any)
 	process, _ := system["process"].(map[string]any)
 	securityModules, _ := system["security_modules"].(map[string]any)
 	namespaceLimits, _ := system["namespace_limits"].(map[string]any)
 	kernelFeatures, _ := system["kernel_features"].(map[string]any)
 	ptraceFacts, _ := system["ptrace"].(map[string]any)
-	probes, _ := body["probes"].(map[string]any)
-	isolationFacts, _ := body["isolation"].(map[string]any)
-	bedUser, _ := body["bed_user"].(map[string]any)
+	probes, _ := isolationFacts["probes"].(map[string]any)
+	privilegeFacts, _ := body["privilege"].(map[string]any)
+	environmentFacts, _ := body["environment"].(map[string]any)
+	bedUser, _ := privilegeFacts["bed_user"].(map[string]any)
 	if runtimeFacts["os"] == "" || runtimeFacts["arch"] == "" || process == nil ||
 		securityModules == nil || namespaceLimits == nil || kernelFeatures == nil || ptraceFacts == nil {
 		t.Fatalf("diagnostics system facts = %v", system)
@@ -204,7 +209,30 @@ func TestDiagnostics(t *testing.T) {
 	if bedUser == nil || bedUser["strategy"] != "fixed" {
 		t.Fatalf("diagnostics bed_user = %v", bedUser)
 	}
-	for _, field := range []string{"ok", "status", "issues", "requirements", "remediation", "recommendations"} {
+	if privilegeFacts["setpriv"] == nil || privilegeFacts["requirements"] == nil {
+		t.Fatalf("diagnostics privilege = %v", privilegeFacts)
+	}
+	if _, exists := privilegeFacts["ready"]; exists || privilegeFacts["preconditions_satisfied"] == nil {
+		t.Fatalf("diagnostics privilege preconditions = %v", privilegeFacts)
+	}
+	if environmentFacts["probe_status"] != bed.EnvironmentProbeNotRun {
+		t.Fatalf("diagnostics environment = %v", environmentFacts)
+	}
+	for _, field := range []string{"network", "executor", "store", "resource", "amenities"} {
+		if body[field] == nil {
+			t.Fatalf("diagnostics missing component %q: %v", field, body)
+		}
+	}
+	storeFacts, _ := body["store"].(map[string]any)
+	resourceFacts, _ := body["resource"].(map[string]any)
+	accounting, _ := resourceFacts["accounting"].(map[string]any)
+	if storeFacts["backend"] != "none" || storeFacts["default_sync"] != "noop" || accounting["backend"] != "noop" {
+		t.Fatalf("diagnostics component reports: store=%v resource=%v", storeFacts, resourceFacts)
+	}
+	if storeFacts["transfers_configured"] != false || storeFacts["transfers_available"] != nil {
+		t.Fatalf("diagnostics store configuration = %v", storeFacts)
+	}
+	for _, field := range []string{"ok", "status", "issues", "remediation", "recommendations"} {
 		if _, exists := body[field]; exists {
 			t.Fatalf("diagnostics must not infer %q: %v", field, body)
 		}

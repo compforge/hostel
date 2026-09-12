@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bedfs"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
 
 func jsonUnmarshal(s string, v any) error { return json.Unmarshal([]byte(s), v) }
@@ -293,7 +293,7 @@ func (s *Server) sessionRun(c *gin.Context) {
 }
 
 // DELETE /session/:sessionId
-func (s *Server) sessionDelete(c *gin.Context, b *bed.Bed) {
+func (s *Server) sessionDelete(c *gin.Context, b *bed.Resident) {
 	if !b.DeleteShell(c.Param("sessionId")) {
 		respondError(c, http.StatusNotFound, ErrSessionNotFound, "session not found")
 		return

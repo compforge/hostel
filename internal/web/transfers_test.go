@@ -33,9 +33,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/isolation"
-	"github.com/qiankunli/hostel/internal/store"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
 type transferS3Fixture struct {
@@ -161,7 +161,7 @@ func (f *transferS3Fixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func newTransferTestServer(t *testing.T, fixture *transferS3Fixture) (*Server, *bed.Bed) {
+func newTransferTestServer(t *testing.T, fixture *transferS3Fixture) (*Server, *bed.Resident) {
 	t.Helper()
 	remote := httptest.NewServer(fixture)
 	t.Cleanup(remote.Close)
@@ -244,8 +244,8 @@ func TestTransfersHTTPRoundTripNoopReplayAndScope(t *testing.T) {
 	req := transferRequest{ID: "upload", Source: transferEndpoint{Type: "bed", Path: "/workspace/source"}, Destination: transferEndpoint{Type: "s3", Key: "export/"}}
 	initial := startTestTransfer(t, s, req, 202)
 	result := awaitTestTransfer(t, s, req.ID)
-	if result.State != store.TransferSucceeded || result.Files != 1 || result.Bytes != 7 || b.Sync != store.SyncNoop {
-		t.Fatalf("upload: %+v sync=%s", result, b.Sync)
+	if result.State != store.TransferSucceeded || result.Files != 1 || result.Bytes != 7 || b.Spec().Sync != store.SyncNoop {
+		t.Fatalf("upload: %+v sync=%s", result, b.Spec().Sync)
 	}
 	req.InstanceID = initial.InstanceID
 	replay := startTestTransfer(t, s, req, 200)
@@ -426,7 +426,7 @@ func TestResticTransfersHTTPReferenceAndNoopBed(t *testing.T) {
 	req := transferRequest{Sync: store.SyncRestic, ID: "restic-upload", Source: transferEndpoint{Type: "bed", Path: "/workspace/source"}, Destination: transferEndpoint{Type: "s3", Key: "tenants/test/repositories/one"}}
 	first := startTestTransfer(t, s, req, 202)
 	result := awaitTestTransfer(t, s, req.ID)
-	if result.State != store.TransferSucceeded || len(result.Ref) != 64 || result.Sync != store.SyncRestic || b.Sync != store.SyncNoop {
+	if result.State != store.TransferSucceeded || len(result.Ref) != 64 || result.Sync != store.SyncRestic || b.Spec().Sync != store.SyncNoop {
 		t.Fatalf("restic upload: %+v", result)
 	}
 	firstRef := result.Ref

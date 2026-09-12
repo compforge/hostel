@@ -95,7 +95,7 @@ evict 等生命周期动作等待同一个 Store 的同步操作，不必等后�
 `Store` 接口只负责远端事实与传输；`StageInBedFS` 负责本地发布语义。需要 Restore 时，它先写入
 bed 目录旁的 staging 目录，成功后才用 rename 替换 stale luggage；失败则清理 staging 并保留原
 luggage。Bed manager 只在 Stage-in 和所选运行环境准备全部成功后发布 resident，完整准备条件见
-[lifecycle.md](lifecycle.md)。远端数据故障不会被解释为空 Bed，半恢复目录也不会进入服务。
+[kernel.md](kernel.md)。远端数据故障不会被解释为空 Bed，半恢复目录也不会进入服务。
 
 可选同步策略：
 
@@ -209,7 +209,7 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 
 ### 生命周期中的持久化边界
 
-Bed 的 phase/readiness/activity 由 [lifecycle.md](lifecycle.md) 统一定义。Store 只参与
+Bed 的 phase/readiness/activity 由 [kernel.md](kernel.md) 统一定义。Store 只参与
 Stage-in、同步、evict 与 purge：恢复成功后仍须完成所选文件边界与网络准备才能 Ready；
 正常 evict 成功后删除本地目录，异常遗留才成为 luggage。快照不保存 Executor、netns
 或 BrowserContext，恢复数据不等于恢复这些运行态。
@@ -284,7 +284,7 @@ noop 只是 `Persist/Restore/Stat/Delete` 的空实现，不改变 lifecycle：B
 
 ## 实现状态
 
-已实现（`internal/store/` + `bed.Manager` 生命周期钩子）：
+已实现（`internal/bed/store/` + `bed.Manager` 生命周期钩子）：
 
 - `Store` 接口 + 独立 `noop` / `cas` / `pack` / `tar` / `restic` 实现；`sync/auto.go` 负责按 bed 识别提交点和既有 CAS → pack 单向切换，S3 client 由 Go 内部远端布局复用，restic 使用同一连接配置
 - 异步 initialization：`POST /v1/beds` 快速返回 phase/readiness；`Ensure` 加入同一 singleflight 并等待。Stage-in 失败保留原因且拒绝发布 resident——静默空启动等于数据丢失
@@ -294,8 +294,8 @@ noop 只是 `Persist/Restore/Stat/Delete` 的空实现，不改变 lifecycle：B
 - capabilities / healthz 报 `persistence: noop|auto|cas|pack|tar|restic`
 - **统一 evict + luggage 兼容**：成功 evict 在所有 Store 策略 下都删除本地目录；durable 可恢复，noop 从 fresh Bed 开始；异常/旧版 luggage 仍按 generation 判新鲜，并由 `--luggage-high/low-bytes` 水位 GC（stale 优先 → LRU）
 - **双活冲突探测**（§三.5）：`Persist` 写前 HEAD 比对 generation，远端更新则 `store.ErrConflict` 拒绝覆盖（first-writer-wins；evict 路径因 persist 失败自然中止，bed 留在本机继续服务）
-- **cas 后端**（§三.3，`internal/store/sync/cas.go`，desync 库）：catar+CDC 流式切块上传（上代 index 做免传清单）、index 提交点带 generation/bytes metadata、块序列相同时零 chunk 上传但推进 index generation、提交后按"LIST − index 引用"做 per-bed GC、restore 经 `UnTarIndex` 并发拉块（块 ID 对解压数据复核，桶内损坏在 restore 报错而不是落进 workspace；desync `LocalFS` 为 `os.Root` 背书，自带 symlink 逃逸防护）；全流程在内存 对象接口 fake 上有单测（roundtrip/增量/GC/no-op/冲突/purge）
-- **pack 后端**（§三.3，`internal/store/sync/pack.go`）：32 MiB 目标 pack、immutable manifest、`head.json` 原子提交、上代 chunk 免传、pack/manifest/chunk 三级摘要校验、两 pack LRU restore；内存 对象接口 fake 覆盖布局/roundtrip/增量/no-op/冲突/purge。是 auto 的新 bed 默认布局，也是高文件数既有 CAS bed 的单向目标；未实现在线 prune/compaction
-- **tar 后端**（§三.3，`internal/store/sync/tar.go`）：每次生成完整 tar.gz 并原子覆盖单对象；Restore 使用 `os.Root` 限制路径与 symlink 逃逸；内存 对象接口 fake 覆盖布局/roundtrip/全量覆盖/冲突/purge/恶意路径。可显式选择，auto 会识别并保持已有 tar bed
+- **cas 后端**（§三.3，`internal/bed/store/sync/cas.go`，desync 库）：catar+CDC 流式切块上传（上代 index 做免传清单）、index 提交点带 generation/bytes metadata、块序列相同时零 chunk 上传但推进 index generation、提交后按"LIST − index 引用"做 per-bed GC、restore 经 `UnTarIndex` 并发拉块（块 ID 对解压数据复核，桶内损坏在 restore 报错而不是落进 workspace；desync `LocalFS` 为 `os.Root` 背书，自带 symlink 逃逸防护）；全流程在内存 对象接口 fake 上有单测（roundtrip/增量/GC/no-op/冲突/purge）
+- **pack 后端**（§三.3，`internal/bed/store/sync/pack.go`）：32 MiB 目标 pack、immutable manifest、`head.json` 原子提交、上代 chunk 免传、pack/manifest/chunk 三级摘要校验、两 pack LRU restore；内存 对象接口 fake 覆盖布局/roundtrip/增量/no-op/冲突/purge。是 auto 的新 bed 默认布局，也是高文件数既有 CAS bed 的单向目标；未实现在线 prune/compaction
+- **tar 后端**（§三.3，`internal/bed/store/sync/tar.go`）：每次生成完整 tar.gz 并原子覆盖单对象；Restore 使用 `os.Root` 限制路径与 symlink 逃逸；内存 对象接口 fake 覆盖布局/roundtrip/全量覆盖/冲突/purge/恶意路径。可显式选择，auto 会识别并保持已有 tar bed
 
 与设计的一处偏差：checkpoint **暂不硬静默**（不暂停接单，调用方自选空闲点打快照）。真实 S3 通路未在本地 CI 验证（无 MinIO）；生命周期逻辑、cas 全编排（经内存 对象接口 fake）有单测覆盖。

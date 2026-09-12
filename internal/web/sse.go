@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/executor"
+	"github.com/qiankunli/hostel/internal/bed/executor"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
 
 type StreamEventType string

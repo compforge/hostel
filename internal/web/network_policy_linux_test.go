@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/network"
+	"github.com/qiankunli/hostel/internal/bed/network"
 )
 
 func TestLinuxNetworkPolicyAPI(t *testing.T) {
@@ -20,6 +20,9 @@ func TestLinuxNetworkPolicyAPI(t *testing.T) {
 	}
 	s := newTestServer(t)
 	manager := network.New(t.Context())
+	if err := manager.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -27,8 +30,8 @@ func TestLinuxNetworkPolicyAPI(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if !manager.Report().Enabled {
-		t.Fatalf("network unavailable: %+v", manager.Report())
+	if !manager.Diagnostics().Enabled {
+		t.Fatalf("network unavailable: %+v", manager.Diagnostics())
 	}
 	s.mgr.SetNetworkManager(manager)
 	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"policy-a","sync":"noop","networkPolicy":{"defaultAction":"deny"}}`), nil)

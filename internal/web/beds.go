@@ -24,8 +24,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/go-stdx/randx"
 
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/network"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	"github.com/qiankunli/hostel/internal/bed/network"
 )
 
 // bedView is the JSON shape for a bed in the management API.
@@ -41,19 +41,19 @@ type bedView struct {
 	RetainUntil  time.Time     `json:"retained_until,omitzero"`
 }
 
-func (s *Server) viewOf(b *bed.Bed) bedView {
+func (s *Server) viewOf(b *bed.Resident) bedView {
 	return s.viewFromStatus(b, b.Status())
 }
 
-func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
+func (s *Server) viewFromStatus(b *bed.Resident, status bed.Status) bedView {
 	return bedView{
 		ID:           b.ID,
-		Sync:         string(b.Sync),
+		Sync:         string(b.Spec().Sync),
 		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
 		Pinned:       status.Pinned,
 		Workspace:    b.Workspace(),
-		CreatedAt:    b.CreatedAt,
+		CreatedAt:    b.Spec().CreatedAt,
 		LastActiveAt: status.LastActiveAt,
 		RetainUntil:  status.RetainUntil,
 	}
@@ -88,7 +88,7 @@ type lifecycleView struct {
 }
 
 // activityView is what the bed is doing right now, by request category
-// (docs/lifecycle.md): operations are in-flight stateless requests, sessions
+// (docs/kernel.md): operations are in-flight stateless requests, sessions
 // are open stateful holds. Sessions never raise the bed's activity — an idle bed
 // may still hold cdp connections.
 type activityView struct {
@@ -114,7 +114,7 @@ type bedDetailView struct {
 	Executor           *executorView  `json:"executor,omitempty"`
 }
 
-// instanceStatus is the hostel-layer status (docs/lifecycle.md): the only way
+// instanceStatus is the hostel-layer status (docs/kernel.md): the only way
 // a hostel says "you may release me". The verdict is computed here so upstream
 // reads a conclusion instead of reassembling phase/activity counts and luggage.
 type instanceStatus string
@@ -466,5 +466,5 @@ func (s *Server) bedCheckpoint(c *gin.Context) {
 		runtimeError(c, "checkpointed bed is no longer resident")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"persistence": string(b.Sync)})
+	c.JSON(http.StatusOK, gin.H{"persistence": string(b.Spec().Sync)})
 }
