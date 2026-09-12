@@ -5,6 +5,7 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/config"
 )
 
 const (
@@ -24,6 +27,7 @@ const (
 )
 
 type targetOptions struct {
+	config           *config.Options
 	store            string
 	isolation        string
 	executor         string
@@ -167,6 +171,20 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 	if searchPath != "" {
 		cmd.Env = append(os.Environ(), "PATH="+searchPath)
 	}
+	if options.config != nil {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		path := filepath.Join(t.TempDir(), "startup.json")
+		raw, err := json.Marshal(options.config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		cmd.Env = append(cmd.Env, "HOSTEL_E2E_CONFIG="+path)
+	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
@@ -195,6 +213,9 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 
 func startImageTarget(t *testing.T, image, addr string, options targetOptions) {
 	t.Helper()
+	if options.config != nil {
+		t.Fatal("internal startup options require make e2e (test binary); production images do not expose this input")
+	}
 	name := fmt.Sprintf("hostel-e2e-%d-%d", os.Getpid(), time.Now().UnixNano())
 	workspaceRoot := options.workspaceRoot
 	if workspaceRoot == "" {

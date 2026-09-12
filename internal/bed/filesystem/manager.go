@@ -10,6 +10,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	"github.com/qiankunli/hostel/internal/feature"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
@@ -65,6 +66,7 @@ func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
 }
 
 type Status struct {
+	Features      map[string]feature.Status        `json:"features"`
 	Requested     string                           `json:"requested"`
 	Effective     string                           `json:"effective"`
 	Ceiling       string                           `json:"ceiling"`
@@ -91,6 +93,7 @@ func (m *Manager) Status() Status {
 		view.Mechanism = report.Mechanism()
 		view.WorkspaceView = report.WorkspaceView()
 		view.Probes = details.Probes
+		view.Features = details.Features
 	}
 	return view
 }

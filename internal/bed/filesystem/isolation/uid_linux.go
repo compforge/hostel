@@ -55,6 +55,7 @@ func newUID(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfacts
 	// Missing caps isn't an error — many environments simply don't grant them;
 	// the resolver falls through to the next mechanism and logs honestly.
 	if miss := missingUIDCaps(facts); miss != "" {
+		discovery.Error = "missing capabilities: " + miss
 		return unavailable{name: "uid", lvl: Room}, discovery
 	}
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {

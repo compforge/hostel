@@ -7,6 +7,7 @@ IMAGE     := hostel:dev
 VERSION   := $(shell cat VERSION)
 LDFLAGS   := -X main.version=$(VERSION)
 PLATFORMS := linux/amd64,linux/arm64
+E2E_ARGS ?=
 E2E_IMAGE ?=
 TEST_FILES ?=
 TEST_PACKAGES ?= ./...
@@ -33,8 +34,9 @@ build: ## Build the hostel binary for the current platform
 test: ## Run all tests with the race detector
 	go test $(TEST_TAGS) -race -count=1 $(TEST_PACKAGES)
 
-e2e: build ## Run the single-machine runtime contract against a real hostel binary
-	HOSTEL_E2E_BINARY="$(CURDIR)/$(BIN)" go test -tags=e2e -count=1 -v ./tests/e2e
+e2e: ## Run the single-machine runtime contract against a real hostel test build
+	go build -tags=e2e -ldflags "$(LDFLAGS)" -o bin/hostel-e2e ./cmd/hostel
+	HOSTEL_E2E_BINARY="$(CURDIR)/bin/hostel-e2e" go test -tags=e2e -count=1 -v $(E2E_ARGS) ./tests/e2e
 
 e2e-image: ## Run the full contract, including PyPI/npm/Chromium (set E2E_IMAGE)
 	@test -n "$(E2E_IMAGE)" || { echo "E2E_IMAGE is required"; exit 1; }

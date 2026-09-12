@@ -20,6 +20,8 @@ package resource
 import (
 	"os"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/feature"
 )
 
 // Usage is one cumulative cgroup snapshot. CPUUsage includes processes that
@@ -31,9 +33,10 @@ type Usage struct {
 
 // Report describes whether exact per-bed accounting is active.
 type Report struct {
-	Backend   string `json:"backend"`
-	Available bool   `json:"available"`
-	Reason    string `json:"reason,omitempty"`
+	Features  map[string]feature.Status `json:"features,omitempty"`
+	Backend   string                    `json:"backend"`
+	Available bool                      `json:"available"`
+	Reason    string                    `json:"reason,omitempty"`
 }
 
 // Tracker prepares per-bed accounting groups and reads their cumulative usage.
@@ -49,7 +52,10 @@ type Tracker interface {
 
 // New assembles accounting without touching cgroups. Resource Manager.Start
 // drives the host probe and records optional accounting availability.
-func New() Tracker { return &hostTracker{tracker: Noop("not started"), create: newTracker} }
+func New() Tracker { return NewConfigured(Config{}) }
+func NewConfigured(cfg Config) Tracker {
+	return &hostTracker{config: cfg, tracker: Noop("not started"), create: newTracker}
+}
 
 // Noop is used before cmd/hostel wires the host tracker and by non-Linux hosts.
 func Noop(reason string) Tracker {

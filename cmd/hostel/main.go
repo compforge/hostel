@@ -62,7 +62,14 @@ func main() {
 		}
 	}
 
-	cfg := config.Load(os.Args[1:])
+	explicit, err := startupOptions()
+	if err != nil {
+		log.Fatalf("hostel: startup options: %v", err)
+	}
+	cfg, err := config.Load(os.Args[1:], explicit)
+	if err != nil {
+		log.Fatalf("hostel: configuration: %v", err)
+	}
 
 	// Preflight subcommands used by the image (no curl needed). Handled after
 	// config.Load so --health probes the SAME addr the server would listen on
@@ -93,22 +100,21 @@ func main() {
 
 	log.Printf("hostel %s starting", version)
 
-	pathProjections, err := config.ParseProjectedPaths(cfg.ProjectedPaths)
+	pathProjections, err := config.ParseProjectedPaths(cfg.Bed.Filesystem.ProjectedPaths)
 	if err != nil {
 		log.Fatalf("hostel: configure path projections: %v", err)
-	}
-	persistedPaths, err := config.ParsePersistedPaths(cfg.PersistedPaths)
-	if err != nil {
-		log.Fatalf("hostel: configure persisted paths: %v", err)
 	}
 
 	// New resolves the requested level against the environment ceiling and
 	// logs the outcome; the returned isolator is always usable.
 	host := hostfacts.Collect()
-	iso := isolation.New(host, cfg.IsolationMode, cfg.WorkspaceRoot,
+	iso, err := isolation.Resolve(host, cfg.Bed.Filesystem, cfg.WorkspaceRoot,
 		isolation.WithPathProjections(pathProjections),
 	)
-	bedUser, err := privilege.NewBedUser(cfg.BedUID, cfg.BedGID)
+	if err != nil {
+		log.Fatalf("hostel: filesystem features: %v", err)
+	}
+	bedUser, err := privilege.NewBedUser(cfg.Bed.Privilege.UID, cfg.Bed.Privilege.GID)
 	if err != nil {
 		log.Fatalf("hostel: configure bed user: %v", err)
 	}
@@ -127,21 +133,7 @@ func main() {
 
 	// Fail fast on a misconfigured store: booting with silent noop while the
 	// operator believes snapshots are on would be quiet data loss.
-	st, err := store.NewManager(context.Background(), store.Config{
-		Sync:                  cfg.StoreSync,
-		ResticBinary:          cfg.ResticBinary,
-		ResticPassword:        cfg.ResticPassword,
-		Bucket:                cfg.S3Bucket,
-		Prefix:                cfg.S3Prefix,
-		Endpoint:              cfg.S3Endpoint,
-		PathStyle:             cfg.S3PathStyle,
-		Region:                cfg.S3Region,
-		AccessKeyID:           cfg.S3AccessKeyID,
-		SecretAccessKey:       cfg.S3SecretAccessKey,
-		SessionToken:          cfg.S3SessionToken,
-		AutoPackFileThreshold: cfg.AutoPackFileThreshold,
-		PersistedPaths:        persistedPaths,
-	})
+	st, err := store.NewManager(context.Background(), cfg.Bed.Store)
 	if err != nil {
 		log.Fatalf("hostel: init store: %v", err)
 	}
@@ -162,16 +154,13 @@ func main() {
 		log.Printf("hostel: filtered reserved carrier environment from bed processes: keys=%v", filtered)
 	}
 
-	networks := network.New(context.Background())
+	networks := network.NewConfigured(context.Background(), cfg.Bed.Network)
 	mgr.SetNetworkManager(networks)
-	resources := resource.New()
+	resources := resource.NewConfigured(cfg.Bed.Resource)
 	mgr.SetResourceTracker(resources)
 	admissionCtx, stopAdmission := context.WithCancel(context.Background())
 	defer stopAdmission()
-	resourceAdmission, err := resource.NewAdmission(admissionCtx, resource.NewCarrier(), resource.AdmissionConfig{
-		CPUThresholdPercent:    cfg.AdmissionCPUThreshold,
-		MemoryThresholdPercent: cfg.AdmissionMemoryThreshold,
-	})
+	resourceAdmission, err := resource.NewAdmission(admissionCtx, resource.NewCarrier(), cfg.Bed.Resource.Admission)
 	if err != nil {
 		log.Fatalf("hostel: configure resource admission: %v", err)
 	}
@@ -194,7 +183,7 @@ func main() {
 
 	// Select one Executor backend before request admission. Auto is an honest
 	// portability fallback; explicitly requesting supervisor fails closed.
-	switch cfg.Executor {
+	switch cfg.Bed.Executor.Backend {
 	case "local":
 		mgr.SetExecutorFactory(executor.NewLocalFactory(resources))
 	case "auto", "supervisor":
@@ -213,7 +202,7 @@ func main() {
 			if factory != nil {
 				_ = factory.Close()
 			}
-			if cfg.Executor == "supervisor" {
+			if cfg.Bed.Executor.Backend == "supervisor" {
 				log.Fatalf("hostel: supervisor executor unavailable: executable=%v probe=%v", executableErr, factoryErr)
 			}
 			log.Printf("hostel: supervisor executor unavailable, using local executor: executable=%v probe=%v", executableErr, factoryErr)
@@ -223,7 +212,7 @@ func main() {
 			log.Printf("hostel: supervisor executor enabled")
 		}
 	default:
-		log.Fatalf("hostel: invalid executor backend %q", cfg.Executor)
+		log.Fatalf("hostel: invalid executor backend %q", cfg.Bed.Executor.Backend)
 	}
 
 	if err := amenities.Start(context.Background()); err != nil {
@@ -276,7 +265,7 @@ func main() {
 	srv := &http.Server{Addr: cfg.Addr, Handler: web.NewServer(
 		mgr,
 		web.WithTracing(cfg.EnableTracing),
-		web.WithDormReadFallbackRoot(cfg.DormReadFallbackRoot),
+		web.WithDormReadFallbackRoot(cfg.Bed.Filesystem.DormReadFallbackRoot),
 	).Handler()}
 	serverDone := make(chan error, 1)
 	go func() {

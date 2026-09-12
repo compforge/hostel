@@ -50,6 +50,7 @@ func newLandlock(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, host
 	// kernel without CONFIG_SECURITY_LANDLOCK reports 0 — the boot probe already
 	// established this fact, no need to re-syscall here).
 	if facts.LandlockABI < 1 {
+		report.Error = "Landlock ABI unavailable"
 		return unavailable{name: "landlock", lvl: Room}, report
 	}
 	self, err := os.Executable()

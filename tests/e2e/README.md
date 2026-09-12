@@ -165,3 +165,27 @@ workspaces are run-owned and cleaned up by the fixture.
 These traffic assertions cover new IPv4 TCP connections. DNS/domain rules,
 TTL expiry, existing established flows and injected nft transaction failures are
 not covered by this E2E case; component tests cover parts of those behaviors.
+
+## Internal component configuration
+
+`make e2e` builds `bin/hostel-e2e` with the `e2e` build tag. The fixture can pass
+`config.Options` through `targetOptions.config`; pointer presence distinguishes
+explicit Auto/false/zero from omission. The test-only `HOSTEL_E2E_CONFIG` file is
+private to the run and is removed with the fixture. Production binaries/images
+have no internal configuration input; configuration-specific cases run in binary mode.
+
+```bash
+make e2e E2E_ARGS='-run ^TestFeature'
+```
+
+`TestFeaturePoliciesOff` disables filesystem helpers/boundaries, NetNS and cgroup,
+asserts the public status reports disabled/not-probed, executes a Bed command,
+and verifies the network policy endpoint rejects unavailable enforcement.
+`TestFeatureRequiredStartupFailure` requires an absent helper or supplies conflicting
+room/feature settings and asserts prompt daemon failure with the specific cause.
+These cases do not skip on missing optional host features. Existing config unit tests
+cover explicit S3 and zero-valued settings overriding environment defaults.
+
+Configuration restrictions exercise selection; they do not prove kernel permission
+rejection or failure halfway through allocation. Keep real restricted-container
+cases alongside these deterministic tests. See [configuration design](../../docs/configuration.md).
