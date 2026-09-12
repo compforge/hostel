@@ -44,7 +44,7 @@ Bed 是跨机制不变的单元；Executor 是它当前可替换的进程承载�
 |---|---|---|
 | 文件与路径 | 每个 Bed 使用自己的文件空间，不能读写邻居数据 | BedFS 统一结构化路径；文件房型决定进程侧的访问屏障；用户态投影只改善路径体验 |
 | 进程与身份 | 执行独立、可完整回收，不能观察或干扰邻居进程 | daemon 保留管理权限，BedUser 统一约束命令身份；Executor/supervisor 管理进程归属与回收；当前 suite 没有私有 PID namespace |
-| 网络 | 每个 Bed 有独立网络空间，并受自己的出站约束 | 可选 netns 覆盖 Bed 命令与 shell；不可用时共享 Carrier；共享设施出站和可配置 egress policy 尚未收敛 |
+| 网络 | 每个 Bed 有独立网络空间，并受自己的出站约束 | 可选 netns 与按 Bed 配置的出站策略覆盖命令和 shell；不可用时共享 Carrier；共享设施出站尚未纳入该边界 |
 | CPU / 内存 | 一个 Bed 的失控负载不挤占或拖垮邻居 | Carrier 准入与可选 per-bed cgroup 记账已有；per-bed 硬限额尚未实现 |
 | 环境与凭据 | Bed 只接触属于自己或明确共享的配置、凭据 | 过滤 Hostel 保留命名空间；其余 Carrier 环境默认继承，部署方负责其中的敏感信息 |
 | 软件与设施 | Bed 的状态与使用互不影响，同时复用重资产 | Carrier 软件环境共享；Chromium 按 BrowserContext、MCP 按配置和会话切分，仍共享承载进程与部分故障边界 |
@@ -54,20 +54,14 @@ Store 管持久化与恢复，和这些能力协作，但不提供隔离屏障�
 
 ## 二、机制组合与生命周期
 
-### 主流程与所有权
+### 所有权
 
-```text
-实例启动：采集环境事实 → 实测候选机制 → 选择可用能力 → 实测最终命令 / shell 组合 → 发布诊断
-Bed 初始化：准备或恢复 BedFS → 准备文件边界、网络资源与记账父组 → 发布 Ready
-执行：解析 BedFS 路径 → 组装网络 / 文件视图 / 身份 → 启动 Execution 或 session shell
-Executor 替换：重建进程承载域，保留同一 resident Bed 的 BedFS 与网络身份
-Bed 回收：撤销 session、同步需持久化的数据、停止执行并释放设施与网络
-```
+Bed Manager 组合各领域能力，拥有准备、发布、撤销与回收的协调权。Filesystem 管文件边界
+与 BedFS 进程视图，Privilege 管身份，Network 管 Bed 网络，Executor 管进程承载域，
+Resource 管资源记账与准入。各领域持有并清理自己的资源。
 
-Bed 生命周期拥有准备、发布、撤销与回收的协调权；各组件拥有自己的资源和清理。
-Network Manager 管 resident Bed 的网络，Executor backend 管进程承载，文件边界与
-workspace backend 共同实现 BedFS 的进程视图。流程细节由 [lifecycle.md](lifecycle.md)、
-[filesystem.md](filesystem.md) 和 [network.md](network.md) 分别维护。
+统一的启动、初始化、Executor 替换、回收与失败重试流程见 [kernel.md](kernel.md)。
+文件机制与路径语义见 [filesystem.md](filesystem.md)，本篇只约束这些能力组合后的隔离保证。
 
 ### 组合必须守住的约束
 
@@ -79,7 +73,7 @@ workspace backend 共同实现 BedFS 的进程视图。流程细节由 [lifecycl
 - **释放中的资源不再服务新执行**：失败清理仍需有人负责，但不能因此继续被视为可用。
   同 ID 的重新初始化不得复用残缺资源，也不得被上一轮清理回收。
 
-`isolation.Environment` 绑定一个 resident Bed 的文件视图、具体网络 allocation 和最终
+`manager.Environment` 绑定一个 resident Bed 的文件视图、具体网络 allocation 和最终
 `BedUser`，命令和 shell 都通过它组装。Network 先使用 daemon 权限完成 netns entry，随后切换
 身份并最终降权，文件边界、路径 helper 和用户程序都在 Bed 身份下运行。BedUser 的选择、UID
 租约、capability 要求与回收契约由 [privilege.md](privilege.md) 统一定义。Store、Network 和
@@ -92,52 +86,7 @@ BedUser 派生运行身份。
 HTTP 服务启动，不在运行时降级。这个探测证明选中路径可执行，跨 Bed 拒绝访问、权限
 集合与失败回收仍由对应机制 probe 和回归测试验证。
 
-回收经过最终活动复核后进入待清理集合，停止数据面准入。旧 Executor、设施、cgroup、
-网络及本地目录全部清理成功，才允许同 ID 重建。失败保留原来的资源 owner 和容量名额，
-通过 Evict/Purge 或实例关闭重试；待清理目录不属于 luggage。资源句柄对应具体分配，
-旧句柄不能按可复用的 Bed ID 删除新资源。
-
 ## 三、关键设计
-
-### 文件房型只描述文件隔离程度
-
-`dorm / room / suite` 是文件数据隔离的三档兑现程度。请求档位与环境上限共同决定实际档位；
-`auto` 选择环境可达的最高档。文件档位不替网络、PID 或 CPU/内存边界作保证。
-
-| 房型 | 进程侧的文件边界 | 当前机制 |
-|---|---|---|
-| dorm | 逻辑分床，按 Carrier 进程权限访问，没有强制跨 Bed 屏障 | direct |
-| room | 限制跨 Bed 数据访问，但目录存在性及公共路径仍可见 | 优先 Landlock，其次独立 UID |
-| suite | 私有 mount 视图遮蔽兄弟 Bed，挂回自己的工作区和配置投影 | bwrap |
-
-三档复用同一 BedFS 数据模型，机制不按档位逐层叠加：room 在共享视图上增加访问控制，
-suite 改用私有 mount 视图。UID 与 Landlock 也不完全等价：UID 额外带来部分进程身份保护，
-却依赖 UID 分配与宿主权限。房型表示文件边界的层级，细节必须结合实际机制理解。
-
-结构化 file API 与 cwd 始终先解析到当前 BedFS，降级不改变同一客户端路径的数据落点。
-PRoot/pathshim 尽量让命令中的工作区路径也指向 BedFS，但它们不是安全边界，不能抬高房型。
-命令文本保持不透明，映射之外的绝对字面量由实际进程视图解释。完整语义见
-[filesystem.md](filesystem.md)。
-
-### 文件机制的取舍
-
-**suite 遮蔽后再挂回本 Bed**。只把 Carrier 根挂成只读仍允许读取邻居数据，因此先遮蔽
-工作区父目录和存在的宿主敏感路径，再挂回当前 BedFS。工具链继续共享，`/usr/local`
-保留 Carrier 级可写软件环境。当前 bwrap 每次启动的 `/tmp` 是独立 tmpfs，不能当作
-跨命令持久的 Bed 数据；需要延续的数据应放在 BedFS 中。
-
-bwrap 使用 user namespace 完成挂载准备，并绑定已有 `/proc`，以适应容器内受限的 procfs。
-当前没有私有 PID namespace，因此私有文件视图不等于完整的进程不可见性。机制及参数顺序
-锚点在 `internal/bed/filesystem/isolation/bwrap_args.go`；部署权限示例见
-[deploy/k8s/README.md](../deploy/k8s/README.md)。
-
-**room 用访问控制兑现数据边界**。Landlock 在子进程中应用规则，UID backend 在子进程中
-切换身份；daemon 必须继续服务所有 Bed，不能对自身套用某个 Bed 的边界。两者都必须在
-用户代码开始前生效，已有描述符和公共路径的可达性不能仅靠路径名称推断。
-
-UID backend 以独立进程身份兑现 room 的数据访问边界，目录属主、进程身份和 UID 租约必须保持
-一致。具体的分配、重启恢复、失败清理和硬链接约束见 [privilege.md](privilege.md)；
-`internal/bed/filesystem/isolation/uid_linux.go` 只负责选择该文件机制，不拥有通用身份生命周期。
 
 ### 软件共享与敏感信息
 
@@ -146,8 +95,8 @@ conda、本地 node_modules 等生态机制解决。共享软件的更改可能�
 整个软件环境时由上层选择更强的 runtime。这个成本取舍不改变用户文件与产物按 Bed 归属
 的目标，也不意味着当前所有共享路径都已受到租户级保护。
 
-文件遮蔽和环境继承是两条边界。suite 遮蔽存在的 `/root`、`/home`、`/run/secrets`、
-`/var/run/secrets` 等敏感路径；低档不能据此假定也具备同样的遮蔽。
+文件遮蔽和环境继承是两条边界。房型、敏感路径遮蔽与共享软件路径的具体规则见
+[filesystem.md](filesystem.md#二文件隔离档位与机制)。
 进程环境在 `internal/bed/manager/env.go` 统一组装，与文件房型正交：
 
 - 过滤 Carrier 中的 `HOSTEL_*`、外部 `BED_*` 和 Hostel 管理的 CDP endpoint；

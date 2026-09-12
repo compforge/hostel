@@ -88,7 +88,7 @@ type lifecycleView struct {
 }
 
 // activityView is what the bed is doing right now, by request category
-// (docs/lifecycle.md): operations are in-flight stateless requests, sessions
+// (docs/kernel.md): operations are in-flight stateless requests, sessions
 // are open stateful holds. Sessions never raise the bed's activity — an idle bed
 // may still hold cdp connections.
 type activityView struct {
@@ -114,7 +114,7 @@ type bedDetailView struct {
 	Executor           *executorView  `json:"executor,omitempty"`
 }
 
-// instanceStatus is the hostel-layer status (docs/lifecycle.md): the only way
+// instanceStatus is the hostel-layer status (docs/kernel.md): the only way
 // a hostel says "you may release me". The verdict is computed here so upstream
 // reads a conclusion instead of reassembling phase/activity counts and luggage.
 type instanceStatus string

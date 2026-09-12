@@ -101,7 +101,7 @@ func (m *Manager) Diagnostics() Report {
 }
 
 // Attachment is one allocation, not a lookup by a reusable Bed ID. Enter only
-// enters its network; isolation.Environment owns final privilege dropping.
+// enters its network; manager.Environment owns final privilege dropping.
 type Attachment interface {
 	Enter(*exec.Cmd) error
 	Gateway() string

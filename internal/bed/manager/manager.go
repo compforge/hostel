@@ -487,7 +487,7 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 	activitySeq := b.activitySeq
 	b.mu.Unlock()
 
-	// Revoke BEFORE persist (docs/lifecycle.md): stateful sessions cannot be
+	// Revoke BEFORE persist (docs/kernel.md): stateful sessions cannot be
 	// waited out, so evict actively ends them — and their writes must not race
 	// the snapshot. The wait is bounded, so a stubborn handler stalls the
 	// evict at most sessionRevokeWait.

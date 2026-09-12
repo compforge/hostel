@@ -66,7 +66,7 @@ CDP token 属于 Bed，由进程环境或 browser/info 下发；铸造 token 不
 
 Bed teardown 才通过 `RevokeBedSecrets` 撤销 token，防止旧凭据授权同 ID 的下一次 Bed。
 已有 CDP 连接由 session 生命周期撤销，不能只删除 token 而放任旧连接继续使用设施。
-完整回收次序见 [lifecycle.md](lifecycle.md)。
+完整回收次序见 [kernel.md](kernel.md)。
 
 ### 应用切分不能覆盖进程、网络和资源边界
 

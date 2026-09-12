@@ -49,6 +49,19 @@ hostel 需要从三个层面回答同一组问题：
 resident bed 只保留最近一次 initialization 和 persist。它们是有界诊断摘要，不是历史库；
 evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史由日志与 Trace 承担。
 
+### 生命周期接口投影
+
+生命周期模型和准入、回收契约由 [kernel.md](kernel.md) 统一定义，HTTP 只投影事实。
+
+| 接口 | 回答的问题 |
+|------|-----------|
+| `POST /v1/beds` | 接受 Bed 初始化；新任务返回 `202` 与 initializing readiness，已 Ready 返回 `200` |
+| `GET /v1/beds` | hostel 什么状态（`instance.status`）+ 全部 bed 概要（含 initializing / failed / dormant） |
+| `GET /v1/beds/:id` | 这个 bed 为什么是这个状态：`phase/readiness`；resident 时再给 activity / lifecycle / executor |
+| `GET /healthz` | 实例可服务性（探活/调度用） |
+
+bed 明细只进 `/v1/beds/:id`；`/v1/beds` 的 bed 条目保持概要。上游读到的任何字段都是 stale-tolerant hint——正确性由准入/回收点的原子复核兜底，不靠上报实时性。
+
 ## 主流程
 
 ```text

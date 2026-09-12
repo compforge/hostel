@@ -92,11 +92,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
       └─ 不可测                    → fail-open，由数量上限兜底
 ```
 
-容量计数是互斥具体状态的命名聚合，具体定义和状态图见 `lifecycle.md`：
-
-- `occupied_beds`：初始化中或已 resident/evicting，正占用 `max_beds` 名额。
-- `resident_beds`：已在当前 Node 准备好的 resident/evicting Bed。
-- `pinned_beds`：resident 中 `inflight > 0` 或 durable store 下 `data_synced=false` 的子集。
+容量计数从 Bed 生命周期事实推导，具体集合和状态图见下文[容量状态口径](#容量状态口径)。
 
 `--bed-pressure-threshold-percent` 是两组容量比率共用的高水位，默认 80，0 表示关闭该信号。任一比率到达水位即上报 `bed_pressure`。`max_pinned_beds` 只是 pinned 比率的参考容量，可以被超过，不产生 429；`max_beds` 才是 Bed 数量的硬上限。
 
@@ -111,6 +107,34 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 
 `--bed-pressure-threshold-percent`、`--admission-cpu-threshold` 与 `--admission-memory-threshold` 只表达策略水位；具体默认值和当前字段
 shape 以配置代码及 README 为准，避免设计文档随调参漂移。
+
+### 容量状态口径
+
+生命周期事实由 [核心模型](kernel.md#请求bed-与实例状态) 定义。一个 Bed 在某一时刻只落在一个具体状态。代码中的 `phase`、`activity`、`readiness` 和
+`data_synced` 是正交事实；讨论容量时，把它们组合成互斥的叶子状态，再投影到三个有名集合：
+
+| 具体状态 | `occupied` | `resident` | `pinned` |
+|---|---:|---:|---:|
+| `initializing` | 是 | 否 | 否 |
+| `resident_active` | 是 | 是 | 是 |
+| `resident_idle_dirty` | 是 | 是 | 是 |
+| `resident_idle_synced` | 是 | 是 | 否 |
+| `evicting_dirty` | 是 | 是 | 是 |
+| `evicting_synced` | 是 | 是 | 否 |
+| `evicting` + `CleanupPending` / 有残留运行资源的 `purging` | 是 | 否 | 否 |
+| `dormant` / `failed` / 无运行资源的 `purging` / 已移除 | 否 | 否 | 否 |
+
+三个聚合的包含关系为 `pinned_beds ⊆ resident_beds ⊆ occupied_beds`：
+
+- `occupied_beds`：正在占用 `max_beds` 名额的 tenant Bed，包含 initializing、resident 和 evicting。
+- `resident_beds`：已在当前 Node 准备好 BedFS/运行境的 tenant Bed，包含 resident 和仍在持久化复核的 evicting；不包含 initializing 或已停止准入的 CleanupPending。
+- `pinned_beds`：其中有 operation，或 durable store 下 `data_synced=false` 的 Bed；它们暂时只能由当前 carrier 承接。noop 只在 operation 进行期间 pinned。
+
+`phase_counts.initializing` 仍表达生命周期，`activity_counts.active|idle` 仍只表达已 resident Bed 的操作态；不为了“凑总数”把 initializing 塞进 activity。兼容 default Bed 不参与上述三项 tenant 容量计数。
+
+![Bed 状态变化与 Node 容量计数](assets/bed-state-counts.svg)
+
+图中回收箭头表示清理成功路径；失败时停留在上表的 CleanupPending，占位直到清理完成。
 
 ## 三、关键设计与能力边界
 

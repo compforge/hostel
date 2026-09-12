@@ -15,7 +15,7 @@
 - **bed**：隔离执行单元，对外即一个 sandbox（workspace + 常驻 shell，状态跨命令保持）。
 - **bed id**：bed 的标识，**由调用方给定、对 hostel 不透明**——hostel 不解释其业务语义（不认识 conversation / tenant 等上层概念，也不据此派生任何子目录）；缺省兜底 id 为 `default`，只服务原生 API 的无 bed 路由，不属于 isolated-session 兼容视图。
 - **workspace-root**：所有 bed 目录的**父目录**，**可配、不写死**（`--workspace-root` / `HOSTEL_WORKSPACE_ROOT`，默认 `/workspace`）；**daemon 启动时创建一次**。
-- **bed 目录**：`{workspace-root}/{bed id}`，含 `meta.json`（可移植身份）+ `data/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面首次请求通过 `Ensure` 加入同一初始化并等待，详见 `docs/lifecycle.md`。
+- **bed 目录**：`{workspace-root}/{bed id}`，含 `meta.json`（可移植身份）+ `data/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面首次请求通过 `Ensure` 加入同一初始化并等待，详见 `docs/kernel.md`。
 - **BedFS**：Bed 持有的文件系统数据域；统一拥有 bed_home、workspace、客户端/宿主/Executor 三个路径空间与文件操作。Executor 替换不改变 BedFS 身份，详见 `docs/filesystem.md`。
 - **bed_home（data 目录）**：BedFS 的宿主根 `{bed 目录}/data`——**客户端视角的 `/`**，任意客户端绝对路径单射 rebase 到它下面、回显对称；bed 只见它，但它不整体持久化。
 - **bed workspace**：`bed_home/workspace` 真实子目录（非别名）——OpenSandbox 契约的 `/workspace`（`bedfs.WorkspacePath`）、相对路径的基准、默认 cwd、suite 下的真实挂载点，也是 `HOSTEL_PERSISTED_PATHS` 默认唯一持久化的数据子树。
@@ -105,7 +105,7 @@ internal/
     - resident / evicting Bed 的 `status.activity=active|idle` 由 operation 数量派生。
     - 容量讨论把正交事实组合成互斥的具体状态，再投影为 `pinned_beds ⊆ resident_beds ⊆ occupied_beds`；不把 initializing 混入 `activity_counts`。
     - `generation` 表达数据版本，`retained_until` 表达最早安全回收期限。
-    - Bed 级请求分 operation 与 session 两类，详见 `docs/lifecycle.md`。
+    - Bed 级请求分 operation 与 session 两类，详见 `docs/kernel.md`。
   - **luggage**：正常 evict 在 durable/noop 下都删除本地 Bed 目录；durable 可从快照恢复，noop 再次初始化则从空目录开始。luggage 扫描只处理异常退出/旧版遗留目录，详见 `docs/store.md` §四。
   - **bed 容量准入**：
     - `occupied_beds` 包含 initializing 与 resident/evicting tenant Bed，`--max-beds` 是其唯一数量硬上限。
@@ -132,11 +132,10 @@ internal/
 
 - 网络管理：`docs/network.md`（自动探测、命令作用域与诊断；共享 Chromium 代理待支持）
 
-- 核心架构（定位、Bed 模型、主流程与组件边界）：`docs/kernel.md`
+- 核心架构（定位、Bed 模型、请求与状态、组件契约及生命周期主流程）：`docs/kernel.md`
 - 待办清单（尚未交付的演进项）：`docs/backlog.md`
-- 生命周期（request / bed / hostel 三粒度、operation 与 session 两类请求、status 推导链）：`docs/lifecycle.md`
-- BedFS（bed_home、workspace、client/carrier/Executor 路径空间与职责边界）：`docs/filesystem.md`
-- 隔离设计（Bed 理想语义、各维度尽力兑现、机制组合、降级与实际保证）：`docs/isolation.md`
+- Filesystem（BedFS、路径空间、进程视图与文件隔离机制）：`docs/filesystem.md`
+- 隔离总览（跨领域隔离目标、机制组合、降级与实际保证）：`docs/isolation.md`
 - 权限模型（daemon / BedUser、UID 租约、capability、降权顺序与部署前提）：`docs/privilege.md`
 - Store（Hostel 直管各 bed 的持久化与 Restore；本地 workspace=工作副本、S3 快照=持久身份）：`docs/store.md`
 - 资源治理方案（carrier 采集/汇报/admission + per-bed accounting 已落地，per-bed limits 待实现）：`docs/resource.md`

@@ -31,7 +31,7 @@ Hostel 只能使用该身份实际具备的管理能力。
 per-Bed UID 是本地数据身份的一部分。Bed Manager 识别本地目录及 `.gc-*` 清理占位，
 通过绑定到本地身份的 Recover / Prepare / Forget 驱动 Privilege Manager；权限组件不推测磁盘目录布局。
 启动先根据目录 owner 恢复租约，资源与本地目录全部清理后才调用 Forget。luggage 和失败清理继续
-保留 UID，具体重试与准入契约见 [lifecycle.md](lifecycle.md#组件参与生命周期)。
+保留 UID，具体重试与准入契约见 [kernel.md](kernel.md#组件参与生命周期)。
 UID 范围须由部署侧预留，避免与宿主账号或 user namespace 映射重叠。
 
 Bed 数据交接给新属主时跳过多硬链接的普通文件，防止改变 Bed 外共享 inode 的 owner；Linux 部署应
@@ -41,7 +41,7 @@ Bed 数据交接给新属主时跳过多硬链接的普通文件，防止改变 
 ## 特权操作顺序
 
 Bed 初始化先恢复或创建 BedFS，再解析并准备 `BedUser`，随后获取网络、文件边界和 Executor 所需的
-资源；全部完成后才发布 Ready。command 与 session 统一通过 `isolation.Environment` 组装执行环境：
+资源；全部完成后才发布 Ready。command 与 session 统一通过 `manager.Environment` 组装执行环境：
 
 ```text
 daemon 准备 BedFS 与资源

@@ -23,7 +23,7 @@ import (
 )
 
 // SessionKind distinguishes the stateful holds a client can open on a bed
-// (docs/lifecycle.md): the client opens and closes them explicitly — possibly
+// (docs/kernel.md): the client opens and closes them explicitly — possibly
 // never — so evict cannot wait them out and must be able to revoke them.
 type SessionKind string
 
@@ -107,7 +107,7 @@ func (m *Manager) OpenSession(b *managedBed, kind SessionKind, closeFn func()) (
 // select on it alongside client traffic.
 func (s *Session) Context() context.Context { return s.ctx }
 
-// Touch reports real traffic on the session (docs/lifecycle.md: touch is a
+// Touch reports real traffic on the session (docs/kernel.md: touch is a
 // side effect of use, never its own request category).
 func (s *Session) Touch() { s.touchFn() }
 
@@ -135,7 +135,7 @@ func (s *Session) Close() {
 	})
 }
 
-// revokeSessions is the evict revoke stage (docs/lifecycle.md): stateful holds
+// revokeSessions is the evict revoke stage (docs/kernel.md): stateful holds
 // cannot be waited out, so evict actively ends them. Shells are closed first
 // (their writes must not race the persist), registered sessions are revoked,
 // and the wait for handlers to exit is bounded.

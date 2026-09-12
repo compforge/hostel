@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-// OperationKind classifies stateless bed operations (docs/lifecycle.md).
+// OperationKind classifies stateless bed operations (docs/kernel.md).
 type OperationKind string
 
 const (
@@ -32,7 +32,7 @@ const (
 )
 
 // Operation timeout policy: every operation is bounded so eviction's
-// refuse-and-retry always converges (docs/lifecycle.md). A non-positive
+// refuse-and-retry always converges (docs/kernel.md). A non-positive
 // timeout gets the default; beyond the max is clamped, not rejected.
 const (
 	DefaultOperationTimeout = 5 * time.Minute

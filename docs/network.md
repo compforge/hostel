@@ -20,7 +20,7 @@ netns、veth、路由、nft 表与 DNS 转发入口，执行真实的 namespace 
 后缓存 verdict。诊断请求不会重新运行探测。
 
 Bed 初始化完成数据准备后获取具体 `Attachment`，保存到 resident Bed 的
-`isolation.Environment`，准备完成后才发布 Ready。命令和 shell 共用这个组合入口：
+`manager.Environment`，准备完成后才发布 Ready。命令和 shell 共用这个组合入口：
 网络进入发生在最终降权之前；Network Manager 只负责进入所分配的 netns，完整的身份切换、
 文件视图与用户程序启动顺序由 [权限模型](privilege.md#特权操作顺序) 统一定义。
 实例在 HTTP 启动前还会实测选中的完整命令与 shell 组合；组合失败明确阻止启动。

@@ -247,7 +247,7 @@ func (s *Server) bedOf(c *gin.Context) *bed.Resident {
 
 // withOp wraps a request-scoped handler in one operation of the given kind:
 // the bed is resolved, held for the handler's lifetime and released on return
-// (docs/lifecycle.md: an operation's span is one request). Explicit
+// (docs/kernel.md: an operation's span is one request). Explicit
 // BeginOperation is reserved for work whose span is NOT the request —
 // background /command outlives it, foreground runs take their timeout from
 // the request body, isolatedCreate creates the bed it then holds.

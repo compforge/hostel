@@ -95,7 +95,7 @@ evict 等生命周期动作等待同一个 Store 的同步操作，不必等后�
 `Store` 接口只负责远端事实与传输；`StageInBedFS` 负责本地发布语义。需要 Restore 时，它先写入
 bed 目录旁的 staging 目录，成功后才用 rename 替换 stale luggage；失败则清理 staging 并保留原
 luggage。Bed manager 只在 Stage-in 和所选运行环境准备全部成功后发布 resident，完整准备条件见
-[lifecycle.md](lifecycle.md)。远端数据故障不会被解释为空 Bed，半恢复目录也不会进入服务。
+[kernel.md](kernel.md)。远端数据故障不会被解释为空 Bed，半恢复目录也不会进入服务。
 
 可选同步策略：
 
@@ -209,7 +209,7 @@ bed 在单个 hostel 里是**瞬时的**（可驱逐、可恢复），因此需�
 
 ### 生命周期中的持久化边界
 
-Bed 的 phase/readiness/activity 由 [lifecycle.md](lifecycle.md) 统一定义。Store 只参与
+Bed 的 phase/readiness/activity 由 [kernel.md](kernel.md) 统一定义。Store 只参与
 Stage-in、同步、evict 与 purge：恢复成功后仍须完成所选文件边界与网络准备才能 Ready；
 正常 evict 成功后删除本地目录，异常遗留才成为 luggage。快照不保存 Executor、netns
 或 BrowserContext，恢复数据不等于恢复这些运行态。

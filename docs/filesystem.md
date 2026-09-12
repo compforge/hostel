@@ -1,8 +1,12 @@
-# BedFS：Bed 的文件系统语义
+# Filesystem：BedFS、进程视图与文件隔离
 
 > 状态：当前实现。隔离目标与实际边界见 [isolation.md](isolation.md)，持久化与恢复见 `store.md`。
 
 ## 一、定位
+
+`filesystem.Manager` 统一拥有 BedFS 与文件隔离机制，负责准备、释放和文件领域诊断。
+数据模型、进程视图和访问屏障在同一领域内协作；跨领域的网络进入、身份切换与执行组合
+由 Bed Manager 协调。能力不足时可以选择可用档位，已选机制执行失败则明确报错。
 
 `BedFS` 是 Bed 持有的数据域，不是一次请求里的路径工具。Bed 创建时建立一个 BedFS；Executor 丢失、替换或重建时，BedFS 的身份与数据不变，只重新生成进程视图。
 
@@ -24,7 +28,47 @@ isolation 根据环境能力尽量兑现进程侧的访问屏障。Dorm 没有�
 
 面向调用方的文件操作与传输 API 统一见 [文件操作与传输](transfers.md)。
 
-## 二、三个路径空间
+## 二、文件隔离档位与机制
+
+`dorm / room / suite` 是文件数据隔离的三档兑现程度。请求档位与环境上限共同决定实际档位；
+`auto` 选择环境可达的最高档。文件档位不替网络、PID 或 CPU/内存边界作保证。
+
+| 房型 | 进程侧的文件边界 | 当前机制 |
+|---|---|---|
+| dorm | 逻辑分床，按 Carrier 进程权限访问，没有强制跨 Bed 屏障 | direct |
+| room | 限制跨 Bed 数据访问，但目录存在性及公共路径仍可见 | 优先 Landlock，其次独立 UID |
+| suite | 私有 mount 视图遮蔽兄弟 Bed，挂回自己的工作区和配置投影 | bwrap |
+
+三档复用同一 BedFS 数据模型，机制不按档位逐层叠加：room 在共享视图上增加访问控制，
+suite 改用私有 mount 视图。UID 与 Landlock 也不完全等价：UID 额外带来部分进程身份保护，
+却依赖 UID 分配与宿主权限。房型表示文件边界的层级，细节必须结合实际机制理解。
+
+结构化 file API 与 cwd 始终先解析到当前 BedFS，降级不改变同一客户端路径的数据落点。
+PRoot/pathshim 尽量让命令中的工作区路径也指向 BedFS，但它们不是安全边界，不能抬高房型。
+命令文本保持不透明，映射之外的绝对字面量由实际进程视图解释。
+
+### 机制的取舍
+
+**suite 遮蔽后再挂回本 Bed**。只把 Carrier 根挂成只读仍允许读取邻居数据，因此先遮蔽
+工作区父目录和存在的宿主敏感路径（如 `/root`、`/home`、`/run/secrets`、
+`/var/run/secrets`），再挂回当前 BedFS；较低档位不能假定具有同样的遮蔽。工具链继续共享，`/usr/local`
+保留 Carrier 级可写软件环境。当前 bwrap 每次启动的 `/tmp` 是独立 tmpfs，不能当作
+跨命令持久的 Bed 数据；需要延续的数据应放在 BedFS 中。
+
+bwrap 使用 user namespace 完成挂载准备，并绑定已有 `/proc`，以适应容器内受限的 procfs。
+当前没有私有 PID namespace，因此私有文件视图不等于完整的进程不可见性。机制及参数顺序
+锚点在 `internal/bed/filesystem/isolation/bwrap_args.go`；部署权限示例见
+[deploy/k8s/README.md](../deploy/k8s/README.md)。
+
+**room 用访问控制兑现数据边界**。Landlock 在子进程中应用规则，UID backend 在子进程中
+切换身份；daemon 必须继续服务所有 Bed，不能对自身套用某个 Bed 的边界。两者都必须在
+用户代码开始前生效，已有描述符和公共路径的可达性不能仅靠路径名称推断。
+
+UID backend 以独立进程身份兑现 room 的数据访问边界，目录属主、进程身份和 UID 租约必须保持
+一致。具体的分配、重启恢复、失败清理和硬链接约束见 [privilege.md](privilege.md)；
+`internal/bed/filesystem/isolation/uid_linux.go` 只负责选择该文件机制，不拥有通用身份生命周期。
+
+## 三、三个路径空间
 
 | 空间 | 示例 | 所有者 |
 |---|---|---|
@@ -43,7 +87,7 @@ isolation 根据环境能力尽量兑现进程侧的访问屏障。Dorm 没有�
 
 绝对路径在客户端命名空间中先规范化，再单射 rebase 到 bed_home；返回路径使用逆映射。房型只改变访问屏障和进程投影，不改变数据落点。
 
-## 三、Executor 视图
+## 四、Executor 视图
 
 ### dorm / room
 
@@ -83,7 +127,7 @@ bwrap 先遮蔽 `<workspace-root>`，再投影同一 BedFS：
 
 `capabilities.workspace_mount` 只说明进程里是否存在 suite 的真实 `/workspace` mount，不表示 BedFS 是否可用。`workspace_view.mode` 报告实际进程视图：`mount`、`proot`、`pathshim` 或 `carrier`；`available=false` 与 `reason` 表示没有用户态 helper 通过启动探测。BedFS 的结构化路径映射是所有房型的基础能力。
 
-## 四、结构化路径与命令文本
+## 五、结构化路径与命令文本
 
 Hostel 解析 file API 的 `path`、命令的 `cwd` 等结构化字段，因此这些字段在所有房型都遵守 BedFS 语义。BedFS 先把 cwd 解析为 Carrier path；新进程由 isolation 投影到 Executor View，已启动的常驻 Shell 则持有启动时的 View，在执行用户命令前通过独立、带终态分帧的 shell 控制步骤切换目录。Web 层不构造 Executor path，也不把 `cd` 拼进用户命令；heredoc、多行脚本等命令文本保持原样。命令中的字面 `/tmp/x` 仍由实际进程 namespace 解释。
 
@@ -93,7 +137,7 @@ Dorm 与 carrier 共享 mount namespace，命令中的字面绝对路径可能�
 
 这是一条默认关闭的只读候选策略，不是第二套路径映射或写入语义。上传、替换、改权限、移动和删除始终只操作 BedFS；room / suite 也不启用回退。配置的 root 会暴露给 file API 读取，Dorm 本身又不提供数据访问屏障，因此共享 carrier 不得开启，也不得把它理解为隔离保证。
 
-## 五、生命周期与边界
+## 六、生命周期与边界
 
 - Bed owns BedFS：`bed_home`、workspace、generation 与快照身份随 Bed 存续；
 - Executor owns process realm：只持有 BedFS View，可丢失和替换；

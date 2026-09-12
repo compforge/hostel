@@ -112,7 +112,7 @@ func (s *Server) browserCDP(c *gin.Context) {
 		log.Printf("hostel: cdp ws upgrade for bed=%s failed: %v", bedID, err)
 		return
 	}
-	// A CDP connection is a session, not an operation (docs/lifecycle.md):
+	// A CDP connection is a session, not an operation (docs/kernel.md):
 	// stateful, ended by the client or revoked by evict — it must not hold
 	// the bed active. closeFn kills the conn, unblocking the proxy loops.
 	sess, err := s.mgr.OpenSession(b, bed.SessionKindCDP, func() { conn.Close() })
