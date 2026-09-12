@@ -8,7 +8,7 @@ import (
 func TestSnapshotsDoNotGrantWriteAccess(t *testing.T) {
 	policy := &NetworkPolicy{DefaultAction: "deny", Egress: []NetworkRule{{Action: "allow", Target: "example.org"}}}
 	spec := Spec{NetworkPolicy: policy, RecoveryDirs: []string{"original"}}
-	b := New("a", 0, spec)
+	b := New("a", "", spec)
 	policy.Egress[0].Target = "mutated-input"
 	spec.RecoveryDirs[0] = "mutated-input"
 	snapshot := b.Spec()
@@ -31,7 +31,7 @@ func TestSnapshotsDoNotGrantWriteAccess(t *testing.T) {
 	}
 }
 func TestDomainWritersPreserveConcurrentSections(t *testing.T) {
-	b := New("a", 0, Spec{})
+	b := New("a", "", Spec{})
 	owners := NewOwners()
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -44,22 +44,21 @@ func TestDomainWritersPreserveConcurrentSections(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 1000; i++ {
-			owners.Store.Update(b, func(s *StoreStatus) { s.Generation++ })
+			owners.Store.Update(b, func(s *StoreStatus) { s.SnapshotGeneration++ })
 			_ = b.Status()
 		}
 	}()
 	wg.Wait()
 	s := b.Status()
-	if s.Privilege.UID != 1000 || s.Store.Generation != 1000 {
+	if s.Privilege.UID != 1000 || s.Store.SnapshotGeneration != 1000 {
 		t.Fatalf("lost domain update: %+v", s)
 	}
 }
-func TestAllocationAndRetainedIdentityAreDistinct(t *testing.T) {
-	local := New("same", 0, Spec{})
-	first := New("same", local.LocalID, Spec{})
-	next := New("same", local.LocalID, Spec{})
-	replacement := New("same", 0, Spec{})
-	if first.InstanceID == next.InstanceID || first.LocalID != next.LocalID || replacement.LocalID == first.LocalID {
-		t.Fatal("identity lifetimes collapsed")
+func TestNameAndLocalIdentityAreDistinct(t *testing.T) {
+	first := New("同名", "", Spec{})
+	recovered := New(first.Name, first.ID, Spec{})
+	replacement := New(first.Name, "", Spec{})
+	if first.ID != recovered.ID || first.ID == replacement.ID || first.Name != replacement.Name {
+		t.Fatal("name and local lifetime collapsed")
 	}
 }

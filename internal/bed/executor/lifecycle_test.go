@@ -30,7 +30,7 @@ func (f *replacementFactory) Create(context.Context, string) (Executor, error) {
 func TestExecutorReplacementWaitsForCleanup(t *testing.T) {
 	old := &stalledExecutor{err: errors.New("cleanup busy")}
 	next := &stalledExecutor{}
-	b := bed.New("replacement", 0, bed.Spec{})
+	b := bed.New("replacement", "", bed.Spec{})
 	factory := &replacementFactory{next: next}
 	m := NewManager(factory, bed.NewOwners().Executor)
 	if err := m.Prepare(context.Background(), b); err != nil {
@@ -46,3 +46,6 @@ func TestExecutorReplacementWaitsForCleanup(t *testing.T) {
 		t.Fatalf("retry replacement: %v creates=%d", err, factory.created)
 	}
 }
+
+func (*stalledExecutor) Done() <-chan struct{} { done := make(chan struct{}); close(done); return done }
+func (*stalledExecutor) Exit() Exit            { return Exit{State: StateLost} }

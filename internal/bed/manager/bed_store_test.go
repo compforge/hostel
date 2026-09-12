@@ -80,7 +80,7 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 	if !b.Status().DataSynced || b.Status().Pinned {
 		t.Fatal("noop dirtiness must not pin durability")
 	}
-	if err := m.Checkpoint(ctx, b.ID); err != nil {
+	if err := m.Checkpoint(ctx, b.Name); err != nil {
 		t.Fatal(err)
 	}
 	normal, err := m.Ensure(ctx, "normal")
@@ -95,23 +95,23 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 		t.Fatal(err)
 	}
 	finish()
-	if err := m.Checkpoint(ctx, normal.ID); err != nil {
+	if err := m.Checkpoint(ctx, normal.Name); err != nil {
 		t.Fatal(err)
 	}
 	for _, entry := range m.Inventory() {
-		if entry.ID == b.ID && entry.Sync != "noop" {
+		if entry.ID == b.Name && entry.Sync != "noop" {
 			t.Fatalf("inventory=%+v", entry)
 		}
 	}
-	for _, id := range []string{b.ID, normal.ID} {
+	for _, id := range []string{b.Name, normal.Name} {
 		if ok, err := m.Evict(ctx, id); err != nil || !ok {
 			t.Fatalf("evict %s: %v %v", id, ok, err)
 		}
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, b.ID, CreateOptions{Sync: "noop"}); err != nil {
+	if _, err := m.InitializeBedWithOptions(ctx, b.Name, CreateOptions{Sync: "noop"}); err != nil {
 		t.Fatal(err)
 	}
-	resumed, err := m.Ensure(ctx, b.ID)
+	resumed, err := m.Ensure(ctx, b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,14 +121,14 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(resumed.Workspace(), "marker.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("noop restored contents: %v", err)
 	}
-	durable, err := m.Ensure(ctx, normal.ID)
+	durable, err := m.Ensure(ctx, normal.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(durable.Workspace(), "restored.txt")); err != nil {
 		t.Fatalf("default bed did not restore: %v", err)
 	}
-	if err := m.Purge(ctx, b.ID); err != nil {
+	if err := m.Purge(ctx, b.Name); err != nil {
 		t.Fatal(err)
 	}
 	st.callsMu.Lock()
@@ -248,10 +248,10 @@ func TestOmittedBedStoreInheritsConfiguredBackend(t *testing.T) {
 	if b.Spec().Sync != st.Name() {
 		t.Fatalf("unspecified sync=%s", b.Spec().Sync)
 	}
-	if err := m.Checkpoint(ctx, b.ID); err != nil {
+	if err := m.Checkpoint(ctx, b.Name); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Purge(ctx, b.ID); err != nil {
+	if err := m.Purge(ctx, b.Name); err != nil {
 		t.Fatal(err)
 	}
 	if len(st.calls) == 0 {
@@ -290,7 +290,7 @@ func TestDurableBedSyncsWithNoopInstanceDefault(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		st.mu.Lock()
-		_, persisted := st.snaps[b.ID]
+		_, persisted := st.snaps[b.Name]
 		st.mu.Unlock()
 		if persisted {
 			return
@@ -321,14 +321,14 @@ func TestPurgeKeepsMetadataUntilSnapshotDeletionSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Purge(ctx, b.ID); err == nil {
+	if err := m.Purge(ctx, b.Name); err == nil {
 		t.Fatal("expected delete failure")
 	}
 	if meta, ok := loadMeta(b.Spec().Dir); !ok || meta.Sync != st.Name() {
 		t.Fatalf("purge lost retry metadata: %+v", meta)
 	}
 	st.fail = false
-	if err := m.Purge(ctx, b.ID); err != nil {
+	if err := m.Purge(ctx, b.Name); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(b.Spec().Dir); !errors.Is(err, os.ErrNotExist) {

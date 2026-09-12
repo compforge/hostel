@@ -59,7 +59,7 @@ func respondBedError(c *gin.Context, err error) {
 	respondError(c, http.StatusBadRequest, ErrBedInvalid, err.Error())
 }
 
-// BedHeader carries the target bed id; empty → default bed.
+// BedHeader carries the caller-owned Bed.Name; empty → default bed.
 const BedHeader = "X-Hostel-Bed"
 
 // Server wires the bed manager into gin routes.
@@ -111,7 +111,7 @@ func NewServer(mgr *bed.Manager, options ...ServerOption) *Server {
 }
 
 func traceHTTPPath(request *http.Request) bool {
-	return !slices.Contains([]string{"/healthz", "/ping", "/metrics", "/metrics/watch", "/v1/diagnostics"}, request.URL.Path)
+	return !slices.Contains([]string{"/healthz", "/ping", "/metrics", "/metrics/watch", "/v1/status"}, request.URL.Path)
 }
 
 // Handler exposes the engine for http.Server / tests.
@@ -121,7 +121,7 @@ func (s *Server) routes() {
 	e := s.engine
 	e.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
 	e.GET("/healthz", s.healthz)
-	e.GET("/v1/diagnostics", s.diagnostics)
+	e.GET("/v1/status", s.status)
 
 	metrics := e.Group("/metrics")
 	{
@@ -318,12 +318,12 @@ func (s *Server) healthz(c *gin.Context) {
 	})
 }
 
-// GET /v1/diagnostics returns the versioned operator view assembled by the Bed
+// GET /v1/status returns the versioned operator view assembled by the Bed
 // manager. Reading it does not rerun startup probes or perform remote I/O.
 //
 // +spec=`Instance diagnostics expose cached facts and component reports; reading the endpoint never reruns probes.`
-func (s *Server) diagnostics(c *gin.Context) {
-	c.JSON(http.StatusOK, s.mgr.Diagnostics())
+func (s *Server) status(c *gin.Context) {
+	c.JSON(http.StatusOK, s.mgr.Status())
 }
 
 func resourceAdmissionView(report resource.AdmissionReport) gin.H {

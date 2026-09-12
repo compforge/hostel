@@ -22,12 +22,12 @@ type BedLifecycle interface {
 type Component[R any] interface {
 	DaemonLifecycle
 	BedLifecycle
-	// Diagnostics returns a read-only snapshot without host probes or remote I/O.
-	Diagnostics() R
+	// Status returns a read-only snapshot without host probes or remote I/O.
+	Status() R
 }
 
 // Noop supplies only hooks a component does not participate in. A component
-// must still explicitly provide Diagnostics to satisfy Component.
+// must still explicitly provide Status to satisfy Component.
 type Noop struct{}
 
 func (Noop) Recover(context.Context, *Bed) error { return nil }
@@ -58,12 +58,17 @@ type Sequence struct {
 	phase        Phase
 	participants []Participant
 	next         int
+	bed          *Bed
 }
 
 func NewSequence(phase Phase, participants ...Participant) *Sequence {
 	return &Sequence{phase: phase, participants: append([]Participant(nil), participants...)}
 }
 func (s *Sequence) Run(ctx context.Context, b *Bed) error {
+	if s.bed != nil && s.bed != b {
+		return fmt.Errorf("lifecycle: sequence belongs to a different Bed")
+	}
+	s.bed = b
 	for s.next < len(s.participants) {
 		if err := ctx.Err(); err != nil {
 			return err

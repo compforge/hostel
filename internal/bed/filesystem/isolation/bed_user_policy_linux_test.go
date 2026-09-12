@@ -56,7 +56,7 @@ func TestUIDIsolationSelectsPerBedAllocator(t *testing.T) {
 }
 
 func acquireTestUser(manager *privilege.Manager, id string) (privilege.BedUser, error) {
-	b := bed.New(id, 0, bed.Spec{})
+	b := bed.New(id, "", bed.Spec{})
 	err := manager.Prepare(context.Background(), b)
 	return manager.User(b), err
 }

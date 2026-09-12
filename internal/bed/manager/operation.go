@@ -45,7 +45,7 @@ const (
 func (m *Manager) touchBed(b *managedBed) {
 	m.mu.Lock()
 	b.mu.Lock()
-	if current, ok := m.beds[b.ID]; ok && current == b {
+	if current, ok := m.beds[b.Name]; ok && current == b {
 		wasPinned := b.pinnedLocked()
 		b.touchLocked(time.Now(), m.bedIdleTTL)
 		m.adjustPinnedLocked(b, wasPinned)
@@ -71,13 +71,13 @@ func (m *Manager) BeginOperation(b *managedBed, kind OperationKind, timeout time
 
 	m.mu.Lock()
 	b.mu.Lock()
-	if current, ok := m.beds[b.ID]; !ok || current != b || m.closed {
+	if current, ok := m.beds[b.Name]; !ok || current != b || m.closed {
 		b.mu.Unlock()
 		m.mu.Unlock()
 		return nil, ErrBedUnavailable
 	}
 	wasPinned := b.pinnedLocked()
-	if !wasPinned && b.ID != m.defaultBed {
+	if !wasPinned && b.Name != m.defaultBed {
 		if err := m.resourceAdmissionErrorLocked(); err != nil {
 			b.mu.Unlock()
 			m.mu.Unlock()
@@ -124,7 +124,7 @@ func (m *Manager) BeginOperation(b *managedBed, kind OperationKind, timeout time
 					b.retainUntil = retainUntil
 				}
 			}
-			if current, ok := m.beds[b.ID]; ok && current == b {
+			if current, ok := m.beds[b.Name]; ok && current == b {
 				m.adjustPinnedLocked(b, wasPinned)
 			}
 			b.mu.Unlock()

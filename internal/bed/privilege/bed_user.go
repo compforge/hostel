@@ -66,8 +66,8 @@ type Requirements struct {
 	Satisfied           bool     `json:"satisfied"`
 }
 
-// Report is the cached, operator-facing privilege configuration and verdict.
-type Report struct {
+// Status is the cached, operator-facing privilege configuration and verdict.
+type Status struct {
 	ReservedUsers          int           `json:"reserved_users"`
 	PreconditionsSatisfied bool          `json:"preconditions_satisfied"`
 	Daemon                 Identity      `json:"daemon"`
@@ -115,8 +115,8 @@ func MissingBedIdentityCapabilities(effectiveCaps uint64) []string {
 
 // NewReport captures privilege diagnostics from startup facts. effectiveCaps
 // is Linux CapEff; it is zero on other platforms.
-func NewReport(bedUser BedUserReport, effectiveCaps uint64) Report {
-	report := Report{
+func NewReport(bedUser BedUserReport, effectiveCaps uint64) Status {
+	report := Status{
 		Daemon:  Identity{UID: os.Geteuid(), GID: os.Getegid()},
 		BedUser: bedUser,
 	}

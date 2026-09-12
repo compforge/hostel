@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,8 +28,8 @@ type initializationNetwork struct {
 	released     atomic.Int32
 }
 
-func (n *initializationNetwork) Diagnostics() network.Report {
-	return network.Report{Enabled: true}
+func (n *initializationNetwork) Status() network.Status {
+	return network.Status{Enabled: true}
 }
 
 func (n *initializationNetwork) Acquire(ctx context.Context, _ string) (network.Attachment, error) {
@@ -64,11 +65,13 @@ func TestInitializationRollsBackNetworkBeforeCompletion(t *testing.T) {
 			}
 			defer cancel()
 			initialization := &bedInitialization{
-				local:  m.localIdentityLocked("rollback"),
-				status: InitializationStatus{ID: "rollback", Sync: store.SyncNoop, BedStatus: BedStatus{Phase: PhaseInitializing}},
-				done:   make(chan struct{}), cancel: cancel,
+				local:     m.localIdentityLocked("rollback"),
+				startedAt: time.Now(),
+				done:      make(chan struct{}), cancel: cancel,
 			}
-			initialization.model = model.New("rollback", initialization.local.bed.LocalID, model.Spec{Dir: filepath.Join(m.root, "rollback"), Sync: store.SyncNoop})
+			initialization.model = initialization.local.bed
+			model.SpecWriter{}.Update(initialization.model, func(s *model.Spec) { s.Sync = store.SyncNoop })
+			m.owners.Lifecycle.Set(initialization.model, model.LifecycleStatus{Phase: PhaseInitializing})
 			m.initializations["rollback"] = initialization
 			n := &initializationNetwork{releasing: make(chan struct{}), resume: make(chan struct{})}
 			n.afterAcquire = func(ctx context.Context) {
@@ -125,7 +128,7 @@ func TestInitializationRollsBackNetworkBeforeCompletion(t *testing.T) {
 			if n.acquired.Load() != 2 || n.released.Load() != 1 || !n.active.Load() {
 				t.Fatal("successful reinitialization did not retain its fresh network")
 			}
-			m.teardown(resident)
+			m.rollback(resident)
 		})
 	}
 }
@@ -145,27 +148,27 @@ func TestEvictionFencesSameIDUntilDirectoryCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { _, err := m.Evict(context.Background(), b.ID); done <- err }()
+	go func() { _, err := m.Evict(context.Background(), b.Name); done <- err }()
 	t.Cleanup(func() { close(n.resume) })
 	select {
 	case <-n.releasing:
 	case <-time.After(5 * time.Second):
 		t.Fatal("cleanup did not start")
 	}
-	if _, err := m.Ensure(context.Background(), b.ID); !errors.Is(err, ErrBedUnavailable) {
+	if _, err := m.Ensure(context.Background(), b.Name); !errors.Is(err, ErrBedUnavailable) {
 		t.Fatalf("same-ID init during cleanup: %v", err)
 	}
 	if _, err := m.BeginOperation(b, OpFile, time.Second); !errors.Is(err, ErrBedUnavailable) {
 		t.Fatalf("old Bed admitted work: %v", err)
 	}
-	if status, ok := m.Initialization(b.ID); !ok || status.Readiness.Ready || status.Phase != PhaseEvicting {
+	if status, ok := m.Initialization(b.Name); !ok || status.Readiness.Ready || status.Phase != PhaseEvicting {
 		t.Fatalf("cleanup status: %+v %t", status, ok)
 	}
 	n.resume <- struct{}{}
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	next, err := m.Ensure(context.Background(), b.ID)
+	next, err := m.Ensure(context.Background(), b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +178,7 @@ func TestEvictionFencesSameIDUntilDirectoryCleanup(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(next.Workspace(), "old")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stale file survived: %v", err)
 	}
-	if err := m.teardown(next); err != nil {
+	if err := m.rollback(next); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -192,8 +195,8 @@ type policyInitializationNetwork struct {
 	fail    bool
 }
 
-func (n *policyInitializationNetwork) Diagnostics() network.Report {
-	return network.Report{Enabled: true}
+func (n *policyInitializationNetwork) Status() network.Status {
+	return network.Status{Enabled: true}
 }
 func (n *policyInitializationNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	return n, nil

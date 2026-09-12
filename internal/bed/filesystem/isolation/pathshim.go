@@ -44,8 +44,8 @@ func (p *pathshimView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	}
 	userArgs := cmd.Args
 	cmd.Args = make([]string, 0, len(userArgs)+8)
-	cmd.Args = append(cmd.Args, p.path, "--quiet", "--bind", fs.Workspace()+":"+bedfs.WorkspacePath)
-	cmd.Args = appendPathshimProjections(cmd.Args, fs.Home(), p.projections)
+	cmd.Args = append(cmd.Args, p.path, "--quiet")
+	cmd.Args = appendPathshimBinds(cmd.Args, fs, p.projections)
 	cmd.Args = append(cmd.Args, "--cwd", guestCwd, "--")
 	cmd.Args = append(cmd.Args, userArgs...)
 	cmd.Path = p.path
@@ -102,8 +102,9 @@ func probePathshim(base Boundary, workspaceRoot, executable string, projections 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	args := []string{"probe", "--bind", probeWorkspace + ":" + bedfs.WorkspacePath}
-	args = appendPathshimProjections(args, probeHome, projections)
+	// pathshim v0.1.6 (also pinned by the image) parses a probe subcommand.
+	// Older binaries such as v0.1.3 interpret "probe" as a user command.
+	args := appendPathshimBinds([]string{"probe"}, fs, projections)
 	cmd := exec.CommandContext(ctx, executable, args...)
 	if err := base.Wrap(cmd, fs, probeWorkspace); err != nil {
 		return ProbeReport{Error: "wrap probe: " + err.Error()}
@@ -127,9 +128,10 @@ func probePathshim(base Boundary, workspaceRoot, executable string, projections 
 	return report
 }
 
-func appendPathshimProjections(args []string, bedHome string, projections []bedfs.PathProjection) []string {
+func appendPathshimBinds(args []string, fs *bedfs.FS, projections []bedfs.PathProjection) []string {
+	args = append(args, "--bind", fs.Workspace()+":"+bedfs.WorkspacePath)
 	for _, projection := range projections {
-		args = append(args, "--bind", projection.CarrierPath(bedHome)+":"+projection.ProcessPath)
+		args = append(args, "--bind", projection.CarrierPath(fs.Home())+":"+projection.ProcessPath)
 	}
 	return args
 }

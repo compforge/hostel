@@ -1,5 +1,18 @@
 package bed
 
+import "time"
+
+type LifecyclePhase string
+
+const (
+	PhaseInitializing LifecyclePhase = "initializing"
+	PhaseResident     LifecyclePhase = "resident"
+	PhaseEvicting     LifecyclePhase = "evicting"
+	PhasePurging      LifecyclePhase = "purging"
+	PhaseDormant      LifecyclePhase = "dormant"
+	PhaseFailed       LifecyclePhase = "failed"
+)
+
 // Status contains observations, never live resources, clients or goroutines.
 type Status struct {
 	Lifecycle  LifecycleStatus
@@ -12,9 +25,11 @@ type Status struct {
 	Amenity    AmenityStatus
 }
 type LifecycleStatus struct {
-	Phase  string
-	Ready  bool
-	Reason string
+	Phase     LifecyclePhase
+	Ready     bool
+	Reason    string
+	Message   string
+	UpdatedAt time.Time
 }
 type FilesystemStatus struct {
 	Home      string
@@ -32,10 +47,11 @@ type NetworkStatus struct {
 	Policy  *NetworkPolicy
 }
 type StoreStatus struct {
-	Source        string
-	Restored      bool
-	Generation    int64
-	SnapshotBytes int64
+	Source             string
+	Restored           bool
+	SnapshotGeneration int64
+	SnapshotBytes      int64
+	LocalBytes         int64
 }
 type ExecutorStatus struct {
 	ID      string

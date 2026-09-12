@@ -185,7 +185,7 @@ func TestPathshimProbeFailureFallsBackToProot(t *testing.T) {
 			} `json:"probes"`
 		} `json:"isolation"`
 	}
-	result, err = c.json(ctx, "GET", "/v1/diagnostics", "", nil, &diagnostics)
+	result, err = c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
 	if err != nil || result.Status != http.StatusOK {
 		t.Fatalf("diagnostics: status=%d err=%v body=%s", result.Status, err, result.Body)
 	}

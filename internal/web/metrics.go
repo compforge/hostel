@@ -101,7 +101,7 @@ func (s *Server) getMetrics(c *gin.Context) {
 		return
 	}
 	metrics, err := readBedMetrics(
-		c.Request.Context(), s.mgr, b.ID, s.metricSampleInterval,
+		c.Request.Context(), s.mgr, b.Name, s.metricSampleInterval,
 	)
 	if err != nil {
 		runtimeError(c, "error reading runtime metrics: "+err.Error())
@@ -139,7 +139,7 @@ func (s *Server) watchMetrics(c *gin.Context) {
 		}
 
 		metrics, err := readBedMetrics(
-			c.Request.Context(), s.mgr, b.ID, s.metricSampleInterval,
+			c.Request.Context(), s.mgr, b.Name, s.metricSampleInterval,
 		)
 		select {
 		case <-c.Request.Context().Done():

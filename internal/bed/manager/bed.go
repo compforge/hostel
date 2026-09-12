@@ -21,6 +21,7 @@ package manager
 
 import (
 	model "github.com/qiankunli/hostel/internal/bed"
+	"golang.org/x/sync/semaphore"
 	"sync"
 	"time"
 
@@ -52,29 +53,22 @@ type managedBed struct {
 	// only its process View; bed_home and file identity stay here with the Bed.
 	filesystem      *bedfs.FS
 	environment     *Environment
-	cleanupMu       sync.Mutex // serializes teardown retries for this allocation
+	cleanupMu       *semaphore.Weighted // serializes teardown retries for this allocation
 	runtimeClosed   bool
 	stopSequence    *model.Sequence
 	releaseSequence *model.Sequence
 
 	executors *executor.Manager
 
-	mu             sync.Mutex
-	persistMu      sync.Mutex // serializes generation bumps and snapshot uploads
-	lastActiveAt   time.Time
-	retainUntil    time.Time // latest safe eviction time promised to accepted operations
-	inflight       int       // bed-scoped operations still in flight
-	inflightByKind map[OperationKind]int
-	activitySeq    uint64    // changes whenever activity starts or finishes
-	generation     int64     // latest local data generation
-	persistedAt    time.Time // last successful snapshot (zero = never)
-	// Snapshot* describes the durable copy last observed at initialization or
-	// persist boundary. LocalBytes is sampled asynchronously by the Store
-	// controller; all three are stale-tolerant scheduling hints.
-	snapshotGeneration int64
-	snapshotBytes      int64
-	localBytes         int64
-	evicting           bool                // an evict's persist is in flight
+	mu                 sync.Mutex
+	persistMu          sync.Mutex // serializes generation bumps and snapshot uploads
+	lastActiveAt       time.Time
+	retainUntil        time.Time // latest safe eviction time promised to accepted operations
+	inflight           int       // bed-scoped operations still in flight
+	inflightByKind     map[OperationKind]int
+	activitySeq        uint64              // changes whenever activity starts or finishes
+	generation         int64               // latest local data generation
+	persistedAt        time.Time           // last successful snapshot (zero = never)
 	purging            bool                // rejects queued persists once identity deletion owns the bed
 	shells             map[string]*Shell   // stateful bash sessions (spec /session)
 	sessions           map[string]*Session // revocable stateful holds (session.go)
@@ -101,7 +95,7 @@ type BedStatus struct {
 }
 
 // Status is one atomic view of a resident bed's scheduler-facing facts.
-type Status struct {
+type ResidentStatus struct {
 	BedStatus
 	Generation         int64
 	SnapshotGeneration int64
@@ -131,7 +125,7 @@ type ExecutorStatus struct {
 // RestoreBytes estimates how much durable data this carrier must download
 // before the bed becomes ready. Restore is currently full-snapshot: generation
 // is only an equality/freshness token, never a proxy for byte distance.
-func (s Status) RestoreBytes() int64 {
+func (s ResidentStatus) RestoreBytes() int64 {
 	return estimatedRestoreBytes(s.Generation, s.SnapshotGeneration, s.SnapshotBytes, s.DataSynced)
 }
 
@@ -160,7 +154,7 @@ func (b *managedBed) pinnedLocked() bool {
 }
 
 // Status reports lifecycle, version and deadline from one lock acquisition.
-func (b *managedBed) Status() Status {
+func (b *managedBed) Status() ResidentStatus {
 	b.mu.Lock()
 	ops := make(map[OperationKind]int, len(b.inflightByKind))
 	for k, n := range b.inflightByKind {
@@ -179,26 +173,13 @@ func (b *managedBed) Status() Status {
 	if n := len(b.sessions); n > 0 {
 		sessions[SessionKindCDP] = n
 	}
-	updatedAt := b.lastActiveAt
-	if updatedAt.IsZero() {
-		updatedAt = b.Spec().CreatedAt
-	}
-	phase := PhaseResident
-	reason := "Initialized"
-	if b.evicting {
-		phase = PhaseEvicting
-		reason = "Evicting"
-	}
-	status := Status{
-		BedStatus: BedStatus{
-			Phase:     phase,
-			Readiness: Readiness{Ready: true, Reason: reason, UpdatedAt: updatedAt},
-			Activity:  b.activityLocked(),
-		},
+	shared := b.Bed.Status()
+	status := ResidentStatus{
+		BedStatus:          lifecycleView(shared.Lifecycle),
 		Generation:         b.generation,
-		SnapshotGeneration: b.snapshotGeneration,
-		SnapshotBytes:      b.snapshotBytes,
-		LocalBytes:         b.localBytes,
+		SnapshotGeneration: shared.Store.SnapshotGeneration,
+		SnapshotBytes:      shared.Store.SnapshotBytes,
+		LocalBytes:         shared.Store.LocalBytes,
 		DataSynced:         b.dataSyncedLocked(),
 		Pinned:             b.pinnedLocked(),
 		LastActiveAt:       b.lastActiveAt,
@@ -208,11 +189,11 @@ func (b *managedBed) Status() Status {
 		Sessions:           sessions,
 		Usage:              b.usage,
 	}
-	currentExecutor := b.executors.Current(b.Bed)
+	status.Activity = b.activityLocked()
 	b.mu.Unlock()
-	if currentExecutor != nil {
+	if shared.Executor.ID != "" {
 		status.Executor = &ExecutorStatus{
-			ID: currentExecutor.ID(), Backend: currentExecutor.Backend(), State: currentExecutor.State(),
+			ID: shared.Executor.ID, Backend: shared.Executor.Backend, State: executor.State(shared.Executor.State),
 		}
 	}
 	return status
@@ -221,8 +202,8 @@ func (b *managedBed) Status() Status {
 // Activity reports whether this resident Bed currently holds an operation.
 func (b *managedBed) Activity() Activity { return b.Status().Activity }
 
-// Short is ShortID(b.ID) — the log-friendly form of this bed's id.
-func (b *managedBed) Short() string { return ShortID(b.ID) }
+// Short is ShortID(b.Name) — the log-friendly form of this bed's id.
+func (b *managedBed) Short() string { return ShortID(b.Name) }
 
 // touchLocked refreshes the activity watermarks; the caller holds b.mu.
 func (b *managedBed) touchLocked(now time.Time, idleTTL time.Duration) {

@@ -15,7 +15,7 @@ func (m *Manager) SetNetworkManager(manager *network.Manager) {
 	manager.SetStatusWriter(m.owners.Network)
 	m.network = manager
 }
-func (m *Manager) NetworkReport() network.Report { return m.network.Diagnostics() }
+func (m *Manager) NetworkReport() network.Status { return m.network.Status() }
 
 // The shared browser remains outside the Bed namespace. Its Bed-scoped API
 // is reached via the veth gateway, never the Bed's now-private loopback.

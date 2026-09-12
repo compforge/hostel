@@ -4,22 +4,26 @@ package bed
 
 import (
 	"sync"
-	"sync/atomic"
 	"time"
+
+	"github.com/qiankunli/go-stdx/randx"
 )
 
-var identitySequence atomic.Uint64
+// ID identifies a local Bed lifetime. Names are caller-owned routing keys;
+// IDs survive daemon restart with local data, but never travel in snapshots.
+type ID string
+
+func (id ID) String() string { return string(id) }
 
 // Bed is the shared identity seen by every domain manager. Resource handles
 // belong to those managers, not to this model.
 // +spec=`Spec is desired state; each Status section has exactly one domain writer.`
 type Bed struct {
-	ID         string
-	LocalID    uint64
-	InstanceID uint64
-	mu         sync.RWMutex
-	spec       Spec
-	status     Status
+	ID     ID
+	Name   string
+	mu     sync.RWMutex
+	spec   Spec
+	status Status
 }
 
 type Spec struct {
@@ -55,13 +59,13 @@ func cloneSpec(s Spec) Spec {
 	return s
 }
 
-// New creates an allocation. Passing a LocalID carries a retained local identity
-// into a new resident attempt; zero creates a new local identity.
-func New(id string, localID uint64, spec Spec) *Bed {
-	if localID == 0 {
-		localID = identitySequence.Add(1)
+// New creates or recovers a local identity. Reinitializing a retained Bed reuses
+// this object; resource managers own replaceable runtime allocations.
+func New(name string, id ID, spec Spec) *Bed {
+	if id == "" {
+		id = ID("bed-" + randx.Hex(16))
 	}
-	return &Bed{ID: id, LocalID: localID, InstanceID: identitySequence.Add(1), spec: cloneSpec(spec)}
+	return &Bed{ID: id, Name: name, spec: cloneSpec(spec)}
 }
 func (b *Bed) Spec() Spec     { b.mu.RLock(); defer b.mu.RUnlock(); return cloneSpec(b.spec) }
 func (b *Bed) Status() Status { b.mu.RLock(); defer b.mu.RUnlock(); return cloneStatus(b.status) }

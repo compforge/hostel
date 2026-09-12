@@ -52,11 +52,11 @@ func (s *Server) mcpRequest(next func(*gin.Context, *mcpproxy.Proxy) error) gin.
 		defer finish()
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
 		start := time.Now()
-		err = next(c, a.Proxy(b.ID))
+		err = next(c, a.Proxy(b.ID.String()))
 		if err != nil {
 			respondMCPError(c, err)
 		}
-		tracing.InfoContext(ctx, "MCP request completed", "bed", b.ID, "route", c.FullPath(), "server", c.Param("name"), "tool", c.GetString("mcp.tool"), "status", c.Writer.Status(), "elapsed", time.Since(start))
+		tracing.InfoContext(ctx, "MCP request completed", "bed", b.Name, "route", c.FullPath(), "server", c.Param("name"), "tool", c.GetString("mcp.tool"), "status", c.Writer.Status(), "elapsed", time.Since(start))
 	}
 }
 

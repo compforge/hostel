@@ -37,7 +37,7 @@ HOSTEL_E2E_REQUIRE_ISOLATION=dorm,room,suite make e2e
 ```
 
 To exercise the best-effort dorm/room `/workspace` process view, provide a
-Linux pathshim binary. The isolation suite then requires canonical cwd, file
+Linux pathshim v0.1.6 binary (the revision pinned by the image). The isolation suite then requires canonical cwd, file
 API interoperability, mapped executable startup, session descendants, and
 terminal signal behavior through pathshim:
 
@@ -51,6 +51,11 @@ Linux PRoot binary. Image mode uses the PRoot bundled in the image:
 ```sh
 HOSTEL_E2E_PROOT=/usr/local/bin/proot make e2e
 ```
+
+With `HOSTEL_E2E_PATHSHIM` in binary mode, the concurrent dorm unzip regression
+explicitly disables PRoot in the disposable daemon PATH and requires `mode=pathshim`.
+A successful higher-priority PRoot selection cannot count as pathshim verification.
+v0.1.3 does not implement the `probe --bind ...` subcommand and is unsupported.
 
 These variables are test-harness inputs: the launcher prepends their parent
 directories to the target `PATH`. Hostel itself has no per-helper path setting.

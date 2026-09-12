@@ -17,7 +17,7 @@ func (r *Registry) Release(_ context.Context, b *bed.Bed) error {
 	if !owned {
 		return nil
 	}
-	if err := r.ReleaseAll(b.ID); err != nil {
+	if err := r.ReleaseAll(b.ID.String()); err != nil {
 		return err
 	}
 	r.mu.Lock()
@@ -43,7 +43,7 @@ func (r *Registry) Close(ctx context.Context) error {
 	}
 	return result
 }
-func (r *Registry) Diagnostics() map[string]string {
+func (r *Registry) Status() map[string]string {
 	report := make(map[string]string)
 	for _, item := range r.List() {
 		report[item.Name()] = item.State()

@@ -82,9 +82,10 @@ func TestMetricsEndpoint(t *testing.T) {
 	if metrics.Timestamp < started || metrics.Timestamp > time.Now().UnixMilli() {
 		t.Fatalf("timestamp = %d", metrics.Timestamp)
 	}
+	b, _ := s.mgr.Get("metrics-bed")
 	if len(tracker.bedIDs) != 2 ||
-		tracker.bedIDs[0] != "metrics-bed" ||
-		tracker.bedIDs[1] != "metrics-bed" {
+		tracker.bedIDs[0] != b.ID.String() ||
+		tracker.bedIDs[1] != b.ID.String() {
 		t.Fatalf("usage sampled for beds %v", tracker.bedIDs)
 	}
 }

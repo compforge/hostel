@@ -122,7 +122,19 @@ func (prefixRoom) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 func fakePathshim(t *testing.T, output string, exitCode int) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "pathshim")
-	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' %s\nexit %d\n", output, exitCode)
+	// Match the pinned helper's probe CLI, rather than accepting arbitrary argv.
+	script := fmt.Sprintf(`#!/bin/sh
+[ "$1" = probe ] || { echo 'expected probe subcommand' >&2; exit 64; }
+shift
+[ "$#" -ge 2 ] || exit 64
+while [ "$#" -gt 0 ]; do
+  [ "$1" = --bind ] && [ "$#" -ge 2 ] || exit 64
+  case "$2" in /*:/*) ;; *) exit 64 ;; esac
+  shift 2
+done
+printf '%%s\n' %s
+exit %d
+`, output, exitCode)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

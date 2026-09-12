@@ -270,7 +270,7 @@ func TestDefaultBedIsNotAnIsolatedSession(t *testing.T) {
 	rec := do(t, s, http.MethodGet, "/v1/isolated/sessions", nil, nil)
 	var list isolatedListResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil ||
-		len(list.Sessions) != 1 || list.Sessions[0].SessionID != visible.ID {
+		len(list.Sessions) != 1 || list.Sessions[0].SessionID != visible.Name {
 		t.Fatalf("list isolated sessions with default bed = %d %s", rec.Code, rec.Body.String())
 	}
 

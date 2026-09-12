@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// Report is a cached startup verdict. Reading it never modifies networking.
-type Report struct {
+// Status is a cached startup verdict. Reading it never modifies networking.
+type Status struct {
 	Enabled bool   `json:"enabled"`
 	Backend string `json:"backend"`
 	Scope   string `json:"scope"`
@@ -55,11 +55,11 @@ type Manager struct {
 	provider     Provider
 	status       bed.StatusWriter[bed.NetworkStatus]
 	hookMu       sync.Mutex
-	allocations  map[*bed.Bed]Attachment
+	allocations  map[*bed.Bed]*bedAllocation
 	mu           sync.Mutex
 	allocationMu sync.Mutex
 	closeMu      sync.Mutex
-	report       Report
+	report       Status
 	backend      backend
 	beds         map[string]*attachment
 	pending      map[string]*acquisition
@@ -69,7 +69,7 @@ type Manager struct {
 // New probes the complete backend using a disposable namespace. Probe failure
 // disables only networking, leaving ordinary Hostel services available.
 func New(_ context.Context) *Manager {
-	return &Manager{needsProbe: true, report: Report{Backend: "shared", Scope: "carrier", Reason: "not started"}, beds: make(map[string]*attachment), pending: make(map[string]*acquisition)}
+	return &Manager{needsProbe: true, report: Status{Backend: "shared", Scope: "carrier", Reason: "not started"}, beds: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 
 func probeManager(ctx context.Context) *Manager {
@@ -77,7 +77,7 @@ func probeManager(ctx context.Context) *Manager {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	b, probe := probeBackend(ctx)
-	report := Report{Enabled: b != nil, Backend: "shared", Scope: "carrier", Probe: probe}
+	report := Status{Enabled: b != nil, Backend: "shared", Scope: "carrier", Probe: probe}
 	report.Probe.DurationMS = time.Since(started).Milliseconds()
 	if b != nil {
 		report.Backend, report.Scope = "netns", "bed_processes"
@@ -88,12 +88,12 @@ func probeManager(ctx context.Context) *Manager {
 	return &Manager{report: report, backend: b, beds: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 
-func (m *Manager) Diagnostics() Report {
+func (m *Manager) Status() Status {
 	if m == nil {
-		return Report{Backend: "shared", Scope: "carrier", Reason: "network manager not configured"}
+		return Status{Backend: "shared", Scope: "carrier", Reason: "network manager not configured"}
 	}
 	if m.provider != nil {
-		return m.provider.Diagnostics()
+		return m.provider.Status()
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

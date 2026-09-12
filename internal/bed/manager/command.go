@@ -97,6 +97,9 @@ func (m *Manager) StartExecution(
 	onStart func(ExecutionStatus),
 	onOutput func(ExecutionOutput),
 ) (*Execution, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	finishOperation, err := m.BeginOperation(b, OpExec, timeout)
 	if err != nil {
 		return nil, err
@@ -115,7 +118,7 @@ func (m *Manager) StartExecution(
 		finishOperation()
 		return nil, err
 	}
-	execution := m.executions.track(ctx, b.ID, mode, bedExecutor.ID(), bedExecutor.Backend(), proc, stdout, stderr, timeout, onStart, onOutput, func(result ExecutionResult) {
+	execution := m.executions.track(ctx, b.Name, mode, bedExecutor.ID(), bedExecutor.Backend(), proc, stdout, stderr, timeout, onStart, onOutput, func(result ExecutionResult) {
 		input.close()
 		finishOperation()
 		b.RecordCommand(result.Duration)

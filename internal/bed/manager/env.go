@@ -123,14 +123,14 @@ func (m *Manager) buildBedEnv(b *managedBed, requestEnv map[string]string) ([]st
 	}
 
 	home := b.environment.View().Workspace()
-	env["BED_ID"] = b.ID
+	env["BED_ID"] = b.Name
 	env["HOME"] = home
 	env["TMPDIR"] = "/tmp"
 	env["USER"] = "hostel-bed"
 	env["LOGNAME"] = "hostel-bed"
 	env["SHELL"] = m.shellPath
 
-	if endpoint := m.bedCDPEndpoint(b.ID); endpoint != "" {
+	if endpoint := m.bedCDPEndpoint(b); endpoint != "" {
 		env["PLAYWRIGHT_MCP_CDP_ENDPOINT"] = m.networkEndpoint(b, endpoint)
 	}
 	for name, value := range requestEnv {
@@ -153,7 +153,7 @@ func (m *Manager) buildBedEnv(b *managedBed, requestEnv map[string]string) ([]st
 // host:port beds can reach hostel on (normally loopback in the shared net ns).
 func (m *Manager) SetCDPAdvertise(addr string) { m.cdpAdvertise = addr }
 
-func (m *Manager) bedCDPEndpoint(bedID string) string {
+func (m *Manager) bedCDPEndpoint(b *managedBed) string {
 	if m.cdpAdvertise == "" || m.amenities == nil {
 		return ""
 	}
@@ -162,12 +162,12 @@ func (m *Manager) bedCDPEndpoint(bedID string) string {
 	if a == nil || !ok {
 		return ""
 	}
-	token, err := br.CDPToken(bedID)
+	token, err := br.CDPToken(b.ID.String())
 	if err != nil {
 		// Honest absence: tooling may fall back to its own browser.
 		return ""
 	}
 	u := url.URL{Scheme: "ws", Host: m.cdpAdvertise, Path: "/v1/cdp",
-		RawQuery: url.Values{"bed": {bedID}, "t": {token}}.Encode()}
+		RawQuery: url.Values{"bed": {b.Name}, "t": {token}}.Encode()}
 	return u.String()
 }

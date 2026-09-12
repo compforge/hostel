@@ -7,16 +7,17 @@ import (
 	"github.com/qiankunli/go-stdx/filepathx"
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/store"
+	"golang.org/x/sync/semaphore"
 	"time"
 )
 
 // initializeResidentBed privately prepares one allocation. Only the composite
 // publishes Ready after all domain prerequisites and the initial policy pass.
 func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitialization) (resolved *managedBed, retErr error) {
-	b := &managedBed{Bed: init.model, local: init.local, executors: m.executorManager,
+	b := &managedBed{cleanupMu: semaphore.NewWeighted(1), Bed: init.model, local: init.local, executors: m.executorManager,
 		shells: make(map[string]*Shell), sessions: make(map[string]*Session), inflightByKind: make(map[OperationKind]int)}
 	m.bindRuntimeLifecycle(b)
-	trace := beginLifecycle(ctx, b.ID, lifecycleInitialize)
+	trace := beginLifecycle(ctx, b.Name, lifecycleInitialize)
 	defer func() {
 		b.recordLifecycle(trace.finish(lifecycleResult(retErr), retErr))
 		if retErr == nil {
@@ -24,9 +25,9 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		}
 		// Even a failed Prepare may own partial resources. Preserve its exact owner
 		// if rollback fails, and keep local data/UID until explicit identity cleanup.
-		if err := m.teardown(b); err != nil {
+		if err := m.rollback(b); err != nil {
 			m.mu.Lock()
-			m.retirements[b.ID] = b
+			m.retirements[b.Name] = b
 			m.mu.Unlock()
 			retErr = errors.Join(retErr, err)
 		}
@@ -37,7 +38,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		trace.source = b.Bed.Status().Store.Source
 		return err
 	}); err != nil {
-		return nil, fmt.Errorf("bed: stage in BedFS %s: %w", b.ID, err)
+		return nil, fmt.Errorf("bed: stage in BedFS %s: %w", b.Name, err)
 	}
 	staged := m.store.StageResult(b.Bed)
 	m.updateInitialization(init, "PreparingBedFS", "preparing BedFS and isolation")
@@ -48,14 +49,14 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		b.filesystem = m.files.Files(b.Bed)
 		return m.privileges.Prepare(ctx, b.Bed)
 	}); err != nil {
-		return nil, fmt.Errorf("bed: prepare workspace %s: %w", b.ID, err)
+		return nil, fmt.Errorf("bed: prepare workspace %s: %w", b.Name, err)
 	}
 	now := time.Now()
 	if err := trace.stage("prepare_resident", func() error {
 		spec := b.Spec()
 		meta, ok := loadMeta(spec.Dir)
 		if !ok {
-			meta = bedMeta{Version: 1, BedID: b.ID, CreatedAt: now, Sync: spec.Sync}
+			meta = bedMeta{Version: 1, BedID: b.Name, CreatedAt: now, Sync: spec.Sync}
 		}
 		meta.Sync = spec.Sync
 		if staged.Snapshot != nil {
@@ -76,13 +77,12 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		if m.bedIdleTTL > 0 {
 			b.retainUntil = now.Add(m.bedIdleTTL)
 		}
-		b.snapshotGeneration, b.snapshotBytes = meta.SnapshotGeneration, meta.SnapshotBytes
-		b.localBytes = filepathx.DirBytes(spec.Dir)
+		m.store.ObserveLocal(b.Bed, &store.SnapshotInfo{Generation: meta.SnapshotGeneration, Bytes: meta.SnapshotBytes}, filepathx.DirBytes(spec.Dir))
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("bed: write meta %s: %w", b.ID, err)
+		return nil, fmt.Errorf("bed: write meta %s: %w", b.Name, err)
 	}
-	if m.network.Diagnostics().Enabled {
+	if m.network.Status().Enabled {
 		m.updateInitialization(init, "PreparingNetwork", "preparing Bed network")
 		if err := trace.stage("prepare_network", func() error { return m.network.Prepare(ctx, b.Bed) }); err != nil {
 			return nil, err

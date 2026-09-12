@@ -15,10 +15,10 @@ type Manager struct {
 	status    bed.StatusWriter[bed.PrivilegeStatus]
 	files     func(*bed.Bed) *bedfs.FS
 	allocator *BedUserAllocator
-	report    Report
+	report    Status
 	mu        sync.Mutex
-	users     map[uint64]BedUser
-	recovered map[uint64]bool
+	users     map[bed.ID]BedUser
+	recovered map[bed.ID]bool
 }
 
 func NewManager(policy BedUserReport, fixed BedUser, effectiveCaps uint64, status bed.StatusWriter[bed.PrivilegeStatus], files func(*bed.Bed) *bedfs.FS) (*Manager, error) {
@@ -30,9 +30,9 @@ func NewManager(policy BedUserReport, fixed BedUser, effectiveCaps uint64, statu
 			return nil, err
 		}
 	}
-	return &Manager{allocator: allocator, report: NewReport(policy, effectiveCaps), users: make(map[uint64]BedUser), recovered: make(map[uint64]bool), status: status, files: files}, nil
+	return &Manager{allocator: allocator, report: NewReport(policy, effectiveCaps), users: make(map[bed.ID]BedUser), recovered: make(map[bed.ID]bool), status: status, files: files}, nil
 }
-func (m *Manager) Diagnostics() Report {
+func (m *Manager) Status() Status {
 	report := m.report
 	report.Requirements.Capabilities = append([]string(nil), report.Requirements.Capabilities...)
 	report.Requirements.MissingCapabilities = append([]string(nil), report.Requirements.MissingCapabilities...)
@@ -45,9 +45,9 @@ func (m *Manager) Diagnostics() Report {
 func (m *Manager) Recover(_ context.Context, b *bed.Bed) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.recovered[b.LocalID] = true
+	m.recovered[b.ID] = true
 	for _, dir := range b.Spec().RecoveryDirs {
-		if err := m.allocator.ReserveOwnedDirectory(b.ID, dir); err != nil {
+		if err := m.allocator.ReserveOwnedDirectory(b.ID.String(), dir); err != nil {
 			return err
 		}
 	}
@@ -55,15 +55,15 @@ func (m *Manager) Recover(_ context.Context, b *bed.Bed) error {
 }
 func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
 	m.mu.Lock()
-	user, ok := m.users[b.LocalID]
+	user, ok := m.users[b.ID]
 	if !ok {
 		var err error
-		user, err = m.allocator.Acquire(b.ID)
+		user, err = m.allocator.Acquire(b.ID.String())
 		if err != nil {
 			m.mu.Unlock()
 			return err
 		}
-		m.users[b.LocalID] = user
+		m.users[b.ID] = user
 	}
 	m.mu.Unlock()
 	m.status.Set(b, bed.PrivilegeStatus{UID: uint32(user.UID()), GID: uint32(user.GID()), Assigned: true})
@@ -77,25 +77,25 @@ func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
 func (m *Manager) User(b *bed.Bed) BedUser {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.users[b.LocalID]
+	return m.users[b.ID]
 }
 func (m *Manager) Forget(_ context.Context, b *bed.Bed) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Bed Manager fences the logical ID until this exact LocalID is forgotten.
 	// Repeated Forget must never release an allocation created after it.
-	if _, ok := m.users[b.LocalID]; ok {
-		m.allocator.Release(b.ID)
-		delete(m.users, b.LocalID)
+	if _, ok := m.users[b.ID]; ok {
+		m.allocator.Release(b.ID.String())
+		delete(m.users, b.ID)
 	} else {
 		// Recovery reserves ownership before Prepare allocates a runtime user.
-		if _, ok := m.recovered[b.LocalID]; ok {
-			m.allocator.Release(b.ID)
+		if _, ok := m.recovered[b.ID]; ok {
+			m.allocator.Release(b.ID.String())
 		}
 	}
-	delete(m.recovered, b.LocalID)
+	delete(m.recovered, b.ID)
 	m.status.Set(b, bed.PrivilegeStatus{})
 	return nil
 }
 
-var _ bed.Component[Report] = (*Manager)(nil)
+var _ bed.Component[Status] = (*Manager)(nil)

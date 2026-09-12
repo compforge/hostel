@@ -45,9 +45,19 @@ Lifecycle 的更新权。读写都复制可变成员，不能通过返回的 map
 承载 operation/session、版本水位与清理重试等协调状态，通过 `Resident` 操作句柄供入口层使用；
 它引用共享 Bed，不另建一份领域 Spec/Status。调度 API 的 Status 是这些生命周期事实的投影。
 
-身份分三个寿命：调用方的 Bed ID、本 daemon 保留数据期间的 LocalID、一次初始化的 InstanceID。
-LocalID 覆盖 resident、冷目录和待删除目录；InstanceID 区分同名 Bed 的前后两次资源分配。
-这些内部标识不改变对外 API 或磁盘格式。清理必须针对原 allocation，不能让旧 hook 按 ID 清掉替代实例。
+身份分为调用方的 `Bed.Name` 与本地的 `Bed.ID`。Name 是不解释业务含义的路由键，支持中文；
+请求头 `X-Hostel-Bed`、查询参数 `bed`、管理路径/请求体中已有的 `id` 和命令环境 `BED_ID`
+都沿用 Name 语义。Bed Manager 解析 Name，领域资源（UID、netns、Executor/cgroup、Amenity tenant）
+使用 Hostel 生成的本地 ID；远端快照仍按 Name / 快照引用定位。
+
+一个本地生命周期只有一个共享 `*bed.Bed`，从 Recover 到 Forget 都使用它；初始化重试和
+Executor 重建只替换领域资源，不新建 Bed。ID 保存在 `{workspace-root}/.identities/{name}.local`，
+重启时与本地目录一起恢复；该记录位于可替换 BedFS 树之外，不进入远端快照。正常 evict/purge
+在运行资源和所有本地目录清理成功后执行 Forget、删除记录；同名再次创建产生新 ID。
+资源分配的 generation/租约由对应 Manager 持有，清理按原 allocation 执行。
+
+Lifecycle 状态是初始化进度与调度视图的唯一来源；Store 统一发布快照/磁盘提示，Executor
+观察自身退出并更新状态，Network 串行提交同一 Bed 的策略与状态，避免旧结果覆盖新结果。
 
 ### 请求、Bed 与实例状态
 
@@ -89,7 +99,7 @@ readiness：是否可服务，以及当前等待或失败原因
 
 领域 Manager 有三个驱动面：daemon 的 `Start/Close`、带 `*bed.Bed` 的单 Bed hooks，以及可选的
 `Run(ctx)` 后台循环。Start 完成同步初始化后返回，Run 阻塞到取消或终止错误；定时节奏、合并与退避
-由领域自己决定。`Component[R]` 汇合启停、Bed lifecycle 和类型化诊断，允许未参与的阶段嵌入 Noop。
+由领域自己决定。`Component[S]` 汇合启停、Bed lifecycle 和类型化诊断，允许未参与的阶段嵌入 Noop。
 Bed Manager 明确安排跨领域顺序；不使用动态注册顺序推导依赖，也不统一抽象 Tick。
 
 Amenity 的全局启停直属 daemon；Bed Manager 只驱动其 Bed 切片。Web handler 负责协议适配，Bed 级
@@ -99,7 +109,7 @@ Amenity 的全局启停直属 daemon；Bed Manager 只驱动其 Bed 切片。Web
 ### 组件参与生命周期
 
 每个 Bed hook 接收同一个 `*bed.Bed`，资源按具体 allocation 归属。组件还提供类型化
-`Diagnostics() R`，由 Bed Manager 聚合，Web 只序列化，报告契约见 [observability.md](observability.md)。
+`Status() S`，由 Bed Manager 聚合，Web 只序列化，报告契约见 [observability.md](observability.md)。
 
 | Hook | Bed Manager 驱动时机与完成条件 |
 |---|---|
@@ -257,3 +267,10 @@ Executor、Store 与 Network 保持领域及资源操作职责，不依赖 HTTP 
 | [backlog.md](backlog.md) | 尚未交付的能力与待修复项 |
 
 使用入口见 [README](../README.md)，代码地图与开发约定见 [AGENTS.md](../AGENTS.md)。
+
+### 关闭与清理预算
+
+`Close(ctx)` 的 deadline 是整个实例关闭的总预算。等待已有清理 owner、停止初始化/Purge、
+逐 Bed Stop/Release 和组件 Close 都使用这一边界，不再给每个 Bed 重置独立关闭时间。
+请求取消后的初始化回滚和 Purge 由 Bed Manager 持有，daemon 关闭会取消并 join；失败保持
+清理 owner、已完成 hook 游标和名字占位，后续 Close/Evict 可重试，不能提前复用 UID 或资源。

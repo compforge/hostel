@@ -71,7 +71,7 @@ for required host capabilities and release-gate options.
 
 | Group | Endpoints |
 |---|---|
-| Basic | `GET /ping`, `GET /healthz`, `GET /v1/diagnostics` |
+| Basic | `GET /ping`, `GET /healthz`, `GET /v1/status` |
 | Metrics | `GET /metrics`, `GET /metrics/watch` (SSE) |
 | Files | `GET /files/info`, `DELETE /files`, `POST /files/mv`, `POST /files/permissions`, `GET /files/search`, `POST /files/replace`, `POST /files/upload`, `GET /files/download` |
 | Directories | `GET /directories/list`, `POST /directories`, `DELETE /directories` |
@@ -386,7 +386,7 @@ See [MCP configuration, lifecycle and embedding](docs/mcp.md).
 Hostel probes per-Bed networking at startup. When the complete probe succeeds,
 commands and persistent shells use a private IPv4 network namespace with routed
 outbound connectivity. Otherwise networking stays shared and Hostel still starts.
-`GET /v1/diagnostics` and `/healthz` expose `network.enabled`, `backend`, `scope`,
+`GET /v1/status` and `/healthz` expose `network.enabled`, `backend`, `scope`,
 and the probe failure reason. Shared Chromium traffic is not covered.
 See [network management](docs/network.md) for prerequisites and boundaries.
 

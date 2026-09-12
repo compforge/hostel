@@ -102,7 +102,7 @@ func loadMeta(bedDir string) (bedMeta, bool) {
 	return m, true
 }
 
-// saveMeta writes atomically: meta.json is the bed's sole identity record —
+// saveMeta writes atomically: meta.json carries the bed's portable bookkeeping —
 // a crash mid-write must not truncate it.
 func saveMeta(bedDir string, m bedMeta) error {
 	data, err := json.MarshalIndent(m, "", "  ")

@@ -221,15 +221,25 @@ type InventoryBed struct {
 // +spec=`Scheduler inventory contains tenant beds only; the compatibility default bed never participates in placement or capacity projections.`
 // +case:id=default_bed_inventory,desc=`Use the default bed and then query scheduler inventory`,expect=`the default bed is absent and tenant capacity remains available while the instance remains retained`
 func (m *Manager) Inventory() []InventoryBed {
-	beds := m.List()
+	beds, _ := m.captureInventory()
+	return beds
+}
+
+func (m *Manager) captureInventory() ([]InventoryBed, bool) {
+	// Cold disk hints are sampled outside the admission lock, then reconciled
+	// against one authoritative lifecycle inventory.
+	luggage := m.ListLuggage()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	beds := m.beds
 	out := make([]InventoryBed, 0, len(beds))
 	for _, b := range beds {
-		if b.ID == m.defaultBed {
+		if b.Name == m.defaultBed || m.purges[b.Name] != nil {
 			continue
 		}
 		status := b.Status()
 		entry := InventoryBed{
-			ID:                 b.ID,
+			ID:                 b.Name,
 			Sync:               b.Spec().Sync,
 			Status:             status.BedStatus,
 			Generation:         status.Generation,
@@ -245,7 +255,7 @@ func (m *Manager) Inventory() []InventoryBed {
 		}
 		out = append(out, entry)
 	}
-	for _, initialization := range m.initializationStatuses() {
+	for _, initialization := range m.initializationStatusesLocked() {
 		if initialization.ID == m.defaultBed {
 			continue
 		}
@@ -256,7 +266,13 @@ func (m *Manager) Inventory() []InventoryBed {
 			LastActiveAt: initialization.StartedAt,
 		})
 	}
-	for _, l := range m.ListLuggage() {
+	for _, l := range luggage {
+		if m.beds[l.BedID] != nil || m.initializations[l.BedID] != nil || m.retirements[l.BedID] != nil || m.purges[l.BedID] != nil {
+			continue
+		}
+		if local := m.localIdentities[l.BedID]; local != nil && local.cleanup != nil {
+			continue
+		}
 		out = append(out, InventoryBed{
 			ID: l.BedID, Sync: l.Sync,
 			Status: BedStatus{
@@ -273,5 +289,10 @@ func (m *Manager) Inventory() []InventoryBed {
 			Usage:              l.Usage,
 		})
 	}
-	return out
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	defaultOccupied := m.beds[m.defaultBed] != nil || m.retirements[m.defaultBed] != nil || m.purges[m.defaultBed] != nil
+	if i := m.initializations[m.defaultBed]; i != nil && i.snapshot().Phase == PhaseInitializing {
+		defaultOccupied = true
+	}
+	return out, defaultOccupied
 }

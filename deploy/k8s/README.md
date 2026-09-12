@@ -11,7 +11,7 @@ three permission layers separate:
 | Layer | Requirement |
 | --- | --- |
 | sandbox-server ServiceAccount | RBAC permission to create Pods in the carrier namespace; a narrowly scoped PSA/admission exception when the selected Pod security setting is otherwise denied. |
-| Created Hostel container | Apply the Bed identity and selected feature requirements defined in [`privilege.md`](../../docs/privilege.md), using `/v1/diagnostics` as the runtime verdict. |
+| Created Hostel container | Apply the Bed identity and selected feature requirements defined in [`privilege.md`](../../docs/privilege.md), using `/v1/status` as the runtime verdict. |
 | Carrier node/runtime | Actually support the requested operation: user namespaces and mount policy for bubblewrap, or ptrace for PRoot. |
 
 The sandbox-server container itself does not need either setting. Its
@@ -132,7 +132,7 @@ overrides the listen address:
 kubectl exec "${POD}" \
   --namespace "${CARRIER_NAMESPACE}" \
   --container "${CONTAINER}" \
-  -- curl --fail --silent --show-error http://127.0.0.1:8872/v1/diagnostics | \
+  -- curl --fail --silent --show-error http://127.0.0.1:8872/v1/status | \
   jq '{
     isolation,
     bwrap: .probes.bwrap,
@@ -153,7 +153,7 @@ Use the first failing layer to locate the problem:
 | Server dry run is denied | The PSA exemption is not active for the exact `SANDBOX_SERVER_USER`, RBAC is missing, or another admission policy rejects `Unconfined`. Read the returned admission error. |
 | Dry run passes, but the stored Pod value is unset or not `Unconfined` | The real carrier template did not request the profile, used the wrong container name, or a mutating policy changed it. |
 | Stored Pod says `Unconfined`, but `/proc/1/attr/apparmor/current` is missing or not `unconfined` | The node/runtime did not expose or apply AppArmor as expected. Inspect Pod events, kubelet/runtime support, and node AppArmor enablement. |
-| Runtime says `unconfined`, but Hostel does not reach `effective: "suite"` | AppArmor is no longer the blocker. Check `/v1/diagnostics`, bwrap startup logs, unprivileged user namespaces, and seccomp. |
+| Runtime says `unconfined`, but Hostel does not reach `effective: "suite"` | AppArmor is no longer the blocker. Check `/v1/status`, bwrap startup logs, unprivileged user namespaces, and seccomp. |
 | All checks pass | The request is admitted, the running container is unconfined, and bwrap suite isolation is operational. |
 
 The exemption skips all Pod Security enforce, audit, and warn checks for Pods
@@ -191,7 +191,7 @@ The creator-side steps are:
    `SYS_PTRACE`, exempt or allowlist only the exact creator identity.
 3. Have sandbox-server add `SYS_PTRACE` only when it selects the PRoot-capable
    template.
-4. Verify the running container through `/v1/diagnostics`; admission success
+4. Verify the running container through `/v1/status`; admission success
    alone does not prove ptrace works.
 
 Use a server-side dry run to check the exact creator identity without creating
@@ -241,7 +241,7 @@ kubectl exec "${POD}" \
   --namespace "${CARRIER_NAMESPACE}" \
   --container "${CONTAINER}" \
   -- curl --fail --silent --show-error \
-  http://127.0.0.1:8872/v1/diagnostics | \
+  http://127.0.0.1:8872/v1/status | \
   jq '{ptrace: .probes.ptrace, proot: .probes.proot, workspace_view}'
 ```
 

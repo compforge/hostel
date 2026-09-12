@@ -19,9 +19,17 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 	for _, requested := range []string{"dorm", "room", "suite"} {
 		requested := requested
 		t.Run(requested, func(t *testing.T) {
-			target := startTarget(t, targetOptions{isolation: requested, maxBeds: 8})
+			options := targetOptions{isolation: requested, maxBeds: 8}
+			forcePathshim := os.Getenv(pathshimEnv) != "" && os.Getenv(imageEnv) == "" && requested == "dorm"
+			if forcePathshim {
+				options.helperPath = pathshimOnlySearchPath(t)
+			}
+			target := startTarget(t, options)
 			c := target.client
 			health := requireSupportedArchiveReplaceView(t, c, requested)
+			if forcePathshim && health.WorkspaceView.Mode != "pathshim" {
+				t.Fatalf("requested real pathshim coverage but selected %+v", health.WorkspaceView)
+			}
 
 			probe, response := c.command(t, "", map[string]any{
 				"command": "command -v unzip >/dev/null",
@@ -74,6 +82,25 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Prevent PRoot's higher selection priority from silently satisfying a run
+// that explicitly requests the pathshim regression contract. This PATH belongs
+// only to the disposable daemon; normal commands retain the runner's tools.
+func pathshimOnlySearchPath(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "proot"), []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	helper, err := filepath.Abs(strings.TrimSpace(os.Getenv(pathshimEnv)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(helper, filepath.Join(dir, "pathshim")); err != nil {
+		t.Fatal(err)
+	}
+	return dir + string(os.PathListSeparator) + os.Getenv("PATH")
 }
 
 func TestDormPathshimFailureUsesProotWithoutEscapingBedFS(t *testing.T) {

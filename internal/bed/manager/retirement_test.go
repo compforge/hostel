@@ -37,7 +37,7 @@ func TestFailedRetirementKeepsIdentityAndDataUntilRetry(t *testing.T) {
 	if err := os.WriteFile(file, []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if evicted, err := m.Evict(context.Background(), b.ID); err == nil || evicted {
+	if evicted, err := m.Evict(context.Background(), b.Name); err == nil || evicted {
 		t.Fatalf("cleanup failure swallowed: %t %v", evicted, err)
 	}
 	if m.OccupiedBedCount() != 1 {
@@ -49,30 +49,30 @@ func TestFailedRetirementKeepsIdentityAndDataUntilRetry(t *testing.T) {
 	if _, err := os.Stat(file); err != nil {
 		t.Fatalf("data deleted before cleanup: %v", err)
 	}
-	if _, err := m.Ensure(context.Background(), b.ID); !errors.Is(err, ErrBedUnavailable) {
+	if _, err := m.Ensure(context.Background(), b.Name); !errors.Is(err, ErrBedUnavailable) {
 		t.Fatalf("reused failed retirement: %v", err)
 	}
-	if len(m.ListLuggage()) != 0 || m.removeLuggage(b.ID) {
+	if len(m.ListLuggage()) != 0 || m.removeLuggage(b.Name) {
 		t.Fatal("pending cleanup exposed to luggage GC")
 	}
 	if inventory := m.Inventory(); len(inventory) != 1 || inventory[0].Status.Readiness.Reason != "CleanupPending" {
 		t.Fatalf("pending cleanup inventory: %+v", inventory)
 	}
 	facility.err = nil
-	if evicted, err := m.Evict(context.Background(), b.ID); err != nil || !evicted {
+	if evicted, err := m.Evict(context.Background(), b.Name); err != nil || !evicted {
 		t.Fatalf("retry: %t %v", evicted, err)
 	}
 	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("retired data remains: %v", err)
 	}
-	next, err := m.Ensure(context.Background(), b.ID)
+	next, err := m.Ensure(context.Background(), b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if next == b {
 		t.Fatal("old resident reused")
 	}
-	if err := m.teardown(next); err != nil {
+	if err := m.rollback(next); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -86,7 +86,7 @@ type retryReleaseNetwork struct {
 	calls int
 }
 
-func (*retryReleaseNetwork) Diagnostics() network.Report { return network.Report{Enabled: true} }
+func (*retryReleaseNetwork) Status() network.Status { return network.Status{Enabled: true} }
 func (n *retryReleaseNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	return n, nil
 }
@@ -103,7 +103,7 @@ func TestRetirementResumesAtFailedComponent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Evict(t.Context(), b.ID); !errors.Is(err, net.err) {
+	if _, err := m.Evict(t.Context(), b.Name); !errors.Is(err, net.err) {
 		t.Fatalf("evict: %v", err)
 	}
 	if facility.calls != 1 || net.calls != 1 {
@@ -113,7 +113,7 @@ func TestRetirementResumesAtFailedComponent(t *testing.T) {
 		t.Fatalf("local identity removed before Release: %v", err)
 	}
 	net.err = nil
-	if _, err := m.Evict(t.Context(), b.ID); err != nil {
+	if _, err := m.Evict(t.Context(), b.Name); err != nil {
 		t.Fatal(err)
 	}
 	if facility.calls != 1 || net.calls != 2 {

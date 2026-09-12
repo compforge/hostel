@@ -34,7 +34,7 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 			Reason  string `json:"reason"`
 		} `json:"network"`
 	}
-	response, err := c.json(ctx, "GET", "/v1/diagnostics", "", nil, &diagnostics)
+	response, err := c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
 	if err != nil {
 		t.Fatal(err)
 	}

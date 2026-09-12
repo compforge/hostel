@@ -256,7 +256,7 @@ func main() {
 	}
 	userReport := mgr.BedUserReport()
 	log.Printf("hostel: execution environment verified (file=%s network=%s executor=%s bed_user_strategy=%s bed_uid=%d bed_gid=%d bed_uid_min=%d bed_uid_max=%d)",
-		iso.Name(), networks.Diagnostics().Backend, mgr.ExecutorBackend(), userReport.Strategy,
+		iso.Name(), networks.Status().Backend, mgr.ExecutorBackend(), userReport.Strategy,
 		userReport.UID, userReport.GID, userReport.UIDMin, userReport.UIDMax)
 
 	// Carrier pressure gates tenant work, not the startup capability probe.

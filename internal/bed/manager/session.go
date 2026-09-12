@@ -79,14 +79,14 @@ func (m *Manager) OpenSession(b *managedBed, kind SessionKind, closeFn func()) (
 	}
 	m.mu.Lock()
 	b.mu.Lock()
-	if current, ok := m.beds[b.ID]; !ok || current != b || m.closed {
+	if current, ok := m.beds[b.Name]; !ok || current != b || m.closed {
 		b.mu.Unlock()
 		m.mu.Unlock()
 		cancel()
 		return nil, ErrBedUnavailable
 	}
 	wasPinned := b.pinnedLocked()
-	if !wasPinned && b.ID != m.defaultBed {
+	if !wasPinned && b.Name != m.defaultBed {
 		if err := m.resourceAdmissionErrorLocked(); err != nil {
 			b.mu.Unlock()
 			m.mu.Unlock()
@@ -139,7 +139,7 @@ func (s *Session) Close() {
 // cannot be waited out, so evict actively ends them. Shells are closed first
 // (their writes must not race the persist), registered sessions are revoked,
 // and the wait for handlers to exit is bounded.
-func (m *Manager) revokeSessions(b *managedBed) {
+func (m *Manager) revokeSessions(ctx context.Context, b *managedBed) {
 	b.mu.Lock()
 	shells := make([]*Shell, 0, len(b.shells))
 	for sid, sh := range b.shells {
@@ -163,6 +163,8 @@ func (m *Manager) revokeSessions(b *managedBed) {
 	for _, s := range sessions {
 		select {
 		case <-s.done:
+		case <-ctx.Done():
+			return
 		case <-timer.C:
 			return
 		}
