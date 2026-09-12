@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 // bwrap confines each command under bubblewrap. Mount view per
@@ -45,16 +46,16 @@ type bwrap struct {
 // while every exec failed). On failure it falls back to direct so the daemon
 // still boots and /healthz reports the truth.
 // Probe pattern borrowed from OpenSandbox execd, extended to the real argv.
-func newBwrap(facts HostFacts, workspaceRoot string, projections []bedfs.PathProjection) (Isolator, ProbeReport) {
+func newBwrap(facts hostfacts.Snapshot, workspaceRoot string, projections []bedfs.PathProjection) (Isolator, hostfacts.ProbeReport) {
 	path := facts.BwrapPath
-	report := ProbeReport{
+	report := hostfacts.ProbeReport{
 		ConfiguredPath: "bwrap",
 		ResolvedPath:   path,
 		Exists:         path != "",
 		Executable:     path != "",
 	}
 	if path == "" {
-		report.Error = facts.bwrapLookupError
+		report.Error = facts.BwrapLookupError
 		return unavailable{name: "bwrap", lvl: Suite}, report
 	}
 
@@ -77,11 +78,11 @@ func newBwrap(facts HostFacts, workspaceRoot string, projections []bedfs.PathPro
 	report.ResolvedPath = path
 	report.Exists = true
 	report.Executable = true
-	if report.failed() {
+	if report.Failed() {
 		log.Printf("isolation: bwrap found but unusable (%s)", report.Error)
 		// Point the operator at the usual k8s cause: userns is on yet bwrap
 		// dies at mount because containerd's default AppArmor profile denies
-		// mount(2). Surfaced here AND in /healthz (HostFacts.apparmor_profile)
+		// mount(2). Surfaced here AND in /healthz (hostfacts.Snapshot.apparmor_profile)
 		// so the fix (an AppArmor-unconfined annotation on the carrier pod) is
 		// discoverable without shelling in.
 		if facts.AppArmorProfile != "" && facts.UnprivilegedUserns {
@@ -130,25 +131,25 @@ func resolveMaskPaths(candidates []string) []string {
 // bwrapSmoke runs `true` under the exact argv shape used for real commands —
 // namespaces, masking, and the /workspace bind all get exercised, so whatever
 // passes here works for beds too.
-func bwrapSmoke(path, workspaceRoot string, masks []string, projections []bedfs.PathProjection) ProbeReport {
+func bwrapSmoke(path, workspaceRoot string, masks []string, projections []bedfs.PathProjection) hostfacts.ProbeReport {
 	probeHome, err := os.MkdirTemp(workspaceRoot, ".probe-*")
 	if err != nil {
-		return ProbeReport{Error: fmt.Sprintf("smoke test: temp bed_home: %v", err)}
+		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: temp bed_home: %v", err)}
 	}
 	defer os.RemoveAll(probeHome)
 	probeWorkspace := filepath.Join(probeHome, "workspace")
 	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
-		return ProbeReport{Error: fmt.Sprintf("smoke test: workspace: %v", err)}
+		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: workspace: %v", err)}
 	}
 	for _, projection := range projections {
 		if err := os.MkdirAll(projection.CarrierPath(probeHome), 0o755); err != nil {
-			return ProbeReport{Error: fmt.Sprintf("smoke test: projection source: %v", err)}
+			return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: projection source: %v", err)}
 		}
 	}
 
 	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, projections, bedfs.WorkspacePath, masks)
 	cmd := exec.Command(path, append(argv, "true")...)
-	report := runExecProbe(cmd)
+	report := hostfacts.RunExecProbe(cmd)
 	if report.Error != "" {
 		report.Error = "smoke test: " + report.Error
 	}

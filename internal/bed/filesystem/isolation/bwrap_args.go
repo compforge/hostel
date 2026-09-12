@@ -14,7 +14,10 @@
 
 package isolation
 
-import "github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+import (
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
+)
 
 // This file has no build tag: the argv builder is pure string assembly so its
 // tests run on every platform (the exec-ing side lives in bwrap_linux.go).
@@ -59,42 +62,29 @@ const carrierSoftwareRoot = "/usr/local"
 // maskPaths are host paths that exist. Environment ownership lives in bed's
 // process-env builder, so isolation mechanisms never inherit or filter it.
 func buildBwrapArgs(workspaceRoot, bedHome, workspace string, projections []bedfs.PathProjection, cwd string, maskPaths []string) []string {
-	argv := []string{
-		// 1.
-		"--unshare-user", "--unshare-uts", "--unshare-ipc",
-		// 2.
-		"--ro-bind", "/", "/",
-		// 3.
-		"--bind", carrierSoftwareRoot, carrierSoftwareRoot,
-		// 4.
-		"--dev", "/dev",
-		"--ro-bind", "/proc", "/proc",
-		"--tmpfs", "/tmp",
+	// Bed policy owns this mount order: mask siblings and credentials before
+	// exposing the selected data roots. The host mechanism only encodes the plan.
+	mounts := []hostfs.Mount{
+		{Kind: hostfs.ReadOnlyBind, Source: "/", Target: "/"},
+		{Kind: hostfs.Bind, Source: carrierSoftwareRoot, Target: carrierSoftwareRoot},
+		{Kind: hostfs.Dev, Target: "/dev"},
+		{Kind: hostfs.ReadOnlyBind, Source: "/proc", Target: "/proc"},
+		{Kind: hostfs.Tmpfs, Target: "/tmp"},
+		{Kind: hostfs.Tmpfs, Target: workspaceRoot},
 	}
-	// 5. Mask BEFORE binding our workspace: if workspaceRoot were masked after,
-	// the tmpfs would swallow the bed's own mount too.
-	argv = append(argv, "--tmpfs", workspaceRoot)
 	for _, p := range maskPaths {
-		argv = append(argv, "--tmpfs", p)
+		mounts = append(mounts, hostfs.Mount{Kind: hostfs.Tmpfs, Target: p})
 	}
-	// 6. /tmp is a private tmpfs by now, so these mount-point directories do
-	// not require the carrier image (or root user) to pre-create anything.
-	argv = append(argv,
-		"--dir", "/tmp/.hostel",
-		"--dir", bwrapBedHomeMountPoint,
-		"--bind", bedHome, bwrapBedHomeMountPoint,
+	mounts = append(mounts,
+		hostfs.Mount{Kind: hostfs.Directory, Target: "/tmp/.hostel"},
+		hostfs.Mount{Kind: hostfs.Directory, Target: bwrapBedHomeMountPoint},
+		hostfs.Mount{Kind: hostfs.Bind, Source: bedHome, Target: bwrapBedHomeMountPoint},
+		hostfs.Mount{Kind: hostfs.Bind, Source: workspace, Target: bedfs.WorkspacePath},
 	)
-	// 7.
-	argv = append(argv, "--bind", workspace, bedfs.WorkspacePath)
-	for _, projection := range projections {
-		argv = append(argv, "--bind", projection.CarrierPath(bedHome), projection.ProcessPath)
+	for _, p := range projections {
+		mounts = append(mounts, hostfs.Mount{Kind: hostfs.Bind, Source: p.CarrierPath(bedHome), Target: p.ProcessPath})
 	}
-	// 8.
-	argv = append(argv,
-		"--chdir", cwd,
-		"--die-with-parent",
-		"--",
-	)
+	argv := (hostfs.Bubblewrap{UserNamespace: true, UTSNamespace: true, IPCNamespace: true, Mounts: mounts, Cwd: cwd, DieWithParent: true}).Args()
 	return argv
 }
 

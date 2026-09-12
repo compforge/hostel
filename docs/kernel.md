@@ -14,7 +14,7 @@ Hostel 负责实例内 Bed 生命周期、执行、文件、持久化、可选�
 
 | 对象 | 身份与职责 |
 |---|---|
-| Bed | 调用方指定 ID 的 sandbox 单元，持有文件数据、配置与生命周期 |
+| Bed | 调用方以 Name 路由、本地以 ID 归属的 sandbox 单元，持有文件数据、配置与生命周期 |
 | BedFS | Bed 的文件系统数据域，拥有 bed_home、workspace 和三类路径空间 |
 | Executor | Bed 当前可替换的进程承载域，一个 resident Bed 同时至多有一个 |
 | Execution | 一次命令运行，记录所属 Bed、Executor、输出与结构化终态 |
@@ -37,7 +37,7 @@ daemon
 ```
 
 `internal/bed` 只放共享模型和契约，全仓只有一个 `Bed` 类型。Spec 保存解析后的配置与准备输入，
-Status 分为 Lifecycle、Filesystem、Privilege、Network、Store、Executor、Resource、Amenity 八个
+Status 分为 Lifecycle、Filesystem、Privilege、Network、Store、Executor、Resource 七个
 类型化部分。各领域能读取完整快照，只获得自己部分的 `StatusWriter`；Bed Manager 拥有 Spec 和
 Lifecycle 的更新权。读写都复制可变成员，不能通过返回的 map、slice 或指针绕过写入边界。
 
@@ -47,8 +47,8 @@ Lifecycle 的更新权。读写都复制可变成员，不能通过返回的 map
 
 身份分为调用方的 `Bed.Name` 与本地的 `Bed.ID`。Name 是不解释业务含义的路由键，支持中文；
 请求头 `X-Hostel-Bed`、查询参数 `bed`、管理路径/请求体中已有的 `id` 和命令环境 `BED_ID`
-都沿用 Name 语义。Bed Manager 解析 Name，领域资源（UID、netns、Executor/cgroup、Amenity tenant）
-使用 Hostel 生成的本地 ID；远端快照仍按 Name / 快照引用定位。
+都沿用 Name 语义。Bed Manager 解析 Name，领域资源（UID、netns、Executor/cgroup）
+使用 Hostel 生成的本地 ID；Amenity Manager 用本地 ID 绑定设施内的 Tenant ID。远端快照仍按 Name / 快照引用定位。
 
 一个本地生命周期只有一个共享 `*bed.Bed`，从 Recover 到 Forget 都使用它；初始化重试和
 Executor 重建只替换领域资源，不新建 Bed。ID 保存在 `{workspace-root}/.identities/{name}.local`，
@@ -95,6 +95,31 @@ readiness：是否可服务，以及当前等待或失败原因
 正交事实；容量统计对这些事实做集合投影，具体口径和状态图见 [resource.md](resource.md#容量状态口径)。
 对外状态及最近动作摘要的投影见 [observability.md](observability.md#生命周期接口投影)。
 
+### 领域与 Host 机制
+
+实现按“入口 → 业务概念与流程 → 底层机制”协作：Web、daemon 和后台触发进入领域流程；
+Bed 与 Amenity 的 Manager 决定资源为谁使用、使用策略及生命周期；`internal/host` 提供通用
+宿主能力。底层资源经领域赋予身份与归属，再组合成 Bed 操作或设施能力。
+
+daemon 启动时采集一次 Host facts，作为 Bed Manager 和 Amenity Manager 的构造输入，并将同一份快照交给实例状态聚合器。组件读取事实用于前置判断，实际可用性仍由领域探测确认。
+
+Host 按能力分包，不设置统一 HostManager，也不预设调用方是 Bed、Amenity 或其他组件：
+
+- `host/network`：namespace、地址、DNS 与出站规则，返回具体网络 allocation。
+- `host/filesystem`：有序挂载、Landlock、pathshim/PRoot 进程路径视图及 ptrace 探测。
+- `host/cgroup`：层次与组、进程放置句柄、用量和释放；组名与父子组织由调用方决定。
+- `host/privilege`：进程 UID/GID、capability 清除及文件 ownership 操作。
+- `host/facts`：只读系统事实与执行探测记录；事实不等于机制已可用。
+
+Host 不导入 Bed/Amenity 模型，不解释 `/workspace`、房型或 Tenant。BedFS 路径语义、
+房型与降级、BedUser/UID 租约、Bed → Executor 资源层次和准入仍由领域负责。
+PRoot/pathshim 提供路径视图，不因此成为安全边界。Host 返回真实结果和资源句柄，
+领域决定是否允许降级并发布 component status。实例聚合器将 Host 的只读启动事实放入
+`/v1/status.host`，与 `components`、`amenities` 并列；Host 不组装接口或业务 readiness。
+
+资源按具体分配清理，关闭旧句柄不能影响同名的新分配；部分失败保留原清理 owner，成功后才允许复用。
+提取通用机制不自动让 Amenity 获得隔离，设施仍自行选择和组合所需能力。
+
 ## 三、组件契约
 
 领域 Manager 有三个驱动面：daemon 的 `Start/Close`、带 `*bed.Bed` 的单 Bed hooks，以及可选的
@@ -102,7 +127,7 @@ readiness：是否可服务，以及当前等待或失败原因
 由领域自己决定。`Component[S]` 汇合启停、Bed lifecycle 和类型化诊断，允许未参与的阶段嵌入 Noop。
 Bed Manager 明确安排跨领域顺序；不使用动态注册顺序推导依赖，也不统一抽象 Tick。
 
-Amenity 的全局启停直属 daemon；Bed Manager 只驱动其 Bed 切片。Web handler 负责协议适配，Bed 级
+Amenity 的全局启停直属 daemon；Bed Manager 通过薄生命周期适配器通知 Amenity Manager 释放 Bed 绑定的 Tenant。Web handler 负责协议适配，Bed 级
 文件、网络、浏览器、MCP 与执行都经过 Bed Manager 的准入。隔离是多个领域共同实现的结果，
 文件隔离机制归 Filesystem，网络、身份与执行环境的组合顺序归 Bed Manager。
 
@@ -243,7 +268,7 @@ BedFS 负责逻辑数据根及路径投影；Store 管理自动持久化，也�
 持久化 workspace 子树和 Bed 元数据。正常 evict 删除本地工作副本，durable 策略可从快照
 恢复，noop 不保留数据。配置归属与恢复契约见 [store.md](store.md)。
 
-Amenity 共享重型进程或连接管理，按 Bed 分配应用状态。Chromium 使用 BrowserContext，
+Amenity 是独立设施。Tenant 是 Hostel 为服务 Bed 定义的设施使用单元，具体资源实现由设施隐藏。Chromium 使用 BrowserContext，
 MCP 使用独立配置、凭据与会话；Jupyter 实例仍在待办。共享设施没有自动进入 Bed 命令的
 netns，其出站与故障边界必须单独说明。设施协议不得裸透传跨 Bed 能力，具体代理与
 过滤边界见 [amenity.md](amenity.md) 和 [mcp.md](mcp.md)。
@@ -252,8 +277,8 @@ netns，其出站与故障边界必须单独说明。设施协议不得裸透传
 
 
 `cmd/hostel` 组装配置与组件；`web` 负责 HTTP 路由、协议适配和结果投影；Bed、BedFS、
-Executor、Store 与 Network 保持领域及资源操作职责，不依赖 HTTP 类型。新增机制应在所属
-边界内扩展，跨机制顺序由执行与生命周期入口协调，不能依赖调用方自行拼接内部细节。
+Executor、Store 与 Network 保持领域职责，不依赖 HTTP 类型；通用宿主机制归 `internal/host`。
+跨机制顺序由领域执行与生命周期入口协调，不能让 Web handler 拼接内部细节。
 
 | 文档 | 所有权与内容 |
 |---|---|

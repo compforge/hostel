@@ -25,6 +25,7 @@ import (
 	"sort"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 )
 
 // BedUser is the Unix user selected for processes and files owned by one Bed.
@@ -121,7 +122,7 @@ func NewReport(bedUser BedUserReport, effectiveCaps uint64) Status {
 		BedUser: bedUser,
 	}
 	report.Setpriv.Required = runtime.GOOS == "linux"
-	if path, err := ProcessCredentialHelper(); err != nil {
+	if path, err := hostprivilege.ProcessCredentialHelper(); err != nil {
 		report.Setpriv.Error = err.Error()
 	} else {
 		report.Setpriv.Available = true
@@ -165,7 +166,7 @@ func (u BedUser) GID() int { return u.gid }
 // handed back to that user as well.
 func (u BedUser) Prepare(fs *bedfs.FS) error {
 	if u.uid != os.Geteuid() || u.gid != os.Getegid() {
-		if err := chownTree(fs.Home(), u.uid, u.gid); err != nil {
+		if err := hostprivilege.ChownTree(fs.Home(), u.uid, u.gid); err != nil {
 			return fmt.Errorf("prepare bed user %d:%d: %w", u.uid, u.gid, err)
 		}
 	}
@@ -173,4 +174,4 @@ func (u BedUser) Prepare(fs *bedfs.FS) error {
 }
 
 // Wrap applies the Bed's process credentials outside any filesystem helper.
-func (u BedUser) Wrap(cmd *exec.Cmd) error { return wrapBedUser(cmd, u) }
+func (u BedUser) Wrap(cmd *exec.Cmd) error { return hostprivilege.WrapCredentials(cmd, u.uid, u.gid) }

@@ -107,8 +107,8 @@ func TestPolicyChangeDiscardsInFlightDNS(t *testing.T) {
 	}
 }
 func TestDisabledNetworkRejectsPolicies(t *testing.T) {
-	var m *Manager
-	if _, err := m.NetworkPolicy(t.Context(), "bed", PolicyMutation{Replace: &Policy{DefaultAction: "deny"}}); !errors.Is(err, ErrUnavailable) {
+	var m *Pool
+	if _, err := m.NetworkPolicy(t.Context(), "allocation", PolicyMutation{Replace: &Policy{DefaultAction: "deny"}}); !errors.Is(err, ErrUnavailable) {
 		t.Fatal(err)
 	}
 }
@@ -123,10 +123,10 @@ func (e *policyEndpointForTest) Policy() *policyControl { return e.control }
 func TestNetworkPolicyRejectsRetiredAttachment(t *testing.T) {
 	ctx := t.Context()
 	ep := &policyEndpointForTest{control: newPolicyForTest()}
-	m := testManager(nil)
-	lease := &attachment{manager: m, bedID: "bed", endpoint: ep, active: true}
-	m.beds[lease.bedID] = lease
-	if _, err := m.NetworkPolicy(ctx, "bed", PolicyMutation{}); err != nil {
+	m := testPool(nil)
+	lease := &attachment{manager: m, key: "allocation", endpoint: ep, active: true}
+	m.allocations[lease.key] = lease
+	if _, err := m.NetworkPolicy(ctx, "allocation", PolicyMutation{}); err != nil {
 		t.Fatal(err)
 	}
 	ep.err = errors.New("cleanup pending")
@@ -136,7 +136,7 @@ func TestNetworkPolicyRejectsRetiredAttachment(t *testing.T) {
 	// Retained cleanup ownership must not make a retired namespace eligible
 	// for policy reads or updates.
 	for _, mutation := range []PolicyMutation{{}, {Replace: &Policy{DefaultAction: "deny"}}} {
-		if _, err := m.NetworkPolicy(ctx, "bed", mutation); !errors.Is(err, ErrUnavailable) {
+		if _, err := m.NetworkPolicy(ctx, "allocation", mutation); !errors.Is(err, ErrUnavailable) {
 			t.Fatalf("retired policy operation: %v", err)
 		}
 	}

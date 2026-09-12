@@ -49,14 +49,16 @@ func TestIsolatedSessionCompatibility(t *testing.T) {
 
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	var diagnostics struct {
-		Network struct {
-			Enabled bool `json:"enabled"`
-		} `json:"network"`
+		Components struct {
+			Network struct {
+				Enabled bool `json:"enabled"`
+			} `json:"network"`
+		} `json:"components"`
 	}
 	verdict, err := c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
 	cancel()
-	if err != nil || verdict.Status != http.StatusOK || state.ShareNet == diagnostics.Network.Enabled {
-		t.Fatalf("isolated share_net=%t disagrees with network=%+v: %v", state.ShareNet, diagnostics.Network, err)
+	if err != nil || verdict.Status != http.StatusOK || state.ShareNet == diagnostics.Components.Network.Enabled {
+		t.Fatalf("isolated share_net=%t disagrees with network=%+v: %v", state.ShareNet, diagnostics.Components.Network, err)
 	}
 
 	primed, response := c.stream(t, base+"/run", "", map[string]any{

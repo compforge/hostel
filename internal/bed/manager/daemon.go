@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	model "github.com/qiankunli/hostel/internal/bed"
 	"log"
 	"os"
 	"sync"
 	"time"
+
+	model "github.com/qiankunli/hostel/internal/bed"
 )
 
 type daemonComponent struct {
@@ -35,11 +36,12 @@ func (m *Manager) Start(ctx context.Context) error {
 		{"store", m.store}, {"network", m.network}, {"executor", m.executorManager},
 	}
 	for _, component := range components {
+		// Start may allocate before failing; register cleanup ownership first.
+		m.components = append(m.components, component)
 		if err := component.lifecycle.Start(ctx); err != nil {
 			m.startErr = fmt.Errorf("start %s: %w", component.name, err)
 			break
 		}
-		m.components = append(m.components, component)
 	}
 	if m.startErr == nil {
 		m.startErr = os.MkdirAll(m.root, 0755)

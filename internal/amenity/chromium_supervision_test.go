@@ -25,9 +25,10 @@ import (
 // supervision is a pure state machine over (state, master, tenants), so no
 // real browser is needed.
 func crashedChromium(tenants ...string) (*chromium, context.Context, context.CancelFunc) {
-	c := &chromium{state: StateRunning, tenants: map[string]*chromiumTenant{}}
+	c := NewChromium(ChromiumConfig{})
+	c.state = StateRunning
 	for _, id := range tenants {
-		c.tenants[id] = &chromiumTenant{bedID: id, tabStop: func() {}}
+		c.contexts[id] = &browserContext{tenantID: id, tabStop: func() {}}
 	}
 	master, cancel := context.WithCancel(context.Background())
 	c.master = master
@@ -38,7 +39,7 @@ func crashedChromium(tenants ...string) (*chromium, context.Context, context.Can
 
 // TestCrashDropsTenantsAndGates: an unexpected master death must flip the
 // amenity to idle, drop every tenant (they hold contexts of a dead browser —
-// the next AcquireTenant rebuilds lazily), and gate the restart.
+// the next browser action rebuilds resources lazily), and gate the restart.
 func TestCrashDropsTenantsAndGates(t *testing.T) {
 	c, master, cancel := crashedChromium("bed-a", "bed-b")
 	cancel()
@@ -48,25 +49,23 @@ func TestCrashDropsTenantsAndGates(t *testing.T) {
 		t.Fatalf("state = %s, want idle", c.State())
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.tenants) != 0 {
-		t.Fatalf("tenants not dropped: %d left", len(c.tenants))
+	if len(c.contexts) != 0 {
+		t.Fatalf("tenants not dropped: %d left", len(c.contexts))
 	}
 	if c.crashCount != 1 || !c.notBefore.After(time.Now()) {
 		t.Fatalf("gate not armed: count=%d notBefore=%v", c.crashCount, c.notBefore)
 	}
-	if err := c.ensureRunning(); err == nil || !strings.Contains(err.Error(), "gated") {
-		t.Fatalf("ensureRunning during gate = %v, want gated error", err)
+	c.mu.Unlock()
+	if err := c.startBrowser(t.Context()); err == nil || !strings.Contains(err.Error(), "gated") {
+		t.Fatalf("startBrowser during gate = %v, want gated error", err)
 	}
 }
 
-// TestOrderlyStopIsNotACrash: stopLocked (idle-stop timer path) cancels the
+// TestOrderlyStopIsNotACrash: stopBrowser (idle-stop timer path) cancels the
 // master too; the watcher must not count it — state already left Running.
 func TestOrderlyStopIsNotACrash(t *testing.T) {
 	c, master, cancel := crashedChromium("bed-a")
-	c.mu.Lock()
-	c.stopLocked() // orderly: tenants disposed, state → idle
-	c.mu.Unlock()
+	c.stopBrowser() // orderly: resources disposed, state → idle
 	cancel()
 	c.onMasterGone(master)
 
@@ -93,9 +92,9 @@ func TestStaleWatcherIgnored(t *testing.T) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.state != StateRunning || c.crashCount != 0 || len(c.tenants) != 1 {
+	if c.state != StateRunning || c.crashCount != 0 || len(c.contexts) != 1 {
 		t.Fatalf("stale watcher mutated current instance: state=%s count=%d tenants=%d",
-			c.state, c.crashCount, len(c.tenants))
+			c.state, c.crashCount, len(c.contexts))
 	}
 }
 
@@ -136,5 +135,36 @@ func TestBackoffEscalatesAndResets(t *testing.T) {
 	c.mu.Unlock()
 	if count != 1 || reset >= second {
 		t.Fatalf("ladder did not reset: count=%d gate=%s (second=%s)", count, reset, second)
+	}
+}
+
+func TestCrashPreservesTenantIdentityAndCredential(t *testing.T) {
+	c := NewChromium(ChromiumConfig{DebugPort: 9222})
+	c.state = StateIdle
+	handle, err := c.NewTenant(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenant := handle.(Browser)
+	token, err := tenant.CDPToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	master, cancel := context.WithCancel(context.Background())
+	c.master, c.masterCtl, c.allocStop, c.state = master, func() {}, func() {}, StateRunning
+	c.contexts[tenant.ID().String()] = &browserContext{tabCtx: master, tabStop: func() {}}
+	cancel()
+	c.onMasterGone(master)
+	if c.tenantHandles[tenant.ID()] != handle {
+		t.Fatal("crash replaced tenant identity")
+	}
+	if got, _ := tenant.CDPToken(); got != token {
+		t.Fatal("crash revoked tenant credential")
+	}
+	if state := tenant.Status().(BrowserTenantStatus); state.BrowserReady || state.Closed {
+		t.Fatalf("tenant state: %+v", state)
+	}
+	if err := tenant.Close(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }

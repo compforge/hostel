@@ -61,14 +61,23 @@ type readinessView struct {
 	Message string `json:"message"`
 }
 
+type bedLifecycleView struct {
+	Phase     string        `json:"phase"`
+	Activity  string        `json:"activity"`
+	Readiness readinessView `json:"readiness"`
+}
 type bedView struct {
+	Sync      string           `json:"sync"`
+	ID        string           `json:"id"`
+	Workspace string           `json:"workspace"`
+	Status    bedLifecycleView `json:"status"`
+}
+type bedDetailView struct {
 	Sync      string `json:"sync"`
 	ID        string `json:"id"`
 	Workspace string `json:"workspace"`
 	Status    struct {
-		Phase     string        `json:"phase"`
-		Activity  string        `json:"activity"`
-		Readiness readinessView `json:"readiness"`
+		Lifecycle bedLifecycleView `json:"lifecycle"`
 	} `json:"status"`
 }
 
@@ -276,13 +285,13 @@ func (c *apiClient) createBed(t *testing.T, id string) httpResult {
 func (c *apiClient) waitBed(t *testing.T, id string, predicate func(bedView) bool, description string) bedView {
 	t.Helper()
 	deadline := time.Now().Add(45 * time.Second)
-	var last bedView
+	var last bedDetailView
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		result, err := c.json(ctx, "GET", "/v1/beds/"+url.PathEscape(id), "", nil, &last)
 		cancel()
-		if err == nil && result.Status == http.StatusOK && predicate(last) {
-			return last
+		if err == nil && result.Status == http.StatusOK && predicate(bedView{Sync: last.Sync, ID: last.ID, Workspace: last.Workspace, Status: last.Status.Lifecycle}) {
+			return bedView{Sync: last.Sync, ID: last.ID, Workspace: last.Workspace, Status: last.Status.Lifecycle}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

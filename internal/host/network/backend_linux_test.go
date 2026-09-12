@@ -34,12 +34,12 @@ func TestLinuxNetwork(t *testing.T) {
 	})
 	t.Logf("report: %+v", m.Status())
 	if mode == "disabled" {
-		if m.Status().Enabled || m.Status().Reason == "" {
+		if m.Status().Available || m.Status().Reason == "" {
 			t.Fatal("expected honest disabled verdict")
 		}
 		return
 	}
-	if !m.Status().Enabled {
+	if !m.Status().Available {
 		t.Fatalf("network unavailable: %+v", m.Status())
 	}
 	for _, id := range []string{"a", "b"} {
@@ -50,7 +50,7 @@ func TestLinuxNetwork(t *testing.T) {
 	var identities []string
 	for _, id := range []string{"a", "b"} {
 		cmd := exec.Command("readlink", "/proc/self/ns/net")
-		if err := m.beds[id].Enter(cmd); err != nil {
+		if err := m.allocations[id].Enter(cmd); err != nil {
 			t.Fatal(err)
 		}
 		out, err := cmd.Output()
@@ -60,10 +60,10 @@ func TestLinuxNetwork(t *testing.T) {
 		identities = append(identities, string(out))
 	}
 	if identities[0] == identities[1] {
-		t.Fatal("Beds share a netns")
+		t.Fatal("Networks share a netns")
 	}
-	// Bed-to-carrier connectivity survives namespace entry and privilege drop.
-	listener, err := net.Listen("tcp4", net.JoinHostPort(m.beds["a"].Gateway(), "0"))
+	// Namespace-to-host connectivity survives namespace entry and privilege drop.
+	listener, err := net.Listen("tcp4", net.JoinHostPort(m.allocations["a"].Gateway(), "0"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,18 +77,18 @@ func TestLinuxNetwork(t *testing.T) {
 	}()
 	helper := exec.Command(os.Args[0], "-test.run=^TestNetworkSocketHelper$")
 	helper.Env = append(os.Environ(), "HOSTEL_NETWORK_HELPER=client", "HOSTEL_NETWORK_ADDRESS="+listener.Addr().String())
-	if err := m.beds["a"].Enter(helper); err != nil {
+	if err := m.allocations["a"].Enter(helper); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := helper.CombinedOutput(); err != nil || !strings.Contains(string(out), "hello") {
 		t.Fatalf("gateway: %s %v", out, err)
 	}
-	// A listener in Bed B must not be reachable from Bed A.
-	b := m.beds["b"].endpoint.(*linuxEndpoint)
+	// A listener in Network B must not be reachable from Network A.
+	b := m.allocations["b"].endpoint.(*linuxEndpoint)
 	address := net.JoinHostPort(b.address.String(), "18081")
 	server := exec.Command(os.Args[0], "-test.run=^TestNetworkSocketHelper$")
 	server.Env = append(os.Environ(), "HOSTEL_NETWORK_HELPER=server", "HOSTEL_NETWORK_ADDRESS="+address)
-	if err := m.beds["b"].Enter(server); err != nil {
+	if err := m.allocations["b"].Enter(server); err != nil {
 		t.Fatal(err)
 	}
 	stdout, err := server.StdoutPipe()
@@ -105,11 +105,11 @@ func TestLinuxNetwork(t *testing.T) {
 	}
 	client := exec.Command(os.Args[0], "-test.run=^TestNetworkSocketHelper$")
 	client.Env = append(os.Environ(), "HOSTEL_NETWORK_HELPER=blocked", "HOSTEL_NETWORK_ADDRESS="+address)
-	if err := m.beds["a"].Enter(client); err != nil {
+	if err := m.allocations["a"].Enter(client); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := client.CombinedOutput(); err != nil {
-		t.Fatalf("cross-Bed isolation: %s %v", out, err)
+		t.Fatalf("cross-network isolation: %s %v", out, err)
 	}
 }
 func TestNetworkSocketHelper(t *testing.T) {
@@ -137,7 +137,7 @@ func TestNetworkSocketHelper(t *testing.T) {
 	if mode == "blocked" {
 		if err == nil {
 			_ = c.Close()
-			t.Fatal("cross-Bed connection succeeded")
+			t.Fatal("cross-network connection succeeded")
 		}
 		return
 	}

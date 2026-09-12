@@ -2,8 +2,9 @@ package resource
 
 import (
 	"context"
-	"github.com/qiankunli/hostel/internal/bed"
 	"sync"
+
+	"github.com/qiankunli/hostel/internal/bed"
 )
 
 // Manager owns accounting and the carrier admission sampler. Resource limits
@@ -19,6 +20,15 @@ type Manager struct {
 
 func NewManager(tracker Tracker, status bed.StatusWriter[bed.ResourceStatus]) *Manager {
 	return &Manager{tracker: tracker, status: status, allocations: make(map[*bed.Bed]bool), admission: NoopAdmission("resource admission not configured")}
+}
+
+// Start owns host accounting initialization, including partial allocations.
+// Bed Manager registers this component for cleanup before calling Start.
+func (m *Manager) Start(ctx context.Context) error {
+	if starter, ok := m.tracker.(interface{ Start(context.Context) error }); ok {
+		return starter.Start(ctx)
+	}
+	return ctx.Err()
 }
 func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
 	m.mu.Lock()
@@ -70,5 +80,14 @@ func (m *Manager) Run(ctx context.Context) error {
 		return runnable.Run(ctx)
 	}
 	<-ctx.Done()
+	return nil
+}
+
+// Close releases tracker-owned descriptors after Bed teardown. Trackers with
+// no daemon resources need not implement io.Closer.
+func (m *Manager) Close(context.Context) error {
+	if closer, ok := m.tracker.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
 	return nil
 }

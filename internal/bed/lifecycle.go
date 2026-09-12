@@ -22,7 +22,9 @@ type BedLifecycle interface {
 type Component[R any] interface {
 	DaemonLifecycle
 	BedLifecycle
-	// Status returns a read-only snapshot without host probes or remote I/O.
+	// Status returns Component Status: this domain's instance-wide snapshot,
+	// distinct from its per-Bed section in Bed.Status(). It performs no host
+	// probes or remote I/O; R remains the domain-owned report type.
 	Status() R
 }
 

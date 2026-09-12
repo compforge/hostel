@@ -18,7 +18,7 @@ func TestPolicyRulesDenyBeforeAllow(t *testing.T) {
 		t.Fatal(rules)
 	}
 }
-func TestLinuxPolicySeparatesBedsAndRevokesAccess(t *testing.T) {
+func TestLinuxPolicySeparatesNetworksAndRevokesAccess(t *testing.T) {
 	if os.Getenv("HOSTEL_NETWORK_TEST") != "enabled" {
 		t.Skip("requires disposable privileged Linux container")
 	}
@@ -33,7 +33,7 @@ func TestLinuxPolicySeparatesBedsAndRevokesAccess(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	if !m.Status().Enabled {
+	if !m.Status().Available {
 		t.Fatalf("network unavailable: %+v", m.Status())
 	}
 	for _, id := range []string{"policy-a", "policy-b"} {
@@ -41,7 +41,7 @@ func TestLinuxPolicySeparatesBedsAndRevokesAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	a, b := m.beds["policy-a"].endpoint.(*linuxEndpoint), m.beds["policy-b"].endpoint.(*linuxEndpoint)
+	a, b := m.allocations["policy-a"].endpoint.(*linuxEndpoint), m.allocations["policy-b"].endpoint.(*linuxEndpoint)
 	if _, err := m.NetworkPolicy(t.Context(), "policy-a", PolicyMutation{Replace: &Policy{DefaultAction: "deny"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -49,10 +49,10 @@ func TestLinuxPolicySeparatesBedsAndRevokesAccess(t *testing.T) {
 	err := probeConnectivity(blocked, a)
 	cancel()
 	if err == nil {
-		t.Fatal("deny-all allowed Bed A to connect")
+		t.Fatal("deny-all allowed Network A to connect")
 	}
 	if err := probeConnectivity(t.Context(), b); err != nil {
-		t.Fatalf("Bed A policy affected Bed B: %v", err)
+		t.Fatalf("Network A policy affected Network B: %v", err)
 	}
 	if _, err := m.NetworkPolicy(t.Context(), "policy-a", PolicyMutation{Merge: []Rule{{Action: "allow", Target: a.gateway.String()}}}); err != nil {
 		t.Fatal(err)

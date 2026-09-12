@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
@@ -34,7 +35,7 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	iso := New("dorm", root, WithPathProjections([]bedfs.PathProjection{projection}))
+	iso := New(hostfacts.Collect(), "dorm", root, WithPathProjections([]bedfs.PathProjection{projection}))
 	report := iso.(Report).WorkspaceView()
 	if report.Mode != "pathshim" || !report.Available {
 		t.Fatalf("workspace view = %+v", report)
@@ -81,7 +82,7 @@ func TestPathshimProbeFailureFallsBackToCarrierView(t *testing.T) {
 	root := t.TempDir()
 	probe := fakePathshim(t, "passthrough", 1)
 	t.Setenv("PATH", filepath.Dir(probe))
-	iso := New("dorm", root)
+	iso := New(hostfacts.Collect(), "dorm", root)
 	report := iso.(Report).WorkspaceView()
 	if report.Mode != "carrier" || report.Available || !strings.Contains(report.Reason, "passthrough") {
 		t.Fatalf("workspace view = %+v", report)

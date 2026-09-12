@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 func TestWorkspaceViewProbesSupportedHelpersBeforeApplyingPriority(t *testing.T) {
@@ -30,12 +31,12 @@ func TestWorkspaceViewProbesSupportedHelpersBeforeApplyingPriority(t *testing.T)
 	pathshim := fakePathshim(t, "bind-view", 0)
 	proot := fakeProot(t)
 	t.Setenv("PATH", filepath.Dir(proot)+string(os.PathListSeparator)+filepath.Dir(pathshim))
-	probes := map[string]ProbeReport{}
+	probes := map[string]hostfacts.ProbeReport{}
 	exitCode := 0
 
 	workspace, report := resolveWorkspaceView(
 		direct{}, root, nil,
-		ProbeReport{Attempted: true, ExitCode: &exitCode},
+		hostfacts.ProbeReport{Attempted: true, ExitCode: &exitCode},
 		probes,
 	)
 	if report.Mode != "proot" || !report.Available {
@@ -44,7 +45,7 @@ func TestWorkspaceViewProbesSupportedHelpersBeforeApplyingPriority(t *testing.T)
 	if _, ok := workspace.(*prootView); !ok {
 		t.Fatalf("selected workspace backend = %T, want proot", workspace)
 	}
-	if !probes["pathshim"].succeeded() || !probes["proot"].succeeded() {
+	if !probes["pathshim"].Succeeded() || !probes["proot"].Succeeded() {
 		t.Fatalf("candidate probes = %+v", probes)
 	}
 	for _, name := range []string{"pathshim", "proot"} {
@@ -60,11 +61,11 @@ func TestWorkspaceViewUsesPathshimWhenPtraceFails(t *testing.T) {
 	pathshim := fakePathshim(t, "bind-view", 0)
 	proot := fakeProot(t)
 	t.Setenv("PATH", filepath.Dir(proot)+string(os.PathListSeparator)+filepath.Dir(pathshim))
-	probes := map[string]ProbeReport{}
+	probes := map[string]hostfacts.ProbeReport{}
 
 	workspace, report := resolveWorkspaceView(
 		direct{}, root, nil,
-		ProbeReport{Attempted: true, Error: "ptrace TRACEME: operation not permitted"},
+		hostfacts.ProbeReport{Attempted: true, Error: "ptrace TRACEME: operation not permitted"},
 		probes,
 	)
 	if report.Mode != "pathshim" || !report.Available {
@@ -81,10 +82,10 @@ func TestWorkspaceViewUsesPathshimWhenPtraceFails(t *testing.T) {
 
 func TestWorkspaceViewReportsMissingHelpers(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	probes := map[string]ProbeReport{}
+	probes := map[string]hostfacts.ProbeReport{}
 	_, report := resolveWorkspaceView(
 		direct{}, t.TempDir(), nil,
-		ProbeReport{Attempted: true, Error: "ptrace denied"},
+		hostfacts.ProbeReport{Attempted: true, Error: "ptrace denied"},
 		probes,
 	)
 	if report.Mode != "carrier" || report.Available {
@@ -104,11 +105,11 @@ func TestWorkspaceViewReportsPresentNonExecutableHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
-	probes := map[string]ProbeReport{}
+	probes := map[string]hostfacts.ProbeReport{}
 	exitCode := 0
 	_, _ = resolveWorkspaceView(
 		direct{}, t.TempDir(), nil,
-		ProbeReport{Attempted: true, ExitCode: &exitCode},
+		hostfacts.ProbeReport{Attempted: true, ExitCode: &exitCode},
 		probes,
 	)
 	probe := probes["proot"]
@@ -148,11 +149,11 @@ func TestWorkspaceViewFallsBackToCarrierWhenBothHelpersFail(t *testing.T) {
 	pathshim := fakePathshim(t, "passthrough", 1)
 	proot := fakeFailingProot(t)
 	t.Setenv("PATH", filepath.Dir(proot)+string(os.PathListSeparator)+filepath.Dir(pathshim))
-	probes := map[string]ProbeReport{}
+	probes := map[string]hostfacts.ProbeReport{}
 	exitCode := 0
 	_, report := resolveWorkspaceView(
 		direct{}, t.TempDir(), nil,
-		ProbeReport{Attempted: true, ExitCode: &exitCode},
+		hostfacts.ProbeReport{Attempted: true, ExitCode: &exitCode},
 		probes,
 	)
 	if report.Mode != "carrier" || report.Available || !strings.Contains(report.Reason, "pathshim") || !strings.Contains(report.Reason, "proot") {

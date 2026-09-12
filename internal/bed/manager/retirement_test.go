@@ -10,6 +10,7 @@ import (
 
 	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/bed/network"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 type failingRelease struct {
@@ -18,19 +19,34 @@ type failingRelease struct {
 	revoked bool
 }
 
-func (*failingRelease) Name() string                                         { return "cleanup-test" }
-func (*failingRelease) State() string                                        { return amenity.StateRunning }
-func (*failingRelease) AcquireTenant(string, string) (amenity.Tenant, error) { return nil, nil }
-func (f *failingRelease) ReleaseTenant(string) error                         { f.calls++; return f.err }
-func (f *failingRelease) RevokeBedSecrets(string)                            { f.revoked = true }
+func (*failingRelease) Name() string                { return "cleanup-test" }
+func (*failingRelease) Start(context.Context) error { return nil }
+func (*failingRelease) Close(context.Context) error { return nil }
+func (*failingRelease) Status() amenity.Status      { return amenity.MCPStatus{State: amenity.StateIdle} }
+func (f *failingRelease) NewTenant(context.Context) (amenity.Tenant, error) {
+	return &failingTenant{f}, nil
+}
+
+type failingTenant struct{ owner *failingRelease }
+
+func (*failingTenant) ID() amenity.TenantID         { return "failure-tenant" }
+func (*failingTenant) Status() amenity.TenantStatus { return amenity.MCPTenantStatus{} }
+func (t *failingTenant) Close(context.Context) error {
+	t.owner.calls++
+	t.owner.revoked = true
+	return t.owner.err
+}
 
 func TestFailedRetirementKeepsIdentityAndDataUntilRetry(t *testing.T) {
 	m := newTestManager(t)
 	facility := &failingRelease{err: errors.New("upstream unavailable")}
-	m.amenities = amenity.NewRegistry()
+	m.amenities = amenity.NewManager(hostfacts.Collect())
 	m.amenities.Register(facility)
 	b, err := m.Ensure(context.Background(), "retire")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.amenities.Acquire(t.Context(), b.ID, facility.Name()); err != nil {
 		t.Fatal(err)
 	}
 	file := filepath.Join(b.Workspace(), "data")
@@ -95,12 +111,15 @@ func (n *retryReleaseNetwork) Close(context.Context) error { n.calls++; return n
 func TestRetirementResumesAtFailedComponent(t *testing.T) {
 	m := newTestManager(t)
 	facility := &failingRelease{}
-	m.amenities = amenity.NewRegistry()
+	m.amenities = amenity.NewManager(hostfacts.Collect())
 	m.amenities.Register(facility)
 	net := &retryReleaseNetwork{err: errors.New("network busy")}
 	m.SetNetworkManager(network.WithProvider(net, m.owners.Network))
 	b, err := m.Ensure(t.Context(), "retry-components")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.amenities.Acquire(t.Context(), b.ID, facility.Name()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.Evict(t.Context(), b.Name); !errors.Is(err, net.err) {

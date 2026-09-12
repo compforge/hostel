@@ -14,10 +14,12 @@
 
 //go:build !linux
 
-package isolation
+package filesystem
 
-func runPtraceProbe() ProbeReport {
-	report := discoverExecutable("/bin/true")
+import hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+
+func ProbePtrace() hostfacts.ProbeReport {
+	report := hostfacts.DiscoverExecutable("/bin/true")
 	report.Error = "unsupported operating system"
 	return report
 }

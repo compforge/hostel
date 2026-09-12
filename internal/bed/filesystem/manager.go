@@ -3,12 +3,14 @@ package filesystem
 
 import (
 	"context"
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
-	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 type Manager struct {
@@ -68,8 +70,7 @@ type Status struct {
 	Ceiling       string                           `json:"ceiling"`
 	Mechanism     string                           `json:"mechanism"`
 	WorkspaceView isolation.WorkspaceViewReport    `json:"workspace_view"`
-	System        isolation.SystemFacts            `json:"system"`
-	Probes        map[string]isolation.ProbeReport `json:"probes"`
+	Probes        map[string]hostfacts.ProbeReport `json:"probes"`
 }
 
 func (m *Manager) Status() Status {
@@ -77,7 +78,7 @@ func (m *Manager) Status() Status {
 		Effective:     m.isolator.Level().String(),
 		Mechanism:     m.isolator.Name(),
 		WorkspaceView: isolation.WorkspaceViewReport{Mode: "carrier", Available: true},
-		Probes:        map[string]isolation.ProbeReport{},
+		Probes:        map[string]hostfacts.ProbeReport{},
 	}
 	if m.isolator.WorkspaceMounted() {
 		view.WorkspaceView.Mode = "mount"
@@ -89,7 +90,6 @@ func (m *Manager) Status() Status {
 		view.Ceiling = report.Ceiling().String()
 		view.Mechanism = report.Mechanism()
 		view.WorkspaceView = report.WorkspaceView()
-		view.System = details.System
 		view.Probes = details.Probes
 	}
 	return view

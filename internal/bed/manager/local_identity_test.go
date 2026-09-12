@@ -3,19 +3,20 @@ package manager
 import (
 	"context"
 	"errors"
-	model "github.com/qiankunli/hostel/internal/bed"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"github.com/qiankunli/hostel/internal/bed/privilege"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 func newIdentityTestManager(t *testing.T, root string) *Manager {
 	t.Helper()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, nil)
+	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

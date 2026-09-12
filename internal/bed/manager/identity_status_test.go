@@ -15,6 +15,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"github.com/qiankunli/hostel/internal/bed/network"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 func TestBedNameLocalLifetimeAndRecovery(t *testing.T) {
@@ -33,7 +34,7 @@ func TestBedNameLocalLifetimeAndRecovery(t *testing.T) {
 	if err := m.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	m2, err := NewManager(m.root, "default", "/bin/bash", isolation.New("dorm", m.root), nil, 0, nil)
+	m2, err := NewManager(hostfacts.Collect(), m.root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", m.root), nil, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,25 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !linux
+package cgroup
 
-package privilege
+import "testing"
 
-import (
-	"fmt"
-	"os"
-	"os/exec"
-)
-
-func ProcessCredentialHelper() (string, error) {
-	return "", fmt.Errorf("privilege: setpriv is unsupported on this platform")
-}
-
-func wrapBedUser(_ *exec.Cmd, user BedUser) error {
-	if user.uid != os.Geteuid() || user.gid != os.Getegid() {
-		return fmt.Errorf("privilege: switching bed user is unsupported on this platform")
+func TestUnifiedCgroupPath(t *testing.T) {
+	path, err := unifiedCgroupPath("0::/kubepods/pod/container\n")
+	if err != nil || path != "/kubepods/pod/container" {
+		t.Fatalf("unifiedCgroupPath = %q, %v", path, err)
 	}
-	return nil
 }
 
-func chownTree(string, int, int) error { return nil }
+func TestCPUUsageMicros(t *testing.T) {
+	got, err := CPUUsageMicros("usage_usec 12345\nuser_usec 10000\nsystem_usec 2345\n")
+	if err != nil || got != 12345 {
+		t.Fatalf("CPUUsageMicros = %d, %v", got, err)
+	}
+}

@@ -39,6 +39,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/resource"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	"github.com/qiankunli/hostel/internal/config"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	"github.com/qiankunli/hostel/internal/supervisor"
 	"github.com/qiankunli/hostel/internal/tracing"
 	"github.com/qiankunli/hostel/internal/web"
@@ -103,7 +104,8 @@ func main() {
 
 	// New resolves the requested level against the environment ceiling and
 	// logs the outcome; the returned isolator is always usable.
-	iso := isolation.New(cfg.IsolationMode, cfg.WorkspaceRoot,
+	host := hostfacts.Collect()
+	iso := isolation.New(host, cfg.IsolationMode, cfg.WorkspaceRoot,
 		isolation.WithPathProjections(pathProjections),
 	)
 	bedUser, err := privilege.NewBedUser(cfg.BedUID, cfg.BedGID)
@@ -111,19 +113,16 @@ func main() {
 		log.Fatalf("hostel: configure bed user: %v", err)
 	}
 
-	// Amenity manager: shared facilities light up per deployment. Chromium is
-	// registered when launch (binary) or attach (--chromium-cdp-url) is
-	// possible; otherwise the facility is honestly absent.
-	amenities := amenity.NewRegistry()
-	amenities.Register(amenity.NewMCP(mcpproxy.Options{}))
-	if br, ok := amenity.NewChromium(amenity.ChromiumConfig{
-		ExecPath:  cfg.ChromiumPath,
-		CDPURL:    cfg.ChromiumCDPURL,
-		IdleStop:  cfg.ChromiumIdleStop,
-		DebugPort: cfg.ChromiumDebugPort,
-	}); ok {
-		amenities.Register(br.(amenity.Amenity))
-		log.Printf("hostel: amenity chromium registered (attach=%v)", cfg.ChromiumCDPURL != "")
+	// Facilities remain registered when unavailable; Start reports the reason.
+	amenities := amenity.NewManager(host)
+	if err := amenities.Register(amenity.NewMCP(mcpproxy.Options{})); err != nil {
+		log.Fatal(err)
+	}
+	if err := amenities.Register(amenity.NewChromium(amenity.ChromiumConfig{
+		ExecPath: cfg.ChromiumPath, CDPURL: cfg.ChromiumCDPURL,
+		IdleStop: cfg.ChromiumIdleStop, DebugPort: cfg.ChromiumDebugPort,
+	})); err != nil {
+		log.Fatal(err)
 	}
 
 	// Fail fast on a misconfigured store: booting with silent noop while the
@@ -147,7 +146,7 @@ func main() {
 		log.Fatalf("hostel: init store: %v", err)
 	}
 
-	mgr, err := bed.NewManager(cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
+	mgr, err := bed.NewManager(host, cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
 		bed.WithBedUser(bedUser),
 	)
 	if err != nil {
@@ -167,13 +166,6 @@ func main() {
 	mgr.SetNetworkManager(networks)
 	resources := resource.New()
 	mgr.SetResourceTracker(resources)
-	resourceReport := resources.Report()
-	if resourceReport.Available {
-		log.Printf("hostel: per-bed resource accounting enabled (backend=%s)", resourceReport.Backend)
-	} else {
-		log.Printf("hostel: per-bed resource accounting unavailable (backend=%s reason=%s)",
-			resourceReport.Backend, resourceReport.Reason)
-	}
 	admissionCtx, stopAdmission := context.WithCancel(context.Background())
 	defer stopAdmission()
 	resourceAdmission, err := resource.NewAdmission(admissionCtx, resource.NewCarrier(), resource.AdmissionConfig{
@@ -234,11 +226,21 @@ func main() {
 		log.Fatalf("hostel: invalid executor backend %q", cfg.Executor)
 	}
 
-	if err := mgr.Start(context.Background()); err != nil {
-		log.Fatalf("hostel: start bed manager: %v", err)
-	}
 	if err := amenities.Start(context.Background()); err != nil {
 		log.Fatalf("hostel: start amenities: %v", err)
+	}
+	if err := mgr.Start(context.Background()); err != nil {
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = amenities.Close(cleanup)
+		cancel()
+		log.Fatalf("hostel: start bed manager: %v", err)
+	}
+	resourceReport := resources.Report()
+	if resourceReport.Available {
+		log.Printf("hostel: per-bed resource accounting enabled (backend=%s)", resourceReport.Backend)
+	} else {
+		log.Printf("hostel: per-bed resource accounting unavailable (backend=%s reason=%s)",
+			resourceReport.Backend, resourceReport.Reason)
 	}
 	if err := mgr.RetryLocalCleanups(context.Background()); err != nil {
 		log.Printf("hostel: startup local cleanup pending: %v", err)

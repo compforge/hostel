@@ -14,17 +14,14 @@
 
 //go:build !linux
 
-package isolation
+package facts
 
-// osFacts: the Linux-only probes (caps, Landlock, userns, cgroup) are all
-// absent off Linux; only collectHostFacts's cross-platform bwrap lookup may set
-// anything. Room/suite mechanisms then report unavailable and the resolver
-// floors to dorm.
-func osFacts() HostFacts {
+// osFacts preserves unavailable observations on non-Linux systems.
+func osFacts() Snapshot {
 	unsupportedInt := ObservedInt{ReadError: "unsupported operating system"}
 	unsupportedString := ObservedString{ReadError: "unsupported operating system"}
-	return HostFacts{
-		diagnostics: SystemFacts{
+	return Snapshot{
+		System: SystemFacts{
 			Process: ProcessFacts{StatusReadError: "unsupported operating system"},
 			SecurityModules: SecurityModuleFacts{
 				LSMList:         unsupportedString,

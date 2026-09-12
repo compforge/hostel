@@ -164,10 +164,17 @@ Health and capability responses report the selected mechanisms, scope and reason
 for unavailable capabilities. See [the isolation design](docs/isolation.md) for
 the full model and [the backlog](docs/backlog.md) for remaining gaps.
 
+Instance status (`GET /v1/status`, schema version 2) groups global domain reports
+under `components` and facility reports under `amenities`, alongside Bed inventory
+and capacity summaries. Bed details (`GET /v1/beds/:id`) use `status.lifecycle`,
+`status.components` and `status.amenities`; the latter contains the IDs and
+domain-specific status of tenants bound to that Bed. Status reads allocate no tenants.
+
 ## Amenities (shared facilities)
 
 Heavyweight, natively multi-tenant tools run **once** per hostel and are sliced
-per bed. **Chromium** uses one shared browser with a BrowserContext per bed
+through tenants bound to beds. A tenant is Hostel's unit of facility use; each
+facility controls its internal resources. **Chromium** uses one shared browser with a BrowserContext per bed
 and artifacts saved into the bed workspace. Enable by
 shipping a chromium binary (`--chromium-path`, or it's probed) or attaching to
 an existing instance (`--chromium-cdp-url`). Hostel exposes Bed-scoped verbs
@@ -235,7 +242,7 @@ that a plain process-group sweep cannot reach. Its RPCs are reconnectable,
 
 Bed initialization is asynchronous at the management boundary: `POST /v1/beds`
 returns `202` with `status.phase=initializing`; poll `GET /v1/beds/:id` until
-`status.readiness.status=true`. Snapshot inspection, restore, BedFS preparation,
+`status.lifecycle.readiness.status=true`. Snapshot inspection, restore, BedFS preparation,
 and failures are exposed through readiness reason/message. Native data-plane
 requests still create on first use by joining the same initialization and waiting
 for Ready, so they never observe a partial BedFS.
@@ -386,7 +393,7 @@ See [MCP configuration, lifecycle and embedding](docs/mcp.md).
 Hostel probes per-Bed networking at startup. When the complete probe succeeds,
 commands and persistent shells use a private IPv4 network namespace with routed
 outbound connectivity. Otherwise networking stays shared and Hostel still starts.
-`GET /v1/status` and `/healthz` expose `network.enabled`, `backend`, `scope`,
+`GET /v1/status` exposes `components.network`; `/healthz` exposes `network`. Both report `enabled`, `backend`, `scope`,
 and the probe failure reason. Shared Chromium traffic is not covered.
 See [network management](docs/network.md) for prerequisites and boundaries.
 

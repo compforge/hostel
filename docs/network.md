@@ -1,5 +1,7 @@
 # 网络管理
 
+`internal/host/network` 提供通用网络 allocation、DNS 与规则执行；Bed Network Manager 负责 Bed 绑定、可选启用策略与状态发布。分层边界见 [核心架构](kernel.md#领域与-host-机制)。
+
 ## 理念与边界
 
 网络隔离沿 Bed 的独立执行空间目标按环境能力尽量兑现，统一模型与组合约束见

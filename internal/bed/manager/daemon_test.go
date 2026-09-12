@@ -3,11 +3,13 @@ package manager
 import (
 	"context"
 	"errors"
-	"github.com/qiankunli/hostel/internal/bed/resource"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/bed/network"
+	"github.com/qiankunli/hostel/internal/bed/resource"
 )
 
 type joiningAdmission struct {
@@ -87,5 +89,32 @@ func TestStartFailureDoesNotAdmitBeds(t *testing.T) {
 	}
 	if len(m.components) != 0 {
 		t.Fatal("failed startup retained initialized components")
+	}
+}
+
+type partiallyStartedNetwork struct {
+	network.Provider
+	closes     int
+	cleanupErr error
+}
+
+func (*partiallyStartedNetwork) Start(context.Context) error   { return errors.New("partial allocation") }
+func (p *partiallyStartedNetwork) Close(context.Context) error { p.closes++; return p.cleanupErr }
+func TestFailedComponentStartRetainsCleanupOwner(t *testing.T) {
+	m := newTestManager(t)
+	p := &partiallyStartedNetwork{cleanupErr: errors.New("resource busy")}
+	m.network = network.WithProvider(p, m.owners.Network)
+	if err := m.Start(t.Context()); err == nil {
+		t.Fatal("partial startup accepted")
+	}
+	if p.closes != 1 || len(m.components) == 0 {
+		t.Fatal("failed component lost cleanup owner")
+	}
+	p.cleanupErr = nil
+	if err := m.closeComponents(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if p.closes != 2 || len(m.components) != 0 {
+		t.Fatal("failed component cleanup not retried")
 	}
 }

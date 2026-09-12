@@ -1,5 +1,7 @@
 # Hostel 资源治理：采集、汇报、策略与隔离
 
+`internal/host/cgroup` 提供通用组和用量机制；Bed Resource 负责 Bed → Executor 的组组织、记账、采样与准入。分层边界见 [核心架构](kernel.md#领域与-host-机制)。
+
 > **状态：carrier 资源采集、资源汇报、容量准入与 per-bed 记账已落地；per-bed 硬限额尚未实现。**
 
 Hostel 的资源治理分成四层：**采集事实 → 汇报事实 → 执行策略 → 内核硬隔离**。前三层已经可以帮助 Hostel 判断自己
@@ -192,3 +194,7 @@ per-bed 配额，容易把高密度、强突发的 agent workload 错配成传�
 当前也没有磁盘容量配额和网络带宽限制；这些是资源独立性的未覆盖维度，不改变 Bed 的
 隔离目标。共享 amenity 仍计入 Carrier 总量，不能虚构 tenant 级精确归因。未完成能力统一见
 [backlog.md](backlog.md)。
+
+## 组件生命周期
+
+构造阶段只组装依赖，Resource Manager.Start 才初始化 cgroup accounting，并报告真实可用性；无可用机制时按资源领域策略降级。Run 驱动采样，Bed hooks 管理单元归属，Close 释放所持资源。Bed Manager 在 Start 前登记清理责任，部分初始化失败也必须经过 Close；失败清理保留责任供重试。host/cgroup 提供操作机制，不决定 Bed 组织和准入策略。

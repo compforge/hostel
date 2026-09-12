@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 // indexOfSeq finds the start of a consecutive argument sequence.
@@ -131,7 +132,7 @@ func TestBuildBwrapArgsAddsConfiguredProjections(t *testing.T) {
 }
 
 func TestDirectUsesCarrierView(t *testing.T) {
-	iso := New("direct", "/anything")
+	iso := New(hostfacts.Collect(), "direct", "/anything")
 	if iso.WorkspaceMounted() {
 		t.Fatal("direct must not report a workspace mount")
 	}

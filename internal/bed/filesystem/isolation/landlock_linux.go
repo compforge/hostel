@@ -23,8 +23,10 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	ll "github.com/landlock-lsm/go-landlock/landlock"
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
+
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 // ConfineArg is the hidden subcommand hostel re-execs into to apply Landlock
@@ -42,8 +44,8 @@ type landlock struct {
 	self string // hostel binary path, re-execed as the confiner
 }
 
-func newLandlock(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
-	report := ProbeReport{}
+func newLandlock(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfacts.ProbeReport) {
+	report := hostfacts.ProbeReport{}
 	// Landlock ABI ≥ 1 means the kernel exposes filesystem restrictions (a custom
 	// kernel without CONFIG_SECURITY_LANDLOCK reports 0 — the boot probe already
 	// established this fact, no need to re-syscall here).
@@ -64,7 +66,7 @@ func newLandlock(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) 
 	// ABI presence alone doesn't prove ENFORCEMENT — run the full form once.
 	report = landlockSmoke(self, workspaceRoot)
 	report.ResolvedPath = self
-	if report.failed() {
+	if report.Failed() {
 		log.Printf("isolation: landlock ABI present but unusable (%s)", report.Error)
 		return unavailable{name: "landlock", lvl: Room}, report
 	}
@@ -81,28 +83,28 @@ func newLandlock(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) 
 // lie, so we honestly report it unavailable.
 // The check execs /bin/sh, not hostel itself: production only ever execs
 // system binaries post-confine, and hostel's own dir isn't in the allowlist.
-func landlockSmoke(self, workspaceRoot string) ProbeReport {
+func landlockSmoke(self, workspaceRoot string) hostfacts.ProbeReport {
 	base, err := os.MkdirTemp(workspaceRoot, ".probe-*")
 	if err != nil {
-		return ProbeReport{Error: fmt.Sprintf("smoke test: temp dir: %v", err)}
+		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: temp dir: %v", err)}
 	}
 	defer os.RemoveAll(base)
 	own := filepath.Join(base, "own")
 	secret := filepath.Join(base, "sibling", "secret")
 	if err := os.MkdirAll(own, 0o755); err != nil {
-		return ProbeReport{Error: "smoke test: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	if err := os.MkdirAll(filepath.Dir(secret), 0o755); err != nil {
-		return ProbeReport{Error: "smoke test: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	if err := os.WriteFile(secret, []byte("s"), 0o644); err != nil {
-		return ProbeReport{Error: "smoke test: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 
 	script := fmt.Sprintf("echo ok > probe.txt || exit 10; cat %q >/dev/null 2>&1 && exit 11; exit 0", secret)
 	cmd := exec.Command(self, ConfineArg, own, "--", "/bin/sh", "-c", script)
 	cmd.Dir = own
-	report := runExecProbe(cmd)
+	report := hostfacts.RunExecProbe(cmd)
 	if report.ExitCode == nil || *report.ExitCode == 0 {
 		return report
 	}
@@ -166,17 +168,5 @@ func landlockRWDirs(dataDir string) []string {
 // paths (ro). BestEffort degrades on older ABIs; missing paths are dropped so a
 // distro without e.g. /lib32 doesn't fail the whole restriction.
 func applyLandlock(dataDir string) error {
-	existing := func(paths []string) []string {
-		out := paths[:0:0]
-		for _, p := range paths {
-			if _, err := os.Stat(p); err == nil {
-				out = append(out, p)
-			}
-		}
-		return out
-	}
-	return ll.V9.BestEffort().RestrictPaths(
-		ll.RODirs(existing(landlockRODirs)...),
-		ll.RWDirs(existing(landlockRWDirs(dataDir))...),
-	)
+	return hostfs.RestrictPaths(landlockRODirs, landlockRWDirs(dataDir))
 }

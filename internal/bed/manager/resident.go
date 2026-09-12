@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/qiankunli/go-stdx/filepathx"
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	"golang.org/x/sync/semaphore"
-	"time"
 )
 
 // initializeResidentBed privately prepares one allocation. Only the composite
@@ -97,7 +98,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 	if err := m.executorManager.Prepare(ctx, b.Bed); err != nil {
 		return nil, err
 	}
-	if err := m.amenities.Prepare(ctx, b.Bed); err != nil {
+	if err := m.amenities.AdmitBed(b.ID); err != nil {
 		return nil, err
 	}
 	b.environment = bindEnvironment(m.iso, b.filesystem, m.network.Attachment(b.Bed), m.privileges.User(b.Bed))

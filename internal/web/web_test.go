@@ -35,12 +35,13 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	root := t.TempDir()
-	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, nil)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -82,17 +83,11 @@ func waitBedReady(t *testing.T, s *Server, id string) *httptest.ResponseRecorder
 		if rec.Code != http.StatusOK {
 			t.Fatalf("get bed %s = %d %s", id, rec.Code, rec.Body.String())
 		}
-		var view struct {
-			Status struct {
-				Readiness struct {
-					Ready bool `json:"status"`
-				} `json:"readiness"`
-			} `json:"status"`
-		}
+		var view bedDetailView
 		if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
 			t.Fatalf("decode bed %s: %v", id, err)
 		}
-		if view.Status.Readiness.Ready {
+		if view.Status.Lifecycle.Readiness.Ready {
 			return rec
 		}
 		if time.Now().After(deadline) {
@@ -146,11 +141,15 @@ func TestStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode diagnostics: %v", err)
 	}
-	if body["schema_version"] != float64(1) {
+	if body["schema_version"] != float64(2) {
 		t.Fatalf("diagnostics schema_version = %v", body["schema_version"])
 	}
-	isolationFacts, _ := body["isolation"].(map[string]any)
-	system, _ := isolationFacts["system"].(map[string]any)
+	components, _ := body["components"].(map[string]any)
+	isolationFacts, _ := components["filesystem"].(map[string]any)
+	system, _ := body["host"].(map[string]any)
+	if _, exists := isolationFacts["system"]; exists {
+		t.Fatal("host facts duplicated under filesystem component")
+	}
 	runtimeFacts, _ := system["runtime"].(map[string]any)
 	process, _ := system["process"].(map[string]any)
 	securityModules, _ := system["security_modules"].(map[string]any)
@@ -158,7 +157,7 @@ func TestStatus(t *testing.T) {
 	kernelFeatures, _ := system["kernel_features"].(map[string]any)
 	ptraceFacts, _ := system["ptrace"].(map[string]any)
 	probes, _ := isolationFacts["probes"].(map[string]any)
-	privilegeFacts, _ := body["privilege"].(map[string]any)
+	privilegeFacts, _ := components["privilege"].(map[string]any)
 	environmentFacts, _ := body["environment"].(map[string]any)
 	bedUser, _ := privilegeFacts["bed_user"].(map[string]any)
 	if runtimeFacts["os"] == "" || runtimeFacts["arch"] == "" || process == nil ||
@@ -218,13 +217,13 @@ func TestStatus(t *testing.T) {
 	if environmentFacts["probe_status"] != bed.EnvironmentProbeNotRun {
 		t.Fatalf("diagnostics environment = %v", environmentFacts)
 	}
-	for _, field := range []string{"network", "executor", "store", "resource", "amenities"} {
-		if body[field] == nil {
+	for _, field := range []string{"network", "executor", "store", "resource"} {
+		if components[field] == nil {
 			t.Fatalf("diagnostics missing component %q: %v", field, body)
 		}
 	}
-	storeFacts, _ := body["store"].(map[string]any)
-	resourceFacts, _ := body["resource"].(map[string]any)
+	storeFacts, _ := components["store"].(map[string]any)
+	resourceFacts, _ := components["resource"].(map[string]any)
 	accounting, _ := resourceFacts["accounting"].(map[string]any)
 	if storeFacts["backend"] != "none" || storeFacts["default_sync"] != "noop" || accounting["backend"] != "noop" {
 		t.Fatalf("diagnostics component reports: store=%v resource=%v", storeFacts, resourceFacts)
@@ -764,7 +763,7 @@ var _ = http.StatusOK
 
 func TestMaxBedsBackpressure(t *testing.T) {
 	root := t.TempDir()
-	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, nil)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 1, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -802,7 +801,7 @@ func TestMaxBedsBackpressure(t *testing.T) {
 
 func TestMaxPinnedBedsReportsPressureWithoutBackpressure(t *testing.T) {
 	root := t.TempDir()
-	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, nil)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 3, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -861,7 +860,7 @@ func TestMaxPinnedBedsReportsPressureWithoutBackpressure(t *testing.T) {
 
 func TestCheckpointEndpointAndPersistenceReporting(t *testing.T) {
 	root := t.TempDir()
-	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, nil)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}

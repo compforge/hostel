@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 const (
@@ -79,9 +80,9 @@ func wrapRuntimeCommand(boundary Boundary, workspace workspaceBackend, cmd *exec
 //
 // +spec=`Below suite, Hostel discovers pathshim and PRoot through PATH, probes every candidate whose prerequisites are satisfied, then resolves the process view in PRoot → pathshim → carrier order without changing the selected isolation level.`
 // +case:id=workspace_view_fallback,desc=`Vary helper discovery, ptrace, pathshim, and PRoot probe outcomes independently`,expect=`Diagnostics preserve discovery facts; PRoot wins when usable, pathshim is next, and carrier is the final fallback`
-func resolveWorkspaceView(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, ptraceProbe ProbeReport, probes map[string]ProbeReport) (workspaceBackend, WorkspaceViewReport) {
-	pathshimDiscovery := discoverExecutable(pathshimCommand)
-	prootDiscovery := discoverExecutable(prootCommand)
+func resolveWorkspaceView(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport) (workspaceBackend, WorkspaceViewReport) {
+	pathshimDiscovery := hostfacts.DiscoverExecutable(pathshimCommand)
+	prootDiscovery := hostfacts.DiscoverExecutable(prootCommand)
 	probes["pathshim"] = pathshimDiscovery
 	probes["proot"] = prootDiscovery
 
@@ -108,7 +109,7 @@ func resolveWorkspaceView(base Boundary, workspaceRoot string, projections []bed
 
 	if prootDiscovery.Error != "" {
 		reasons = append(reasons, "proot: "+prootDiscovery.Error)
-	} else if !ptraceProbe.succeeded() {
+	} else if !ptraceProbe.Succeeded() {
 		reasons = append(reasons, "ptrace: "+rawProbeFailure(ptraceProbe))
 	} else {
 		candidate, report, probe := newProotView(base, workspaceRoot, projections, prootDiscovery)
@@ -135,7 +136,7 @@ func resolveWorkspaceView(base Boundary, workspaceRoot string, projections []bed
 	return workspace, WorkspaceViewReport{Mode: workspace.Mode(), Available: false, Reason: reason}
 }
 
-func rawProbeFailure(probe ProbeReport) string {
+func rawProbeFailure(probe hostfacts.ProbeReport) string {
 	exitCode := "null"
 	if probe.ExitCode != nil {
 		exitCode = fmt.Sprint(*probe.ExitCode)

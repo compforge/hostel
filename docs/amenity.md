@@ -2,14 +2,17 @@
 
 ## 一、理念与概念
 
-Amenity 在 Carrier 内复用重型进程或连接管理，为每个 Bed 分配自己的应用状态。
-Chromium 使用 BrowserContext，MCP 使用按 Bed 管理的配置和连接池；Jupyter 尚未实现。
-复用可以降低启动与常驻成本，但应用状态切分只兑现部分独立性。统一目标与信任边界见
-[isolation.md](isolation.md)。
+Amenity 是独立于 Bed 的设施，由 daemon 下的 Amenity Manager 管理。Tenant 是 Hostel
+为服务 Bed 而定义的设施使用单元；具体资源如何实现属于设施内部细节。Chromium 可以为 Tenant
+分配 BrowserContext，MCP 可以为 Tenant 管理配置和连接池，不要求 Tenant 对应独立进程。Tenant 表达使用归属，期望按 Tenant 隔离但不强求；共享资源或独立资源均由设施决定，Tenant 的存在不构成额外隔离保证。
 
-设施实例拥有共享运行态，Bed 拥有自己的 tenant 切片。Registry 把 Bed 回收接到各设施的
-释放入口；具体协议由设施实现负责，HTTP 适配留在 web 层。设施可以有自己的生命周期，
-不要求一份切片对应一个 OS 进程。
+Bed Manager 解析调用方的 Bed Name，Amenity Manager 以本地 Bed ID 维护到各设施 Tenant ID
+的绑定。Tenant ID 在设施内唯一、生命周期内稳定，不包含 Bed 名称语义；同名 Bed 重建使用新的
+本地身份，不能继承旧绑定。Tenant 内部资源可以重建而不改变 Tenant 身份。
+
+设施拥有 Tenant 及具体资源，Amenity Manager 拥有绑定与协调责任。一个 Bed 在每个设施下
+按需绑定一个 Tenant，未使用的设施不分配。获取动作受 Bed operation/session 准入保护，绑定
+创建与回收串行协调；设施之间的实现差异由各自类型化动作接口承接。
 
 产物归属、访问屏障和持久化分别判断：截图与下载写入对应 Bed workspace，file API 按
 BedFS 读取，Store 按配置选择快照子树。产物落在 Bed 目录，并不自动保证其他 Bed 进程
@@ -18,14 +21,14 @@ BedFS 读取，Store 按配置选择快照子树。产物落在 Bed 目录，并
 ## 二、主流程
 
 ```text
-实例启动：注册设施，探测可用性，报告 unavailable / idle / running
-Bed 首次使用：启动或连接设施 → 分配本 Bed 切片 → 执行动作或建立代理会话
+实例启动：注册设施 → Start 初始化并探测 → 不可用设施保留状态和原因
+Bed 首次使用：创建 Tenant 并绑定 → 按需分配具体资源 → 执行动作或建立代理会话
 实际使用：operation 或 session 流量更新 Bed 活跃度
-Bed 回收：先撤销 session → 释放设施切片并撤销 Bed 级凭据
-设施空闲：自行决定是否停止；共享进程故障可能同时丢失多个 Bed 的切片
+Bed 回收：先撤销 session → 关闭各绑定 Tenant 并撤销凭据 → 成功后移除绑定
+设施空闲：自行决定是否停止；共享进程故障可能丢失多个 Tenant 的资源，Tenant 身份仍可保留
 ```
 
-Chromium 支持 launch 或 attach。launch 由 Hostel 惰性启动浏览器，最后一个 tenant 释放后
+Chromium 支持 launch 或 attach。launch 由 Hostel 惰性启动浏览器，最后一份浏览器资源释放后
 按空闲期限停止；attach 连接部署方提供的浏览器，只管理 Bed 切片，不拥有外部进程生死。
 浏览器不可用不阻止其他 Hostel 能力启动，使用浏览器的请求明确失败。
 
@@ -61,12 +64,22 @@ loopback 也不代表对 Bed 不可达：共享网络时 Bed 仍可能访问它�
 ### Bed 凭据与设施切片有不同寿命
 
 CDP token 属于 Bed，由进程环境或 browser/info 下发；铸造 token 不启动 Chromium，
-首次代理拨号才准备 tenant。browser/close 只回收浏览器切片，token 保留，以便常驻 shell
+首次代理拨号才准备浏览器资源。browser/close 只回收资源，Tenant 身份和 token 保留，以便常驻 shell
 继续使用已注入的 endpoint。共享 Chromium 重启同样不撤销 Bed token。
 
-Bed teardown 才通过 `RevokeBedSecrets` 撤销 token，防止旧凭据授权同 ID 的下一次 Bed。
-已有 CDP 连接由 session 生命周期撤销，不能只删除 token 而放任旧连接继续使用设施。
-完整回收次序见 [kernel.md](kernel.md)。
+Bed teardown 关闭绑定的 Tenant，先撤销 token，再清理资源。已有 CDP 连接由 Bed session
+生命周期撤销，不能只删除 token 而放任旧连接继续使用设施。关闭失败的 Tenant 禁止重新获取
+凭据，仍保留资源清理责任。完整回收次序见 [kernel.md](kernel.md)。
+
+### 两级状态由领域拥有
+
+设施提供全局 Amenity Status，Tenant 提供该设施使用单元的状态。两者字段由设施自身定义：
+Chromium 报告浏览器资源是否就绪、是否等待清理；MCP 报告配置的服务数量、连接条目、活跃调用
+和关闭状态。Manager 只聚合，不把不同设施统一解释成一份通用资源状态。
+
+`/v1/status` 的 `amenities` 汇总设施状态；`/v1/beds/:id` 的 `status.amenities` 通过绑定查询
+关联 Tenant，包含 Tenant ID 和领域报告。Tenant 状态不复制进 Bed 模型；没有绑定就不列入。
+观察不创建资源、不续租、不访问远端，也不返回凭据或底层资源句柄。详见 [observability.md](observability.md)。
 
 ### 应用切分不能覆盖进程、网络和资源边界
 
@@ -83,10 +96,12 @@ Bed teardown 才通过 `RevokeBedSecrets` 撤销 token，防止旧凭据授权�
 
 ### 释放失败保留清理责任
 
-Registry 尝试释放所有设施并撤销 Bed 级凭据，汇总释放错误。任一设施失败都会让 Bed
-保留为待清理身份，阻止同 ID 重建；重试 Evict/Purge 或实例关闭时继续释放。
-Chromium 仅在 context 释放成功或承载实例已停止后移除本地 tenant 记录，释放失败保留
-记录供重试。因此 API 返回清理失败时，不应假定外部切片已经消失。
+Amenity Manager 尝试关闭所有绑定 Tenant，汇总错误。成功项立即移除绑定，失败项保留
+身份和清理责任；Bed Manager 因此保留待清理 Bed，重试从未完成的资源继续。
+Chromium 只有确认 Context 已释放或已随自有浏览器消失后才放弃资源记录。
+
+设施的 Start 完成初始化后返回，重型资源保持惰性分配。后台维护属于设施，Close 负责取消和
+等待退出。attach 模式仅清理 Hostel 创建的 Context 和连接，不能关闭外部浏览器。
 
 ## 四、验证边界
 
@@ -96,3 +111,9 @@ token 生命周期、按需启停和回收。浏览器相关验证需要实际 C
 
 新增设施时分别验证自己的状态归属、凭据、产物、出站与释放失败；设施可用状态只表示
 能提供服务，不代表这些维度都已达到理想隔离。
+
+### 并发与状态读取
+
+设施初始化与昂贵资源启动分开：Start 完成必要初始化，首次使用可以惰性启动资源，空闲时可以回收资源并保留 Tenant 身份和有效凭据。共享启动由设施协调；Tenant 资源操作按 Tenant 协调，不因一个 Tenant 的远端慢操作串行化所有 Tenant。
+
+状态锁只保护内存快照，不跨浏览器启动、CDP 调用或资源释放。全局与 Tenant Status、凭据读取均不等待这些操作；超时或取消终结等待，部分资源仍保留清理归属。关闭 Tenant 先撤销凭据，再清理资源；设施关闭阻止新工作，并等待自己拥有的后台任务退出。

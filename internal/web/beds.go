@@ -23,6 +23,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/go-stdx/randx"
+	"github.com/qiankunli/hostel/internal/instance"
 
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/bed/network"
@@ -104,14 +105,15 @@ type executorView struct {
 
 type bedDetailView struct {
 	bedView
-	Generation         int64          `json:"generation"`
-	SnapshotGeneration int64          `json:"snapshot_generation,omitempty"`
-	SnapshotBytes      int64          `json:"snapshot_bytes,omitempty"`
-	LocalBytes         int64          `json:"local_bytes,omitempty"`
-	RestoreBytes       int64          `json:"restore_bytes,omitempty"`
-	Activity           activityView   `json:"activity"`
-	Lifecycle          *lifecycleView `json:"lifecycle,omitempty"`
-	Executor           *executorView  `json:"executor,omitempty"`
+	Status             instance.BedStatus `json:"status"`
+	Generation         int64              `json:"generation"`
+	SnapshotGeneration int64              `json:"snapshot_generation,omitempty"`
+	SnapshotBytes      int64              `json:"snapshot_bytes,omitempty"`
+	LocalBytes         int64              `json:"local_bytes,omitempty"`
+	RestoreBytes       int64              `json:"restore_bytes,omitempty"`
+	Activity           activityView       `json:"activity"`
+	Lifecycle          *lifecycleView     `json:"lifecycle,omitempty"`
+	Executor           *executorView      `json:"executor,omitempty"`
 }
 
 // instanceStatus is the hostel-layer status (docs/kernel.md): the only way
@@ -181,7 +183,7 @@ func (s *Server) bedGet(c *gin.Context) {
 	b, ok := s.mgr.Get(c.Param("bedId"))
 	if !ok {
 		if initialization, initializing := s.mgr.Initialization(c.Param("bedId")); initializing {
-			c.JSON(http.StatusOK, initializationView(initialization))
+			c.JSON(http.StatusOK, bedDetailView{bedView: initializationView(initialization), Status: s.observer.BedStatus(s.mgr.BedModel(initialization.ID), initialization.BedStatus)})
 			return
 		}
 		respondError(c, http.StatusNotFound, ErrBedInvalid, "bed not found")
@@ -191,6 +193,7 @@ func (s *Server) bedGet(c *gin.Context) {
 	lifecycle := b.Lifecycle()
 	c.JSON(http.StatusOK, bedDetailView{
 		bedView:            s.viewFromStatus(b, status),
+		Status:             s.observer.BedStatus(b.Bed, status.BedStatus),
 		Generation:         status.Generation,
 		SnapshotGeneration: status.SnapshotGeneration,
 		SnapshotBytes:      status.SnapshotBytes,
@@ -292,8 +295,8 @@ func (s *Server) capabilities(c *gin.Context) {
 	iso := s.mgr.Isolator()
 	resources := s.mgr.ResourceReport()
 	amenities := map[string]string{} // name → lifecycle state
-	for _, a := range s.mgr.Amenities().List() {
-		amenities[a.Name()] = a.State()
+	for name, state := range s.mgr.Amenities().States() {
+		amenities[name] = state
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"isolator":    iso.Name(),

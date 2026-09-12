@@ -15,6 +15,8 @@
 package isolation
 
 import (
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
+
 	"context"
 	"log"
 	"os"
@@ -24,6 +26,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 type pathshimView struct {
@@ -42,20 +45,14 @@ func (p *pathshimView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err != nil {
 		return err
 	}
-	userArgs := cmd.Args
-	cmd.Args = make([]string, 0, len(userArgs)+8)
-	cmd.Args = append(cmd.Args, p.path, "--quiet")
-	cmd.Args = appendPathshimBinds(cmd.Args, fs, p.projections)
-	cmd.Args = append(cmd.Args, "--cwd", guestCwd, "--")
-	cmd.Args = append(cmd.Args, userArgs...)
-	cmd.Path = p.path
+	hostfs.Pathshim{Path: p.path}.Wrap(cmd, processMappings(fs, p.projections), guestCwd)
 	return nil
 }
 
 // +spec=`A pathshim process view applies the workspace and configured projections atomically without changing isolation level or mount capability.`
 // +case:id=pathshim_process_view,desc=`Probe and run one command through the selected dorm or room mechanism`,expect=`Every configured path maps to its BedFS source, command semantics survive, and probe failure falls back to carrier paths`
-func newPathshimView(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, discovery ProbeReport) (workspaceBackend, WorkspaceViewReport, ProbeReport) {
-	probe := withExecutionProbe(discovery, probePathshim(base, workspaceRoot, discovery.ResolvedPath, projections))
+func newPathshimView(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, discovery hostfacts.ProbeReport) (workspaceBackend, WorkspaceViewReport, hostfacts.ProbeReport) {
+	probe := hostfacts.WithExecutionProbe(discovery, probePathshim(base, workspaceRoot, discovery.ResolvedPath, projections))
 	reason := probe.Error
 	if reason != "" {
 		log.Printf("isolation: pathshim process view unavailable (%s)", reason)
@@ -68,53 +65,50 @@ func newPathshimView(base Boundary, workspaceRoot string, projections []bedfs.Pa
 	}, WorkspaceViewReport{Mode: "pathshim", Available: true}, probe
 }
 
-func probePathshim(base Boundary, workspaceRoot, executable string, projections []bedfs.PathProjection) ProbeReport {
+func probePathshim(base Boundary, workspaceRoot, executable string, projections []bedfs.PathProjection) hostfacts.ProbeReport {
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
-		return ProbeReport{Error: "create workspace root: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "create workspace root: " + err.Error()}
 	}
 	probeHome, err := os.MkdirTemp(workspaceRoot, ".pathshim-probe-*")
 	if err != nil {
-		return ProbeReport{Error: "create probe bed: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "create probe bed: " + err.Error()}
 	}
 	defer os.RemoveAll(probeHome)
 	probeWorkspace := filepath.Join(probeHome, "workspace")
 	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
-		return ProbeReport{Error: "create probe workspace: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "create probe workspace: " + err.Error()}
 	}
 	fs, err := bedfs.New(probeHome)
 	if err != nil {
-		return ProbeReport{Error: err.Error()}
+		return hostfacts.ProbeReport{Error: err.Error()}
 	}
 	defer fs.Close()
 	for _, projection := range projections {
 		hostPath, err := fs.Resolve(projection.BedPath)
 		if err != nil {
-			return ProbeReport{Error: "resolve probe projection: " + err.Error()}
+			return hostfacts.ProbeReport{Error: "resolve probe projection: " + err.Error()}
 		}
 		if err := fs.EnsureDir(hostPath); err != nil {
-			return ProbeReport{Error: "create probe projection: " + err.Error()}
+			return hostfacts.ProbeReport{Error: "create probe projection: " + err.Error()}
 		}
 	}
 	if preparer, ok := base.(Preparer); ok {
 		if err := preparer.Prepare(fs); err != nil {
-			return ProbeReport{Error: "prepare probe bed: " + err.Error()}
+			return hostfacts.ProbeReport{Error: "prepare probe bed: " + err.Error()}
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	// pathshim v0.1.6 (also pinned by the image) parses a probe subcommand.
-	// Older binaries such as v0.1.3 interpret "probe" as a user command.
-	args := appendPathshimBinds([]string{"probe"}, fs, projections)
-	cmd := exec.CommandContext(ctx, executable, args...)
+	cmd := (hostfs.Pathshim{Path: executable}).ProbeCommand(ctx, processMappings(fs, projections))
 	if err := base.Wrap(cmd, fs, probeWorkspace); err != nil {
-		return ProbeReport{Error: "wrap probe: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "wrap probe: " + err.Error()}
 	}
-	report := runExecProbe(cmd)
+	report := hostfacts.RunExecProbe(cmd)
 	if ctx.Err() != nil {
 		report.Error = "probe timed out"
 		return report
 	}
-	if report.failed() {
+	if report.Failed() {
 		detail := strings.TrimSpace(report.Stdout + report.Stderr)
 		if detail == "" {
 			detail = report.Error
@@ -126,12 +120,4 @@ func probePathshim(base Boundary, workspaceRoot, executable string, projections 
 		report.Error = "unexpected probe output: " + strings.TrimSpace(report.Stdout)
 	}
 	return report
-}
-
-func appendPathshimBinds(args []string, fs *bedfs.FS, projections []bedfs.PathProjection) []string {
-	args = append(args, "--bind", fs.Workspace()+":"+bedfs.WorkspacePath)
-	for _, projection := range projections {
-		args = append(args, "--bind", projection.CarrierPath(fs.Home())+":"+projection.ProcessPath)
-	}
-	return args
 }

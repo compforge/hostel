@@ -2,9 +2,11 @@ package manager
 
 import (
 	"context"
-	model "github.com/qiankunli/hostel/internal/bed"
 	"log"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/amenity"
+	model "github.com/qiankunli/hostel/internal/bed"
 )
 
 // Bed Manager owns the explicit cross-domain order and retry cursor; domains
@@ -15,7 +17,7 @@ func (m *Manager) bindRuntimeLifecycle(b *managedBed) {
 		model.Participant{Name: "executor", Lifecycle: m.executorManager},
 	)
 	b.releaseSequence = model.NewSequence(model.Release,
-		model.Participant{Name: "amenity", Lifecycle: m.amenities},
+		model.Participant{Name: "amenity", Lifecycle: amenityLifecycle{manager: m.amenities}},
 		model.Participant{Name: "executor", Lifecycle: m.executorManager},
 		model.Participant{Name: "resource", Lifecycle: m.resourceManager},
 		model.Participant{Name: "network", Lifecycle: m.network},
@@ -82,4 +84,14 @@ func (m *Manager) cleanupContext(parent context.Context, timeout time.Duration) 
 		cancel()
 	}
 	return ctx, func() { stop(); cancel() }
+}
+
+// amenityLifecycle only bridges Bed teardown; daemon owns facility lifecycles.
+type amenityLifecycle struct {
+	model.Noop
+	manager *amenity.Manager
+}
+
+func (a amenityLifecycle) Release(ctx context.Context, b *model.Bed) error {
+	return a.manager.ReleaseBed(ctx, b.ID)
 }

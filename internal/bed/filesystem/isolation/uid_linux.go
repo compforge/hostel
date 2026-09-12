@@ -17,6 +17,8 @@
 package isolation
 
 import (
+	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
+
 	"fmt"
 	"log"
 	"os"
@@ -26,6 +28,7 @@ import (
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/privilege"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 // Dedicated Bed uids live in a fixed high band assumed unused by the host.
@@ -41,13 +44,13 @@ import (
 // the room slot where Landlock is absent (old/custom kernels).
 type uidIso struct{}
 
-func newUID(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
-	helper, helperErr := privilege.ProcessCredentialHelper()
+func newUID(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfacts.ProbeReport) {
+	helper, helperErr := hostprivilege.ProcessCredentialHelper()
 	if helperErr != nil {
-		discovery := ProbeReport{ConfiguredPath: "setpriv", Error: "find binary: " + helperErr.Error()}
+		discovery := hostfacts.ProbeReport{ConfiguredPath: "setpriv", Error: "find binary: " + helperErr.Error()}
 		return unavailable{name: "uid", lvl: Room}, discovery
 	}
-	discovery := discoverExecutable(helper)
+	discovery := hostfacts.DiscoverExecutable(helper)
 	discovery.ConfiguredPath = "setpriv"
 	// Missing caps isn't an error — many environments simply don't grant them;
 	// the resolver falls through to the next mechanism and logs honestly.
@@ -59,8 +62,8 @@ func newUID(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
 	}
 	// Caps present ≠ enforcement works. Prove the whole chain once — chown →
 	// setuid → no_new_privs → EACCES on a sibling — exactly as production runs.
-	report := withExecutionProbe(discovery, uidSmoke(workspaceRoot))
-	if report.failed() {
+	report := hostfacts.WithExecutionProbe(discovery, uidSmoke(workspaceRoot))
+	if report.Failed() {
 		log.Printf("isolation: uid isolation caps present but unusable (%s)", report.Error)
 		return unavailable{name: "uid", lvl: Room}, report
 	}
@@ -69,7 +72,7 @@ func newUID(facts HostFacts, workspaceRoot string) (Isolator, ProbeReport) {
 
 // missingUIDCaps uses the same requirements published by diagnostics, so the
 // selected mechanism and the operator verdict cannot disagree.
-func missingUIDCaps(facts HostFacts) string {
+func missingUIDCaps(facts hostfacts.Snapshot) string {
 	return strings.Join(privilege.MissingBedIdentityCapabilities(facts.EffectiveCaps), ",")
 }
 
@@ -78,35 +81,35 @@ func missingUIDCaps(facts HostFacts) string {
 // and check it can write its own dir but gets EACCES on the sibling's
 // secret. Catches a silently-broken setuid (e.g. no CAP_SETUID) that the cap
 // bits alone wouldn't — same honesty contract as landlockSmoke.
-func uidSmoke(workspaceRoot string) ProbeReport {
+func uidSmoke(workspaceRoot string) hostfacts.ProbeReport {
 	base, err := os.MkdirTemp(workspaceRoot, ".uidprobe-*")
 	if err != nil {
-		return ProbeReport{Error: fmt.Sprintf("smoke test: temp dir: %v", err)}
+		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: temp dir: %v", err)}
 	}
 	defer os.RemoveAll(base)
 	// The probe process (a bed uid) must be able to TRAVERSE base to reach the
 	// two dirs under it — MkdirTemp makes it 0700, which would block a non-root
 	// uid at the door.
 	if err := os.Chmod(base, 0o755); err != nil {
-		return ProbeReport{Error: "smoke test: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	own := filepath.Join(base, "own")
 	sibling := filepath.Join(base, "sibling")
 	secret := filepath.Join(sibling, "secret")
 	if err := os.MkdirAll(own, 0o755); err != nil {
-		return ProbeReport{Error: "smoke test: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	if err := os.MkdirAll(sibling, 0o755); err != nil {
-		return ProbeReport{Error: "smoke test: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	if err := os.WriteFile(secret, []byte("s"), 0o600); err != nil {
-		return ProbeReport{Error: "smoke test: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	if err := prepareUIDDir(own, uidBase); err != nil {
-		return ProbeReport{Error: "smoke test: prepare own: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "smoke test: prepare own: " + err.Error()}
 	}
 	if err := prepareUIDDir(sibling, uidBase+1); err != nil {
-		return ProbeReport{Error: "smoke test: prepare sibling: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "smoke test: prepare sibling: " + err.Error()}
 	}
 
 	script := fmt.Sprintf("echo ok > probe.txt || exit 10; cat %q >/dev/null 2>&1 && exit 11; exit 0", secret)
@@ -115,12 +118,12 @@ func uidSmoke(workspaceRoot string) ProbeReport {
 	cmd.Dir = own
 	user, err := privilege.NewBedUser(uidBase, uidBase)
 	if err != nil {
-		return ProbeReport{Error: "smoke test: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "smoke test: " + err.Error()}
 	}
 	if err := user.Wrap(cmd); err != nil {
-		return ProbeReport{Error: "smoke test: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "smoke test: " + err.Error()}
 	}
-	report := runExecProbe(cmd)
+	report := hostfacts.RunExecProbe(cmd)
 	if report.ExitCode == nil || *report.ExitCode == 0 {
 		return report
 	}
