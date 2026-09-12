@@ -12,7 +12,7 @@ already part of `PATH`, together with PRoot's `libtalloc2` runtime dependency.
 Hostel discovers the conventional command names `proot` and `pathshim`; it has
 no per-helper path environment variable or flag. A custom image can omit either
 candidate, or provide an executable with the same command name anywhere in
-`PATH`. `/v1/diagnostics` records discovery and smoke-probe facts separately.
+`PATH`. `/v1/status` records discovery and smoke-probe facts separately.
 
 PRoot supplies a best-effort per-Bed process view only when ptrace and its own
 smoke probe work. It does not raise the reported Hostel isolation level.

@@ -24,7 +24,7 @@ func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
 	m.mu.Lock()
 	m.allocations[b] = true
 	m.mu.Unlock()
-	group, err := m.tracker.OpenGroup(b.ID)
+	group, err := m.tracker.OpenGroup(b.ID.String())
 	if err != nil {
 		return err
 	}
@@ -43,7 +43,7 @@ func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
 	if !owned {
 		return nil
 	}
-	if err := m.tracker.Release(b.ID); err != nil {
+	if err := m.tracker.Release(b.ID.String()); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -53,16 +53,16 @@ func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
 	return nil
 }
 
-type Diagnostics struct {
+type Status struct {
 	Accounting Report          `json:"accounting"`
 	Admission  AdmissionReport `json:"admission"`
 }
 
-func (m *Manager) Diagnostics() Diagnostics {
-	return Diagnostics{Accounting: m.tracker.Report(), Admission: m.admission.Report()}
+func (m *Manager) Status() Status {
+	return Status{Accounting: m.tracker.Report(), Admission: m.admission.Report()}
 }
 
-var _ bed.Component[Diagnostics] = (*Manager)(nil)
+var _ bed.Component[Status] = (*Manager)(nil)
 
 func (m *Manager) SetAdmission(a Admitter) { m.admission = a }
 func (m *Manager) Run(ctx context.Context) error {

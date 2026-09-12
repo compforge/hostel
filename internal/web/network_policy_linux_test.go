@@ -30,8 +30,8 @@ func TestLinuxNetworkPolicyAPI(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if !manager.Diagnostics().Enabled {
-		t.Fatalf("network unavailable: %+v", manager.Diagnostics())
+	if !manager.Status().Enabled {
+		t.Fatalf("network unavailable: %+v", manager.Status())
 	}
 	s.mgr.SetNetworkManager(manager)
 	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"policy-a","sync":"noop","networkPolicy":{"defaultAction":"deny"}}`), nil)

@@ -137,7 +137,7 @@ func (s *Server) isolatedCreate(c *gin.Context) {
 	}
 	finish, err := s.mgr.BeginOperation(b, bed.OpControl, 0)
 	if err != nil {
-		_ = s.mgr.Purge(c.Request.Context(), b.ID)
+		_ = s.mgr.Purge(c.Request.Context(), b.Name)
 		respondBedError(c, err)
 		return
 	}
@@ -146,12 +146,12 @@ func (s *Server) isolatedCreate(c *gin.Context) {
 	// Do the same so a 201 response means the bed is ready to run, not merely
 	// that its workspace directory exists.
 	if _, err := s.mgr.ForegroundShell(b); err != nil {
-		_ = s.mgr.Purge(c.Request.Context(), b.ID)
+		_ = s.mgr.Purge(c.Request.Context(), b.Name)
 		runtimeError(c, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, isolatedCreateResponse{
-		SessionID: b.ID,
+		SessionID: b.Name,
 		CreatedAt: b.Spec().CreatedAt,
 	})
 }
@@ -222,15 +222,15 @@ func (s *Server) isolatedGet(c *gin.Context) {
 // GET /v1/isolated/sessions
 func (s *Server) isolatedList(c *gin.Context) {
 	beds := s.mgr.List()
-	sort.Slice(beds, func(i, j int) bool { return beds[i].ID < beds[j].ID })
+	sort.Slice(beds, func(i, j int) bool { return beds[i].Name < beds[j].Name })
 	items := make([]isolatedSessionSummary, 0, len(beds))
 	for _, b := range beds {
-		if b.ID == s.mgr.DefaultBedID() {
+		if b.Name == s.mgr.DefaultBedID() {
 			continue
 		}
 		state := isolatedState(b, !s.mgr.NetworkReport().Enabled)
 		items = append(items, isolatedSessionSummary{
-			SessionID:            b.ID,
+			SessionID:            b.Name,
 			Status:               state.Status,
 			CreatedAt:            state.CreatedAt,
 			LastRunAt:            state.LastRunAt,

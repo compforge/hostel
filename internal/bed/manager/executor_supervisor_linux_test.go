@@ -150,10 +150,10 @@ func TestSupervisorTeardownKillsTree(t *testing.T) {
 		return escapee > 0
 	})
 
-	if ok, err := m.Evict(context.Background(), b.ID); err != nil || ok {
+	if ok, err := m.Evict(context.Background(), b.Name); err != nil || ok {
 		t.Fatalf("Evict active bed: ok=%v err=%v", ok, err)
 	}
-	m.teardown(b)
+	m.rollback(b)
 	select {
 	case result := <-done:
 		if result.Process.Kind != executor.ProcessSignaled || result.Cause != CauseBedTeardown {

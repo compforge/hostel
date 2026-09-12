@@ -55,11 +55,11 @@ func shellCommandArgs(shellPath, command string) []string {
 	return []string{"-c", command}
 }
 
-var bedIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+var bedIDRe = regexp.MustCompile(`^[\pL\pN][\pL\pN._-]{0,127}$`)
 
 func validBedID(id string) error {
-	if !bedIDRe.MatchString(id) {
-		return fmt.Errorf("bed: invalid id %q (allowed: alnum . _ -, ≤128)", id)
+	if len(id) > 128 || !bedIDRe.MatchString(id) {
+		return fmt.Errorf("bed: invalid id %q (allowed: Unicode letters/numbers . _ -, ≤128 UTF-8 bytes)", id)
 	}
 	return nil
 }
@@ -291,7 +291,7 @@ func (m *Manager) StartSessionExecution(
 	if err != nil {
 		return nil, err
 	}
-	execution := m.executions.trackSession(ctx, b.ID, shell, command, cwdInBed, timeout, onStart, onOutput, func(result ExecutionResult) {
+	execution := m.executions.trackSession(ctx, b.Name, shell, command, cwdInBed, timeout, onStart, onOutput, func(result ExecutionResult) {
 		finishOperation()
 		b.RecordCommand(result.Duration)
 	})

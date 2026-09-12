@@ -53,7 +53,8 @@ func TestMCPBedConfigurationLifecycle(t *testing.T) {
 		t.Fatalf("bed b: %d %s", out.Code, out.Body.String())
 	}
 	// Real bed teardown releases the configured pool, including its secrets.
-	previous := facility.Proxy("a")
+	b, _ := mgr.Get("a")
+	previous := facility.Proxy(b.ID.String())
 	out = do(t, s, http.MethodDelete, "/v1/beds/a", nil, nil)
 	if out.Code != 200 {
 		t.Fatalf("delete %d %s", out.Code, out.Body.String())

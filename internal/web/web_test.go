@@ -136,11 +136,11 @@ func TestPingAndHealthz(t *testing.T) {
 	}
 }
 
-func TestDiagnostics(t *testing.T) {
+func TestStatus(t *testing.T) {
 	s := newTestServer(t)
-	rec := do(t, s, http.MethodGet, "/v1/diagnostics", nil, nil)
+	rec := do(t, s, http.MethodGet, "/v1/status", nil, nil)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("/v1/diagnostics = %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("/v1/status = %d %s", rec.Code, rec.Body.String())
 	}
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {

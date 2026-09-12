@@ -106,7 +106,7 @@ Trace；启动日志和没有上下文的后台日志保持原格式。
 ## Trace
 
 Hostel 接收 W3C Trace Context 与 Baggage，并通过 OTLP gRPC 或 HTTP 导出。入站 HTTP span 使用
-Gin 路由模板命名；`/healthz`、`/ping`、`/metrics`、`/metrics/watch`、`/v1/diagnostics`
+Gin 路由模板命名；`/healthz`、`/ping`、`/metrics`、`/metrics/watch`、`/v1/status`
 不创建 span，避免探针和高频采样淹没有效请求。
 
 领域 span 保持小而稳定：
@@ -152,21 +152,21 @@ running 都不能推导出完整隔离，语义由 [isolation.md](isolation.md) 
 实例诊断沿 domain owner 汇总，而不是在 HTTP 层重新解释组件状态：
 
 ```text
-domain component → Diagnostics() 返回自己定义的 Report
-Bed Manager      → 组合版本化 Diagnostics，不跨 domain 推导
+domain component → Status() 返回自己定义的 Status
+Bed Manager      → 聚合领域 Status，并推导 Bed inventory / 实例容量状态
 HTTP             → 序列化响应
 ```
 
-Report 同时是组件内部事实到运维协议的边界。新增或修改诊断项时，由拥有该事实的组件定义语义和
+Status 同时是组件内部事实到运维协议的边界。新增或修改诊断项时，由拥有该事实的组件定义语义和
 快照方式；聚合层只决定顶层结构与 schema 版本，web 层不读取组件内部状态。
-`Component[R]` 将这一读取契约与 daemon、Bed 两层 Lifecycle 放在同一个组件协议下；报告保持领域类型，
-不通过通用 map 或类型断言组装。Diagnostics 只观察，不执行生命周期 hook。
+`Component[S]` 将这一读取契约与 daemon、Bed 两层 Lifecycle 放在同一个组件协议下；报告保持领域类型，
+不通过通用 map 或类型断言组装。Status 只观察，不执行生命周期 hook。
 
-Bed 的分域 Status 是单 Bed 的实际准备结果；Diagnostics 是领域的实例级报告，两者粒度不同。
+Bed 的分域 Status 是单 Bed 的实际准备结果；组件 Status 是领域的实例级报告，两者粒度不同。
 Filesystem 自己提供文件隔离报告，Resource 自己提供 accounting/admission，Bed Manager 只聚合；
 HTTP 不重做探测、不读取领域内部句柄。
 
-`GET /v1/diagnostics` 是版本化的运维诊断快照，当前 `schema_version` 为 `1`。顶层按所有者分为
+`GET /v1/status` 是版本化的运维诊断快照，当前 `schema_version` 为 `1`。顶层按所有者分为
 `environment`、`isolation`、`privilege`、`network`、`executor`、`store`、`resource` 与 `amenities`，HTTP 层只负责序列化，
 不跨组件推导状态。`isolation.system` 和 `isolation.probes` 保存启动时缓存的系统事实与机制原始探测，
 包括 runtime、进程 capability/seccomp、LSM label、namespace sysctl、kernel feature、ptrace Yama scope，
@@ -177,6 +177,12 @@ HTTP 不重做探测、不读取领域内部句柄。
 命令和 shell 验证完整组合的 `not_run|running|passed|failed` 状态、时间和错误。`store.transfers_configured`
 只表示 S3 transfer 配置存在，不推导远端连通或 restic 可执行。诊断接口不披露 bucket、endpoint 或凭据；
 读取接口不重新探测主机，也不访问远端存储。
+`instance` 与 `beds` 由 Bed Manager 的 `InventoryStatus()` 一次聚合，`/v1/beds` 使用同一入口。
+phase/activity、occupied/resident/pinned 计数与本次返回的行一致，不再分别读取原子计数器。
+`retained/draining/releasable` 由 Bed Manager 推导；HTTP 只序列化。冷目录大小在锁外采样，
+再按锁内的准入与清理身份过滤，属于可滞后的调度提示；活跃操作及组件状态不构成全局事务快照。
+`/healthz` 保留轻量健康与能力视图，不增加目录扫描。
+
 Bed Manager 的 `local_cleanups` 报告已认领本地目录的清理状态和最近失败，供区分运行中、等待重试与完成。
 Privilege 的 `reserved_users` 表示 per-Bed UID 池中保留的租约数，包括冷数据与待清理身份；fixed 策略不占池。
 不存在的内核节点以 `value: null` 和 `read_error` 表达，与节点存在且值为 `0` 严格区分。

@@ -33,8 +33,8 @@ func TestLinuxPolicySeparatesBedsAndRevokesAccess(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	if !m.Diagnostics().Enabled {
-		t.Fatalf("network unavailable: %+v", m.Diagnostics())
+	if !m.Status().Enabled {
+		t.Fatalf("network unavailable: %+v", m.Status())
 	}
 	for _, id := range []string{"policy-a", "policy-b"} {
 		if _, err := m.Acquire(t.Context(), id); err != nil {

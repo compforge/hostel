@@ -66,7 +66,7 @@ func TestOpenSessionOnEvictedBedRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	evicted, err := m.Evict(context.Background(), b.ID)
+	evicted, err := m.Evict(context.Background(), b.Name)
 	if err != nil || !evicted {
 		t.Fatalf("Evict = %v, %v", evicted, err)
 	}
@@ -89,7 +89,7 @@ func TestEvictRevokesSessions(t *testing.T) {
 		t.Fatalf("OpenSession: %v", err)
 	}
 
-	evicted, err := m.Evict(context.Background(), b.ID)
+	evicted, err := m.Evict(context.Background(), b.Name)
 	if err != nil || !evicted {
 		t.Fatalf("Evict = %v, %v — an idle session must not block eviction", evicted, err)
 	}

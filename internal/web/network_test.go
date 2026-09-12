@@ -9,7 +9,7 @@ import (
 
 func TestNetworkDiagnosticsWithoutManager(t *testing.T) {
 	s := newTestServer(t)
-	for _, path := range []string{"/healthz", "/v1/diagnostics"} {
+	for _, path := range []string{"/healthz", "/v1/status"} {
 		rec := do(t, s, http.MethodGet, path, nil, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: %s", path, rec.Body.String())

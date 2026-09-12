@@ -20,6 +20,7 @@ import (
 	"fmt"
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem"
+	"golang.org/x/sync/semaphore"
 	"log"
 	"os"
 	"sync"
@@ -39,7 +40,7 @@ import (
 // Manager owns the set of beds and their lifecycle. Safe for concurrent use.
 type Manager struct {
 	startMu         sync.Mutex
-	closeMu         sync.Mutex
+	closeMu         *semaphore.Weighted
 	started         bool
 	startErr        error
 	components      []daemonComponent
@@ -47,6 +48,8 @@ type Manager struct {
 	runCancel       context.CancelFunc
 	runDone         chan struct{}
 	closed          bool
+	cleanupCtx      context.Context
+	cleanupCancel   context.CancelFunc
 	owners          model.Owners
 	files           *filesystem.Manager
 	executorManager *executor.Manager
@@ -136,7 +139,10 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 		st = store.NewManagerWithStores(store.Noop{})
 	}
 	resources := resource.Noop("resource tracker not configured")
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	m := &Manager{
+		closeMu:    semaphore.NewWeighted(1),
+		cleanupCtx: cleanupCtx, cleanupCancel: cleanupCancel,
 		root:            root,
 		owners:          model.NewOwners(),
 		defaultBed:      defaultBed,
@@ -187,10 +193,10 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 
 // BedUserReport exposes the configured assignment policy for diagnostics.
 func (m *Manager) BedUserReport() privilege.BedUserReport {
-	return m.privileges.Diagnostics().BedUser
+	return m.privileges.Status().BedUser
 }
 
-func (m *Manager) PrivilegeReport() privilege.Report { return m.privileges.Diagnostics() }
+func (m *Manager) PrivilegeReport() privilege.Status { return m.privileges.Status() }
 
 // SetResourceTracker installs host resource accounting before any bed process
 // starts. cmd/hostel calls it once during assembly; keeping it out of
@@ -219,7 +225,13 @@ func (m *Manager) ResourceReport() resource.Report { return m.resources.Report()
 
 // ResourceUsage returns one cumulative usage snapshot for a bed.
 func (m *Manager) ResourceUsage(id string) (resource.Usage, error) {
-	return m.resources.Usage(id)
+	m.mu.Lock()
+	b := m.beds[id]
+	m.mu.Unlock()
+	if b == nil {
+		return resource.Usage{}, ErrBedUnavailable
+	}
+	return m.resources.Usage(b.ID.String())
 }
 
 // SetResourceAdmission installs the cached carrier-pressure gate before
@@ -326,7 +338,7 @@ func (m *Manager) resourceAdmissionErrorLocked() error {
 // adjustPinnedLocked updates the tenant capacity counter after a bed mutation.
 // Callers hold m.mu and b.mu and pass the pre-mutation compound value.
 func (m *Manager) adjustPinnedLocked(b *managedBed, wasPinned bool) {
-	if b.ID == m.defaultBed {
+	if b.Name == m.defaultBed {
 		return
 	}
 	isPinned := b.pinnedLocked()
@@ -367,7 +379,7 @@ func (m *Manager) tenantResidentBedsLocked() int {
 func (m *Manager) tenantOccupiedBedsLocked() int {
 	n := m.tenantResidentBedsLocked()
 	for id, initialization := range m.initializations {
-		if id != m.defaultBed && m.retirements[id] == nil && initialization.status.Phase == PhaseInitializing {
+		if id != m.defaultBed && m.retirements[id] == nil && initialization.snapshot().Phase == PhaseInitializing {
 			n++
 		}
 	}
@@ -396,7 +408,7 @@ func (m *Manager) DefaultBedOccupied() bool {
 		return true
 	}
 	initialization, ok := m.initializations[m.defaultBed]
-	return ok && initialization.status.Phase == PhaseInitializing
+	return ok && initialization.snapshot().Phase == PhaseInitializing
 }
 
 // SetBedIdleTTL configures the idle retention used for new beds and operation
@@ -475,7 +487,7 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 
 	// Enter EVICTING: remember the activity watermark we snapshot against.
 	b.mu.Lock()
-	if b.evicting {
+	if b.Bed.Status().Lifecycle.Phase == PhaseEvicting {
 		b.mu.Unlock()
 		return false, nil // another evict is already in flight
 	}
@@ -483,7 +495,7 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 		b.mu.Unlock()
 		return false, nil
 	}
-	b.evicting = true
+	m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseEvicting, Ready: true, Reason: "Evicting", UpdatedAt: time.Now()})
 	activitySeq := b.activitySeq
 	b.mu.Unlock()
 
@@ -492,13 +504,13 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 	// the snapshot. The wait is bounded, so a stubborn handler stalls the
 	// evict at most sessionRevokeWait.
 	_ = trace.stage("revoke_sessions", func() error {
-		m.revokeSessions(b)
+		m.revokeSessions(ctx, b)
 		return nil
 	})
 
 	if err := m.persistBed(ctx, b, "evict"); err != nil {
 		b.mu.Lock()
-		b.evicting = false
+		m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: true, Reason: "Initialized", UpdatedAt: time.Now()})
 		b.mu.Unlock()
 		return false, fmt.Errorf("bed: persist before evict %s: %w", id, err)
 	}
@@ -513,7 +525,7 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 	b.mu.Lock()
 	current, present := m.beds[id]
 	if !present || current != b || b.activitySeq != activitySeq || b.inflight > 0 {
-		b.evicting = false
+		m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: true, Reason: "Initialized", UpdatedAt: time.Now()})
 		b.mu.Unlock()
 		m.mu.Unlock()
 		return false, nil
@@ -532,71 +544,28 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 // are gone. A failed attempt stays observable and can be retried with Evict.
 // +spec=`Same-ID initialization cannot overlap destructive cleanup from an earlier resident Bed.`
 func (m *Manager) finishRetirement(ctx context.Context, b *managedBed) (bool, error) {
-	b.cleanupMu.Lock()
-	defer b.cleanupMu.Unlock()
+	if err := b.cleanupMu.Acquire(ctx, 1); err != nil {
+		return false, err
+	}
+	defer b.cleanupMu.Release(1)
 	m.mu.Lock()
-	current := m.retirements[b.ID] == b
+	current := m.retirements[b.Name] == b
 	m.mu.Unlock()
 	if !current {
 		return true, nil
 	}
-	if err := m.teardown(b); err != nil {
+	if err := m.teardown(ctx, b); err != nil {
 		return false, err
 	}
 	if err := m.cleanLocalIdentity(ctx, b.local, true); err != nil {
 		return false, err
 	}
 	m.mu.Lock()
-	if m.retirements[b.ID] == b {
-		delete(m.retirements, b.ID)
+	if m.retirements[b.Name] == b {
+		delete(m.retirements, b.Name)
 	}
 	m.mu.Unlock()
 	return true, nil
-}
-
-// Close is called after HTTP admission stops. Pending retirements retain the
-// same cleanup owners and are retried alongside resident Beds.
-func (m *Manager) Close(ctx context.Context) error {
-	m.closeMu.Lock()
-	defer m.closeMu.Unlock()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := m.stopBackground(ctx); err != nil {
-		return err
-	}
-	if err := m.store.StopTransfers(ctx, ""); err != nil {
-		return err
-	}
-	if err := m.cancelAllInitializations(ctx); err != nil {
-		return err
-	}
-	beds := m.List()
-	m.mu.Lock()
-	for _, b := range m.retirements {
-		beds = append(beds, b)
-	}
-	m.mu.Unlock()
-	var closeErr error
-	for _, b := range beds {
-		m.mu.Lock()
-		retiring := m.retirements[b.ID] == b
-		m.mu.Unlock()
-		if retiring {
-			_, err := m.finishRetirement(ctx, b)
-			closeErr = errors.Join(closeErr, err)
-			continue
-		}
-		m.executions.killBed(b.ID, CauseDaemonShutdown)
-		b.cleanupMu.Lock()
-		closeErr = errors.Join(closeErr, m.teardown(b))
-		b.cleanupMu.Unlock()
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	closeErr = errors.Join(m.RetryLocalCleanups(ctx), m.closeComponents(ctx))
-	return closeErr
 }
 
 // CollectExpired reaps beds whose promised expiry has elapsed. The final
@@ -634,7 +603,7 @@ func (m *Manager) CollectExpired(ctx context.Context, now time.Time) []string {
 // accurate ("locally dirty"), while a falsely-advanced LastPersistedAt would
 // make restart-time dirty tracking skip data that never reached the store.
 func (m *Manager) persistBed(ctx context.Context, b *managedBed, trigger string) (retErr error) {
-	trace := beginLifecycle(ctx, b.ID, lifecyclePersist)
+	trace := beginLifecycle(ctx, b.Name, lifecyclePersist)
 	trace.trigger = trigger
 	defer func() {
 		b.recordLifecycle(trace.finish(lifecycleResult(retErr), retErr))
@@ -660,7 +629,7 @@ func (m *Manager) persistBed(ctx context.Context, b *managedBed, trigger string)
 		var ok bool
 		meta, ok = loadMeta(b.Spec().Dir)
 		if !ok {
-			meta = bedMeta{Version: 1, BedID: b.ID, CreatedAt: b.Spec().CreatedAt, Sync: b.Spec().Sync}
+			meta = bedMeta{Version: 1, BedID: b.Name, CreatedAt: b.Spec().CreatedAt, Sync: b.Spec().Sync}
 		}
 		meta.Generation++
 		// Flush counters before packing so they travel with the snapshot.
@@ -676,7 +645,7 @@ func (m *Manager) persistBed(ctx context.Context, b *managedBed, trigger string)
 		b.mu.Unlock()
 		return nil
 	}); err != nil {
-		return fmt.Errorf("bed: bump generation %s: %w", b.ID, err)
+		return fmt.Errorf("bed: bump generation %s: %w", b.Name, err)
 	}
 
 	var persistedAt time.Time
@@ -708,15 +677,13 @@ func (m *Manager) persistBed(ctx context.Context, b *managedBed, trigger string)
 		wasPinned := b.pinnedLocked()
 		b.persistedAt = snapshotWatermark
 		b.usage.LastPersistMs = persistedAt.Sub(persistStarted).Milliseconds()
-		b.localBytes = localBytes
+		m.store.ObserveLocal(b.Bed, snapshot, localBytes)
 		if snapshot != nil {
-			b.snapshotGeneration = snapshot.Generation
-			b.snapshotBytes = snapshot.Bytes
 			meta.SnapshotGeneration = snapshot.Generation
 			meta.SnapshotBytes = snapshot.Bytes
 		}
 		meta.Usage = b.usage
-		if current, ok := m.beds[b.ID]; ok && current == b {
+		if current, ok := m.beds[b.Name]; ok && current == b {
 			m.adjustPinnedLocked(b, wasPinned)
 		}
 		b.mu.Unlock()
@@ -760,7 +727,7 @@ func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, b
 			// automatic snapshot generation or Store I/O for them.
 			bytes := filepathx.DirBytes(b.Spec().Dir)
 			b.mu.Lock()
-			b.localBytes = bytes
+			m.store.ObserveLocal(b.Bed, nil, bytes)
 			b.mu.Unlock()
 			continue
 		}
@@ -769,7 +736,7 @@ func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, b
 		// must not block durability; real session traffic touches lastActiveAt,
 		// so activity after persistBed captures its watermark keeps the bed
 		// dirty for a follow-up pass.
-		dirty := b.lastActiveAt.After(b.persistedAt) && b.inflight == 0 && !b.evicting && !b.purging
+		dirty := b.lastActiveAt.After(b.persistedAt) && b.inflight == 0 && b.Bed.Status().Lifecycle.Phase != PhaseEvicting && !b.purging
 		b.mu.Unlock()
 		if !dirty {
 			continue
@@ -779,7 +746,7 @@ func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, b
 			failed = true
 			continue
 		}
-		done = append(done, b.ID)
+		done = append(done, b.Name)
 	}
 	return done, failed
 }

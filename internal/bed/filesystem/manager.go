@@ -62,7 +62,7 @@ func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
 	return nil
 }
 
-type Report struct {
+type Status struct {
 	Requested     string                           `json:"requested"`
 	Effective     string                           `json:"effective"`
 	Ceiling       string                           `json:"ceiling"`
@@ -72,8 +72,8 @@ type Report struct {
 	Probes        map[string]isolation.ProbeReport `json:"probes"`
 }
 
-func (m *Manager) Diagnostics() Report {
-	view := Report{
+func (m *Manager) Status() Status {
+	view := Status{
 		Effective:     m.isolator.Level().String(),
 		Mechanism:     m.isolator.Name(),
 		WorkspaceView: isolation.WorkspaceViewReport{Mode: "carrier", Available: true},
@@ -95,4 +95,4 @@ func (m *Manager) Diagnostics() Report {
 	return view
 }
 
-var _ bed.Component[Report] = (*Manager)(nil)
+var _ bed.Component[Status] = (*Manager)(nil)

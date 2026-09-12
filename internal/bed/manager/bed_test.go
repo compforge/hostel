@@ -85,14 +85,14 @@ func TestResolveDefaultBedAndValidation(t *testing.T) {
 	m := newTestManager(t)
 
 	b, err := m.Ensure(context.Background(), "") // empty → default
-	if err != nil || b.ID != "default" {
+	if err != nil || b.Name != "default" {
 		t.Fatalf("Resolve(\"\") = %v, %v", b, err)
 	}
 	if _, err := m.Ensure(context.Background(), "bad id!"); err == nil {
 		t.Fatal("Resolve invalid id: want error")
 	}
 	b2, _ := m.Ensure(context.Background(), "conv-123")
-	if b2.ID != "conv-123" || b2.Workspace() == b.Workspace() {
+	if b2.Name != "conv-123" || b2.Workspace() == b.Workspace() {
 		t.Fatalf("distinct bed expected, got %+v", b2)
 	}
 	if got := m.ResidentBedCount(); got != 1 {
@@ -109,16 +109,17 @@ func TestManagerCloseReleasesBedAmenityState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Ensure(context.Background(), "close-amenity"); err != nil {
+	b, err := m.Ensure(context.Background(), "close-amenity")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(facility.released) != 1 || facility.released[0] != "close-amenity" {
+	if len(facility.released) != 1 || facility.released[0] != b.ID.String() {
 		t.Fatalf("released tenants = %v", facility.released)
 	}
-	if len(facility.revoked) != 1 || facility.revoked[0] != "close-amenity" {
+	if len(facility.revoked) != 1 || facility.revoked[0] != b.ID.String() {
 		t.Fatalf("revoked secrets = %v", facility.revoked)
 	}
 }
@@ -190,7 +191,7 @@ func TestLifecycleObservations(t *testing.T) {
 		t.Fatalf("initialization stages = %q", got)
 	}
 
-	if err := m.Checkpoint(context.Background(), b.ID); err != nil {
+	if err := m.Checkpoint(context.Background(), b.Name); err != nil {
 		t.Fatalf("Checkpoint: %v", err)
 	}
 	lifecycle = b.Lifecycle()
@@ -202,7 +203,7 @@ func TestLifecycleObservations(t *testing.T) {
 	}
 
 	fs.fail = true
-	if err := m.Checkpoint(context.Background(), b.ID); err == nil {
+	if err := m.Checkpoint(context.Background(), b.Name); err == nil {
 		t.Fatal("Checkpoint failure: want error")
 	}
 	lifecycle = b.Lifecycle()
@@ -210,7 +211,7 @@ func TestLifecycleObservations(t *testing.T) {
 		t.Fatalf("LastPersist failure = %+v", lifecycle.LastPersist)
 	}
 	fs.fail = false
-	if ok, err := m.Evict(context.Background(), b.ID); err != nil || !ok {
+	if ok, err := m.Evict(context.Background(), b.Name); err != nil || !ok {
 		t.Fatalf("Evict: ok=%v err=%v", ok, err)
 	}
 	if !strings.Contains(logs.String(), "action=initialize stage=stage_in_bedfs event=start") ||
@@ -407,7 +408,7 @@ func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 	if ok, err := m.Evict(context.Background(), "conv-kill"); err != nil || ok {
 		t.Fatalf("Evict active bed: ok=%v err=%v", ok, err)
 	}
-	m.teardown(b)
+	m.rollback(b)
 	select {
 	case result := <-done:
 		if result.Process.Kind != executor.ProcessSignaled || result.Cause != CauseBedTeardown {
@@ -544,8 +545,8 @@ func TestOperationExtendsExpiryAndBlocksExpiredReap(t *testing.T) {
 	if got := b.Activity(); got != ActivityIdle {
 		t.Fatalf("finished operation activity = %q, want idle", got)
 	}
-	if reaped := m.CollectExpired(context.Background(), retainUntil.Add(time.Hour)); len(reaped) != 1 || reaped[0] != b.ID {
-		t.Fatalf("CollectExpired after finish = %v, want [%s]", reaped, b.ID)
+	if reaped := m.CollectExpired(context.Background(), retainUntil.Add(time.Hour)); len(reaped) != 1 || reaped[0] != b.Name {
+		t.Fatalf("CollectExpired after finish = %v, want [%s]", reaped, b.Name)
 	}
 }
 
@@ -1117,9 +1118,9 @@ func TestInitializeBedRunsStoreWorkAsynchronouslyAndReservesCapacity(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resident.ID != "one" || backend.calls() != 1 || m.OccupiedBedCount() != 1 || m.ResidentBedCount() != 1 {
+	if resident.Name != "one" || backend.calls() != 1 || m.OccupiedBedCount() != 1 || m.ResidentBedCount() != 1 {
 		t.Fatalf("resident=%s stat_calls=%d occupied_count=%d resident_count=%d",
-			resident.ID, backend.calls(), m.OccupiedBedCount(), m.ResidentBedCount())
+			resident.Name, backend.calls(), m.OccupiedBedCount(), m.ResidentBedCount())
 	}
 	if status, ok := m.Initialization("one"); ok {
 		t.Fatalf("completed initialization still visible: %+v", status)
@@ -1318,8 +1319,8 @@ func TestPersistDirtyDoesNotWaitForSessionClose(t *testing.T) {
 	}
 	defer sess.Close()
 
-	if done := m.PersistDirty(context.Background()); len(done) != 1 || done[0] != b.ID {
-		t.Fatalf("PersistDirty with open session = %v, want [%s]", done, b.ID)
+	if done := m.PersistDirty(context.Background()); len(done) != 1 || done[0] != b.Name {
+		t.Fatalf("PersistDirty with open session = %v, want [%s]", done, b.Name)
 	}
 	status := b.Status()
 	if status.Sessions[SessionKindCDP] != 1 {
@@ -1335,8 +1336,8 @@ func TestPersistDirtyDoesNotWaitForSessionClose(t *testing.T) {
 	if !b.Status().Pinned {
 		t.Fatal("session traffic did not pin dirty data")
 	}
-	if done := m.PersistDirty(context.Background()); len(done) != 1 || done[0] != b.ID {
-		t.Fatalf("PersistDirty after session traffic = %v, want [%s]", done, b.ID)
+	if done := m.PersistDirty(context.Background()); len(done) != 1 || done[0] != b.Name {
+		t.Fatalf("PersistDirty after session traffic = %v, want [%s]", done, b.Name)
 	}
 }
 

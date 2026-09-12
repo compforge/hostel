@@ -159,3 +159,61 @@ func (m *Manager) stopBackground(ctx context.Context) error {
 
 var _ model.DaemonLifecycle = (*Manager)(nil)
 var _ model.Runnable = (*Manager)(nil)
+
+// Close is called after HTTP admission stops. Pending retirements retain the
+// same cleanup owners and are retried alongside resident Beds.
+func (m *Manager) Close(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := m.closeMu.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer m.closeMu.Release(1)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stopCleanup := context.AfterFunc(ctx, m.cleanupCancel)
+	defer stopCleanup()
+	if err := m.stopBackground(ctx); err != nil {
+		return err
+	}
+	if err := m.store.StopTransfers(ctx, ""); err != nil {
+		return err
+	}
+	if err := m.cancelAllInitializations(ctx); err != nil {
+		return err
+	}
+	if err := m.joinPurges(ctx); err != nil {
+		return err
+	}
+	beds := m.List()
+	m.mu.Lock()
+	for _, b := range m.retirements {
+		beds = append(beds, b)
+	}
+	m.mu.Unlock()
+	var closeErr error
+	for _, b := range beds {
+		m.mu.Lock()
+		retiring := m.retirements[b.Name] == b
+		m.mu.Unlock()
+		if retiring {
+			_, err := m.finishRetirement(ctx, b)
+			closeErr = errors.Join(closeErr, err)
+			continue
+		}
+		m.executions.killBed(b.Name, CauseDaemonShutdown)
+		if err := b.cleanupMu.Acquire(ctx, 1); err != nil {
+			closeErr = errors.Join(closeErr, err)
+			continue
+		}
+		closeErr = errors.Join(closeErr, m.teardown(ctx, b))
+		b.cleanupMu.Release(1)
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	closeErr = errors.Join(m.RetryLocalCleanups(ctx), m.closeComponents(ctx))
+	return closeErr
+}

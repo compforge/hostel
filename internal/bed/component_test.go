@@ -23,21 +23,22 @@ func (p *testParticipant) Release(context.Context, *Bed) error {
 }
 func TestSequenceRetriesOnlyUnfinishedHooks(t *testing.T) {
 	var log []string
+	b := New("test", "", Spec{})
 	first := &testParticipant{name: "first", log: &log}
 	second := &testParticipant{name: "second", log: &log, fail: true}
 	last := &testParticipant{name: "last", log: &log}
 	sequence := NewSequence(Release, Participant{"first", first}, Participant{"second", second}, Participant{"last", last})
-	if err := sequence.Run(context.Background(), New("test", 0, Spec{})); err == nil {
+	if err := sequence.Run(context.Background(), b); err == nil {
 		t.Fatal("expected failure")
 	}
 	if !reflect.DeepEqual(log, []string{"first", "second"}) {
 		t.Fatal(log)
 	}
 	second.fail = false
-	if err := sequence.Run(context.Background(), New("test", 0, Spec{})); err != nil {
+	if err := sequence.Run(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
-	if err := sequence.Run(context.Background(), New("test", 0, Spec{})); err != nil {
+	if err := sequence.Run(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(log, []string{"first", "second", "second", "last"}) {
@@ -46,20 +47,36 @@ func TestSequenceRetriesOnlyUnfinishedHooks(t *testing.T) {
 }
 func TestSequenceCancellationDoesNotAdvance(t *testing.T) {
 	var log []string
+	b := New("test", "", Spec{})
 	p := &testParticipant{name: "one", log: &log}
 	sequence := NewSequence(Release, Participant{"one", p})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := sequence.Run(ctx, New("test", 0, Spec{})); !errors.Is(err, context.Canceled) {
+	if err := sequence.Run(ctx, b); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	if len(log) != 0 {
 		t.Fatal(log)
 	}
-	if err := sequence.Run(context.Background(), New("test", 0, Spec{})); err != nil {
+	if err := sequence.Run(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	if len(log) != 1 {
 		t.Fatal(log)
+	}
+}
+
+func TestSequenceCannotReleaseAnotherBed(t *testing.T) {
+	var calls []string
+	p := &testParticipant{name: "release", log: &calls}
+	sequence := NewSequence(Release, Participant{"release", p})
+	if err := sequence.Run(t.Context(), New("same", "", Spec{})); err != nil {
+		t.Fatal(err)
+	}
+	if err := sequence.Run(t.Context(), New("same", "", Spec{})); err == nil {
+		t.Fatal("accepted another local lifetime")
+	}
+	if len(calls) != 1 {
+		t.Fatal(calls)
 	}
 }

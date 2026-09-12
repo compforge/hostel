@@ -49,7 +49,7 @@ func (e *fakeEndpoint) Close(context.Context) error {
 	return e.err
 }
 func testManager(b backend) *Manager {
-	return &Manager{report: Report{Enabled: true, Backend: "netns", Scope: "bed_processes"}, backend: b, beds: make(map[string]*attachment), pending: make(map[string]*acquisition)}
+	return &Manager{report: Status{Enabled: true, Backend: "netns", Scope: "bed_processes"}, backend: b, beds: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 
 func TestDisabledDoesNotChangeCommands(t *testing.T) {
@@ -63,7 +63,7 @@ func TestDisabledDoesNotChangeCommands(t *testing.T) {
 	if lease != nil {
 		t.Fatal("disabled manager returned an allocation")
 	}
-	if cmd.String() != before || m.Diagnostics().Enabled {
+	if cmd.String() != before || m.Status().Enabled {
 		t.Fatal("disabled manager changed execution")
 	}
 }
@@ -95,7 +95,7 @@ func TestAcquireSingleFlightAndNoSilentFallback(t *testing.T) {
 	if _, err := m.Acquire(context.Background(), "bed"); !errors.Is(err, b.err) {
 		t.Fatalf("runtime failure: %v", err)
 	}
-	if !m.Diagnostics().Enabled {
+	if !m.Status().Enabled {
 		t.Fatal("runtime failure silently disabled manager")
 	}
 }

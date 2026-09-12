@@ -42,7 +42,7 @@ func claimTestUser(t *testing.T, m *Manager, id string) *localIdentity {
 }
 func assertUserReserved(t *testing.T, m *Manager) {
 	t.Helper()
-	other := model.New("other", 0, model.Spec{})
+	other := model.New("other", "", model.Spec{})
 	if err := m.privileges.Prepare(context.Background(), other); err == nil {
 		t.Fatal("UID assigned to other while original local data survives")
 	}
@@ -81,7 +81,7 @@ func TestPurgeRetainsUIDUntilFailedGCCleanupCompletes(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(m.root, gcTmpPrefix+"same", "data")); err != nil {
 		t.Fatal(err)
 	}
-	reports := m.Diagnostics().LocalCleanups
+	reports := m.Status().LocalCleanups
 	if len(reports) != 1 || reports[0].Error == "" || reports[0].Running {
 		t.Fatalf("cleanup report=%+v", reports)
 	}
@@ -89,10 +89,10 @@ func TestPurgeRetainsUIDUntilFailedGCCleanupCompletes(t *testing.T) {
 	if err := m.Purge(context.Background(), "same"); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.Diagnostics().LocalCleanups) != 0 {
+	if len(m.Status().LocalCleanups) != 0 {
 		t.Fatal("finished cleanup remains reported")
 	}
-	if err := m.privileges.Prepare(context.Background(), model.New("other", 0, model.Spec{})); err != nil {
+	if err := m.privileges.Prepare(context.Background(), model.New("other", "", model.Spec{})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -108,7 +108,7 @@ func TestRecoveryFencesGCResidueWithWatermarksDisabled(t *testing.T) {
 		t.Fatalf("create beside recovered cleanup: %v", err)
 	}
 	assertUserReserved(t, m)
-	if len(m.Diagnostics().LocalCleanups) != 1 {
+	if len(m.Status().LocalCleanups) != 1 {
 		t.Fatal("startup residue is not reported")
 	}
 	// The normal tick still completes cleanup with high=0 (no cold eviction).
@@ -116,7 +116,7 @@ func TestRecoveryFencesGCResidueWithWatermarksDisabled(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, gcTmpPrefix+"same")); !os.IsNotExist(err) {
 		t.Fatalf("GC residue survived: %v", err)
 	}
-	if err := m.privileges.Prepare(ctx, model.New("other", 0, model.Spec{})); err != nil {
+	if err := m.privileges.Prepare(ctx, model.New("other", "", model.Spec{})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -138,7 +138,7 @@ func TestRecoveredGCDoesNotForgetSurvivingColdIdentity(t *testing.T) {
 	if err := m.cleanLocalIdentity(context.Background(), local, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.privileges.Prepare(context.Background(), model.New("other", 0, model.Spec{})); err != nil {
+	if err := m.privileges.Prepare(context.Background(), model.New("other", "", model.Spec{})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -181,7 +181,7 @@ func TestPurgeJoinsRunningGCAndCreateWaitsForCleanup(t *testing.T) {
 	if err := <-purgeDone; err != nil {
 		t.Fatal(err)
 	}
-	if err := m.privileges.Prepare(context.Background(), model.New("other", 0, model.Spec{})); err != nil {
+	if err := m.privileges.Prepare(context.Background(), model.New("other", "", model.Spec{})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -194,10 +194,10 @@ func TestCloseRetriesPendingColdCleanup(t *testing.T) {
 	if err := m.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.Diagnostics().LocalCleanups) != 0 {
+	if len(m.Status().LocalCleanups) != 0 {
 		t.Fatal("Close left cold cleanup pending")
 	}
-	if err := m.privileges.Prepare(context.Background(), model.New("other", 0, model.Spec{})); err != nil {
+	if err := m.privileges.Prepare(context.Background(), model.New("other", "", model.Spec{})); err != nil {
 		t.Fatal(err)
 	}
 }

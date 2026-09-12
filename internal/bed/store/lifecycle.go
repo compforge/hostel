@@ -24,7 +24,7 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	m.stages[b] = StageInResult{}
 	m.mu.Unlock()
 	result, err := m.StageInBedFS(ctx, spec.Sync, StageInRequest{
-		BedID: b.ID, BedDir: spec.Dir, LocalPresent: spec.LocalPresent,
+		BedID: b.Name, BedDir: spec.Dir, LocalPresent: spec.LocalPresent,
 		LocalGeneration: spec.LocalGeneration, OnStep: observer,
 	})
 	m.mu.Lock()
@@ -36,7 +36,7 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	m.mu.Unlock()
 	status := bed.StoreStatus{Source: string(result.Source), Restored: result.Restored}
 	if result.Snapshot != nil {
-		status.Generation = result.Snapshot.Generation
+		status.SnapshotGeneration = result.Snapshot.Generation
 		status.SnapshotBytes = result.Snapshot.Bytes
 	}
 	m.status.Set(b, status)
@@ -54,7 +54,7 @@ func (m *Manager) Stop(ctx context.Context, b *bed.Bed) error {
 	if !owned {
 		return nil
 	}
-	return m.StopTransfers(ctx, b.ID)
+	return m.StopTransfers(ctx, b.Name)
 }
 func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
 	m.mu.Lock()
@@ -65,20 +65,32 @@ func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
 }
 func (m *Manager) Close(ctx context.Context) error { return m.StopTransfers(ctx, "") }
 
-var _ bed.Component[Report] = (*Manager)(nil)
+var _ bed.Component[Status] = (*Manager)(nil)
 
 func (m *Manager) PersistBed(ctx context.Context, b *bed.Bed, generation int64) error {
 	spec := b.Spec()
-	if err := m.Persist(ctx, spec.Sync, b.ID, spec.Dir, generation); err != nil {
+	if err := m.Persist(ctx, spec.Sync, b.Name, spec.Dir, generation); err != nil {
 		return err
 	}
-	m.status.Update(b, func(s *bed.StoreStatus) { s.Generation = generation })
+	m.status.Update(b, func(s *bed.StoreStatus) { s.SnapshotGeneration = generation })
 	return nil
 }
 func (m *Manager) StatBed(ctx context.Context, b *bed.Bed) (*SnapshotInfo, error) {
-	snapshot, err := m.Stat(ctx, b.Spec().Sync, b.ID)
+	snapshot, err := m.Stat(ctx, b.Spec().Sync, b.Name)
 	if err == nil && snapshot != nil {
-		m.status.Update(b, func(s *bed.StoreStatus) { s.Generation = snapshot.Generation; s.SnapshotBytes = snapshot.Bytes })
+		m.status.Update(b, func(s *bed.StoreStatus) { s.SnapshotGeneration = snapshot.Generation; s.SnapshotBytes = snapshot.Bytes })
 	}
 	return snapshot, err
+}
+
+// ObserveLocal records metadata recovered from the local tree and asynchronous
+// disk-size samples. These are scheduling hints, not live file system handles.
+func (m *Manager) ObserveLocal(b *bed.Bed, snapshot *SnapshotInfo, localBytes int64) {
+	m.status.Update(b, func(s *bed.StoreStatus) {
+		s.LocalBytes = localBytes
+		if snapshot != nil {
+			s.SnapshotGeneration = snapshot.Generation
+			s.SnapshotBytes = snapshot.Bytes
+		}
+	})
 }

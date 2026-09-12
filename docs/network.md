@@ -47,7 +47,7 @@ Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspac
   veth 访问的地址（默认 `:8872`），不是仅监听 carrier loopback。
 - 这些边界不等于安全容器：Hostel 的可信/半可信代码模型不变。透明 MITM 和 Credential Vault 不在当前能力范围。
 
-`GET /v1/diagnostics` 和 `/healthz` 的 `network` 返回启用状态、backend、作用域、失败
+`GET /v1/status` 和 `/healthz` 的 `network` 返回启用状态、backend、作用域、失败
 原因和启动 probe（attempted、stage、duration_ms、error）。`enabled=false` 是网络能力
 缺席，不是 Hostel 健康检查失败。`/v1/isolated` 的 share_net 如实反映该状态，显式请求
 与实例能力冲突会报不支持。

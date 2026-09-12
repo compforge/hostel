@@ -32,15 +32,15 @@ func TestLinuxNetwork(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	t.Logf("report: %+v", m.Diagnostics())
+	t.Logf("report: %+v", m.Status())
 	if mode == "disabled" {
-		if m.Diagnostics().Enabled || m.Diagnostics().Reason == "" {
+		if m.Status().Enabled || m.Status().Reason == "" {
 			t.Fatal("expected honest disabled verdict")
 		}
 		return
 	}
-	if !m.Diagnostics().Enabled {
-		t.Fatalf("network unavailable: %+v", m.Diagnostics())
+	if !m.Status().Enabled {
+		t.Fatalf("network unavailable: %+v", m.Status())
 	}
 	for _, id := range []string{"a", "b"} {
 		if _, err := m.Acquire(context.Background(), id); err != nil {

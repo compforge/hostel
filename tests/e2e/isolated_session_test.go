@@ -53,7 +53,7 @@ func TestIsolatedSessionCompatibility(t *testing.T) {
 			Enabled bool `json:"enabled"`
 		} `json:"network"`
 	}
-	verdict, err := c.json(ctx, "GET", "/v1/diagnostics", "", nil, &diagnostics)
+	verdict, err := c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
 	cancel()
 	if err != nil || verdict.Status != http.StatusOK || state.ShareNet == diagnostics.Network.Enabled {
 		t.Fatalf("isolated share_net=%t disagrees with network=%+v: %v", state.ShareNet, diagnostics.Network, err)

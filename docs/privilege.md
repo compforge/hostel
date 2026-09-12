@@ -79,7 +79,7 @@ Linux 下所有 Bed command/session 都经过 `setpriv`，包括 BedUser 与 dae
 | `CAP_SETPCAP` | 管理最终进程的 capability 集合 |
 
 `drop: ["ALL"]` 会移除包括 `CAP_KILL`、`CAP_SETPCAP` 在内的默认 capability，必须按
-`/v1/diagnostics.privilege.requirements.capabilities` 的实际结果显式加回。只有 daemon 与 BedUser
+`/v1/status.privilege.requirements.capabilities` 的实际结果显式加回。只有 daemon 与 BedUser
 相同时，这组身份切换要求才为空。
 
 隔离和进程视图在 Bed identity 基础上还有各自的运行条件。下表区分实际操作要求与容器中常见的
@@ -128,9 +128,9 @@ capability 清理和 `NoNewPrivs` 的完整组合。组合探测失败会阻止�
 非 Linux 平台不支持切换 Bed 身份；只有 BedUser 与 daemon 身份相同时才可执行。Hostel 不尝试在运行
 时获取缺失的部署权限。
 
-## Diagnostics
+## Status
 
-`GET /v1/diagnostics` 中与权限相关的事实分属三个 owner：
+`GET /v1/status` 中与权限相关的事实分属三个 owner：
 
 - `privilege`：daemon 身份、Bed user 策略、`setpriv` 解析结果、身份切换所需与缺失的 capability；
   `preconditions_satisfied` 只表示这些静态前提满足。

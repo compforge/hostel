@@ -70,13 +70,13 @@ func (s *Server) networkPolicy(c *gin.Context) {
 		case errors.Is(err, network.ErrInvalidPolicy):
 			respondError(c, http.StatusBadRequest, ErrInvalidRequest, err.Error())
 		default:
-			tracing.InfoContext(ctx, "network policy update failed", "bed", b.ID, "error", err)
+			tracing.InfoContext(ctx, "network policy update failed", "bed", b.Name, "error", err)
 			respondError(c, http.StatusInternalServerError, ErrRuntimeError, "network policy update failed")
 		}
 		return
 	}
 	if c.Request.Method != http.MethodGet {
-		tracing.InfoContext(ctx, "network policy applied", "bed", b.ID, "mode", status.Mode, "rules", len(status.Policy.Egress))
+		tracing.InfoContext(ctx, "network policy applied", "bed", b.Name, "mode", status.Mode, "rules", len(status.Policy.Egress))
 	}
 	c.JSON(http.StatusOK, status)
 }

@@ -25,18 +25,19 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
-// Diagnostics is the versioned operator view of one Hostel instance. Each
+// Status is the versioned operator view of one Hostel instance. Each
 // section has one owning component; the HTTP layer only serializes this value.
-type Diagnostics struct {
+type Status struct {
+	InventoryStatus
 	LocalCleanups []LocalCleanupReport `json:"local_cleanups"`
 	SchemaVersion int                  `json:"schema_version"`
 	Environment   EnvironmentReport    `json:"environment"`
-	Isolation     IsolationDiagnostics `json:"isolation"`
-	Privilege     privilege.Report     `json:"privilege"`
-	Network       network.Report       `json:"network"`
-	Executor      executor.Report      `json:"executor"`
-	Store         store.Report         `json:"store"`
-	Resource      ResourceDiagnostics  `json:"resource"`
+	Isolation     filesystem.Status    `json:"isolation"`
+	Privilege     privilege.Status     `json:"privilege"`
+	Network       network.Status       `json:"network"`
+	Executor      executor.Status      `json:"executor"`
+	Store         store.Status         `json:"store"`
+	Resource      resource.Status      `json:"resource"`
 	Amenities     map[string]string    `json:"amenities"`
 }
 
@@ -58,27 +59,24 @@ type EnvironmentReport struct {
 	Error       string    `json:"error,omitempty"`
 }
 
-type IsolationDiagnostics = filesystem.Report
-
-type ResourceDiagnostics = resource.Diagnostics
-
-// Diagnostics returns component snapshots only. Isolation and privilege facts
+// Status returns component snapshots only. Isolation and privilege facts
 // were captured at startup; this method performs no host probes or remote I/O.
-func (m *Manager) Diagnostics() Diagnostics {
+func (m *Manager) Status() Status {
 	m.diagnosticsMu.RLock()
 	environment := m.environment
 	m.diagnosticsMu.RUnlock()
-	return Diagnostics{
-		LocalCleanups: m.localCleanupReports(),
-		SchemaVersion: 1,
-		Environment:   environment,
-		Isolation:     m.files.Diagnostics(),
-		Privilege:     m.privileges.Diagnostics(),
-		Network:       m.network.Diagnostics(),
-		Executor:      m.executorManager.Diagnostics(),
-		Store:         m.store.Diagnostics(),
-		Resource:      m.resourceManager.Diagnostics(),
-		Amenities:     m.amenities.Diagnostics(),
+	return Status{
+		InventoryStatus: m.InventoryStatus(),
+		LocalCleanups:   m.localCleanupReports(),
+		SchemaVersion:   1,
+		Environment:     environment,
+		Isolation:       m.files.Status(),
+		Privilege:       m.privileges.Status(),
+		Network:         m.network.Status(),
+		Executor:        m.executorManager.Status(),
+		Store:           m.store.Status(),
+		Resource:        m.resourceManager.Status(),
+		Amenities:       m.amenities.Status(),
 	}
 }
 

@@ -45,9 +45,9 @@ func (s *Server) viewOf(b *bed.Resident) bedView {
 	return s.viewFromStatus(b, b.Status())
 }
 
-func (s *Server) viewFromStatus(b *bed.Resident, status bed.Status) bedView {
+func (s *Server) viewFromStatus(b *bed.Resident, status bed.ResidentStatus) bedView {
 	return bedView{
-		ID:           b.ID,
+		ID:           b.Name,
 		Sync:         string(b.Spec().Sync),
 		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
@@ -117,54 +117,6 @@ type bedDetailView struct {
 // instanceStatus is the hostel-layer status (docs/kernel.md): the only way
 // a hostel says "you may release me". The verdict is computed here so upstream
 // reads a conclusion instead of reassembling phase/activity counts and luggage.
-type instanceStatus string
-
-const (
-	instanceRetained   instanceStatus = "retained"   // a resident bed is within its retention promise
-	instanceDraining   instanceStatus = "draining"   // resident beds all expired, eviction in progress
-	instanceReleasable instanceStatus = "releasable" // nothing resident; snapshots (if any) are remote
-)
-
-// statusOfInstance folds the scheduler-visible inventory, the compatibility
-// default bed into the hostel-layer status. A zero
-// RetainUntil (no idle TTL configured) counts as retained — releasable must
-// never be concluded from unknown retention.
-func statusOfInstance(beds []bed.InventoryBed, defaultBedOccupied bool, now time.Time) instanceStatus {
-	// The default bed never participates in scheduler inventory or idle GC, so
-	// its residency is a separate, unconditional reason to retain this instance.
-	if defaultBedOccupied {
-		return instanceRetained
-	}
-	hasResident, allExpired := false, true
-	for _, b := range beds {
-		switch b.Status.Phase {
-		case bed.PhaseInitializing:
-			hasResident = true
-			allExpired = false
-			continue
-		case bed.PhasePurging:
-			hasResident = true
-			continue
-		case bed.PhaseFailed:
-			continue
-		case bed.PhaseDormant:
-			continue
-		}
-		hasResident = true
-		if b.RetainUntil.IsZero() || b.RetainUntil.After(now) {
-			allExpired = false
-		}
-	}
-	switch {
-	case hasResident && !allExpired:
-		return instanceRetained
-	case hasResident:
-		return instanceDraining
-	default:
-		return instanceReleasable
-	}
-}
-
 // GET /v1/beds — the scheduler's one-poll picture: instance capacity plus
 // every bed this instance holds (resident/evicting plus activity, dormant as
 // luggage on disk) with its last persisted generation. Everything here is a
@@ -176,75 +128,7 @@ func statusOfInstance(beds []bed.InventoryBed, defaultBedOccupied bool, now time
 // +spec=`phase_counts and activity_counts are exact projections of the beds returned in the same response.`
 // +case:id=bed_inventory_invariants,desc=`Create, activate, idle, and purge beds`,expect=`instance counters match the returned bed facts after every transition`
 func (s *Server) bedList(c *gin.Context) {
-	beds := s.mgr.Inventory()
-	hasBeds := false
-	phaseCounts := map[string]int{
-		string(bed.PhaseResident):     0,
-		string(bed.PhaseEvicting):     0,
-		string(bed.PhasePurging):      0,
-		string(bed.PhaseDormant):      0,
-		string(bed.PhaseInitializing): 0,
-		string(bed.PhaseFailed):       0,
-	}
-	activityCounts := map[string]int{
-		string(bed.ActivityActive): 0,
-		string(bed.ActivityIdle):   0,
-	}
-	var luggageBytes int64
-	var retainUntil time.Time
-	retentionKnown := true
-	for _, b := range beds {
-		phaseCounts[string(b.Status.Phase)]++
-		if b.Status.Activity != "" {
-			activityCounts[string(b.Status.Activity)]++
-		}
-		if b.Status.Phase == bed.PhaseFailed {
-			continue
-		}
-		if b.Status.Phase == bed.PhaseDormant {
-			luggageBytes += b.LocalBytes
-		} else {
-			hasBeds = true
-			if b.RetainUntil.IsZero() {
-				retentionKnown = false
-			} else if b.RetainUntil.After(retainUntil) {
-				retainUntil = b.RetainUntil
-			}
-		}
-	}
-	high, low := s.mgr.LuggageLimits()
-	var instanceRetainUntil any
-	if hasBeds && retentionKnown {
-		instanceRetainUntil = retainUntil
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"instance": gin.H{
-			"status":                         statusOfInstance(beds, s.mgr.DefaultBedOccupied(), time.Now()),
-			"sync":                           s.mgr.SyncName(),
-			"bed_sync_selection":             true,
-			"transfer_syncs":                 []string{"copy", "restic"},
-			"file_transfers":                 s.mgr.TransfersConfigured(),
-			"transfer_instance_id":           s.mgr.TransferInstanceID(),
-			"network":                        s.mgr.NetworkReport(),
-			"network_policy":                 true,
-			"isolation":                      s.mgr.Isolator().Level().String(),
-			"occupied_beds":                  s.mgr.OccupiedBedCount(),
-			"resident_beds":                  s.mgr.ResidentBedCount(),
-			"max_beds":                       s.mgr.MaxBeds(),
-			"pinned_beds":                    s.mgr.PinnedBedCount(),
-			"max_pinned_beds":                s.mgr.MaxPinnedBeds(),
-			"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
-			"bed_pressure":                   s.mgr.BedPressure(),
-			"phase_counts":                   phaseCounts,
-			"activity_counts":                activityCounts,
-			"retained_until":                 instanceRetainUntil,
-			"luggage_bytes":                  luggageBytes,
-			"luggage_high_bytes":             high,
-			"luggage_low_bytes":              low,
-			"resource_admission":             resourceAdmissionView(s.mgr.ResourceAdmissionReport()),
-		},
-		"beds": beds,
-	})
+	c.JSON(http.StatusOK, s.mgr.InventoryStatus())
 }
 
 type createBedRequest struct {

@@ -60,7 +60,7 @@ func (m *Manager) PurgeWithSync(ctx context.Context, id, requestedSync string) e
 
 	purge, owner := m.beginPurge(id)
 	if !owner {
-		waitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
+		waitCtx, cancel := m.cleanupContext(ctx, purgeStoreTimeout)
 		defer cancel()
 		select {
 		case <-purge.done:
@@ -108,6 +108,8 @@ func (m *Manager) finishPurge(id string, purge *bedPurge, err error) {
 }
 
 func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
+	ctx, cancel := m.cleanupContext(ctx, purgeStoreTimeout)
+	defer cancel()
 	m.mu.Lock()
 	local := m.localIdentityLocked(id)
 	m.mu.Unlock()
@@ -123,14 +125,14 @@ func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
 		err = checkBedSync(requested, kind, b.Spec().Sync)
 		kind = b.Spec().Sync
 	} else if initialization := m.initializations[id]; initialization != nil {
-		err = checkBedSync(requested, kind, initialization.status.Sync)
-		kind = initialization.status.Sync
+		err = checkBedSync(requested, kind, initialization.snapshot().Sync)
+		kind = initialization.snapshot().Sync
 	}
 	m.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	joinCtx, cancelJoin := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
+	joinCtx, cancelJoin := context.WithTimeout(ctx, purgeStoreTimeout)
 	_, err = m.cancelInitialization(joinCtx, id)
 	cancelJoin()
 	if err != nil {
@@ -157,18 +159,20 @@ func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
 	}
 	m.mu.Unlock()
 	if b != nil {
-		b.cleanupMu.Lock()
-		defer b.cleanupMu.Unlock()
+		if err := b.cleanupMu.Acquire(ctx, 1); err != nil {
+			return err
+		}
+		defer b.cleanupMu.Release(1)
 		// A persist that already passed admission may still be uploading. Join it
 		// before Delete; queued persists observe purging after this lock is released
 		// and fail instead of recreating the snapshot.
 		b.persistMu.Lock()
 		defer b.persistMu.Unlock()
-		if err := m.teardown(b); err != nil {
+		if err := m.teardown(ctx, b); err != nil {
 			return err
 		}
 	}
-	deleteCtx, cancelDelete := context.WithTimeout(context.WithoutCancel(ctx), purgeStoreTimeout)
+	deleteCtx, cancelDelete := context.WithTimeout(ctx, purgeStoreTimeout)
 	defer cancelDelete()
 	// Keep local metadata available for retry if deleting the snapshot fails.
 	if err := m.store.Delete(deleteCtx, kind, id); err != nil {
@@ -180,5 +184,22 @@ func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
 	m.mu.Lock()
 	delete(m.retirements, id)
 	m.mu.Unlock()
+	return nil
+}
+
+func (m *Manager) joinPurges(ctx context.Context) error {
+	m.mu.Lock()
+	pending := make([]<-chan struct{}, 0, len(m.purges))
+	for _, purge := range m.purges {
+		pending = append(pending, purge.done)
+	}
+	m.mu.Unlock()
+	for _, done := range pending {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return nil
 }

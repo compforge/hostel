@@ -25,24 +25,61 @@ func (m *Manager) bindRuntimeLifecycle(b *managedBed) {
 }
 
 // The cleanup owner serializes retries independently of user request expiry.
-func (m *Manager) teardown(b *managedBed) error {
+func (m *Manager) teardown(ctx context.Context, b *managedBed) (retErr error) {
 	if b.runtimeClosed {
 		return nil
 	}
-	m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: "stopping", Reason: "RuntimeCleanup"})
-	m.executions.killBed(b.ID, CauseBedTeardown)
-	m.revokeSessions(b)
-	ctx, cancel := context.WithTimeout(context.Background(), 13*time.Second)
-	defer cancel()
+	initializing := b.Bed.Status().Lifecycle.Phase == PhaseInitializing
+	defer func() {
+		if retErr != nil && !initializing {
+			m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "CleanupPending", Message: retErr.Error(), UpdatedAt: time.Now()})
+		}
+	}()
+	// Initialization remains joinable while its rollback releases partial
+	// resources. Preserve its failed stage until the owner publishes failure.
+	if !initializing {
+		m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "RuntimeCleanup", UpdatedAt: time.Now()})
+	}
+	m.executions.killBed(b.Name, CauseBedTeardown)
+	m.revokeSessions(ctx, b)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := b.stopSequence.Run(ctx, b.Bed); err != nil {
-		log.Printf("hostel bed stop failed: bed=%s instance=%d err=%v", b.ID, b.InstanceID, err)
+		log.Printf("hostel bed stop failed: bed=%s id=%s err=%v", b.Name, b.ID, err)
 		return err
 	}
 	if err := b.releaseSequence.Run(ctx, b.Bed); err != nil {
-		log.Printf("hostel bed release failed: bed=%s instance=%d err=%v", b.ID, b.InstanceID, err)
+		log.Printf("hostel bed release failed: bed=%s id=%s err=%v", b.Name, b.ID, err)
 		return err
 	}
 	b.runtimeClosed = true
-	m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: "dormant", Reason: "RuntimeReleased"})
+	if !initializing {
+		m.mu.Lock()
+		retiring := m.retirements[b.Name] == b
+		m.mu.Unlock()
+		phase, reason := PhaseDormant, "RuntimeReleased"
+		if retiring {
+			phase, reason = PhaseEvicting, "CleanupPending"
+		}
+		m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: phase, Reason: reason, UpdatedAt: time.Now()})
+	}
 	return nil
+}
+
+// Rollback is detached from the initiating request but belongs to the daemon.
+// Close can cancel and join it when its overall shutdown deadline expires.
+func (m *Manager) rollback(b *managedBed) error {
+	ctx, cancel := context.WithTimeout(m.cleanupCtx, 13*time.Second)
+	defer cancel()
+	return m.teardown(ctx, b)
+}
+
+func (m *Manager) cleanupContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
+	stop := context.AfterFunc(m.cleanupCtx, cancel)
+	if m.cleanupCtx.Err() != nil {
+		cancel()
+	}
+	return ctx, func() { stop(); cancel() }
 }

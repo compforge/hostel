@@ -30,15 +30,15 @@ import (
 
 // Phase is the coarse local lifecycle of a Bed identity. Activity
 // (active/idle) and readiness remain separate facts.
-type Phase string
+type Phase = model.LifecyclePhase
 
 const (
-	PhaseInitializing Phase = "initializing"
-	PhaseResident     Phase = "resident"
-	PhaseEvicting     Phase = "evicting"
-	PhasePurging      Phase = "purging"
-	PhaseDormant      Phase = "dormant"
-	PhaseFailed       Phase = "failed"
+	PhaseInitializing = model.PhaseInitializing
+	PhaseResident     = model.PhaseResident
+	PhaseEvicting     = model.PhaseEvicting
+	PhasePurging      = model.PhasePurging
+	PhaseDormant      = model.PhaseDormant
+	PhaseFailed       = model.PhaseFailed
 )
 
 // Readiness reports whether a Bed may receive data-plane operations. Reason is
@@ -61,13 +61,13 @@ type InitializationStatus struct {
 }
 
 type bedInitialization struct {
-	model  *model.Bed
-	local  *localIdentity
-	status InitializationStatus
-	done   chan struct{}
-	cancel context.CancelFunc
-	bed    *managedBed
-	err    error
+	model     *model.Bed
+	local     *localIdentity
+	startedAt time.Time
+	done      chan struct{}
+	cancel    context.CancelFunc
+	bed       *managedBed
+	err       error
 }
 
 const (
@@ -91,7 +91,7 @@ func (m *Manager) InitializeBedWithOptions(ctx context.Context, id string, optio
 		return residentInitializationStatus(resident), nil
 	}
 	m.mu.Lock()
-	status := initialization.status
+	status := initialization.snapshot()
 	m.mu.Unlock()
 	return status, nil
 }
@@ -134,19 +134,22 @@ func (m *Manager) Initialization(id string) (InitializationStatus, bool) {
 	if !ok {
 		return InitializationStatus{}, false
 	}
-	return initialization.status, true
+	return initialization.snapshot(), true
 }
 
 func (m *Manager) initializationStatuses() []InitializationStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.initializationStatusesLocked()
+}
+func (m *Manager) initializationStatusesLocked() []InitializationStatus {
 	m.pruneFailedInitializationsLocked(time.Now())
 	statuses := make([]InitializationStatus, 0, len(m.initializations)+len(m.purges))
 	for id, initialization := range m.initializations {
 		if _, purging := m.purges[id]; purging || m.retirements[id] != nil {
 			continue
 		}
-		statuses = append(statuses, initialization.status)
+		statuses = append(statuses, initialization.snapshot())
 	}
 	for id, b := range m.retirements {
 		if m.purges[id] == nil {
@@ -173,7 +176,7 @@ func (m *Manager) beginInitialization(
 		if err != nil {
 			return nil, nil, err
 		}
-		if !m.network.Diagnostics().Enabled {
+		if !m.network.Status().Enabled {
 			return nil, nil, network.ErrUnavailable
 		}
 		options.NetworkPolicy = &normalized
@@ -223,9 +226,9 @@ func (m *Manager) beginInitialization(
 		m.mu.Unlock()
 		return nil, resident, errors.Join(checkBedSync(requestedSync, selected, resident.Spec().Sync), checkInitialPolicy(options.NetworkPolicy, resident.Spec().NetworkPolicy))
 	}
-	if current, ok := m.initializations[id]; ok && current.status.Phase == PhaseInitializing {
+	if current, ok := m.initializations[id]; ok && current.snapshot().Phase == PhaseInitializing {
 		m.mu.Unlock()
-		return current, nil, errors.Join(checkBedSync(requestedSync, selected, current.status.Sync), checkInitialPolicy(options.NetworkPolicy, current.model.Spec().NetworkPolicy))
+		return current, nil, errors.Join(checkBedSync(requestedSync, selected, current.snapshot().Sync), checkInitialPolicy(options.NetworkPolicy, current.model.Spec().NetworkPolicy))
 	}
 	if m.retirements[id] != nil {
 		m.mu.Unlock()
@@ -255,29 +258,22 @@ func (m *Manager) beginInitialization(
 	now := time.Now()
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), initializationTimeout)
 	initialization := &bedInitialization{
-		local: m.localIdentityLocked(id),
-		status: InitializationStatus{
-			ID:   id,
-			Sync: selected,
-			BedStatus: BedStatus{
-				Phase: PhaseInitializing,
-				Readiness: Readiness{
-					Reason:    "InitializationQueued",
-					UpdatedAt: now,
-				},
-			},
-			StartedAt: now,
-		},
-		done:   make(chan struct{}),
-		cancel: cancel,
+		local:     m.localIdentityLocked(id),
+		startedAt: now,
+		done:      make(chan struct{}),
+		cancel:    cancel,
 	}
 	localMeta, localPresent := loadMeta(filepath.Join(m.root, id))
 	spec := model.Spec{Dir: filepath.Join(m.root, id), Sync: selected, CreatedAt: localMeta.CreatedAt, LocalPresent: localPresent, LocalGeneration: localMeta.Generation}
 	if options.NetworkPolicy != nil {
 		spec.NetworkPolicy = network.ToModel(*options.NetworkPolicy)
 	}
-	initialization.model = model.New(id, initialization.local.bed.LocalID, spec)
-	m.owners.Lifecycle.Set(initialization.model, model.LifecycleStatus{Phase: string(PhaseInitializing), Reason: "InitializationQueued"})
+	initialization.model = initialization.local.bed
+	model.SpecWriter{}.Update(initialization.model, func(s *model.Spec) {
+		spec.RecoveryDirs = s.RecoveryDirs
+		*s = spec
+	})
+	m.owners.Lifecycle.Set(initialization.model, model.LifecycleStatus{Phase: PhaseInitializing, Reason: "InitializationQueued", UpdatedAt: now})
 	m.initializations[id] = initialization
 	m.mu.Unlock()
 
@@ -286,7 +282,11 @@ func (m *Manager) beginInitialization(
 }
 
 func (m *Manager) runInitialization(ctx context.Context, initialization *bedInitialization) {
-	bedID := initialization.status.ID
+	bedID := initialization.snapshot().ID
+	if err := m.saveLocalIdentity(initialization.local); err != nil {
+		m.finishInitialization(initialization, nil, fmt.Errorf("save local bed identity: %w", err))
+		return
+	}
 	resident, err := m.initializeResidentBed(ctx, initialization)
 	if err != nil {
 		m.finishInitialization(initialization, nil, err)
@@ -301,9 +301,11 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 			m.mu.Lock()
 			m.retirements[bedID] = resident
 			m.mu.Unlock()
-			resident.cleanupMu.Lock()
-			cleanupErr := m.teardown(resident)
-			resident.cleanupMu.Unlock()
+			cleanupErr := resident.cleanupMu.Acquire(m.cleanupCtx, 1)
+			if cleanupErr == nil {
+				cleanupErr = m.rollback(resident)
+				resident.cleanupMu.Release(1)
+			}
 			if cleanupErr == nil {
 				m.mu.Lock()
 				delete(m.retirements, bedID)
@@ -330,17 +332,17 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 func (m *Manager) publishInitializedBed(initialization *bedInitialization, resident *managedBed) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	current, ok := m.initializations[initialization.status.ID]
-	if !ok || current != initialization || current.status.Phase != PhaseInitializing {
+	current, ok := m.initializations[initialization.snapshot().ID]
+	if m.closed || !ok || current != initialization || current.snapshot().Phase != PhaseInitializing {
 		return context.Canceled
 	}
-	if _, exists := m.beds[resident.ID]; exists {
-		return fmt.Errorf("bed %s became resident during initialization", resident.ID)
+	if _, exists := m.beds[resident.Name]; exists {
+		return fmt.Errorf("bed %s became resident during initialization", resident.Name)
 	}
-	m.owners.Lifecycle.Set(resident.Bed, model.LifecycleStatus{Phase: string(PhaseResident), Ready: true, Reason: "Initialized"})
-	m.beds[resident.ID] = resident
-	delete(m.initializations, resident.ID)
-	if resident.ID != m.defaultBed {
+	m.owners.Lifecycle.Set(resident.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: true, Reason: "Initialized", UpdatedAt: time.Now()})
+	m.beds[resident.Name] = resident
+	delete(m.initializations, resident.Name)
+	if resident.Name != m.defaultBed {
 		m.residentBeds.Add(1)
 		if resident.pinnedLocked() {
 			m.pinnedBeds.Add(1)
@@ -352,14 +354,15 @@ func (m *Manager) publishInitializedBed(initialization *bedInitialization, resid
 
 func (m *Manager) finishInitialization(initialization *bedInitialization, resident *managedBed, err error) {
 	initialization.cancel()
+	failedReason := failedReadinessReason(initialization.snapshot().Readiness.Reason)
 	if err != nil {
 		m.mu.Lock()
-		retiring := m.retirements[initialization.status.ID] != nil
+		retiring := m.retirements[initialization.snapshot().ID] != nil
 		m.mu.Unlock()
 		if !retiring {
 			// A failed Stage-in may never create local data. Forget that empty
 			// identity before waking retries, but retain any surviving cold copy.
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			cleanupCtx, cancel := context.WithTimeout(m.cleanupCtx, 5*time.Second)
 			err = errors.Join(err, m.cleanLocalIdentity(cleanupCtx, initialization.local, false))
 			cancel()
 		}
@@ -367,24 +370,19 @@ func (m *Manager) finishInitialization(initialization *bedInitialization, reside
 	m.mu.Lock()
 	initialization.bed = resident
 	initialization.err = err
-	if err != nil {
-		m.owners.Lifecycle.Set(initialization.model, model.LifecycleStatus{Phase: string(PhaseFailed), Reason: err.Error()})
-	}
-	current, currentExists := m.initializations[initialization.status.ID]
+
+	current, currentExists := m.initializations[initialization.snapshot().ID]
 	if currentExists && current == initialization {
 		if err == nil {
-			delete(m.initializations, initialization.status.ID)
+			delete(m.initializations, initialization.snapshot().ID)
+		} else if m.retirements[initialization.model.Name] != nil {
+			m.owners.Lifecycle.Set(initialization.model, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "CleanupPending", Message: err.Error(), UpdatedAt: time.Now()})
+			delete(m.initializations, initialization.model.Name)
 		} else if !errors.Is(err, context.Canceled) {
 			now := time.Now()
-			reason := failedReadinessReason(initialization.status.Readiness.Reason)
-			initialization.status.Phase = PhaseFailed
-			initialization.status.Readiness = Readiness{
-				Reason:    reason,
-				Message:   err.Error(),
-				UpdatedAt: now,
-			}
+			m.owners.Lifecycle.Set(initialization.model, model.LifecycleStatus{Phase: PhaseFailed, Reason: failedReason, Message: err.Error(), UpdatedAt: now})
 		} else {
-			delete(m.initializations, initialization.status.ID)
+			delete(m.initializations, initialization.snapshot().ID)
 		}
 	}
 	m.mu.Unlock()
@@ -413,13 +411,11 @@ func failedReadinessReason(current string) string {
 func (m *Manager) updateInitialization(initialization *bedInitialization, reason, message string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	current, ok := m.initializations[initialization.status.ID]
-	if !ok || current != initialization || current.status.Phase != PhaseInitializing {
+	current, ok := m.initializations[initialization.snapshot().ID]
+	if !ok || current != initialization || current.snapshot().Phase != PhaseInitializing {
 		return
 	}
-	current.status.Readiness.Reason = reason
-	current.status.Readiness.Message = message
-	current.status.Readiness.UpdatedAt = time.Now()
+	m.owners.Lifecycle.Set(current.model, model.LifecycleStatus{Phase: PhaseInitializing, Reason: reason, Message: message, UpdatedAt: time.Now()})
 }
 
 func (m *Manager) updateInitializationStageIn(initialization *bedInitialization, step store.StageInStep) {
@@ -440,7 +436,7 @@ func (m *Manager) cancelInitialization(ctx context.Context, id string) (bool, er
 		m.mu.Unlock()
 		return false, nil
 	}
-	if initialization.status.Phase != PhaseInitializing {
+	if initialization.snapshot().Phase != PhaseInitializing {
 		delete(m.initializations, id)
 		m.mu.Unlock()
 		return true, nil
@@ -461,9 +457,8 @@ func (m *Manager) cancelInitialization(ctx context.Context, id string) (bool, er
 func (m *Manager) cancelAllInitializations(ctx context.Context) error {
 	m.mu.Lock()
 	initializations := make([]*bedInitialization, 0, len(m.initializations))
-	for id, initialization := range m.initializations {
-		if initialization.status.Phase == PhaseInitializing {
-			delete(m.initializations, id)
+	for _, initialization := range m.initializations {
+		if initialization.snapshot().Phase == PhaseInitializing {
 			initialization.cancel()
 			initializations = append(initializations, initialization)
 		}
@@ -481,8 +476,8 @@ func (m *Manager) cancelAllInitializations(ctx context.Context) error {
 
 func (m *Manager) pruneFailedInitializationsLocked(now time.Time) {
 	for id, initialization := range m.initializations {
-		if initialization.status.Phase == PhaseFailed &&
-			now.Sub(initialization.status.Readiness.UpdatedAt) >= failedInitializationRetention {
+		if initialization.snapshot().Phase == PhaseFailed &&
+			now.Sub(initialization.snapshot().Readiness.UpdatedAt) >= failedInitializationRetention {
 			delete(m.initializations, id)
 		}
 	}
@@ -491,7 +486,7 @@ func (m *Manager) pruneFailedInitializationsLocked(now time.Time) {
 func residentInitializationStatus(resident *managedBed) InitializationStatus {
 	status := resident.Status()
 	return InitializationStatus{
-		ID:        resident.ID,
+		ID:        resident.Name,
 		Sync:      resident.Spec().Sync,
 		BedStatus: status.BedStatus,
 	}
@@ -533,7 +528,7 @@ func checkBedSync(requested string, selected, current store.SyncKind) error {
 }
 
 func retirementStatus(b *managedBed) InitializationStatus {
-	return InitializationStatus{ID: b.ID, Sync: b.Spec().Sync, BedStatus: BedStatus{Phase: PhaseEvicting, Readiness: Readiness{Reason: "CleanupPending", Message: "previous Bed resources are being released; retry eviction before reinitializing"}}}
+	return InitializationStatus{ID: b.Name, Sync: b.Spec().Sync, BedStatus: lifecycleView(b.Bed.Status().Lifecycle)}
 }
 
 func checkInitialPolicy(requested *network.Policy, initial *model.NetworkPolicy) error {
@@ -541,4 +536,12 @@ func checkInitialPolicy(requested *network.Policy, initial *model.NetworkPolicy)
 		return fmt.Errorf("%w: initial policy differs; use the policy API to update a resident Bed", network.ErrInvalidPolicy)
 	}
 	return nil
+}
+
+// snapshot projects lifecycle from the single shared model, including progress.
+func (i *bedInitialization) snapshot() InitializationStatus {
+	return InitializationStatus{ID: i.model.Name, Sync: i.model.Spec().Sync, BedStatus: lifecycleView(i.model.Status().Lifecycle), StartedAt: i.startedAt}
+}
+func lifecycleView(s model.LifecycleStatus) BedStatus {
+	return BedStatus{Phase: s.Phase, Readiness: Readiness{Ready: s.Ready, Reason: s.Reason, Message: s.Message, UpdatedAt: s.UpdatedAt}}
 }
