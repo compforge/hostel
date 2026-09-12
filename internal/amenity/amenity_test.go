@@ -144,7 +144,7 @@ func TestChromiumEndToEnd(t *testing.T) {
 		t.Fatalf("Goto after idle-stop: %v", err)
 	}
 	_ = br.ReleaseTenant(last.ID().String())
-	c.mu.Lock()
-	c.stopLocked()
-	c.mu.Unlock()
+	if err := c.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 }

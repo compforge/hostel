@@ -101,6 +101,8 @@ readiness：是否可服务，以及当前等待或失败原因
 Bed 与 Amenity 的 Manager 决定资源为谁使用、使用策略及生命周期；`internal/host` 提供通用
 宿主能力。底层资源经领域赋予身份与归属，再组合成 Bed 操作或设施能力。
 
+daemon 启动时采集一次 Host facts，作为 Bed Manager 和 Amenity Manager 的构造输入，并将同一份快照交给实例状态聚合器。组件读取事实用于前置判断，实际可用性仍由领域探测确认。
+
 Host 按能力分包，不设置统一 HostManager，也不预设调用方是 Bed、Amenity 或其他组件：
 
 - `host/network`：namespace、地址、DNS 与出站规则，返回具体网络 allocation。

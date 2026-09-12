@@ -22,6 +22,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"github.com/qiankunli/hostel/internal/bed/resource"
 	"github.com/qiankunli/hostel/internal/bed/store"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 type mutableAdmission struct {
@@ -68,7 +69,7 @@ func TestResourceAdmissionChecksSyncedIdleAndNewBeds(t *testing.T) {
 
 func TestResourceAdmissionAllowsUnsyncedIdleBed(t *testing.T) {
 	root := t.TempDir()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
+	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestResourceAdmissionAllowsUnsyncedIdleBed(t *testing.T) {
 
 func TestEnsureKeepsSyncedIdleBedEligibleForAdmission(t *testing.T) {
 	root := t.TempDir()
-	m, err := NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
+	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}

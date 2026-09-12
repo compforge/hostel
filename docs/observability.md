@@ -154,7 +154,7 @@ running 都不能推导出完整隔离，语义由 [isolation.md](isolation.md) 
 ```text
 Component → 全局 Status → Bed Manager ─────┐
 Amenity   → 全局 Status → Amenity Manager ─┤
-Host      → 启动时的系统事实快照 ──────────┴→ Hostel 实例聚合 → /v1/status
+Host      → daemon 采集并注入的系统事实快照 ──────────┴→ Hostel 实例聚合 → /v1/status
 
 Bed 分域 Status ───────────────────────────┐
 Tenant 领域 Status → Bed/Tenant 绑定查询 ───┴→ Bed 详情组合 → /v1/beds/:id
@@ -174,7 +174,7 @@ Amenity Manager 只通过适配器参与 Bed 回收，其设施全局生命周�
 
 Bed 详情的 `status.lifecycle` 由 Bed Manager 提供；Tenant 状态由设施持有，查询时组合，
 不复制进 Bed。Tenant Status 的字段跟随设施领域：浏览器就绪和 MCP 连接池不是同一种状态。
-接口不根据 Status 推导更强的隔离保证，也不执行生命周期 hook、探测或远端 I/O。
+接口不根据 Status 推导更强的隔离保证，也不执行生命周期 hook、探测或远端 I/O。状态读取只读取已发布的内存状态，不持有慢操作的协调锁；Tenant 存在不代表设施提供强制隔离。
 
 `GET /v1/status` 的 `schema_version` 为 `2`。`host` 报告 runtime、process、security_modules、
 namespace_limits、kernel_features 与 ptrace 等启动事实；状态读取复用快照，不重新探测。

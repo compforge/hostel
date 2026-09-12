@@ -14,6 +14,7 @@ const (
 
 // Amenity is one independent facility. Start initializes without requiring
 // eager resource allocation. Close joins all work owned by the facility.
+// +spec=`Expensive resources may start on demand; Status never waits for resource I/O.`
 type Amenity interface {
 	Name() string
 	Start(context.Context) error

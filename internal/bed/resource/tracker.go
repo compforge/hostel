@@ -47,9 +47,9 @@ type Tracker interface {
 	Release(bedID string) error
 }
 
-// New probes cgroup v2 accounting and degrades to a truthful noop tracker when
-// the hierarchy is absent or not delegated to the container.
-func New() Tracker { return newTracker() }
+// New assembles accounting without touching cgroups. Resource Manager.Start
+// drives the host probe and records optional accounting availability.
+func New() Tracker { return &hostTracker{tracker: Noop("not started"), create: newTracker} }
 
 // Noop is used before cmd/hostel wires the host tracker and by non-Linux hosts.
 func Noop(reason string) Tracker {

@@ -25,7 +25,8 @@ import (
 // supervision is a pure state machine over (state, master, tenants), so no
 // real browser is needed.
 func crashedChromium(tenants ...string) (*chromium, context.Context, context.CancelFunc) {
-	c := &chromium{state: StateRunning, contexts: map[string]*browserContext{}}
+	c := NewChromium(ChromiumConfig{})
+	c.state = StateRunning
 	for _, id := range tenants {
 		c.contexts[id] = &browserContext{tenantID: id, tabStop: func() {}}
 	}
@@ -48,25 +49,23 @@ func TestCrashDropsTenantsAndGates(t *testing.T) {
 		t.Fatalf("state = %s, want idle", c.State())
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if len(c.contexts) != 0 {
 		t.Fatalf("tenants not dropped: %d left", len(c.contexts))
 	}
 	if c.crashCount != 1 || !c.notBefore.After(time.Now()) {
 		t.Fatalf("gate not armed: count=%d notBefore=%v", c.crashCount, c.notBefore)
 	}
-	if err := c.ensureRunning(); err == nil || !strings.Contains(err.Error(), "gated") {
-		t.Fatalf("ensureRunning during gate = %v, want gated error", err)
+	c.mu.Unlock()
+	if err := c.startBrowser(t.Context()); err == nil || !strings.Contains(err.Error(), "gated") {
+		t.Fatalf("startBrowser during gate = %v, want gated error", err)
 	}
 }
 
-// TestOrderlyStopIsNotACrash: stopLocked (idle-stop timer path) cancels the
+// TestOrderlyStopIsNotACrash: stopBrowser (idle-stop timer path) cancels the
 // master too; the watcher must not count it — state already left Running.
 func TestOrderlyStopIsNotACrash(t *testing.T) {
 	c, master, cancel := crashedChromium("bed-a")
-	c.mu.Lock()
-	c.stopLocked() // orderly: tenants disposed, state → idle
-	c.mu.Unlock()
+	c.stopBrowser() // orderly: resources disposed, state → idle
 	cancel()
 	c.onMasterGone(master)
 

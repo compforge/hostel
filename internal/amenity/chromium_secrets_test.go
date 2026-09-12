@@ -14,13 +14,17 @@
 
 package amenity
 
-import "testing"
+import (
+	"testing"
+
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+)
 
 // Browser resources may be recycled without replacing Hostel's Tenant identity.
 func TestCDPSecretLifecycle(t *testing.T) {
 	c := NewChromium(ChromiumConfig{DebugPort: 9222})
 	c.state = StateIdle // token operations do not require a browser executable
-	reg := NewManager()
+	reg := NewManager(hostfacts.Collect())
 	if err := reg.Register(c); err != nil {
 		t.Fatal(err)
 	}

@@ -24,22 +24,23 @@ import (
 	"sync/atomic"
 	"time"
 
-	model "github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bed/filesystem"
-	"golang.org/x/sync/semaphore"
-
 	"github.com/qiankunli/go-stdx/filepathx"
 	"github.com/qiankunli/hostel/internal/amenity"
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
+	"github.com/qiankunli/hostel/internal/bed/filesystem"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/resource"
 	"github.com/qiankunli/hostel/internal/bed/store"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+	"golang.org/x/sync/semaphore"
 )
 
 // Manager owns the set of beds and their lifecycle. Safe for concurrent use.
 type Manager struct {
+	hostFacts       hostfacts.Snapshot
 	startMu         sync.Mutex
 	closeMu         *semaphore.Weighted
 	started         bool
@@ -131,9 +132,10 @@ func WithBedUser(user privilege.BedUser) ManagerOption {
 	return func(m *Manager) { m.bedUser = user }
 }
 
-// NewManager creates the bed manager and ensures the workspace root exists.
+// NewManager assembles domain managers from the daemon host snapshot.
+// Start prepares the workspace root and recovers local identities.
 // amenities and st may be nil; maxBeds 0 = unlimited.
-func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Manager, maxBeds int, st *store.Manager, opts ...ManagerOption) (*Manager, error) {
+func NewManager(host hostfacts.Snapshot, root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Manager, maxBeds int, st *store.Manager, opts ...ManagerOption) (*Manager, error) {
 	processEnv, _ := newProcessEnv(os.Environ())
 	shellPath = resolveShellPath(shellPath)
 	if st == nil {
@@ -144,6 +146,7 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 	m := &Manager{
 		closeMu:    semaphore.NewWeighted(1),
 		cleanupCtx: cleanupCtx, cleanupCancel: cleanupCancel,
+		hostFacts:       host,
 		root:            root,
 		owners:          model.NewOwners(),
 		defaultBed:      defaultBed,
@@ -179,12 +182,8 @@ func NewManager(root, defaultBed, shellPath string, iso isolation.Isolator, amen
 	m.resourceManager = resource.NewManager(m.resources, m.owners.Resource)
 	m.network.SetStatusWriter(m.owners.Network)
 	m.store.SetStatusWriter(m.owners.Store)
-	var effectiveCaps uint64
-	if report, ok := iso.(isolation.Report); ok {
-		effectiveCaps = report.Facts().EffectiveCaps
-	}
 	var err error
-	m.privileges, err = privilege.NewManager(isolation.DescribeBedUser(m.iso, m.bedUser), m.bedUser, effectiveCaps, m.owners.Privilege, m.files.Files)
+	m.privileges, err = privilege.NewManager(isolation.DescribeBedUser(m.iso, m.bedUser), m.bedUser, host.EffectiveCaps, m.owners.Privilege, m.files.Files)
 	if err != nil {
 		return nil, err
 	}
@@ -750,3 +749,6 @@ func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, b
 	}
 	return done, failed
 }
+
+// HostFacts returns the boot snapshot supplied by the composition root.
+func (m *Manager) HostFacts() hostfacts.Snapshot { return m.hostFacts }

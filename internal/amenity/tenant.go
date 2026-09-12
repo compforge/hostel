@@ -10,6 +10,7 @@ func (id TenantID) String() string { return string(id) }
 
 // Tenant is Hostel's facility-use unit, primarily allocated for a Bed. Each
 // Amenity owns its concrete resources and defines its domain-specific Status.
+// Tenant is an ownership boundary; resource isolation is facility-specific and optional.
 type Tenant interface {
 	ID() TenantID
 	// Close revokes credentials and releases resources. Failures retain cleanup

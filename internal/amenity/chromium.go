@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -32,12 +31,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
-	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 	"github.com/qiankunli/go-stdx/randx"
+	"golang.org/x/sync/semaphore"
 )
 
 // ChromiumConfig selects launch-or-attach (docs/amenity.md §5).
@@ -66,7 +64,11 @@ type chromium struct {
 	cfg    ChromiumConfig
 	attach bool
 
+	// mu protects only in-memory state. No browser I/O or waiting under it.
 	mu            sync.Mutex
+	runtime       *semaphore.Weighted
+	workCtx       context.Context
+	cancelWork    context.CancelFunc
 	workers       sync.WaitGroup
 	tenantHandles map[TenantID]*browserTenant
 	reason        string
@@ -86,7 +88,7 @@ type chromium struct {
 	// docs/kernel.md 〈进程树〉): a watcher on the master context detects the
 	// browser dying and flips back to idle with contexts dropped, so the next action
 	// lazily rebuilds resources under the same Tenant identity — no restart storm, and a bed
-	// simply sees a fresh browser. notBefore gates ensureRunning with
+	// simply sees a fresh browser. notBefore gates startup with
 	// exponential backoff so a crash-looping browser can't melt the pod.
 	crashCount int
 	lastCrash  time.Time
@@ -112,32 +114,33 @@ func NewChromium(cfg ChromiumConfig) *chromium {
 	if cfg.ActionTimeout <= 0 {
 		cfg.ActionTimeout = 30 * time.Second
 	}
-	return &chromium{cfg: cfg, state: StateUnavailable, reason: "not_started",
+	workCtx, cancelWork := context.WithCancel(context.Background())
+	return &chromium{workCtx: workCtx, cancelWork: cancelWork, cfg: cfg, attach: cfg.CDPURL != "", runtime: semaphore.NewWeighted(runtimeWeight), state: StateUnavailable, reason: "not_started",
 		contexts: make(map[string]*browserContext), tenantHandles: make(map[TenantID]*browserTenant), cdpSecrets: make(map[string]string)}
 }
 
 func (c *chromium) Start(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := ctx.Err(); err != nil {
+	if err := c.runtime.Acquire(ctx, runtimeWeight); err != nil {
 		return err
 	}
+	defer c.runtime.Release(runtimeWeight)
+	c.mu.Lock()
 	if c.closed {
+		c.mu.Unlock()
 		return fmt.Errorf("chromium: facility closed")
 	}
 	if c.state != StateUnavailable {
+		c.mu.Unlock()
 		return nil
 	}
-	if c.cfg.CDPURL != "" {
-		c.attach = true
+	c.mu.Unlock()
+	reason := ""
+	if c.attach {
 		if _, err := c.upstreamWSURL(ctx); err != nil {
-			// Keep the configured facility visible without exposing its endpoint.
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			c.reason = "attach_probe_failed"
-			log.Printf("amenity: chromium unavailable: %s", c.reason)
-			return nil
+			reason = "attach_probe_failed"
 		}
 	} else {
 		path := c.cfg.ExecPath
@@ -154,12 +157,22 @@ func (c *chromium) Start(ctx context.Context) error {
 			path = ""
 		}
 		if path == "" {
-			c.reason = "executable_not_found"
-			return nil
+			reason = "executable_not_found"
+		} else {
+			c.cfg.ExecPath = path
 		}
-		c.cfg.ExecPath = path
 	}
-	c.state, c.reason = StateIdle, ""
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return fmt.Errorf("chromium: facility closed")
+	}
+	c.reason = reason
+	if reason == "" {
+		c.state = StateIdle
+	} else {
+		log.Printf("amenity: chromium unavailable: %s", reason)
+	}
 	return nil
 }
 
@@ -183,170 +196,6 @@ func (c *chromium) State() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.state
-}
-
-// ensureRunning starts (or attaches to) the shared browser on first demand.
-// Caller holds c.mu.
-func (c *chromium) ensureRunning() error {
-	if c.closed || c.state == StateUnavailable {
-		return fmt.Errorf("chromium unavailable: %s", c.reason)
-	}
-	if c.state == StateRunning {
-		return nil
-	}
-	// Crash-loop guard: after the watcher recorded a death, restarts are gated.
-	// The error is the caller's signal to retry later — deliberately NOT a
-	// blocking sleep, which would pin c.mu and freeze every bed's actions.
-	if wait := time.Until(c.notBefore); wait > 0 {
-		return fmt.Errorf("amenity: chromium restart gated for %s (crash #%d)", wait.Round(time.Millisecond), c.crashCount)
-	}
-	base := context.Background()
-	if c.attach {
-		c.allocCtx, c.allocStop = chromedp.NewRemoteAllocator(base, c.cfg.CDPURL)
-	} else {
-		opts := append(chromedp.DefaultExecAllocatorOptions[:],
-			chromedp.ExecPath(c.cfg.ExecPath),
-			// Chromium's own sandbox is unreliable in containers: mandatory-off as
-			// root, and needs userns/setuid otherwise. Reachability of this process
-			// from bed code is NOT a uid story anymore (runtime is often one non-root
-			// uid, beds keep the host pid ns) — it is governed by the semi-trusted
-			// model documented in docs/amenity.md ("诚实边界").
-			chromedp.NoSandbox,
-		)
-		if c.cfg.DebugPort > 0 {
-			// Fixed port so the per-bed CDP proxy has a stable upstream to dial;
-			// chromedp's own stderr-parsed ws URL is not exposed by its API.
-			opts = append(opts, chromedp.Flag("remote-debugging-port", strconv.Itoa(c.cfg.DebugPort)))
-		}
-		c.allocCtx, c.allocStop = chromedp.NewExecAllocator(base, opts...)
-	}
-	c.master, c.masterCtl = chromedp.NewContext(c.allocCtx)
-	// Force the browser up now so failures surface here, not mid-action.
-	if err := chromedp.Run(c.master); err != nil {
-		c.stopLocked()
-		return fmt.Errorf("amenity: chromium start: %w", err)
-	}
-	c.state = StateRunning
-	c.workers.Add(1)
-	go func(master context.Context) { defer c.workers.Done(); c.watchMaster(master) }(c.master)
-	return nil
-}
-
-// watchMaster turns the master context's death into supervision: chromedp
-// cancels it when the browser process exits (crash) — and orderly stops cancel
-// it too, which onMasterGone tells apart by state.
-func (c *chromium) watchMaster(master context.Context) {
-	<-master.Done()
-	c.onMasterGone(master)
-}
-
-// onMasterGone handles one master-context death. Only an UNEXPECTED death of
-// the CURRENT instance counts as a crash: orderly stops (idle-stop timer,
-// stopLocked) already flipped state off Running before releasing the lock, and
-// a stale watcher's master no longer matches.
-func (c *chromium) onMasterGone(master context.Context) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.master != master || c.state != StateRunning {
-		return
-	}
-	now := time.Now()
-	if now.Sub(c.lastCrash) > 5*time.Minute {
-		c.crashCount = 0 // stable for a while: earlier crashes are history
-	}
-	c.crashCount++
-	c.lastCrash = now
-	backoff := time.Duration(1<<min(c.crashCount-1, 6)) * time.Second // 1s → 64s cap
-	c.notBefore = now.Add(backoff)
-	dropped := len(c.contexts)
-	c.stopLocked()
-	log.Printf("amenity: chromium died (crash #%d, %d tenant(s) dropped); restart gated for %s",
-		c.crashCount, dropped, backoff)
-}
-
-// stopLocked tears the browser down. Caller holds c.mu.
-func (c *chromium) stopLocked() {
-	for id, t := range c.contexts {
-		t.tabStop()
-		delete(c.contexts, id)
-	}
-	if c.masterCtl != nil {
-		c.masterCtl()
-		c.masterCtl = nil
-	}
-	if c.allocStop != nil {
-		c.allocStop()
-		c.allocStop = nil
-	}
-	c.state = StateIdle
-}
-
-// tenant resolves private browser resources for a Hostel tenant, creating
-// context and tab lazily.
-// Caller holds c.mu.
-func (c *chromium) tenant(tenantID, workspace string) (*browserContext, error) {
-	if c.closed || (c.tenantHandles[TenantID(tenantID)] == nil || c.tenantHandles[TenantID(tenantID)].closing) {
-		return nil, fmt.Errorf("chromium: tenant %s closed", tenantID)
-	}
-	if t, ok := c.contexts[tenantID]; ok {
-		if t.tabCtx != nil {
-			return t, nil
-		}
-		// A partial allocation still owns a remote context. Dispose it before
-		// retrying, preserving ownership if the remote operation fails again.
-		if err := c.releaseContextLocked(context.Background(), tenantID); err != nil {
-			return nil, err
-		}
-	}
-	if err := c.ensureRunning(); err != nil {
-		return nil, err
-	}
-	if c.idleTimer != nil {
-		c.stopIdleTimerLocked()
-	}
-
-	var contextID cdp.BrowserContextID
-	var targetID target.ID
-	err := chromedp.Run(c.master, chromedp.ActionFunc(func(ctx context.Context) error {
-		// Target.* context management is a BROWSER-session domain — route via
-		// the browser executor, not the page session (else: Not allowed).
-		bctx := cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Browser)
-		// TODO(network): set this Bed's proxyServer when the Bed-scoped egress
-		// proxy is available. BrowserContext does not inherit a command's netns;
-		// validate bypass/QUIC/WebRTC paths before advertising browser enforcement.
-		// See docs/backlog.md and docs/network.md.
-		id, err := target.CreateBrowserContext().Do(bctx)
-		if err != nil {
-			return err
-		}
-		contextID = id
-		// Publish ownership as soon as the remote context exists; later target or
-		// session setup can fail and must not orphan it.
-		c.contexts[tenantID] = &browserContext{tenantID: tenantID, contextID: id, tabStop: func() {}}
-		// Route downloads into the bed's own workspace.
-		_ = browser.SetDownloadBehavior(browser.SetDownloadBehaviorBehaviorAllow).
-			WithDownloadPath(filepath.Join(workspace, "downloads")).
-			WithBrowserContextID(id).Do(bctx)
-		// New headless refuses tab creation in a fresh context without an
-		// explicit window ("no browser is open").
-		targetID, err = target.CreateTarget("about:blank").WithBrowserContextID(id).WithNewWindow(true).Do(bctx)
-		return err
-	}))
-	if err != nil {
-		return nil, fmt.Errorf("amenity: chromium context for tenant %s: %w", tenantID, err)
-	}
-	tabCtx, tabStop := chromedp.NewContext(c.master, chromedp.WithTargetID(targetID))
-	// Attach the target on the LONG-LIVED tab context now. Otherwise the first
-	// per-action call would attach on its short-lived timeout context, and the
-	// attach would be torn down when that context is cancelled — every action
-	// after the first would hang (no session).
-	if err := chromedp.Run(tabCtx); err != nil {
-		tabStop()
-		return nil, fmt.Errorf("amenity: chromium attach tab for tenant %s: %w", tenantID, err)
-	}
-	t := &browserContext{tenantID: tenantID, contextID: contextID, tabCtx: tabCtx, tabStop: tabStop}
-	c.contexts[tenantID] = t
-	return t, nil
 }
 
 // CDPToken mints or returns a tenant-owned proxy secret.
@@ -417,6 +266,8 @@ func (c *chromium) upstreamWSURL(ctx context.Context) (string, error) {
 // ServeCDP implements Browser: authenticate the token, then bridge the client
 // websocket to the shared browser filtered to this bed's contexts.
 func (c *chromium) ServeCDP(ctx context.Context, conn net.Conn, tenantID, workspace, token string, onActivity func()) error {
+	ctx, stopWork := linkedContext(ctx, c.workCtx)
+	defer stopWork()
 	defer conn.Close()
 	c.mu.Lock()
 	secret, ok := c.cdpSecrets[tenantID]
@@ -428,15 +279,13 @@ func (c *chromium) ServeCDP(ctx context.Context, conn net.Conn, tenantID, worksp
 		// Refuse — never fall back to unfiltered CDP.
 		return fmt.Errorf("amenity: chromium CDP: unauthorized for tenant %s", tenantID)
 	}
-	// Authorized: ensure the tenant NOW. This is the lazy boot point — the
-	// browser starts on the first dial, not when the endpoint was handed out.
-	t, err := c.tenant(tenantID, workspace)
+	c.mu.Unlock()
+	t, release, err := c.acquireTenant(ctx, tenantID, workspace)
 	if err != nil {
-		c.mu.Unlock()
 		return err
 	}
 	contextID := t.contextID
-	c.mu.Unlock()
+	release()
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	upstream, err := c.upstreamWSURL(dialCtx)
 	cancel()
@@ -446,88 +295,31 @@ func (c *chromium) ServeCDP(ctx context.Context, conn net.Conn, tenantID, worksp
 	return proxyCDP(ctx, conn, upstream, tenantID, string(contextID), onActivity)
 }
 
-// ReleaseTenant releases only a tenant's current browser resources. The
-// identity and credential live until browserTenant.Close.
+// ReleaseTenant recycles browser resources without revoking tenant identity.
 func (c *chromium) ReleaseTenant(tenantID string) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.releaseContextLocked(context.Background(), tenantID)
-}
-
-func (c *chromium) releaseContextLocked(parent context.Context, tenantID string) error {
-	// Deliberately does NOT touch cdpSecrets: browser/close (bed action API)
-	// also lands here to recycle the slice, and the bed's env-injected proxy
-	// endpoint must keep working afterwards — the next dial just re-ensures a
-	// fresh tenant. Secrets die when the tenant is closed.
-	t, ok := c.contexts[tenantID]
-	if !ok {
+	t := c.tenantHandles[TenantID(tenantID)]
+	c.mu.Unlock()
+	if t == nil {
 		return nil
 	}
-	if c.state == StateRunning {
-		ctx, cancel := context.WithTimeout(c.master, 5*time.Second)
-		stop := context.AfterFunc(parent, cancel)
-		defer stop()
-		defer cancel()
-		if err := parent.Err(); err != nil {
-			return err
-		}
-		if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-			bctx := cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Browser)
-			if err := target.DisposeBrowserContext(t.contextID).Do(bctx); err != nil {
-				// A prior dispose may have succeeded while its reply was lost.
-				// Confirm absence before forgetting ownership; otherwise retry later.
-				contexts, _, lookupErr := target.GetBrowserContexts().Do(bctx)
-				if lookupErr != nil {
-					return err
-				}
-				for _, id := range contexts {
-					if id == t.contextID {
-						return err
-					}
-				}
-			}
-			return nil
-		})); err != nil {
-			return fmt.Errorf("release browser context: %w", err)
-		}
-	}
-	delete(c.contexts, tenantID)
-	t.tabStop()
-	if len(c.contexts) == 0 && !c.attach && !c.closed && c.cfg.IdleStop > 0 && c.state == StateRunning {
-		c.stopIdleTimerLocked()
-		c.workers.Add(1)
-		c.idleTimer = time.AfterFunc(c.cfg.IdleStop, func() {
-			defer c.workers.Done()
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			// Re-check under lock: a tenant may have arrived meanwhile.
-			if len(c.contexts) == 0 && c.state == StateRunning && !c.closed {
-				log.Printf("amenity: chromium idle for %s, stopping", c.cfg.IdleStop)
-				c.stopLocked()
-			}
-		})
-	}
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.ActionTimeout)
+	defer cancel()
+	return t.CloseContext(ctx)
 }
 
-// run executes actions in the bed's tab with the action timeout applied.
 func (c *chromium) run(ctx context.Context, tenantID, workspace string, actions ...chromedp.Action) error {
-	c.mu.Lock()
-	t, err := c.tenant(tenantID, workspace)
-	c.mu.Unlock()
+	ctx, stopWork := linkedContext(ctx, c.workCtx)
+	defer stopWork()
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.ActionTimeout)
+	defer cancel()
+	t, release, err := c.acquireTenant(ctx, tenantID, workspace)
 	if err != nil {
 		return err
 	}
-	actx, cancel := context.WithTimeout(t.tabCtx, c.cfg.ActionTimeout)
-	defer cancel()
-	// Honor the caller's cancellation too (HTTP request context).
-	go func() {
-		select {
-		case <-ctx.Done():
-			cancel()
-		case <-actx.Done():
-		}
-	}()
+	defer release()
+	actx, stop := linkedContext(ctx, t.tabCtx)
+	defer stop()
 	return chromedp.Run(actx, actions...)
 }
 
@@ -622,43 +414,6 @@ var (
 	_ Amenity       = (*chromium)(nil)
 	_ TenantFactory = (*chromium)(nil)
 )
-
-// Close releases only owned contexts in attach mode, then disconnects. Failed
-// disposal keeps ownership for retry; the external browser is never stopped.
-func (c *chromium) Close(ctx context.Context) error {
-	c.mu.Lock()
-	c.closed = true
-	c.stopIdleTimerLocked()
-	clear(c.cdpSecrets)
-	var result error
-	for id := range c.contexts {
-		if err := c.releaseContextLocked(ctx, id); err != nil {
-			result = errors.Join(result, err)
-		}
-	}
-	if result != nil {
-		c.mu.Unlock()
-		return result
-	}
-	for id, t := range c.tenantHandles {
-		t.closed = true
-		delete(c.tenantHandles, id)
-	}
-	c.stopLocked()
-	c.state = StateClosed
-	c.mu.Unlock()
-	c.workers.Wait()
-	return nil
-}
-
-func (c *chromium) stopIdleTimerLocked() {
-	if c.idleTimer != nil {
-		if c.idleTimer.Stop() {
-			c.workers.Done()
-		}
-		c.idleTimer = nil
-	}
-}
 
 // ChromiumStatus describes the shared facility, independently of any Bed.
 type ChromiumStatus struct {

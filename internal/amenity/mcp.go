@@ -7,6 +7,7 @@ import (
 
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/hostel/pkg/mcpproxy"
+	"golang.org/x/sync/semaphore"
 )
 
 type MCP struct {
@@ -17,10 +18,11 @@ type MCP struct {
 }
 
 type MCPTenant struct {
-	id     TenantID
-	owner  *MCP
-	proxy  *mcpproxy.Proxy
-	closed bool // protected by owner.mu
+	closeMu *semaphore.Weighted
+	id      TenantID
+	owner   *MCP
+	proxy   *mcpproxy.Proxy
+	closed  bool // protected by owner.mu
 }
 
 func NewMCP(options mcpproxy.Options) *MCP {
@@ -52,7 +54,7 @@ func (a *MCP) NewTenant(ctx context.Context) (Tenant, error) {
 	if a.closed {
 		return nil, errors.New("mcp: facility closed")
 	}
-	t := &MCPTenant{id: TenantID(randx.Hex(16)), owner: a, proxy: mcpproxy.New(a.options)}
+	t := &MCPTenant{id: TenantID(randx.Hex(16)), owner: a, closeMu: semaphore.NewWeighted(1), proxy: mcpproxy.New(a.options)}
 	a.tenants[t.id] = t
 	return t, nil
 }
@@ -60,9 +62,14 @@ func (t *MCPTenant) ID() TenantID           { return t.id }
 func (t *MCPTenant) Proxy() *mcpproxy.Proxy { return t.proxy }
 func (t *MCPTenant) Status() TenantStatus   { return MCPTenantStatus{t.proxy.Status()} }
 func (t *MCPTenant) Close(ctx context.Context) error {
+	if err := t.closeMu.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer t.closeMu.Release(1)
 	t.owner.mu.Lock()
-	defer t.owner.mu.Unlock()
-	if t.closed {
+	closed := t.closed
+	t.owner.mu.Unlock()
+	if closed {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -71,8 +78,10 @@ func (t *MCPTenant) Close(ctx context.Context) error {
 	if err := t.proxy.Close(); err != nil {
 		return err
 	}
+	t.owner.mu.Lock()
 	t.closed = true
 	delete(t.owner.tenants, t.id)
+	t.owner.mu.Unlock()
 	return nil
 }
 func (a *MCP) Close(ctx context.Context) error {

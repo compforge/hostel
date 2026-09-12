@@ -27,6 +27,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/bed/store"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 type isolatedBlockingStore struct {
@@ -138,7 +139,7 @@ func TestIsolatedSessionRemainsActiveWhileEvicting(t *testing.T) {
 		started: make(chan struct{}, 1),
 		release: make(chan struct{}),
 	}
-	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, store.NewManagerWithStores(backend))
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, store.NewManagerWithStores(backend))
 	if err != nil {
 		t.Fatal(err)
 	}

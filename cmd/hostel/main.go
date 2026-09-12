@@ -39,6 +39,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/resource"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	"github.com/qiankunli/hostel/internal/config"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	"github.com/qiankunli/hostel/internal/supervisor"
 	"github.com/qiankunli/hostel/internal/tracing"
 	"github.com/qiankunli/hostel/internal/web"
@@ -103,7 +104,8 @@ func main() {
 
 	// New resolves the requested level against the environment ceiling and
 	// logs the outcome; the returned isolator is always usable.
-	iso := isolation.New(cfg.IsolationMode, cfg.WorkspaceRoot,
+	host := hostfacts.Collect()
+	iso := isolation.New(host, cfg.IsolationMode, cfg.WorkspaceRoot,
 		isolation.WithPathProjections(pathProjections),
 	)
 	bedUser, err := privilege.NewBedUser(cfg.BedUID, cfg.BedGID)
@@ -112,7 +114,7 @@ func main() {
 	}
 
 	// Facilities remain registered when unavailable; Start reports the reason.
-	amenities := amenity.NewManager()
+	amenities := amenity.NewManager(host)
 	if err := amenities.Register(amenity.NewMCP(mcpproxy.Options{})); err != nil {
 		log.Fatal(err)
 	}
@@ -144,7 +146,7 @@ func main() {
 		log.Fatalf("hostel: init store: %v", err)
 	}
 
-	mgr, err := bed.NewManager(cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
+	mgr, err := bed.NewManager(host, cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
 		bed.WithBedUser(bedUser),
 	)
 	if err != nil {
@@ -164,13 +166,6 @@ func main() {
 	mgr.SetNetworkManager(networks)
 	resources := resource.New()
 	mgr.SetResourceTracker(resources)
-	resourceReport := resources.Report()
-	if resourceReport.Available {
-		log.Printf("hostel: per-bed resource accounting enabled (backend=%s)", resourceReport.Backend)
-	} else {
-		log.Printf("hostel: per-bed resource accounting unavailable (backend=%s reason=%s)",
-			resourceReport.Backend, resourceReport.Reason)
-	}
 	admissionCtx, stopAdmission := context.WithCancel(context.Background())
 	defer stopAdmission()
 	resourceAdmission, err := resource.NewAdmission(admissionCtx, resource.NewCarrier(), resource.AdmissionConfig{
@@ -239,6 +234,13 @@ func main() {
 		_ = amenities.Close(cleanup)
 		cancel()
 		log.Fatalf("hostel: start bed manager: %v", err)
+	}
+	resourceReport := resources.Report()
+	if resourceReport.Available {
+		log.Printf("hostel: per-bed resource accounting enabled (backend=%s)", resourceReport.Backend)
+	} else {
+		log.Printf("hostel: per-bed resource accounting unavailable (backend=%s reason=%s)",
+			resourceReport.Backend, resourceReport.Reason)
 	}
 	if err := mgr.RetryLocalCleanups(context.Background()); err != nil {
 		log.Printf("hostel: startup local cleanup pending: %v", err)

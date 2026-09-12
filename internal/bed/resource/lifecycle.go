@@ -21,6 +21,15 @@ type Manager struct {
 func NewManager(tracker Tracker, status bed.StatusWriter[bed.ResourceStatus]) *Manager {
 	return &Manager{tracker: tracker, status: status, allocations: make(map[*bed.Bed]bool), admission: NoopAdmission("resource admission not configured")}
 }
+
+// Start owns host accounting initialization, including partial allocations.
+// Bed Manager registers this component for cleanup before calling Start.
+func (m *Manager) Start(ctx context.Context) error {
+	if starter, ok := m.tracker.(interface{ Start(context.Context) error }); ok {
+		return starter.Start(ctx)
+	}
+	return ctx.Err()
+}
 func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
 	m.mu.Lock()
 	m.allocations[b] = true

@@ -35,8 +35,12 @@ func (m *Manager) BedStatus(id bed.ID) map[string]BindingStatus {
 		return out
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	tenants := make(map[string]Tenant, len(b.tenants))
 	for name, t := range b.tenants {
+		tenants[name] = t
+	}
+	b.mu.Unlock()
+	for name, t := range tenants {
 		out[name] = BindingStatus{t.ID(), t.Status()}
 	}
 	return out

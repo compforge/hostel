@@ -4,7 +4,7 @@
 
 Amenity 是独立于 Bed 的设施，由 daemon 下的 Amenity Manager 管理。Tenant 是 Hostel
 为服务 Bed 而定义的设施使用单元；具体资源如何实现属于设施内部细节。Chromium 可以为 Tenant
-分配 BrowserContext，MCP 可以为 Tenant 管理配置和连接池，不要求 Tenant 对应独立进程。
+分配 BrowserContext，MCP 可以为 Tenant 管理配置和连接池，不要求 Tenant 对应独立进程。Tenant 表达使用归属，期望按 Tenant 隔离但不强求；共享资源或独立资源均由设施决定，Tenant 的存在不构成额外隔离保证。
 
 Bed Manager 解析调用方的 Bed Name，Amenity Manager 以本地 Bed ID 维护到各设施 Tenant ID
 的绑定。Tenant ID 在设施内唯一、生命周期内稳定，不包含 Bed 名称语义；同名 Bed 重建使用新的
@@ -111,3 +111,9 @@ token 生命周期、按需启停和回收。浏览器相关验证需要实际 C
 
 新增设施时分别验证自己的状态归属、凭据、产物、出站与释放失败；设施可用状态只表示
 能提供服务，不代表这些维度都已达到理想隔离。
+
+### 并发与状态读取
+
+设施初始化与昂贵资源启动分开：Start 完成必要初始化，首次使用可以惰性启动资源，空闲时可以回收资源并保留 Tenant 身份和有效凭据。共享启动由设施协调；Tenant 资源操作按 Tenant 协调，不因一个 Tenant 的远端慢操作串行化所有 Tenant。
+
+状态锁只保护内存快照，不跨浏览器启动、CDP 调用或资源释放。全局与 Tenant Status、凭据读取均不等待这些操作；超时或取消终结等待，部分资源仍保留清理归属。关闭 Tenant 先撤销凭据，再清理资源；设施关闭阻止新工作，并等待自己拥有的后台任务退出。

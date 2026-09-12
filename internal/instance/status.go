@@ -4,7 +4,6 @@ package instance
 import (
 	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	manager "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/host/facts"
 )
@@ -15,17 +14,10 @@ type Observer struct {
 	Amenities *amenity.Manager
 }
 
-// NewObserver reuses the host snapshot captured by the filesystem resolver.
-// Embedded runtimes may supply an isolator without a report; collect once at
-// assembly in that case, never on a status request.
-func NewObserver(beds *manager.Manager, amenities *amenity.Manager) Observer {
-	var host facts.SystemFacts
-	if report, ok := beds.Isolator().(isolation.Report); ok {
-		host = report.Facts().System
-	} else {
-		host = facts.Collect().System
-	}
-	return Observer{Beds: beds, Amenities: amenities, host: host}
+// NewObserver composes the same boot snapshot supplied to the domain managers.
+// Construction and status reads never probe the host.
+func NewObserver(host facts.Snapshot, beds *manager.Manager, amenities *amenity.Manager) Observer {
+	return Observer{Beds: beds, Amenities: amenities, host: host.System}
 }
 
 // Status separates host observations from domain and facility status.

@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 // fakeMech is an availability-controllable mechanism for resolver tests.
@@ -108,7 +109,7 @@ func TestParseRequestAndNewReports(t *testing.T) {
 	// New's selection rule is table-tested above with fake mechanisms; here only
 	// assert host-independent invariants — what "auto" lands on varies by host
 	// (mac/CI → dorm/direct, a Linux box with bwrap → suite/bwrap).
-	iso := New("auto", t.TempDir())
+	iso := New(hostfacts.Collect(), "auto", t.TempDir())
 	r, ok := iso.(Report)
 	if !ok {
 		t.Fatalf("New(auto) does not implement Report: %T", iso)

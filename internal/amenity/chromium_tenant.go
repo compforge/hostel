@@ -6,6 +6,7 @@ import (
 	"net"
 
 	"github.com/qiankunli/go-stdx/randx"
+	"golang.org/x/sync/semaphore"
 )
 
 // Browser is one tenant's browser capability. Contexts may be recycled while
@@ -29,10 +30,11 @@ type Browser interface {
 }
 
 type browserTenant struct {
-	id      TenantID
-	owner   *chromium
-	closing bool
-	closed  bool // protected by owner.mu
+	operation *semaphore.Weighted
+	id        TenantID
+	owner     *chromium
+	closing   bool
+	closed    bool // protected by owner.mu
 }
 
 func (c *chromium) NewTenant(ctx context.Context) (Tenant, error) {
@@ -44,7 +46,7 @@ func (c *chromium) NewTenant(ctx context.Context) (Tenant, error) {
 	if c.closed || c.state == StateUnavailable {
 		return nil, fmt.Errorf("chromium unavailable: %s", c.reason)
 	}
-	t := &browserTenant{id: TenantID(randx.Hex(16)), owner: c}
+	t := &browserTenant{id: TenantID(randx.Hex(16)), owner: c, operation: semaphore.NewWeighted(1)}
 	c.tenantHandles[t.id] = t
 	return t, nil
 }
@@ -67,25 +69,47 @@ func (t *browserTenant) Status() TenantStatus {
 func (t *browserTenant) Close(ctx context.Context) error {
 	c := t.owner
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if t.closed {
+		c.mu.Unlock()
 		return nil
 	}
 	t.closing = true
-	// Revoke before remote disposal, even if cleanup must be retried.
 	delete(c.cdpSecrets, t.id.String())
-	if err := c.releaseContextLocked(ctx, t.id.String()); err != nil {
+	c.mu.Unlock()
+	if err := t.operation.Acquire(ctx, 1); err != nil {
 		return err
 	}
+	defer t.operation.Release(1)
+	if err := c.runtime.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer c.runtime.Release(1)
+	if err := c.releaseContext(ctx, t.id.String()); err != nil {
+		return err
+	}
+	c.mu.Lock()
 	delete(c.tenantHandles, t.id)
 	t.closed = true
+	c.mu.Unlock()
 	return nil
 }
 func (t *browserTenant) CloseContext(ctx context.Context) error {
 	c := t.owner
+	if err := t.operation.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer t.operation.Release(1)
+	if err := c.runtime.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer c.runtime.Release(1)
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.releaseContextLocked(ctx, t.id.String())
+	closed := t.closed || t.closing || c.closed
+	c.mu.Unlock()
+	if closed {
+		return fmt.Errorf("chromium: tenant %s closed", t.id)
+	}
+	return c.releaseContext(ctx, t.id.String())
 }
 func (t *browserTenant) CDPToken() (string, error) {
 	return t.owner.CDPToken(t.id.String())

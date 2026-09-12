@@ -8,12 +8,15 @@ import (
 	"sync"
 
 	"github.com/qiankunli/hostel/internal/bed"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+	"golang.org/x/sync/semaphore"
 )
 
 // Manager composes independent facilities and owns Bed-to-Tenant bindings.
 // Facility registration is fixed before Start. No facility calls back into it
 // while holding its resource locks.
 type Manager struct {
+	hostFacts hostfacts.Snapshot
 	mu        sync.RWMutex
 	lifecycle sync.Mutex
 	amenities []Amenity
@@ -23,12 +26,15 @@ type Manager struct {
 }
 
 type bedBinding struct {
-	mu      sync.Mutex
-	closing bool
-	tenants map[string]Tenant
+	operation *semaphore.Weighted
+	mu        sync.Mutex
+	closing   bool
+	tenants   map[string]Tenant
 }
 
-func NewManager() *Manager { return &Manager{beds: make(map[bed.ID]*bedBinding)} }
+func NewManager(host hostfacts.Snapshot) *Manager {
+	return &Manager{hostFacts: host, beds: make(map[bed.ID]*bedBinding)}
+}
 
 func (m *Manager) Register(a Amenity) error {
 	if m == nil || a == nil {
@@ -75,7 +81,7 @@ func (m *Manager) AdmitBed(id bed.ID) error {
 		return errors.New("amenity: manager closed")
 	}
 	if m.beds[id] == nil {
-		m.beds[id] = &bedBinding{tenants: make(map[string]Tenant)}
+		m.beds[id] = &bedBinding{operation: semaphore.NewWeighted(1), tenants: make(map[string]Tenant)}
 	}
 	return nil
 }
@@ -95,15 +101,21 @@ func (m *Manager) Acquire(ctx context.Context, id bed.ID, name string) (Tenant, 
 	if b == nil {
 		return nil, fmt.Errorf("amenity: bed %s is not admitted", id)
 	}
+	if err := b.operation.Acquire(ctx, 1); err != nil {
+		return nil, err
+	}
+	defer b.operation.Release(1)
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.closing {
+	closing := b.closing
+	t := b.tenants[name]
+	b.mu.Unlock()
+	if closing {
 		return nil, fmt.Errorf("amenity: bed %s is closing", id)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if t := b.tenants[name]; t != nil {
+	if t != nil {
 		return t, nil
 	}
 	a := m.Find(name)
@@ -115,7 +127,9 @@ func (m *Manager) Acquire(ctx context.Context, id bed.ID, name string) (Tenant, 
 	if err != nil {
 		return nil, fmt.Errorf("amenity %s: create tenant: %w", name, err)
 	}
+	b.mu.Lock()
 	b.tenants[name] = t
+	b.mu.Unlock()
 	slog.DebugContext(ctx, "amenity tenant bound", "bed_id", id, "amenity", name, "tenant_id", t.ID())
 	return t, nil
 }
@@ -128,20 +142,34 @@ func (m *Manager) ReleaseBed(ctx context.Context, id bed.ID) error {
 		return nil
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.closing = true
-	var result error
+	b.mu.Unlock()
+	if err := b.operation.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer b.operation.Release(1)
+	b.mu.Lock()
+	tenants := make(map[string]Tenant, len(b.tenants))
 	for name, t := range b.tenants {
+		tenants[name] = t
+	}
+	b.mu.Unlock()
+	var result error
+	for name, t := range tenants {
 		if err := t.Close(ctx); err != nil {
 			result = errors.Join(result, fmt.Errorf("amenity %s tenant %s: %w", name, t.ID(), err))
 			slog.WarnContext(ctx, "amenity tenant cleanup pending", "bed_id", id, "amenity", name, "tenant_id", t.ID(), "error", err)
 			continue
 		}
+		b.mu.Lock()
 		delete(b.tenants, name)
+		b.mu.Unlock()
 	}
 	if result == nil {
 		m.mu.Lock()
-		delete(m.beds, id)
+		if m.beds[id] == b {
+			delete(m.beds, id)
+		}
 		m.mu.Unlock()
 	}
 	return result
@@ -184,3 +212,6 @@ func (m *Manager) CDPToken(ctx context.Context, id bed.ID) (string, error) {
 	}
 	return br.CDPToken()
 }
+
+// HostFacts is the boot snapshot available to facility assembly.
+func (m *Manager) HostFacts() hostfacts.Snapshot { return m.hostFacts }

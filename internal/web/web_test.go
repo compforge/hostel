@@ -35,12 +35,13 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	root := t.TempDir()
-	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, nil)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -762,7 +763,7 @@ var _ = http.StatusOK
 
 func TestMaxBedsBackpressure(t *testing.T) {
 	root := t.TempDir()
-	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 1, nil)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 1, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -800,7 +801,7 @@ func TestMaxBedsBackpressure(t *testing.T) {
 
 func TestMaxPinnedBedsReportsPressureWithoutBackpressure(t *testing.T) {
 	root := t.TempDir()
-	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 3, nil)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 3, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -859,7 +860,7 @@ func TestMaxPinnedBedsReportsPressureWithoutBackpressure(t *testing.T) {
 
 func TestCheckpointEndpointAndPersistenceReporting(t *testing.T) {
 	root := t.TempDir()
-	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, nil)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}

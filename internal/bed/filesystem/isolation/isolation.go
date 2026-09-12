@@ -29,9 +29,8 @@ import (
 	"os/exec"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
-	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
-
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 )
 
 // Level is a data-isolation guarantee, ordered weakest→strongest.
@@ -115,13 +114,12 @@ type WorkspaceViewReport struct {
 }
 
 // Report is the boot-time resolution, exposed for capabilities/healthz: the
-// resolution outcome plus the host facts it was resolved from.
+// resolution outcome and mechanism-specific probe evidence.
 type Report interface {
 	Requested() Level
 	Effective() Level
 	Ceiling() Level
 	Mechanism() string
-	Facts() hostfacts.Snapshot
 	WorkspaceView() WorkspaceViewReport
 	Diagnostics() DiagnosticsReport
 }
@@ -156,7 +154,6 @@ type resolved struct {
 	boundary       Boundary
 	workspace      workspaceBackend
 	req, eff, ceil Level
-	facts          hostfacts.Snapshot
 	workspaceView  WorkspaceViewReport
 	diagnostics    DiagnosticsReport
 	projections    []bedfs.PathProjection
@@ -171,7 +168,6 @@ func (r *resolved) Requested() Level                   { return r.req }
 func (r *resolved) Effective() Level                   { return r.eff }
 func (r *resolved) Ceiling() Level                     { return r.ceil }
 func (r *resolved) Mechanism() string                  { return r.boundary.Name() }
-func (r *resolved) Facts() hostfacts.Snapshot          { return r.facts }
 func (r *resolved) WorkspaceView() WorkspaceViewReport { return r.workspaceView }
 func (r *resolved) Diagnostics() DiagnosticsReport {
 	probes := make(map[string]hostfacts.ProbeReport, len(r.diagnostics.Probes))
@@ -216,16 +212,14 @@ func (r *resolved) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 //
 // +spec=`effective isolation is the strongest available level not exceeding the request, and requested/effective/ceiling remain observable.`
 // +case:id=isolation_level_boundaries,desc=`Run the same sibling-path probe under dorm, room, and suite requests`,expect=`dorm shares, room denies, suite hides, and unavailable levels degrade honestly`
-func New(requested, workspaceRoot string, opts ...Option) Isolator {
+func New(facts hostfacts.Snapshot, requested, workspaceRoot string, opts ...Option) Isolator {
 	cfg := options{}
 	for _, option := range opts {
 		option(&cfg)
 	}
 	req := parseRequest(requested)
 
-	// One host probe shared by every mechanism (see hostfacts.Snapshot): they read it for
-	// the cheap pre-check and keep their own boot smoke for the verdict.
-	facts := hostfacts.Collect()
+	// The daemon supplies one host snapshot; each mechanism owns its execution probe.
 
 	// Candidate mechanisms, strongest first; within a level, preferred first
 	// (the selection below keeps the first available at each level). direct
@@ -282,7 +276,6 @@ func New(requested, workspaceRoot string, opts ...Option) Isolator {
 		req:           req,
 		eff:           eff,
 		ceil:          ceiling,
-		facts:         facts,
 		workspaceView: workspaceView,
 		diagnostics: DiagnosticsReport{
 			Probes: probes,

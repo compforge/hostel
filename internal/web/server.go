@@ -25,13 +25,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/qiankunli/hostel/internal/instance"
-	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
-
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/bed/resource"
+	"github.com/qiankunli/hostel/internal/instance"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 // respondBedError maps bed resolution/admission failures: a full or
@@ -104,7 +103,7 @@ func NewServer(mgr *bed.Manager, options ...ServerOption) *Server {
 	e.Use(gin.Recovery())
 	s := &Server{
 		mgr:                  mgr,
-		observer:             instance.NewObserver(mgr, mgr.Amenities()),
+		observer:             instance.NewObserver(mgr.HostFacts(), mgr, mgr.Amenities()),
 		engine:               e,
 		metricSampleInterval: time.Second,
 		dormReadFallbackRoot: cfg.dormReadFallbackRoot,

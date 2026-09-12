@@ -36,6 +36,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/bed/store"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 type transferS3Fixture struct {
@@ -170,7 +171,7 @@ func newTransferTestServer(t *testing.T, fixture *transferS3Fixture) (*Server, *
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), nil, 0, stores)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, stores)
 	if err != nil {
 		t.Fatal(err)
 	}

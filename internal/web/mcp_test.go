@@ -24,15 +24,16 @@ import (
 	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	"github.com/qiankunli/hostel/pkg/mcpproxy"
 )
 
 func TestMCPBedConfigurationLifecycle(t *testing.T) {
 	root := t.TempDir()
-	registry := amenity.NewManager()
+	registry := amenity.NewManager(hostfacts.Collect())
 	facility := amenity.NewMCP(mcpproxy.Options{})
 	registry.Register(facility)
-	mgr, err := bed.NewManager(root, "default", "/bin/bash", isolation.New("dorm", root), registry, 0, nil)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), registry, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

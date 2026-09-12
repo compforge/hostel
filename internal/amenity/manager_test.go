@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/qiankunli/hostel/internal/bed"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 type testFacility struct {
@@ -43,7 +44,7 @@ func (t *testTenant) Status() TenantStatus        { return MCPTenantStatus{} }
 func (t *testTenant) Close(context.Context) error { t.closes++; return t.closeErr }
 
 func TestBindingsReuseAndRetainFailedCleanup(t *testing.T) {
-	m := NewManager()
+	m := NewManager(hostfacts.Collect())
 	a, b := &testFacility{name: "a"}, &testFacility{name: "b"}
 	for _, f := range []*testFacility{a, b} {
 		if err := m.Register(f); err != nil {
@@ -119,7 +120,7 @@ func TestBindingsReuseAndRetainFailedCleanup(t *testing.T) {
 }
 
 func TestFacilityStartupRollbackAndRegistration(t *testing.T) {
-	m := NewManager()
+	m := NewManager(hostfacts.Collect())
 	fail := errors.New("start failed")
 	a, b, c := &testFacility{name: "a"}, &testFacility{name: "b", startErr: fail}, &testFacility{name: "c"}
 	for _, f := range []*testFacility{a, b, c} {
@@ -145,7 +146,7 @@ func TestFacilityStartupRollbackAndRegistration(t *testing.T) {
 }
 
 func TestUnavailableChromiumRemainsObservable(t *testing.T) {
-	m := NewManager()
+	m := NewManager(hostfacts.Collect())
 	c := NewChromium(ChromiumConfig{ExecPath: "/nonexistent/hostel-test-chromium"})
 	if err := m.Register(c); err != nil {
 		t.Fatal(err)

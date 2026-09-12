@@ -10,6 +10,7 @@ import (
 
 	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/bed/network"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 type failingRelease struct {
@@ -39,7 +40,7 @@ func (t *failingTenant) Close(context.Context) error {
 func TestFailedRetirementKeepsIdentityAndDataUntilRetry(t *testing.T) {
 	m := newTestManager(t)
 	facility := &failingRelease{err: errors.New("upstream unavailable")}
-	m.amenities = amenity.NewManager()
+	m.amenities = amenity.NewManager(hostfacts.Collect())
 	m.amenities.Register(facility)
 	b, err := m.Ensure(context.Background(), "retire")
 	if err != nil {
@@ -110,7 +111,7 @@ func (n *retryReleaseNetwork) Close(context.Context) error { n.calls++; return n
 func TestRetirementResumesAtFailedComponent(t *testing.T) {
 	m := newTestManager(t)
 	facility := &failingRelease{}
-	m.amenities = amenity.NewManager()
+	m.amenities = amenity.NewManager(hostfacts.Collect())
 	m.amenities.Register(facility)
 	net := &retryReleaseNetwork{err: errors.New("network busy")}
 	m.SetNetworkManager(network.WithProvider(net, m.owners.Network))
