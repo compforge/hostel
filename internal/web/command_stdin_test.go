@@ -21,8 +21,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/executor"
+	"github.com/qiankunli/hostel/internal/bed/executor"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
 
 func TestCommandStdinFileRoundTrip(t *testing.T) {

@@ -24,13 +24,13 @@ import (
 	"github.com/gobwas/ws"
 
 	"github.com/qiankunli/hostel/internal/amenity"
-	"github.com/qiankunli/hostel/internal/bed"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
 
 // browserOf resolves the bed from the :bedId path param and the Browser
 // amenity, writing the error response when either is missing. The raw CDP
 // socket is never exposed — only these bed-scoped verbs (docs/amenity.md §2).
-func (s *Server) browserOf(c *gin.Context) (*bed.Bed, amenity.Browser, func()) {
+func (s *Server) browserOf(c *gin.Context) (*bed.Resident, amenity.Browser, func()) {
 	a := s.mgr.Amenities().Find("chromium")
 	br, ok := a.(amenity.Browser)
 	if a == nil || !ok {

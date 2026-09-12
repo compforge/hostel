@@ -11,8 +11,8 @@ capability、设置 `no_new_privs`。
 允许真实操作；Hostel 会探测完整执行路径，并通过 diagnostics 披露事实。部署不应以
 `privileged: true`、`hostPID` 或无边界的宿主权限替代具体要求。
 
-`internal/privilege` 是 Bed 操作系统身份的 owner：它负责 `BedUser`、目录 ownership、进程
-credentials 和 UID 租约；`privilege.Manager` 统一拥有分配器与权限报告。文件隔离策略由 `internal/isolation` 选择，网络与资源权限分别由对应
+`internal/bed/privilege` 是 Bed 操作系统身份的 owner：它负责 `BedUser`、目录 ownership、进程
+credentials 和 UID 租约；`privilege.Manager` 统一拥有分配器与权限报告。文件隔离策略由 `internal/bed/filesystem/isolation` 选择，网络与资源权限分别由对应
 组件使用；权限层不决定房型、网络策略或资源配额。
 
 ## Daemon 与 BedUser

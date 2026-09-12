@@ -27,7 +27,7 @@ import (
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/mem"
 
-	"github.com/qiankunli/hostel/internal/bed"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
 
 // systemMetrics matches OpenSandbox execd's Metrics response exactly. In

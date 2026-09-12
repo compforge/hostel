@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/qiankunli/hostel/internal/store"
+	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
 type transferEndpoint struct {

@@ -110,6 +110,12 @@ hostel 不自行选择新 carrier，跨 carrier 溢出由上层调度负责。�
 
 ### 3. Hostel
 
+Bed Manager 的 Start 完成领域初始化、本地目录恢复和 UID 保留，组合环境探测完成后才开放 Web。
+Run 启动 Store 同步、Resource 采样与 Bed 回收循环；每个领域保留自己的周期和失败重试策略。
+关闭时先停止准入、取消并等待后台循环，再取消初始化、清理各 Bed 的运行资源，最后逆序关闭领域
+组件。daemon 随后关闭共享 Amenity。正常关闭保留本地数据与 UID 对应关系，不对所有 Bed 执行 Forget；
+启动失败则回滚已启动的组件。终止性后台错误会通知 daemon 走同一关闭路径。
+
 ```text
 启动组装（探测文件、网络与资源能力 → 组装设施、Store 与 Bed manager → web）→ 服务
    ├─ 后台循环：idle bed reaper / luggage GC / Store 同步调度
@@ -173,16 +179,17 @@ resident Bed 的网络资源不属于某一次 Executor：Executor 替换保留�
 
 ### 组件参与生命周期
 
-Bed Manager 通过 `Lifecycle` 驱动绑定到具体 allocation 的参与者；参与者持有该次分配的资源句柄，
-不能在释放时仅凭可复用的 Bed ID 查找资源。`Component[R]` 在此基础上增加 `Diagnostics() R`，
+Bed Manager 通过 `BedLifecycle` 驱动各领域 Manager，每个 hook 都接收同一个 `*bed.Bed`。领域按
+该 allocation 保存资源句柄，不能在释放时仅凭可复用的 Bed ID 查找资源。`Component[R]` 还包含
+`DaemonLifecycle`（Start/Close）和 `Diagnostics() R`，
 报告由领域组件拥有，聚合层保留类型。组件可以嵌入 `Noop` 留空不参与的阶段。
 
 | Hook | Bed Manager 驱动时机与完成条件 |
 |---|---|
 | Recover | 启动准入前恢复已有本地身份；Privilege 根据目录 owner 保留 UID |
-| Prepare | 初始化时按 Store、BedFS/权限、网络、资源的依赖顺序准备；全部成功后才发布 Ready |
+| Prepare | 初始化时按 Store、Filesystem、Privilege、Network（含初始策略）、Resource、Executor、Amenity 顺序准备；全部成功后才发布 Ready |
 | Stop | 已停止数据面准入后终止 Transfer 与 Executor，阻止继续使用资源 |
-| Release | Stop 成功后依次释放设施、资源组、网络、BedFS；不释放 UID |
+| Release | Stop 成功后释放设施切片、Executor、资源组、网络、BedFS 和 Store 任务状态；不释放 UID |
 | Forget | 运行资源和本地 Bed / `.gc-*` 目录全部清理后，由 Privilege 释放身份 |
 
 Stop / Release 保存每个参与者的完成进度，失败重试从未完成的 hook 继续；已成功的 hook 不重复执行。

@@ -20,13 +20,43 @@ Hostel 负责实例内 Bed 生命周期、执行、文件、持久化、可选�
 | Execution | 一次命令运行，记录所属 Bed、Executor、输出与结构化终态 |
 | Amenity | Carrier 共享的设施，按 Bed 分配状态并管理设施本身的生命周期 |
 
-Bed 是上层路由与归属的单位，不等于某个 OS 进程。Executor 丢失后可为同一 Bed 重建，
-不会替换其 BedFS；resident Bed 的网络身份也独立于 Executor。Store Manager 与
-Network Manager 是实例级组件，分别拥有持久化与网络资源的实现和调度。
-Privilege Manager 拥有权限策略、UID 分配与诊断。组件为具体 allocation 绑定生命周期参与者，
-Bed Manager 通过统一的 `Lifecycle` hooks 驱动它们；`Component[R]` 另外提供类型化诊断。
-Bed Manager 决定执行顺序与何时发布 Ready、释放身份，各组件实现自己的资源动作。
-本地身份覆盖 resident、luggage 和待删除目录，寿命可以长于一次 resident allocation。
+Bed 是上层路由与归属的单位，不等于某个 OS 进程。Hostel 在 Pod 内以进程为中心提供轻量隔离单元，
+Executor 替换不会改变 Bed 的数据和网络身份。
+
+```text
+daemon
+├── Web Server
+├── Bed Manager（composite）
+│   ├── Filesystem Manager
+│   ├── Privilege Manager
+│   ├── Network Manager
+│   ├── Store Manager
+│   ├── Executor Manager
+│   └── Resource Manager
+└── Amenity Manager
+```
+
+`internal/bed` 只放共享模型和契约，全仓只有一个 `Bed` 类型。Spec 保存解析后的配置与准备输入，
+Status 分为 Lifecycle、Filesystem、Privilege、Network、Store、Executor、Resource、Amenity 八个
+类型化部分。各领域能读取完整快照，只获得自己部分的 `StatusWriter`；Bed Manager 拥有 Spec 和
+Lifecycle 的更新权。读写都复制可变成员，不能通过返回的 map、slice 或指针绕过写入边界。
+
+资源句柄、锁、后台任务和客户端由对应领域 Manager 持有。Bed Manager 内部的 `managedBed`
+承载 operation/session、版本水位与清理重试等协调状态，通过 `Resident` 操作句柄供入口层使用；
+它引用共享 Bed，不另建一份领域 Spec/Status。调度 API 的 Status 是这些生命周期事实的投影。
+
+身份分三个寿命：调用方的 Bed ID、本 daemon 保留数据期间的 LocalID、一次初始化的 InstanceID。
+LocalID 覆盖 resident、冷目录和待删除目录；InstanceID 区分同名 Bed 的前后两次资源分配。
+这些内部标识不改变对外 API 或磁盘格式。清理必须针对原 allocation，不能让旧 hook 按 ID 清掉替代实例。
+
+领域 Manager 有三个驱动面：daemon 的 `Start/Close`、带 `*bed.Bed` 的单 Bed hooks，以及可选的
+`Run(ctx)` 后台循环。Start 完成同步初始化后返回，Run 阻塞到取消或终止错误；定时节奏、合并与退避
+由领域自己决定。`Component[R]` 汇合启停、Bed lifecycle 和类型化诊断，允许未参与的阶段嵌入 Noop。
+Bed Manager 明确安排跨领域顺序；不使用动态注册顺序推导依赖，也不统一抽象 Tick。
+
+Amenity 的全局启停直属 daemon；Bed Manager 只驱动其 Bed 切片。Web handler 负责协议适配，Bed 级
+文件、网络、浏览器、MCP 与执行都经过 Bed Manager 的准入。隔离是多个领域共同实现的结果，
+文件隔离机制归 Filesystem，网络、身份与执行环境的组合顺序归 Bed Manager。
 
 ## 三、主流程
 
@@ -68,8 +98,8 @@ local backend 由 daemon 直接派生并管理进程组，不承诺清理已脱�
 
 Execution 区分进程退出、信号终结和丢失，并独立记录 timeout/cancel/teardown 等终止原因。
 Executor 丢失终结其所属 Execution，不能把传输 EOF 当成正常退出。协议和观测见
-[observability.md](observability.md)，实现锚点在 `internal/executor`、`internal/supervisor`
-与 `internal/bed/execution.go`。
+[observability.md](observability.md)，实现锚点在 `internal/bed/executor`、`internal/supervisor`
+与 `internal/bed/manager/execution.go`。
 
 ## 四、Bed 独立性与共享实现
 

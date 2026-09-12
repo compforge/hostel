@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/amenity"
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/pkg/mcpproxy"
 )
 

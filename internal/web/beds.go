@@ -24,8 +24,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/go-stdx/randx"
 
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/network"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	"github.com/qiankunli/hostel/internal/bed/network"
 )
 
 // bedView is the JSON shape for a bed in the management API.
@@ -41,19 +41,19 @@ type bedView struct {
 	RetainUntil  time.Time     `json:"retained_until,omitzero"`
 }
 
-func (s *Server) viewOf(b *bed.Bed) bedView {
+func (s *Server) viewOf(b *bed.Resident) bedView {
 	return s.viewFromStatus(b, b.Status())
 }
 
-func (s *Server) viewFromStatus(b *bed.Bed, status bed.Status) bedView {
+func (s *Server) viewFromStatus(b *bed.Resident, status bed.Status) bedView {
 	return bedView{
 		ID:           b.ID,
-		Sync:         string(b.Sync),
+		Sync:         string(b.Spec().Sync),
 		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
 		Pinned:       status.Pinned,
 		Workspace:    b.Workspace(),
-		CreatedAt:    b.CreatedAt,
+		CreatedAt:    b.Spec().CreatedAt,
 		LastActiveAt: status.LastActiveAt,
 		RetainUntil:  status.RetainUntil,
 	}
@@ -466,5 +466,5 @@ func (s *Server) bedCheckpoint(c *gin.Context) {
 		runtimeError(c, "checkpointed bed is no longer resident")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"persistence": string(b.Sync)})
+	c.JSON(http.StatusOK, gin.H{"persistence": string(b.Spec().Sync)})
 }

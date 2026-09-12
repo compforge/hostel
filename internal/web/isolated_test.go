@@ -24,9 +24,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/isolation"
-	"github.com/qiankunli/hostel/internal/store"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
 type isolatedBlockingStore struct {

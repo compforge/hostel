@@ -32,9 +32,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/executor"
-	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/bed/executor"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
 
 func newTestServer(t *testing.T) *Server {

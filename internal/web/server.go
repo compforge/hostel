@@ -27,10 +27,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
-	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bedfs"
-	"github.com/qiankunli/hostel/internal/isolation"
-	"github.com/qiankunli/hostel/internal/resource"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	"github.com/qiankunli/hostel/internal/bed/resource"
 )
 
 // respondBedError maps bed resolution/admission failures: a full or
@@ -227,9 +227,9 @@ const resolvedBedContextKey = "hostel.resolved-bed"
 // creating it on first use. Adapters that require an existing bed may inject a
 // pre-resolved value, which also prevents their read paths from creating one.
 // On invalid id it writes an error and returns nil.
-func (s *Server) bedOf(c *gin.Context) *bed.Bed {
+func (s *Server) bedOf(c *gin.Context) *bed.Resident {
 	if resolved, ok := c.Get(resolvedBedContextKey); ok {
-		if b, ok := resolved.(*bed.Bed); ok {
+		if b, ok := resolved.(*bed.Resident); ok {
 			return b
 		}
 	}
@@ -251,7 +251,7 @@ func (s *Server) bedOf(c *gin.Context) *bed.Bed {
 // BeginOperation is reserved for work whose span is NOT the request —
 // background /command outlives it, foreground runs take their timeout from
 // the request body, isolatedCreate creates the bed it then holds.
-func (s *Server) withOp(kind bed.OperationKind, next func(*gin.Context, *bed.Bed)) gin.HandlerFunc {
+func (s *Server) withOp(kind bed.OperationKind, next func(*gin.Context, *bed.Resident)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		b := s.bedOf(c)
 		if b == nil {
@@ -269,7 +269,7 @@ func (s *Server) withOp(kind bed.OperationKind, next func(*gin.Context, *bed.Bed
 
 // opsOf returns filesystem ops rooted at the request's bed and holds one
 // operation reference until finish is called.
-func (s *Server) opsOf(c *gin.Context) (*bed.Bed, *bedfs.FS, func()) {
+func (s *Server) opsOf(c *gin.Context) (*bed.Resident, *bedfs.FS, func()) {
 	b := s.bedOf(c)
 	if b == nil {
 		return nil, nil, nil

@@ -22,8 +22,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/qiankunli/hostel/internal/bedfs"
-	"github.com/qiankunli/hostel/internal/isolation"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 )
 
 func (s *Server) fileReader(ops *bedfs.FS) *bedfs.Reader {

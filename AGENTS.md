@@ -2,7 +2,7 @@
 
 ## 项目定位与边界
 
-**面向 AI agent 的 sandbox runtime**：在一台机器 / 一个容器内管理多个隔离执行单元（**bed**）。资源与文件 API 以 OpenSandbox 为设计基线，执行协议由 hostel 自己拥有。形态上 hostel = **web server + bed manager + amenity manager + store** 的组合（后续可扩充更多 manager）。可单机跑（laptop/VM/CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
+**面向 AI agent 的 sandbox runtime**：在一台机器 / 一个容器内管理多个隔离执行单元（**bed**）。资源与文件 API 以 OpenSandbox 为设计基线，执行协议由 hostel 自己拥有。形态上 daemon 组装 **Web Server、Bed Manager、Amenity Manager**；Bed Manager 以唯一 Bed 模型组合驱动各领域 Manager。可单机跑（laptop/VM/CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
 
 - **做**：bed 生命周期、exec / file、共享多租服务（Chromium/Jupyter/MCP…）管理。
 - **不做**（留给上层调度系统）：实例调度、跨实例路由、计费配额。
@@ -68,44 +68,33 @@ Bed 的理想语义是独立执行空间，文件、进程、网络和资源按�
 deploy/
 ├── docker/Dockerfile  多阶段多架构镜像(amd64/arm64,builder 原生交叉编译免 QEMU)：静态 hostel + debian-slim（内置 bwrap/PRoot/pathshim + 可选 chromium）；tini PID1；hostel --health 做 HEALTHCHECK
 └── k8s/              Kubernetes 部署示例；AppArmor 的 PSA 豁免申请见 pod-security-admission-exemption.yaml
-cmd/hostel/main.go     组装：config→isolation→amenity registry→store→bed manager→gin server；idle GC/luggage GC/持久兜底；--version/--health/__confine(landlock confiner 自 re-exec) 前置子命令；优雅关停
+cmd/hostel/main.go     daemon 入口：配置、组件组装、启动探测、Web 与信号；驱动 Manager 启停
 tests/e2e/             单机真实进程/镜像 E2E：公开 API、bed runtime/isolation 与可选 carrier userland；不经过 sandctl/K8s
 internal/
+├── bed/               唯一 Bed 模型（Spec / 分域 Status）及生命周期契约；不导入领域实现
+│   ├── manager/       Composite：准入、初始化/回收顺序、operation/session、执行环境组装与诊断聚合
+│   │   ├── bed.go     managedBed / Resident：请求操作句柄与并发协调，引用共享 Bed
+│   │   ├── daemon.go  Start / Run / Close：组件启动回滚、后台循环取消与 join
+│   │   ├── resident.go 初始化各领域资源，全部完成后由初始化入口发布 Ready
+│   │   └── local_identity.go 本地身份与清理占位；目录删除完成后才 Forget
+│   ├── filesystem/    BedFS 与文件隔离的 owner，提供文件领域诊断
+│   │   ├── bedfs/     数据根、路径投影及文件 API 的实现
+│   │   └── isolation/ 文件边界和进程文件视图的机制、探测与降级
+│   ├── privilege/     BedUser、UID 租约、ownership、降权与权限报告
+│   ├── network/       可选 per-Bed netns、出站策略与精确 allocation 句柄
+│   ├── store/         Stage-in、持久化、Transfer 及自动同步循环
+│   │   ├── sync/      noop/auto/cas/pack/tar/copy/restic 同步策略
+│   │   └── backend/   S3 位置、共享客户端和对象操作
+│   ├── executor/      可替换进程域的 Manager、local / supervisor backend
+│   └── resource/      cgroup accounting、carrier admission 与采样循环；未施加 per-Bed limits
+├── amenity/           daemon 直属共享设施；Bed Manager 只驱动 Bed 切片 hook
+├── supervisor/        Linux executor 的 IPC、进程派生与收尸
 ├── config/            flags + HOSTEL_* env
-├── tracing/           OpenTelemetry 进程初始化：OTLP exporter、W3C propagation 与日志 trace/span 关联
-├── isolation/         执行环境组装：Boundary 解析 direct/landlock/uid/bwrap 隔离档，workspace backend 独立解析 mount/PRoot/pathshim/carrier 进程视图
-├── lifecycle/         allocation-bound Lifecycle hooks 与类型化 Component 诊断契约；Bed Manager 显式编排
-├── privilege/         Manager 统一拥有 BedUser 分配、UID 租约与权限诊断；ownership / credentials 见 docs/privilege.md
-├── executor/          Executor 抽象与 local / supervisor backend；进程 identity、幂等 Start、终态与整域 Shutdown
-├── supervisor/        supervisor backend 的可重连 IPC 协议与 Linux supervisor/reaper 实现
-├── bed/               ★核心。bed=隔离单元=对外一个 sandbox
-│   ├── bed.go         Bed：隔离单元本体 + Status（phase/readiness/activity + generation/retained_until）+ touch/accessor
-│   ├── manager.go     Manager：resident / 待清理 bed 集合、回收(Evict→revoke→persist→原子复核→teardown/Purge/CollectExpired)、持久化(persistBed/Checkpoint/PersistDirty)
-│   ├── resident.go    初始化后的 BedFS、文件边界、网络 allocation 和资源记账父组准备
-│   ├── component_lifecycle.go  按 resident allocation 编排 Stop/Release，并保存重试进度
-│   ├── local_identity.go  本地身份、重启恢复与删除占位；目录清理完成后驱动 Forget
-│   ├── environment.go  启动时通过真实 Bed 命令 / shell 验证选定执行环境
-│   ├── initialization.go InitializeBed singleflight、phase/readiness、后台 Stage-in、容量预占与 Ready 发布；Ensure 复用并等待
-│   ├── store_sync.go  将 Bed 同步诉求与安全遍历入口接到全局 Store Manager 的唯一同步循环
-│   ├── operation.go   operation（无状态请求，kind=exec/file/browser/mcp/checkpoint/control）：BeginOperation + timeout 截断
-│   ├── session.go     session（可撤销有状态持有，cdp 类）：OpenSession/Touch/Close；revokeSessions 供 evict 在 persist 前吊销（shell 走 shell.go 自备机制，revoke 时一并 Close）
-│   ├── env.go         bed 进程环境唯一组装点：过滤 Hostel 保留命名空间 + Carrier env + BED_* context + request overlay
-│   ├── observability.go Bed 生命周期记录：initialize/persist/evict 的结构化 stage 日志与最近摘要
-│   ├── execution.go   Execution：前台/后台/session 统一身份、输出、进程终态、stop cause 与有界 registry
-│   ├── luggage.go     异常退出/旧版遗留目录：磁盘水位 GC（stale 优先→LRU）、Inventory（调度器视图）
-│   ├── shell.go       常驻 bash：CreateShell/ForegroundShell；持有 Executor View；Run 用 marker 分帧、单消费，RunAt 以独立控制步骤投影 cwd（状态跨 run 保持）
-│   └── command.go     一次性命令构建与启动；所有终态和观测事实归 execution.go
-├── bedfs/             BedFS 数据域：bed_home/workspace、client/carrier/Executor 路径投影与文件操作；新建路径按属主 chown
-├── store/             全局 Store Manager：策略组装、自动同步调度、Stage-in 发布与 Transfer 任务生命周期；见 docs/store.md
-│   ├── sync/          如何同步及组织数据：noop/auto/cas/pack/tar/copy/restic；不依赖 Manager 或 Transfer 任务状态
-│   └── backend/       存在哪里：S3 配置、共享客户端、对象读写与条件提交；不解释 Bed 或同步策略
-├── network/            可选 per-bed netns：启动实测、IPv4 接线、DNS、Bed 网络策略与执行入口；见 docs/network.md
-├── resource/          Bed 父组 / Executor 子组的 cgroup v2 记账 + carrier CPU/内存准入；只读准入不要求子树委派
-├── amenity/           Amenity 接口(生命周期 State)+ Registry；chromium 实例(共享浏览器/每 bed BrowserContext)；见 docs/amenity.md
-└── web/               gin 薄适配层：server(路由+bedOf 解析) / errors / sse / files / command / beds
+├── tracing/           OpenTelemetry 与 trace/log 关联
+└── web/               HTTP 薄入口；Bed 请求统一经过 Bed Manager，实例级设施操作交给 Amenity
 ```
 
-**数据流**：请求 →`web` 按 `X-Hostel-Bed`(缺省 default) 解析 bed → 调 `bed`/`bedfs` 核心 → 响应（命令走 SSE）。核心层（bed/bedfs/isolation/privilege/service）**不含任何 HTTP 类型**，换框架只动 `web/`。
+**数据流**：请求 →`web` 按 `X-Hostel-Bed`(缺省 default) 解析 bed → 调 `bed`/`bedfs` 核心 → 响应（命令走 SSE）。核心模型与领域组件**不含任何 HTTP 类型**，换框架只动 `web/`。
 
 ## 关键约定
 

@@ -25,6 +25,7 @@ package amenity
 import (
 	"errors"
 	"fmt"
+	"github.com/qiankunli/hostel/internal/bed"
 	"sync"
 )
 
@@ -61,11 +62,16 @@ type Amenity interface {
 // Registry is the amenity manager: the set of facilities wired at boot.
 // Nil-safe: a nil registry behaves as empty.
 type Registry struct {
+	bed.Noop
+	status    bed.StatusWriter[bed.AmenityStatus]
+	beds      map[*bed.Bed]bool
 	mu        sync.RWMutex
 	amenities []Amenity
 }
 
-func NewRegistry() *Registry { return &Registry{} }
+func NewRegistry() *Registry {
+	return &Registry{status: bed.NewOwners().Amenity, beds: make(map[*bed.Bed]bool)}
+}
 
 func (r *Registry) Register(a Amenity) {
 	if r == nil || a == nil {

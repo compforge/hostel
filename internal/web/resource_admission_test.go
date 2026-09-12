@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/resource"
+	"github.com/qiankunli/hostel/internal/bed/resource"
 )
 
 type rejectingResourceAdmission struct{}

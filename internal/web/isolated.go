@@ -26,7 +26,7 @@ import (
 	"github.com/qiankunli/go-stdx/shellx"
 	"github.com/qiankunli/go-stdx/uuid"
 
-	"github.com/qiankunli/hostel/internal/bed"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
 
 type isolatedWorkspaceSpec struct {
@@ -152,7 +152,7 @@ func (s *Server) isolatedCreate(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, isolatedCreateResponse{
 		SessionID: b.ID,
-		CreatedAt: b.CreatedAt,
+		CreatedAt: b.Spec().CreatedAt,
 	})
 }
 
@@ -240,7 +240,7 @@ func (s *Server) isolatedList(c *gin.Context) {
 	c.JSON(http.StatusOK, isolatedListResponse{Sessions: items})
 }
 
-func isolatedState(b *bed.Bed, shareNet bool) isolatedSessionState {
+func isolatedState(b *bed.Resident, shareNet bool) isolatedSessionState {
 	st := b.Status()
 	var remaining *int
 	if !st.RetainUntil.IsZero() {
@@ -251,7 +251,7 @@ func isolatedState(b *bed.Bed, shareNet bool) isolatedSessionState {
 		// Evicting is deliberately still active here: activity may cancel the
 		// eviction, while "dead" is terminal in the isolated-session contract.
 		Status:               "active",
-		CreatedAt:            b.CreatedAt,
+		CreatedAt:            b.Spec().CreatedAt,
 		LastRunAt:            st.LastActiveAt,
 		IdleRemainingSeconds: remaining,
 		Profile:              "balanced",

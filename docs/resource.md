@@ -43,7 +43,7 @@ request / limit 注入 env，也不访问 Kubernetes API。
 
 ### 1. carrier 资源采集
 
-`internal/resource.Carrier` 是只读采集边界，不要求 cgroup 子树委派：
+`internal/bed/resource.Carrier` 是只读采集边界，不要求 cgroup 子树委派：
 
 | 事实 | cgroup v2 来源 | 语义 |
 |---|---|---|
@@ -73,7 +73,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 - `/metrics` / `/metrics/watch`：按目标 bed 返回其累计 CPU 与当前内存；未获得 per-bed cgroup
   能力时保留协议兼容 fallback，但不声称精确归因。
 
-`internal/resource` 只提供资源领域事实和 verdict；JSON shape 仍由 `internal/web` 负责，Bed Manager
+`internal/bed/resource` 只提供资源领域事实和 verdict；JSON shape 仍由 `internal/web` 负责，Bed Manager
 只消费 `Admitter.Check()`，不依赖 cgroup 文件或 HTTP 类型。
 
 ### 3. 当前准入策略

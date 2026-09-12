@@ -128,7 +128,7 @@ PRoot/pathshim 尽量让命令中的工作区路径也指向 BedFS，但它们�
 
 bwrap 使用 user namespace 完成挂载准备，并绑定已有 `/proc`，以适应容器内受限的 procfs。
 当前没有私有 PID namespace，因此私有文件视图不等于完整的进程不可见性。机制及参数顺序
-锚点在 `internal/isolation/bwrap_args.go`；部署权限示例见
+锚点在 `internal/bed/filesystem/isolation/bwrap_args.go`；部署权限示例见
 [deploy/k8s/README.md](../deploy/k8s/README.md)。
 
 **room 用访问控制兑现数据边界**。Landlock 在子进程中应用规则，UID backend 在子进程中
@@ -137,7 +137,7 @@ bwrap 使用 user namespace 完成挂载准备，并绑定已有 `/proc`，以�
 
 UID backend 以独立进程身份兑现 room 的数据访问边界，目录属主、进程身份和 UID 租约必须保持
 一致。具体的分配、重启恢复、失败清理和硬链接约束见 [privilege.md](privilege.md)；
-`internal/isolation/uid_linux.go` 只负责选择该文件机制，不拥有通用身份生命周期。
+`internal/bed/filesystem/isolation/uid_linux.go` 只负责选择该文件机制，不拥有通用身份生命周期。
 
 ### 软件共享与敏感信息
 
@@ -148,7 +148,7 @@ conda、本地 node_modules 等生态机制解决。共享软件的更改可能�
 
 文件遮蔽和环境继承是两条边界。suite 遮蔽存在的 `/root`、`/home`、`/run/secrets`、
 `/var/run/secrets` 等敏感路径；低档不能据此假定也具备同样的遮蔽。
-进程环境在 `internal/bed/env.go` 统一组装，与文件房型正交：
+进程环境在 `internal/bed/manager/env.go` 统一组装，与文件房型正交：
 
 - 过滤 Carrier 中的 `HOSTEL_*`、外部 `BED_*` 和 Hostel 管理的 CDP endpoint；
 - 其余 Carrier 环境默认继承，由部署方承担其中凭据和配置的共享风险；

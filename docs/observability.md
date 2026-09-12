@@ -146,8 +146,12 @@ HTTP             → 序列化响应
 
 Report 同时是组件内部事实到运维协议的边界。新增或修改诊断项时，由拥有该事实的组件定义语义和
 快照方式；聚合层只决定顶层结构与 schema 版本，web 层不读取组件内部状态。
-`Component[R]` 将这一读取契约与 Lifecycle 放在同一个组件协议下；报告保持领域类型，
+`Component[R]` 将这一读取契约与 daemon、Bed 两层 Lifecycle 放在同一个组件协议下；报告保持领域类型，
 不通过通用 map 或类型断言组装。Diagnostics 只观察，不执行生命周期 hook。
+
+Bed 的分域 Status 是单 Bed 的实际准备结果；Diagnostics 是领域的实例级报告，两者粒度不同。
+Filesystem 自己提供文件隔离报告，Resource 自己提供 accounting/admission，Bed Manager 只聚合；
+HTTP 不重做探测、不读取领域内部句柄。
 
 `GET /v1/diagnostics` 是版本化的运维诊断快照，当前 `schema_version` 为 `1`。顶层按所有者分为
 `environment`、`isolation`、`privilege`、`network`、`executor`、`store`、`resource` 与 `amenities`，HTTP 层只负责序列化，

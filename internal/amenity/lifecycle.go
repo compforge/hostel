@@ -2,20 +2,47 @@ package amenity
 
 import (
 	"context"
-
-	"github.com/qiankunli/hostel/internal/lifecycle"
+	"errors"
+	"github.com/qiankunli/hostel/internal/bed"
 )
 
-type Binding struct {
-	lifecycle.Noop
-	registry *Registry
-	id       string
+// Bed hooks only release a Bed slice. The daemon owns the shared facilities.
+func (r *Registry) Release(_ context.Context, b *bed.Bed) error {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	owned := r.beds[b]
+	r.mu.RUnlock()
+	if !owned {
+		return nil
+	}
+	if err := r.ReleaseAll(b.ID); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	delete(r.beds, b)
+	r.mu.Unlock()
+	if r != nil {
+		r.status.Set(b, bed.AmenityStatus{Released: true})
+	}
+	return nil
 }
-
-var _ lifecycle.Component[map[string]string] = (*Binding)(nil)
-
-func Bind(registry *Registry, id string) *Binding { return &Binding{registry: registry, id: id} }
-func (b *Binding) Release(context.Context) error  { return b.registry.ReleaseAll(b.id) }
+func (r *Registry) SetStatusWriter(status bed.StatusWriter[bed.AmenityStatus]) {
+	if r != nil {
+		r.status = status
+	}
+}
+func (r *Registry) Start(context.Context) error { return nil }
+func (r *Registry) Close(ctx context.Context) error {
+	var result error
+	for _, a := range r.List() {
+		if closer, ok := a.(interface{ Close(context.Context) error }); ok {
+			result = errors.Join(result, closer.Close(ctx))
+		}
+	}
+	return result
+}
 func (r *Registry) Diagnostics() map[string]string {
 	report := make(map[string]string)
 	for _, item := range r.List() {
@@ -23,4 +50,15 @@ func (r *Registry) Diagnostics() map[string]string {
 	}
 	return report
 }
-func (b *Binding) Diagnostics() map[string]string { return b.registry.Diagnostics() }
+
+var _ bed.Component[map[string]string] = (*Registry)(nil)
+
+func (r *Registry) Prepare(_ context.Context, b *bed.Bed) error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.beds[b] = true
+	return nil
+}
