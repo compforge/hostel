@@ -17,6 +17,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +37,14 @@ import (
 type transferMemory struct {
 	objects map[string]string
 	keys    []string
+}
+
+func TestTransferInstanceIDUsesV7Hex(t *testing.T) {
+	id := NewManagerWithStores(Noop{}).TransferInstanceID()
+	decoded, err := hex.DecodeString(id)
+	if err != nil || len(decoded) != 16 || id[12] != '7' || !transferIDPattern.MatchString(id) {
+		t.Fatalf("transfer instance id = %q, want UUIDv7 hex", id)
+	}
 }
 
 func (m *transferMemory) Get(_ context.Context, key string) (io.ReadCloser, error) {
