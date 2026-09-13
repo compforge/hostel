@@ -48,7 +48,7 @@ type Config struct {
 }
 
 // Init installs Hostel's process-wide trace provider. Endpoint selection is
-// intentionally identical to sandctl: gRPC wins when both deployment values
+// gRPC wins when both deployment values
 // exist, while enabled-without-endpoint is an explicit no-op rather than a
 // carrier startup failure.
 func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) {

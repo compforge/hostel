@@ -184,7 +184,7 @@ func NewManager(host hostfacts.Snapshot, root, defaultBed, shellPath string, iso
 		option(m)
 	}
 	if m.services == nil {
-		m.services = service.NewManager(nil, nil, "", m.servicesChanged)
+		m.services = service.NewManager(nil, "", m.servicesChanged)
 	}
 	m.files = filesystem.NewManager(iso, m.owners.Filesystem)
 	m.executorManager = executor.NewManager(m.executorFactory, m.owners.Executor)

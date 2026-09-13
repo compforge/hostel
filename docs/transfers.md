@@ -108,9 +108,9 @@ BedFS 或删除本地目录；等待失败保留现场供清理重试，不能�
 
 ## Restic 目录传输
 
-使用与 hictld 一致的 restic 0.19.1；Hostel 镜像内置该二进制。本机可通过
+使用 restic 0.19.1；Hostel 镜像内置该二进制。本机可通过
 `HOSTEL_RESTIC_BINARY` / `--restic-binary` 指定路径。S3 连接仍由 Store 配置；密码通过
-`HOSTEL_RESTIC_PASSWORD` 配置，缺省使用与 hictld 一致的空密码 repository。密码和 S3
+`HOSTEL_RESTIC_PASSWORD` 配置，缺省使用空密码 repository。密码和 S3
 凭据只传给 Store 管理的 restic 进程，不进入 Bed 环境或响应。
 
 上传目录：

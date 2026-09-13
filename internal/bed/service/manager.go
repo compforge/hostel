@@ -35,7 +35,6 @@ type Runtime interface {
 }
 type Status struct {
 	Name        string                   `json:"name"`
-	Template    string                   `json:"template"`
 	Required    bool                     `json:"required"`
 	Phase       string                   `json:"phase"`
 	ExecutionID string                   `json:"execution_id,omitempty"`
@@ -54,7 +53,6 @@ type Access struct {
 }
 type Manager struct {
 	bed.Noop
-	catalog   *Catalog
 	ports     *hostnetwork.PortManager
 	advertise string
 	mu        sync.Mutex
@@ -71,25 +69,24 @@ type group struct {
 	stopped bool
 }
 type record struct {
-	spec     bed.ServiceSpec
-	template Template
-	status   Status
-	token    string
-	restart  chan struct{}
-	cancel   context.CancelFunc
-	done     chan struct{}
+	spec    bed.ServiceSpec
+	status  Status
+	token   string
+	restart chan struct{}
+	cancel  context.CancelFunc
+	done    chan struct{}
 }
 
-func NewManager(catalog *Catalog, ports *hostnetwork.PortManager, advertise string, onChange func(*bed.Bed)) *Manager {
-	return &Manager{catalog: catalog, ports: ports, advertise: advertise, groups: make(map[*bed.Bed]*group), onChange: onChange}
+func NewManager(ports *hostnetwork.PortManager, advertise string, onChange func(*bed.Bed)) *Manager {
+	return &Manager{ports: ports, advertise: advertise, groups: make(map[*bed.Bed]*group), onChange: onChange}
 }
 func (m *Manager) Resolve(specs []bed.ServiceSpec) ([]bed.ServiceSpec, error) {
-	resolved, err := m.catalog.Resolve(specs)
+	resolved, err := Normalize(specs)
 	if err != nil {
 		return nil, err
 	}
 	for _, s := range resolved {
-		if m.catalog.templates[s.Template].HTTP != nil && (m.ports == nil || m.advertise == "") {
+		if s.HTTP != nil && (m.ports == nil || m.advertise == "") {
 			return nil, fmt.Errorf("HTTP services require a port manager and advertised host")
 		}
 	}
@@ -112,8 +109,7 @@ func (m *Manager) PrepareBed(ctx context.Context, b *bed.Bed, runtime Runtime) e
 		return fmt.Errorf("services already prepared")
 	}
 	for _, spec := range specs {
-		t := m.catalog.templates[spec.Template]
-		r := &record{spec: spec, template: t, status: Status{Name: spec.Name, Template: spec.Template, Required: t.Required, Phase: "starting"}, restart: make(chan struct{}, 1), done: make(chan struct{})}
+		r := &record{spec: spec, status: Status{Name: spec.Name, Required: spec.Required, Phase: "starting"}, restart: make(chan struct{}, 1), done: make(chan struct{})}
 		g.records = append(g.records, r)
 	}
 	m.groups[b] = g
@@ -145,7 +141,7 @@ func (m *Manager) PrepareBed(ctx context.Context, b *bed.Bed, runtime Runtime) e
 func groupReadiness(g *group) (bool, string) {
 	ready := !g.stopped
 	for _, r := range g.records {
-		if r.template.Required && r.status.Phase != "ready" {
+		if r.spec.Required && r.status.Phase != "ready" {
 			ready = false
 			if r.status.Phase == "failed" || r.status.Phase == "stopped" {
 				return false, r.spec.Name

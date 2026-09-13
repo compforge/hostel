@@ -37,7 +37,6 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/resource"
-	"github.com/qiankunli/hostel/internal/bed/service"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	"github.com/qiankunli/hostel/internal/config"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
@@ -110,11 +109,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("hostel: HTTP listener: %v", err)
 	}
-	catalog, err := service.LoadCatalog(cfg.ServiceTemplates)
-	if err != nil {
-		log.Fatalf("hostel: service templates: %v", err)
-	}
-
 	pathProjections, err := config.ParseProjectedPaths(cfg.Bed.Filesystem.ProjectedPaths)
 	if err != nil {
 		log.Fatalf("hostel: configure path projections: %v", err)
@@ -156,7 +150,7 @@ func main() {
 
 	mgr, err := bed.NewManager(host, cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
 		bed.WithBedUser(bedUser),
-		bed.WithServices(catalog, ports, cfg.ServiceAdvertiseHost),
+		bed.WithServices(ports, cfg.ServiceAdvertiseHost),
 	)
 	if err != nil {
 		log.Fatalf("hostel: init bed manager: %v", err)

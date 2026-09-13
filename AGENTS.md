@@ -24,7 +24,7 @@
 - **房型（dorm / room / suite）**：bed 的文件隔离档，与 bed 正交（见〈关键约定〉isolation）。
 - **luggage**：非正常生命周期状态，只表达异常退出或旧版 Hostel 遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
 - **amenity**：bed 外由 hostel 统一管理、按 bed 分配状态的共享设施（Chromium / Jupyter / MCP 连接池）。
-- **bed service**：Bed 定义中的可选托管服务，与用户命令共用 Bed Environment/Executor；程序与模板由部署方提供，Hostel 不依赖 hictld。端口通过 daemon 级 Port Manager 统一申请，见 `docs/bed-service.md`。
+- **bed service**：Bed 定义中的可选托管服务，与用户命令共用 Bed Environment/Executor；创建者提交通用完整 `ServiceSpec`，Carrier 镜像提供程序与依赖，Hostel 不依赖具体业务服务。端口通过 daemon 级 Port Manager 统一申请，见 `docs/bed-service.md`。
 - **executor**：某个 bed 当前的、可替换的进程承载域。bed 持久存在，executor 丢失或关闭后可用新 id 重建；Linux 默认使用 supervisor backend，非 Linux / 显式 local 使用 daemon 直接派生。
 - **execution**：一次命令运行。每次有独立 id，且记录其所属 bed id 与 executor id。
 
@@ -71,7 +71,7 @@ deploy/
 ├── docker/Dockerfile  多阶段多架构镜像(amd64/arm64,builder 原生交叉编译免 QEMU)：静态 hostel + debian-slim（内置 bwrap/PRoot/pathshim + 可选 chromium）；tini PID1；hostel --health 做 HEALTHCHECK
 └── k8s/              Kubernetes 部署示例；AppArmor 的 PSA 豁免申请见 pod-security-admission-exemption.yaml
 cmd/hostel/main.go     daemon 入口：配置、组件组装、启动探测、Web 与信号；驱动 Manager 启停
-tests/e2e/             单机真实进程/镜像 E2E：公开 API、bed runtime/isolation 与可选 carrier userland；不经过 sandctl/K8s
+tests/e2e/             单机真实进程/镜像 E2E：公开 API、bed runtime/isolation 与可选 carrier userland；不经过上层控制面或 K8s
 internal/
 ├── bed/               唯一 Bed 模型（Spec / 分域 Status）及生命周期契约；不导入领域实现
 │   ├── manager/       Composite：准入、初始化/回收顺序、operation/session、执行环境组装与诊断聚合
@@ -88,7 +88,7 @@ internal/
 │   │   ├── sync/      noop/auto/cas/pack/tar/copy/restic 同步策略
 │   │   └── backend/   S3 位置、共享客户端和对象操作
 │   ├── executor/      可替换进程域的 Manager、local / supervisor backend
-│   ├── service/       Bed 声明服务的模板、就绪、监督、端口发布与停止
+│   ├── service/       Bed ServiceSpec 的规范化、就绪、监督、端口发布与停止
 │   └── resource/      cgroup accounting、carrier admission 与采样循环；未施加 per-Bed limits
 ├── amenity/           daemon 直属独立设施；Manager 维护 Bed ID 到 Tenant ID 的绑定，设施隐藏资源实现
 ├── host/              通用宿主能力；不依赖 Bed/Amenity 模型，不预设使用方
@@ -140,7 +140,7 @@ internal/
 
 ## References
 
-- Bed 粒度托管服务、统一 TCP 端口、模板与管理 API：`docs/bed-service.md`
+- Bed 粒度托管服务、统一 TCP 端口、ServiceSpec 与管理 API：`docs/bed-service.md`
 
 - 启动配置、Feature 策略与环境前提：`docs/configuration.md`
 

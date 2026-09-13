@@ -35,6 +35,7 @@ func TestServiceHelperProcess(t *testing.T) {
 		os.Exit(32)
 	}
 	_ = os.WriteFile("service-started", []byte(os.Getenv("BED_ID")), 0600)
+	_ = os.WriteFile("service-credential", []byte(os.Getenv("SERVICE_FILE_VALUE")), 0600)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+os.Getenv("SERVICE_TOKEN") {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -57,13 +58,13 @@ func TestServiceHelperProcess(t *testing.T) {
 
 func testServiceManager(t *testing.T) (*Manager, []model.ServiceSpec, *hostnetwork.PortManager) {
 	t.Helper()
-	catalog, err := service.NewCatalog([]service.Template{{Name: "web", Command: []string{os.Args[0], "-test.run=^TestServiceHelperProcess$"}, Env: map[string]string{"SERVICE_TEST_HELPER": "1", "SERVICE_LISTEN": "${LISTEN_ADDR}", "GORACE": "atexit_sleep_ms=0"}, Required: true, Restart: "on-failure", MaxRestarts: 2, StartupSeconds: 10, StopSeconds: 1, HTTP: &service.HTTPTemplate{ReadyPath: "/ready", TokenEnv: "SERVICE_TOKEN"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	ports, _ := hostnetwork.NewPortManager(25000, 25100)
 	m := newTestManager(t)
-	WithServices(catalog, ports, "127.0.0.1")(m)
+	WithServices(ports, "127.0.0.1")(m)
+	credential := filepath.Join(t.TempDir(), "service-value")
+	if err := os.WriteFile(credential, []byte("from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -72,7 +73,20 @@ func testServiceManager(t *testing.T) (*Manager, []model.ServiceSpec, *hostnetwo
 		}
 		ports.Close()
 	})
-	return m, []model.ServiceSpec{{Name: "main", Template: "web"}, {Name: "tools", Template: "web"}}, ports
+	serviceSpec := model.ServiceSpec{
+		Command:        []string{os.Args[0], "-test.run=^TestServiceHelperProcess$"},
+		Env:            map[string]string{"SERVICE_TEST_HELPER": "1", "SERVICE_LISTEN": "${LISTEN_ADDR}", "GORACE": "atexit_sleep_ms=0"},
+		EnvFiles:       map[string]string{"SERVICE_FILE_VALUE": credential},
+		Required:       true,
+		Restart:        "on-failure",
+		MaxRestarts:    2,
+		StartupSeconds: 10,
+		StopSeconds:    1,
+		HTTP:           &model.ServiceHTTPSpec{ReadyPath: "/ready", TokenEnv: "SERVICE_TOKEN"},
+	}
+	main, tools := serviceSpec, serviceSpec
+	main.Name, tools.Name = "main", "tools"
+	return m, []model.ServiceSpec{main, tools}, ports
 }
 
 func waitService(t *testing.T, m *Manager, b *Resident, name string, predicate func(service.Status) bool) service.Status {
@@ -110,6 +124,10 @@ func TestBedServicesShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(b.Workspace(), "service-started"))
 	if err != nil || string(data) != b.Name {
 		t.Fatalf("service did not use Bed environment: %q %v", data, err)
+	}
+	data, err = os.ReadFile(filepath.Join(b.Workspace(), "service-credential"))
+	if err != nil || string(data) != "from-file" {
+		t.Fatalf("service did not resolve credential file: %q %v", data, err)
 	}
 	if _, err := m.InitializeBed(t.Context(), b.Name); !errors.Is(err, ErrServicesConflict) {
 		t.Fatalf("explicit empty create changed services: %v", err)
@@ -260,8 +278,8 @@ func TestBedServiceHoldCanBeReleasedEarly(t *testing.T) {
 	}
 }
 
-func TestBedServiceLocalRecoveryPinsDeclaration(t *testing.T) {
-	m, specs, _ := testServiceManager(t)
+func TestBedServiceLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
+	m, specs, ports := testServiceManager(t)
 	_, err := m.InitializeBedWithOptions(t.Context(), "recover", CreateOptions{Services: specs[:1]})
 	if err != nil {
 		t.Fatal(err)
@@ -273,14 +291,10 @@ func TestBedServiceLocalRecoveryPinsDeclaration(t *testing.T) {
 	if err := m.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	// Recover local identity with a different deployment definition: this must
-	// be rejected, not silently change the retained Bed's desired services.
-	catalog, err := service.NewCatalog([]service.Template{{Name: "web", Command: []string{"changed-program"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The complete desired state lives with the local Bed identity. Recovery no
+	// longer depends on a deployment-owned template catalog.
 	host := hostfacts.Collect()
-	next, err := NewManager(host, m.root, "default", "/bin/sh", isolation.New(host, "dorm", m.root), nil, 0, nil, WithServices(catalog, nil, ""))
+	next, err := NewManager(host, m.root, "default", "/bin/sh", isolation.New(host, "dorm", m.root), nil, 0, nil, WithServices(ports, "127.0.0.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +309,11 @@ func TestBedServiceLocalRecoveryPinsDeclaration(t *testing.T) {
 	if !identityRetained {
 		t.Fatal("recovery replaced local Bed identity")
 	}
-	if _, err := next.Ensure(t.Context(), b.Name); err == nil || !strings.Contains(err.Error(), "template changed") {
-		t.Fatalf("recovery accepted changed template: %v", err)
+	recovered, err := next.Ensure(t.Context(), b.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recovered.Spec().Services; len(got) != 1 || got[0].Name != "main" || got[0].SpecDigest == "" {
+		t.Fatalf("recovery lost service declaration: %+v", got)
 	}
 }
