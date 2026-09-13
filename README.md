@@ -237,8 +237,19 @@ is filtered from bed processes; externally supplied `BED_*` and the managed CDP
 endpoint are filtered as well, then Hostel injects the actual bed context.
 Every other Carrier variable is inherited by default, including ecosystem and
 deployment-specific variables. The deployment owner is responsible for the
-safety of those inherited values. Request `envs` are an invocation-scoped
-overlay and cannot claim the reserved `HOSTEL_*` or `BED_*` namespaces.
+safety of those inherited values. Create a Bed with an execution baseline, for
+example `POST /v1/beds` with `{"id":"agent","env":{"LANG":"C.UTF-8"}}`.
+Ordinary commands and new session shells inherit this Bed `env`; command
+`envs` override it for that invocation only. Bed Services use their own resolved
+environment, not the Bed execution baseline. All caller overlays reject the
+reserved `HOSTEL_*`, `BED_*` and managed CDP endpoint variables.
+
+The Bed environment is immutable for its local lifetime: repeated creates must
+declare the same values (omitted/empty `env` declares no overrides), otherwise
+Hostel returns 409. Native data-plane requests reuse the existing declaration.
+The environment survives daemon restart with retained local data, but is not
+included in workspace snapshots or status responses. After eviction or a move
+to another instance, the caller must declare it again.
 
 S3 configuration is Hostel-owned and uses `HOSTEL_S3_REGION`,
 `HOSTEL_S3_ACCESS_KEY_ID`, `HOSTEL_S3_SECRET_ACCESS_KEY`, and optionally

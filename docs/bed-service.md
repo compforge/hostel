@@ -236,6 +236,10 @@ Bedbox 镜像；不要求同时升级 Hostel，也不热替换正在运行的 Be
 同 Bed 内的 Service 与用户程序仍处于同一信任边界，独立 env 不提供针对同 UID 进程
 读取或 `/proc` 访问的保密保证；需要更强凭据隔离时应单独设计权限或凭据代理能力。
 
+Service 只继承 Carrier 通用环境和 Hostel 注入的 Bed 上下文，再叠加自身解析后的环境；
+普通执行的 `Bed.Spec.Env` 不传给 Service。共用 Bed Environment 表达目录、身份和隔离
+视图一致，不代表共用所有进程环境变量。普通命令与会话的环境契约见 [kernel.md](kernel.md#执行与进程归属)。
+
 非敏感 Bed 服务声明与模板版本标识随本地 Bed 身份保留。恢复时验证模板仍可用且定义
 匹配，不因模板目录更新静默改变原 Bed 的启动语义。跨实例创建由上层重新声明服务，
 workspace 快照不携带本地进程身份、endpoint 或部署凭据。

@@ -88,9 +88,13 @@ func (m *Manager) recoverLocalIdentities() error {
 			if strings.HasPrefix(id, "{") {
 				var record localIdentityRecord
 				if err := json.Unmarshal(data, &record); err != nil {
-					return fmt.Errorf("read bed %s service identity: %w", local.bed.Name, err)
+					return fmt.Errorf("read bed %s identity: %w", local.bed.Name, err)
 				}
 				id = record.ID
+				if err := validateEnv("bed", record.Env); err != nil {
+					return fmt.Errorf("recover bed %s environment: %w", local.bed.Name, err)
+				}
+				spec.Env = record.Env
 				spec.Services = record.Services
 			}
 			if !strings.HasPrefix(id, "bed-") || len(id) != 36 {
@@ -120,7 +124,8 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.Marshal(localIdentityRecord{ID: local.bed.ID.String(), Services: local.bed.Spec().Services})
+	spec := local.bed.Spec()
+	data, err := json.Marshal(localIdentityRecord{ID: local.bed.ID.String(), Env: spec.Env, Services: spec.Services})
 	if err != nil {
 		return err
 	}
@@ -128,6 +133,7 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 }
 
 type localIdentityRecord struct {
+	Env      map[string]string   `json:"env,omitempty"`
 	ID       string              `json:"id"`
 	Services []model.ServiceSpec `json:"services,omitempty"`
 }

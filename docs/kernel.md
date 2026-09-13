@@ -216,6 +216,17 @@ Bed Manager 是保活与回收决策的唯一 owner。共享 Bed 的 Lifecycle S
 `/command` 每次创建独立进程；只有显式 `/session` 才保留 shell 的 cd/export 等状态。
 普通命令之间通过文件延续状态，避免某条脚本的 exit、trap 或 set -e 终结其他执行。
 
+Bed 的基础执行环境属于 Spec，而不属于 Executor 或某次命令。普通命令和新建 session shell
+按 Carrier 环境、Hostel 注入的 Bed 上下文、Bed Env、单次执行 env 的顺序组合；保留变量
+不允许调用方覆盖。session 内的 export 只改变该 shell，不能改写 Bed 定义或其他执行。
+Bed Service 共用隔离和目录视图，但只叠加自己的环境，不隐式继承普通执行的 Bed Env。
+
+环境声明在本地 Bed 生命周期内固定，重复创建必须一致，原生 Ensure 只加入已有声明。
+它随 daemon 私有的本地身份记录保存，Executor 替换和保留目录的重启不会丢失；不进入
+workspace 快照或状态响应，也不记录环境值到日志。Forget 后或跨实例重建由调用方重新
+声明，不能从用户可替换的文件数据恢复执行配置。独立 env 仅控制继承，不增加同 Bed
+进程间的安全隔离。
+
 ```text
 hostel daemon
 ├─ Chromium 等共享设施进程

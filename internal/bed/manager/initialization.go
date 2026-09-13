@@ -20,6 +20,7 @@ import (
 	"fmt"
 	model "github.com/qiankunli/hostel/internal/bed"
 	"log"
+	"maps"
 	"path/filepath"
 	"time"
 
@@ -167,6 +168,10 @@ func (m *Manager) beginInitialization(
 	id string,
 	options CreateOptions,
 ) (*bedInitialization, *managedBed, error) {
+	if err := validateEnv("bed", options.Env); err != nil {
+		return nil, nil, err
+	}
+	options.Env = maps.Clone(options.Env)
 	if err := m.Start(ctx); err != nil {
 		return nil, nil, err
 	}
@@ -229,11 +234,23 @@ func (m *Manager) beginInitialization(
 
 	if resident, ok := m.beds[id]; ok {
 		m.mu.Unlock()
-		return nil, resident, errors.Join(checkBedSync(requestedSync, selected, resident.Spec().Sync), checkInitialPolicy(options.NetworkPolicy, resident.Spec().NetworkPolicy), checkServices(options, resident.Spec().Services))
+		actual := resident.Spec()
+		return nil, resident, errors.Join(
+			checkBedSync(requestedSync, selected, actual.Sync),
+			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
+			checkServices(options, actual.Services),
+			checkBedEnv(options, actual.Env),
+		)
 	}
 	if current, ok := m.initializations[id]; ok && current.snapshot().Phase == PhaseInitializing {
 		m.mu.Unlock()
-		return current, nil, errors.Join(checkBedSync(requestedSync, selected, current.snapshot().Sync), checkInitialPolicy(options.NetworkPolicy, current.model.Spec().NetworkPolicy), checkServices(options, current.model.Spec().Services))
+		actual := current.model.Spec()
+		return current, nil, errors.Join(
+			checkBedSync(requestedSync, selected, actual.Sync),
+			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
+			checkServices(options, actual.Services),
+			checkBedEnv(options, actual.Env),
+		)
 	}
 	if m.retirements[id] != nil {
 		m.mu.Unlock()
@@ -244,17 +261,18 @@ func (m *Manager) beginInitialization(
 		return nil, nil, selectionErr
 	}
 	if local := m.localIdentities[id]; local != nil {
-		actual := local.bed.Spec().Services
-		if err := checkServices(options, actual); err != nil {
+		actual := local.bed.Spec()
+		if err := errors.Join(checkServices(options, actual.Services), checkBedEnv(options, actual.Env)); err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
-		resolved, err := m.services.Resolve(actual)
+		resolved, err := m.services.Resolve(actual.Services)
 		if err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
 		options.Services = resolved
+		options.Env = actual.Env
 	}
 	// A new request retries a failed initialization. Its previous status remains
 	// observable until this explicit desired-state signal arrives.
@@ -284,6 +302,7 @@ func (m *Manager) beginInitialization(
 	localMeta, localPresent := loadMeta(filepath.Join(m.root, id))
 	spec := model.Spec{Dir: filepath.Join(m.root, id), Sync: selected, CreatedAt: localMeta.CreatedAt, LocalPresent: localPresent, LocalGeneration: localMeta.Generation}
 	spec.Services = options.Services
+	spec.Env = options.Env
 	if options.NetworkPolicy != nil {
 		spec.NetworkPolicy = network.ToModel(*options.NetworkPolicy)
 	}
@@ -517,10 +536,12 @@ func residentInitializationStatus(resident *managedBed) InitializationStatus {
 	}
 }
 
-// CreateOptions selects the sync policy when creating a Bed. An explicit Sync
-// overrides the instance default. After eviction, callers must repeat overrides
-// because the local Bed metadata is removed together with its workspace.
+// CreateOptions declares a Bed. Env and Services are immutable for its local
+// lifetime; explicit creates must repeat the same declaration (nil Env means
+// empty). Native Ensure instead joins the existing declaration. After eviction,
+// callers must repeat overrides because the local identity has been removed.
 type CreateOptions struct {
+	Env           map[string]string
 	Services      []model.ServiceSpec
 	lookup        bool // native Ensure joins desired state; an explicit create compares it
 	Sync          string

@@ -137,6 +137,7 @@ func (s *Server) bedList(c *gin.Context) {
 }
 
 type createBedRequest struct {
+	Env           map[string]string   `json:"env,omitempty"`
 	Services      []model.ServiceSpec `json:"services,omitempty"`
 	NetworkPolicy *network.Policy     `json:"networkPolicy,omitempty"`
 	ID            string              `json:"id,omitempty"`
@@ -159,7 +160,7 @@ func (s *Server) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Sync: req.Sync, NetworkPolicy: req.NetworkPolicy, Services: req.Services})
+	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Env: req.Env, Sync: req.Sync, NetworkPolicy: req.NetworkPolicy, Services: req.Services})
 	if err != nil {
 		if errors.Is(err, network.ErrUnavailable) {
 			respondError(c, http.StatusServiceUnavailable, ErrServiceUnavailable, "bed network policy is unavailable")
