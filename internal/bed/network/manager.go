@@ -48,6 +48,13 @@ type Manager struct {
 func New(ctx context.Context) *Manager {
 	return NewConfigured(ctx, Config{})
 }
+
+// SetPortManager supplies the daemon's allocator before network startup.
+func (m *Manager) SetPortManager(ports *hostnetwork.PortManager) {
+	if m.pool != nil {
+		m.pool.SetPortManager(ports)
+	}
+}
 func NewConfigured(ctx context.Context, cfg Config) *Manager {
 	m := &Manager{config: cfg}
 	if cfg.NetNS.Effective() != feature.Off {

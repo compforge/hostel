@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -83,10 +84,19 @@ func (m *Manager) recoverLocalIdentities() error {
 		}
 		if err == nil {
 			id := strings.TrimSpace(string(data))
+			spec := local.bed.Spec()
+			if strings.HasPrefix(id, "{") {
+				var record localIdentityRecord
+				if err := json.Unmarshal(data, &record); err != nil {
+					return fmt.Errorf("read bed %s service identity: %w", local.bed.Name, err)
+				}
+				id = record.ID
+				spec.Services = record.Services
+			}
 			if !strings.HasPrefix(id, "bed-") || len(id) != 36 {
 				return fmt.Errorf("invalid local identity for bed %s", local.bed.Name)
 			}
-			local.bed = model.New(local.bed.Name, model.ID(id), local.bed.Spec())
+			local.bed = model.New(local.bed.Name, model.ID(id), spec)
 		}
 		if err := m.saveLocalIdentity(local); err != nil {
 			return err
@@ -110,7 +120,16 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return osx.WriteFileAtomic(path, []byte(local.bed.ID.String()+"\n"), 0o600)
+	data, err := json.Marshal(localIdentityRecord{ID: local.bed.ID.String(), Services: local.bed.Spec().Services})
+	if err != nil {
+		return err
+	}
+	return osx.WriteFileAtomic(path, data, 0o600)
+}
+
+type localIdentityRecord struct {
+	ID       string              `json:"id"`
+	Services []model.ServiceSpec `json:"services,omitempty"`
 }
 
 // waitForLocalCleanup only joins an active attempt. An idle/failed cleanup is

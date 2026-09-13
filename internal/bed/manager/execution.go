@@ -36,6 +36,7 @@ const (
 	ExecutionForeground ExecutionMode = "foreground"
 	ExecutionBackground ExecutionMode = "background"
 	ExecutionSession    ExecutionMode = "session"
+	ExecutionService    ExecutionMode = "service"
 )
 
 type TerminationCause string
@@ -45,6 +46,7 @@ const (
 	CauseTimeout        TerminationCause = "timeout"
 	CauseClientCanceled TerminationCause = "client_canceled"
 	CauseInterrupted    TerminationCause = "interrupted"
+	CauseServiceStop    TerminationCause = "service_stop"
 	CauseBedTeardown    TerminationCause = "bed_teardown"
 	CauseDaemonShutdown TerminationCause = "daemon_shutdown"
 	CauseExternalSignal TerminationCause = "external_signal"
@@ -161,13 +163,16 @@ func newExecution(ctx context.Context, bedID string, mode ExecutionMode, executo
 // then kills the process tree. Recording happens before signalling so Wait can
 // never observe SIGKILL and lose the initiating cause.
 func (e *Execution) RequestStop(cause TerminationCause) bool {
+	return e.requestStop(cause, e.stop)
+}
+
+func (e *Execution) requestStop(cause TerminationCause, stop func()) bool {
 	e.mu.Lock()
 	if e.result != nil || e.finishing || e.stopCause != "" {
 		e.mu.Unlock()
 		return false
 	}
 	e.stopCause = cause
-	stop := e.stop
 	e.mu.Unlock()
 	if stop != nil {
 		stop()
@@ -536,7 +541,7 @@ func (r *ExecutionRegistry) killBed(bedID string, cause TerminationCause) {
 	r.mu.Lock()
 	var executions []*Execution
 	for _, execution := range r.executions {
-		if execution.BedID == bedID {
+		if execution.BedID == bedID && execution.Mode != ExecutionService {
 			executions = append(executions, execution)
 		}
 	}

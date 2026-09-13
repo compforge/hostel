@@ -20,6 +20,7 @@ import (
 )
 
 type linuxBackend struct {
+	ports            *PortManager
 	mu               sync.Mutex
 	ip, nft, setpriv string
 	prefix           string
@@ -52,9 +53,12 @@ func run(ctx context.Context, input, command string, args ...string) ([]byte, er
 	return out, nil
 }
 
-func probeBackend(ctx context.Context) (backend, Probe) {
+func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 	probe := Probe{Stage: "tools"}
 	b := &linuxBackend{prefix: "hn" + randx.Hex(4), endpoints: make(map[string]*linuxEndpoint)}
+	if len(ports) > 0 {
+		b.ports = ports[0]
+	}
 	var err error
 	for _, tool := range []struct {
 		name string
@@ -187,6 +191,8 @@ func (e *linuxEndpoint) create(ctx context.Context) error {
 	}
 	e.config = true
 	e.dns = newDNSForwarder(e.gateway.String(), b.resolvers)
+	e.dns.ports = b.ports
+	e.dns.owner = "network/" + e.name + "/dns"
 	e.policy = &policyControl{current: Policy{DefaultAction: "allow"}, apply: e.applyPolicy, learn: e.learnDNS}
 	e.dns.policy = e.policy
 	if err := os.WriteFile(filepath.Join(dir, "resolv.conf"), []byte("nameserver "+e.gateway.String()+"\n"+b.resolverOptions), 0644); err != nil {
@@ -249,6 +255,8 @@ func (e *linuxEndpoint) Wrap(cmd *exec.Cmd) {
 	cmd.Path = e.owner.ip
 }
 func (e *linuxEndpoint) Gateway() string { return e.gateway.String() }
+
+func (e *linuxEndpoint) Address() string { return e.address.String() }
 
 func (e *linuxEndpoint) Close(ctx context.Context) error {
 	e.mu.Lock()
@@ -338,7 +346,17 @@ func readResolvers() ([]string, string, error) {
 }
 
 func probeConnectivity(ctx context.Context, ep endpoint) error {
-	listener, err := net.Listen("tcp4", net.JoinHostPort(ep.Gateway(), "0"))
+	var listener net.Listener
+	var err error
+	if e, ok := ep.(*linuxEndpoint); ok && e.owner.ports != nil {
+		var allocation *PortAllocation
+		allocation, listener, err = e.owner.ports.Listen("network/"+e.name+"/probe", net.JoinHostPort(ep.Gateway(), "0"))
+		if err == nil {
+			defer allocation.Release()
+		}
+	} else {
+		listener, err = net.Listen("tcp4", net.JoinHostPort(ep.Gateway(), "0"))
+	}
 	if err != nil {
 		return err
 	}

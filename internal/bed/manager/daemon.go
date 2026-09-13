@@ -34,6 +34,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	components := []daemonComponent{
 		{"filesystem", m.files}, {"privilege", m.privileges}, {"resource", m.resourceManager},
 		{"store", m.store}, {"network", m.network}, {"executor", m.executorManager},
+		{"service", m.services},
 	}
 	for _, component := range components {
 		// Start may allocate before failing; register cleanup ownership first.
@@ -179,6 +180,15 @@ func (m *Manager) Close(ctx context.Context) error {
 	defer stopCleanup()
 	if err := m.stopBackground(ctx); err != nil {
 		return err
+	}
+	m.mu.Lock()
+	holds := make([]*serviceHold, 0, len(m.serviceHolds))
+	for _, hold := range m.serviceHolds {
+		holds = append(holds, hold)
+	}
+	m.mu.Unlock()
+	for _, hold := range holds {
+		hold.finish()
 	}
 	if err := m.store.StopTransfers(ctx, ""); err != nil {
 		return err

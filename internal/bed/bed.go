@@ -27,6 +27,7 @@ type Bed struct {
 }
 
 type Spec struct {
+	Services        []ServiceSpec
 	Dir             string
 	CreatedAt       time.Time
 	Sync            SyncKind
@@ -54,6 +55,7 @@ func clonePolicy(p *NetworkPolicy) *NetworkPolicy {
 	return &c
 }
 func cloneSpec(s Spec) Spec {
+	s.Services = CloneServices(s.Services)
 	s.NetworkPolicy = clonePolicy(s.NetworkPolicy)
 	s.RecoveryDirs = append([]string(nil), s.RecoveryDirs...)
 	return s

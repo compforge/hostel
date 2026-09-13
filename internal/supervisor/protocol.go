@@ -69,6 +69,7 @@ const (
 // the connection: callers may redial Get/Wait after an EOF, and Start is
 // idempotent for the same process id and specification fingerprint.
 type request struct {
+	DrainGroup bool      `json:"drain_group,omitempty"`
 	Operation  operation `json:"operation"`
 	ExecutorID string    `json:"executor_id"`
 	ProcessID  string    `json:"process_id,omitempty"`

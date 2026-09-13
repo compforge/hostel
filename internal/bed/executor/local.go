@@ -18,12 +18,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/hostel/internal/bed/resource"
+	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 )
 
 // LocalFactory creates Executors whose processes are direct Hostel children.
@@ -89,6 +92,14 @@ func (e *localExecutor) Exit() Exit {
 }
 
 func (e *localExecutor) Start(ctx context.Context, processID string, cmd *exec.Cmd) (Process, error) {
+	return e.start(ctx, processID, cmd, false)
+}
+
+func (e *localExecutor) StartService(ctx context.Context, processID string, cmd *exec.Cmd) (Process, error) {
+	return e.start(ctx, processID, cmd, true)
+}
+
+func (e *localExecutor) start(ctx context.Context, processID string, cmd *exec.Cmd, drainGroup bool) (Process, error) {
 	if processID == "" {
 		return nil, errors.New("executor: process id is required")
 	}
@@ -110,7 +121,7 @@ func (e *localExecutor) Start(ctx context.Context, processID string, cmd *exec.C
 		return nil, fmt.Errorf("executor %s is %s", e.id, e.state)
 	}
 	if existing, ok := e.processes[processID]; ok {
-		if existing.specHash != processSpecHash(cmd) {
+		if existing.specHash != processSpecHash(cmd) || existing.drainGroup != drainGroup {
 			return nil, fmt.Errorf("executor: process id %s reused with different specification", processID)
 		}
 		return existing, nil
@@ -132,6 +143,7 @@ func (e *localExecutor) Start(ctx context.Context, processID string, cmd *exec.C
 		return nil, err
 	}
 	process := &localProcess{
+		drainGroup: drainGroup,
 		id:         processID,
 		executorID: e.id,
 		specHash:   processSpecHash(cmd),
@@ -195,6 +207,7 @@ func (e *localExecutor) finish(state State, err error) {
 }
 
 type localProcess struct {
+	drainGroup bool
 	id         string
 	executorID string
 	specHash   string
@@ -212,12 +225,16 @@ func (p *localProcess) ID() string { return p.id }
 func (p *localProcess) PID() int   { return p.pid }
 
 func (p *localProcess) Kill() {
+	_ = p.Signal(syscall.SIGKILL)
+}
+
+func (p *localProcess) Signal(signal syscall.Signal) error {
 	p.signalMu.Lock()
 	defer p.signalMu.Unlock()
 	if p.exited {
-		return
+		return nil
 	}
-	_ = signalProcessGroup(p.pid, syscall.SIGKILL)
+	return signalProcessGroup(p.pid, signal)
 }
 
 func (p *localProcess) Wait(ctx context.Context) (ProcessOutcome, error) {
@@ -256,14 +273,26 @@ func (p *localProcess) reap() {
 
 func (p *localProcess) markExitedBeforeReap(barrierErr error) error {
 	p.signalMu.Lock()
-	defer p.signalMu.Unlock()
 	if barrierErr != nil {
-		if err := signalProcessGroup(p.pid, syscall.SIGKILL); err != nil &&
-			!errors.Is(err, syscall.ESRCH) {
+		if err := signalProcessGroup(p.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			p.signalMu.Unlock()
 			return fmt.Errorf("executor: kill pid %d after exit barrier failure: %w", p.pid, err)
 		}
 	}
 	p.exited = true
+	p.signalMu.Unlock()
+	if p.drainGroup {
+		// Do not publish completion/release a service's sockets while a child
+		// still writes. Retaining the unreaped leader also prevents PID ABA.
+		for {
+			if err := hostprocess.DrainGroup(p.pid); err == nil {
+				break
+			} else {
+				log.Printf("executor: service group cleanup pending: pid=%d err=%v", p.pid, err)
+			}
+			time.Sleep(time.Second)
+		}
+	}
 	return nil
 }
 

@@ -36,6 +36,10 @@ import (
 // respondBedError maps bed resolution/admission failures: a full or
 // resource-pressured instance is 429 backpressure, anything else is a bad id.
 func respondBedError(c *gin.Context, err error) {
+	if errors.Is(err, bed.ErrServicesConflict) {
+		respondError(c, http.StatusConflict, ErrBedInvalid, err.Error())
+		return
+	}
 	if errors.Is(err, bed.ErrSyncConflict) {
 		respondError(c, http.StatusConflict, ErrBedSyncConflict, err.Error())
 		return
@@ -199,6 +203,12 @@ func (s *Server) routes() {
 		v1.POST("", s.bedCreate)
 		v1.GET("/capabilities", s.capabilities)
 		v1.GET("/:bedId", s.bedGet)
+		v1.GET("/:bedId/services", s.serviceList)
+		v1.GET("/:bedId/services/:service", s.serviceGet)
+		v1.GET("/:bedId/services/:service/logs", s.serviceLogs)
+		v1.POST("/:bedId/services/:service/restart", s.serviceRestart)
+		v1.POST("/:bedId/services/:service/access", s.serviceAccess)
+		v1.DELETE("/:bedId/service-holds/:holdId", s.serviceHoldRelease)
 		v1.GET("/:bedId/network/healthz", s.networkPolicy)
 		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 			v1.Handle(method, "/:bedId/network/policy", s.networkPolicy)

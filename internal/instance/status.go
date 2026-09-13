@@ -5,7 +5,9 @@ import (
 	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/bed"
 	manager "github.com/qiankunli/hostel/internal/bed/manager"
+	"github.com/qiankunli/hostel/internal/bed/service"
 	"github.com/qiankunli/hostel/internal/host/facts"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
 type Observer struct {
@@ -23,14 +25,15 @@ func NewObserver(host facts.Snapshot, beds *manager.Manager, amenities *amenity.
 // Status separates host observations from domain and facility status.
 // Inventory contains summaries, never tenant details.
 type Status struct {
-	SchemaVersion int               `json:"schema_version"`
-	Host          facts.SystemFacts `json:"host"`
+	Ports         []hostnetwork.PortStatus `json:"ports"`
+	SchemaVersion int                      `json:"schema_version"`
+	Host          facts.SystemFacts        `json:"host"`
 	manager.Status
 	Amenities map[string]amenity.Status `json:"amenities"`
 }
 
 func (o Observer) Status() Status {
-	return Status{SchemaVersion: 2, Host: o.host, Status: o.Beds.Status(), Amenities: o.Amenities.Status()}
+	return Status{SchemaVersion: 2, Host: o.host, Status: o.Beds.Status(), Amenities: o.Amenities.Status(), Ports: o.Beds.PortStatus()}
 }
 
 // BedStatus uses the same component/amenity organization at unit granularity.
@@ -44,6 +47,7 @@ type BedStatus struct {
 		Store      bed.StoreStatus      `json:"store"`
 		Executor   bed.ExecutorStatus   `json:"executor"`
 		Resource   bed.ResourceStatus   `json:"resource"`
+		Services   []service.Status     `json:"services"`
 	} `json:"components"`
 	Amenities map[string]amenity.BindingStatus `json:"amenities"`
 }
@@ -61,5 +65,6 @@ func (o Observer) BedStatus(b *bed.Bed, lifecycle manager.BedStatus) BedStatus {
 	report.Components.Store = state.Store
 	report.Components.Executor = state.Executor
 	report.Components.Resource = state.Resource
+	report.Components.Services = o.Beds.Services().Status(b)
 	return report
 }

@@ -33,13 +33,19 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/resource"
+	"github.com/qiankunli/hostel/internal/bed/service"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"golang.org/x/sync/semaphore"
 )
 
 // Manager owns the set of beds and their lifecycle. Safe for concurrent use.
 type Manager struct {
+	ports           *hostnetwork.PortManager
+	services        *service.Manager
+	serviceStatusMu sync.Mutex
+	serviceHolds    map[string]*serviceHold
 	hostFacts       hostfacts.Snapshot
 	startMu         sync.Mutex
 	closeMu         *semaphore.Weighted
@@ -176,6 +182,9 @@ func NewManager(host hostfacts.Snapshot, root, defaultBed, shellPath string, iso
 	}
 	for _, option := range opts {
 		option(m)
+	}
+	if m.services == nil {
+		m.services = service.NewManager(nil, nil, "", m.servicesChanged)
 	}
 	m.files = filesystem.NewManager(iso, m.owners.Filesystem)
 	m.executorManager = executor.NewManager(m.executorFactory, m.owners.Executor)
@@ -474,6 +483,9 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 			return true, nil
 		}
 		return false, nil // not resident; nothing to evict
+	}
+	if len(b.Spec().Services) > 0 {
+		return m.evictServiceBed(ctx, b, expiryCutoff)
 	}
 	trace := beginLifecycle(ctx, id, lifecycleEvict)
 	defer func() {

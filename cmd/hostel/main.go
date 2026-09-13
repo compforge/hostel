@@ -37,9 +37,11 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/resource"
+	"github.com/qiankunli/hostel/internal/bed/service"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	"github.com/qiankunli/hostel/internal/config"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"github.com/qiankunli/hostel/internal/supervisor"
 	"github.com/qiankunli/hostel/internal/tracing"
 	"github.com/qiankunli/hostel/internal/web"
@@ -99,6 +101,19 @@ func main() {
 	}()
 
 	log.Printf("hostel %s starting", version)
+	ports, err := hostnetwork.NewPortManager(cfg.PortRangeStart, cfg.PortRangeEnd)
+	if err != nil {
+		log.Fatalf("hostel: port configuration: %v", err)
+	}
+	defer ports.Close()
+	_, listener, err := ports.Listen("daemon/http", cfg.Addr)
+	if err != nil {
+		log.Fatalf("hostel: HTTP listener: %v", err)
+	}
+	catalog, err := service.LoadCatalog(cfg.ServiceTemplates)
+	if err != nil {
+		log.Fatalf("hostel: service templates: %v", err)
+	}
 
 	pathProjections, err := config.ParseProjectedPaths(cfg.Bed.Filesystem.ProjectedPaths)
 	if err != nil {
@@ -127,6 +142,7 @@ func main() {
 	if err := amenities.Register(amenity.NewChromium(amenity.ChromiumConfig{
 		ExecPath: cfg.ChromiumPath, CDPURL: cfg.ChromiumCDPURL,
 		IdleStop: cfg.ChromiumIdleStop, DebugPort: cfg.ChromiumDebugPort,
+		Ports: ports,
 	})); err != nil {
 		log.Fatal(err)
 	}
@@ -140,6 +156,7 @@ func main() {
 
 	mgr, err := bed.NewManager(host, cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
 		bed.WithBedUser(bedUser),
+		bed.WithServices(catalog, ports, cfg.ServiceAdvertiseHost),
 	)
 	if err != nil {
 		log.Fatalf("hostel: init bed manager: %v", err)
@@ -155,6 +172,7 @@ func main() {
 	}
 
 	networks := network.NewConfigured(context.Background(), cfg.Bed.Network)
+	networks.SetPortManager(ports)
 	mgr.SetNetworkManager(networks)
 	resources := resource.NewConfigured(cfg.Bed.Resource)
 	mgr.SetResourceTracker(resources)
@@ -271,7 +289,7 @@ func main() {
 	go func() {
 		log.Printf("hostel: listening on %s (isolation=%s, workspace-root=%s, default-bed=%s)",
 			cfg.Addr, iso.Name(), cfg.WorkspaceRoot, cfg.DefaultBed)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverDone <- err
 		}
 	}()
