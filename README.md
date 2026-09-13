@@ -79,8 +79,21 @@ for required host capabilities and release-gate options.
 | Session | `POST /session`, `POST /session/:id/run` (SSE), `DELETE /session/:id` |
 | Isolated session | `/v1/isolated/session(s)`, `run` (SSE), session-scoped files/directories, `capabilities` |
 | Transfers | `POST /v1/beds/:id/transfers`, `GET/DELETE /v1/beds/:id/transfers/:transfer_id` — direct Bed ↔ S3 file copies; [contract](docs/transfers.md) |
-| Beds | `GET/POST /v1/beds`, `GET/DELETE /v1/beds/:id`, `POST /v1/beds/:id/checkpoint`, `GET /v1/beds/capabilities` |
+| Beds | `GET/POST /v1/beds`, `GET/DELETE /v1/beds/:id`, `POST /v1/beds/:id/checkpoint`, `POST /v1/beds/:id/renew-expiration`, `GET /v1/beds/capabilities` |
 | Scheduler | `GET /v1/beds` — instance capacity, state counts + every local bed's (resident + dormant) lifecycle, generation and retention |
+
+To keep an existing resident Bed available without running work, call
+`POST /v1/beds/:id/renew-expiration` with `{}` (or no body) to retain it for at
+least one configured idle TTL from now. An optional RFC 3339 `expiresAt`
+requests a minimum absolute deadline, for example
+`{"expiresAt":"2026-09-14T12:00:00Z"}`. The response is
+`{"expiresAt":"..."}` with the effective deadline; shorter requests never
+reduce an existing promise. A supplied timestamp must be in the future.
+If idle expiration is disabled, it remains disabled and the response is
+`{"expiresAt":null}`. Renewal does not create or wake a Bed, mark it active,
+or checkpoint data. Missing residents return 404; a resident already being
+reclaimed returns 409. Explicit deletion and daemon shutdown still apply.
+See [Bed lifecycle](docs/kernel.md#bed-保活与续期) for retention semantics.
 
 `POST /command` accepts an optional `stdin` string in both foreground and
 background mode. It is delivered unchanged to the process, followed by EOF;

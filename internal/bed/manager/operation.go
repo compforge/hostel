@@ -48,7 +48,7 @@ func (m *Manager) touchBed(b *managedBed) {
 	b.mu.Lock()
 	if current, ok := m.beds[b.Name]; ok && current == b {
 		wasPinned := b.pinnedLocked()
-		b.touchLocked(time.Now(), m.bedIdleTTL)
+		m.touchLocked(b, time.Now())
 		m.adjustPinnedLocked(b, wasPinned)
 	}
 	b.mu.Unlock()
@@ -67,9 +67,6 @@ func (m *Manager) BeginOperation(b *managedBed, kind OperationKind, timeout time
 	if timeout > MaxOperationTimeout {
 		timeout = MaxOperationTimeout
 	}
-	now := time.Now()
-	retainUntil := now.Add(m.bedIdleTTL).Add(timeout)
-
 	m.mu.Lock()
 	b.mu.Lock()
 	if current, ok := m.beds[b.Name]; !ok || current != b || m.closed {
@@ -95,14 +92,13 @@ func (m *Manager) BeginOperation(b *managedBed, kind OperationKind, timeout time
 			return nil, err
 		}
 	}
+	now := time.Now()
 	b.lastActiveAt = now
 	b.activitySeq++
 	b.inflight++
 	b.inflightByKind[kind]++
 	m.adjustPinnedLocked(b, wasPinned)
-	if m.bedIdleTTL > 0 && retainUntil.After(b.retainUntil) {
-		b.retainUntil = retainUntil
-	}
+	m.keepaliveLocked(b, now.Add(timeout))
 	b.mu.Unlock()
 	m.mu.Unlock()
 	m.RequestStoreSync()
@@ -110,9 +106,9 @@ func (m *Manager) BeginOperation(b *managedBed, kind OperationKind, timeout time
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			now := time.Now()
 			m.mu.Lock()
 			b.mu.Lock()
+			now := time.Now()
 			wasPinned := b.pinnedLocked()
 			if b.inflight > 0 {
 				b.inflight--
@@ -129,12 +125,7 @@ func (m *Manager) BeginOperation(b *managedBed, kind OperationKind, timeout time
 				b.lastActiveAt = now
 				b.activitySeq++
 			}
-			if m.bedIdleTTL > 0 {
-				retainUntil := now.Add(m.bedIdleTTL)
-				if retainUntil.After(b.retainUntil) {
-					b.retainUntil = retainUntil
-				}
-			}
+			m.keepaliveLocked(b, now)
 			if current, ok := m.beds[b.Name]; ok && current == b {
 				m.adjustPinnedLocked(b, wasPinned)
 			}

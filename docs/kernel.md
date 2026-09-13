@@ -72,8 +72,9 @@ session 不增加 activity：只有空闲 CDP 连接的 Bed 仍可回收。shell
 因为它们都由客户端持有状态，并需要在回收时主动终止。把长连接当作无界 operation 会让
 回收永远等待，所以 operation 的 timeout 必须有界。
 
-operation 开闭、session 打开和 session 的真实流量会 touch，刷新 `last_active_at` 与
-`retained_until`。状态查询和重放不 touch；控制面轮询不能让 Bed 显得活跃。
+operation 开闭、session 打开和 session 的真实流量会 touch，按既有同步约定维护
+`last_active_at`，并推进保活基准 `keepalive_at`。状态查询和重放不 touch；
+控制面轮询不能让 Bed 显得活跃。显式续期只推进保活基准，不表示发生真实活动。
 [Transfer](transfers.md) 属于 file operation，持有范围覆盖后台传输，不随创建它的 HTTP 请求结束。
 
 生命周期事实按归属维护，上层状态由下层事实推导：
@@ -183,6 +184,32 @@ Ready 必须等到 Store Stage-in、BedFS、身份、已启用的网络及初始
 请求 handler 统一调用 Bed Manager 准入；跨 HTTP 请求存活的工作显式持有 operation。
 准入会把保留期限预留到 timeout + idleTTL，已接纳的 operation 不被 idle reaper 杀死。
 观测请求只读事实，不延长保留期。
+
+### Bed 保活与续期
+
+Bed Manager 是保活与回收决策的唯一 owner。共享 Bed 的 Lifecycle Status 保存
+`keepalive_at`；它是保活计时基准，可能在未来，不是最后一次真实请求的发生时间。
+`retained_until` 由该基准加本次驻留固定的 idleTTL 派生，不另存一份期限。
+
+各调用路径通过同一单调推进规则表达保留需要：
+
+- operation 准入：基准至少推进到当前时间加归一化后的 operation timeout。
+- operation 结束、session touch：基准至少推进到当前时间，不覆盖已有更晚的承诺。
+- renew 未指定期限：与操作结束的保活效果相同，但不更新活动或数据同步水位。
+- renew 指定 expiresAt：基准至少推进到 expiresAt 减 idleTTL。
+
+自动回收要求无 operation，且 `keepalive_at + idleTTL` 已到期；idleTTL 为零时禁用
+自动到期，default Bed 仍不参与自动回收。operation 的执行超时由各执行入口负责，
+保活承诺不取代任务取消。清理、Service readiness 更新和状态发布不得覆盖保活基准。
+
+续期与开始回收在 Bed Manager 内原子互斥：续期先成功则回收必须遵守更晚期限；
+回收先开始则拒绝续期，不重新开放正在退出的 Bed。只有当前 resident 身份可续期，
+不通过 Ensure 创建或唤醒；resident 的 readiness 暂时失败不妨碍保活。
+
+续期不是 operation，不改变 active、pinned 或 Store 同步事实。一个 idle、非 pinned
+的 Bed 仍可处于保留期，继续占用 resident/occupied 容量，使 Carrier 保持 retained。
+期限只约束自动回收，不阻止显式删除或 daemon shutdown，也不保证 Service 不会故障重启。
+保活基准属于本次驻留，不进入 workspace 快照；daemon 重启后由上层重新确认运行态与保留期限。
 
 ### 执行与进程归属
 

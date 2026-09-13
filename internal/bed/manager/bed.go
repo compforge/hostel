@@ -63,8 +63,8 @@ type managedBed struct {
 	mu                 sync.Mutex
 	persistMu          sync.Mutex // serializes generation bumps and snapshot uploads
 	lastActiveAt       time.Time
-	retainUntil        time.Time // latest safe eviction time promised to accepted operations
-	inflight           int       // bed-scoped operations still in flight
+	idleTTL            time.Duration // fixed for this resident allocation
+	inflight           int           // bed-scoped operations still in flight
 	inflightByKind     map[OperationKind]int
 	activitySeq        uint64              // changes whenever activity starts or finishes
 	generation         int64               // latest local data generation
@@ -104,6 +104,7 @@ type ResidentStatus struct {
 	DataSynced         bool
 	Pinned             bool
 	LastActiveAt       time.Time
+	KeepaliveAt        time.Time
 	RetainUntil        time.Time
 	Inflight           int
 	// Operations breaks Inflight down by kind; Sessions counts open stateful
@@ -183,7 +184,8 @@ func (b *managedBed) Status() ResidentStatus {
 		DataSynced:         b.dataSyncedLocked(),
 		Pinned:             b.pinnedLocked(),
 		LastActiveAt:       b.lastActiveAt,
-		RetainUntil:        b.retainUntil,
+		KeepaliveAt:        shared.Lifecycle.KeepaliveAt,
+		RetainUntil:        retentionDeadline(shared.Lifecycle.KeepaliveAt, b.idleTTL),
 		Inflight:           b.inflight,
 		Operations:         ops,
 		Sessions:           sessions,
@@ -206,14 +208,10 @@ func (b *managedBed) Activity() Activity { return b.Status().Activity }
 func (b *managedBed) Short() string { return ShortID(b.Name) }
 
 // touchLocked refreshes the activity watermarks; the caller holds b.mu.
-func (b *managedBed) touchLocked(now time.Time, idleTTL time.Duration) {
+func (m *Manager) touchLocked(b *managedBed, now time.Time) {
 	b.lastActiveAt = now
 	b.activitySeq++
-	if idleTTL > 0 {
-		if retainUntil := now.Add(idleTTL); retainUntil.After(b.retainUntil) {
-			b.retainUntil = retainUntil
-		}
-	}
+	m.keepaliveLocked(b, now)
 }
 
 // LastActiveAt reports the most recent request or command activity.
@@ -223,11 +221,12 @@ func (b *managedBed) LastActiveAt() time.Time {
 	return b.lastActiveAt
 }
 
-// RetainUntil is the latest safe eviction time promised to accepted work.
+// RetainUntil is the earliest idle-GC deadline, not an operation timeout.
+// Zero means automatic expiration is disabled.
 func (b *managedBed) RetainUntil() time.Time {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.retainUntil
+	return b.retainedUntilLocked()
 }
 
 // Inflight reports bed-scoped operations still in flight.

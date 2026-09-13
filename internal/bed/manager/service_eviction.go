@@ -23,18 +23,13 @@ func (m *Manager) evictServiceBed(ctx context.Context, b *Resident, cutoff *time
 	}()
 	m.mu.Lock()
 	b.mu.Lock()
-	if m.closed || m.beds[b.Name] != b {
+	started, err := m.beginEvictionLocked(b, cutoff, true)
+	if !started {
 		b.mu.Unlock()
 		m.mu.Unlock()
-		return false, ErrBedUnavailable
-	}
-	if b.inflight > 0 || (cutoff != nil && (b.retainUntil.IsZero() || b.retainUntil.After(*cutoff))) {
-		b.mu.Unlock()
-		m.mu.Unlock()
-		return false, nil
+		return false, err
 	}
 	sequence := b.activitySeq
-	m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "StoppingServices", UpdatedAt: time.Now()})
 	b.mu.Unlock()
 	m.mu.Unlock()
 	trace := beginLifecycle(ctx, b.Name, lifecycleEvict)
@@ -58,7 +53,7 @@ func (m *Manager) evictServiceBed(ctx context.Context, b *Resident, cutoff *time
 		}
 		// Failed cleanup remains non-ready and retryable via another eviction;
 		// never publish a stopped required service as Initialized.
-		m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseResident, UpdatedAt: time.Now()})
+		m.setLifecycle(b.Bed, model.LifecycleStatus{Phase: PhaseResident, UpdatedAt: time.Now()})
 		m.servicesChanged(b.Bed)
 	}()
 	if err := trace.stage("stop_services", func() error { return m.services.Stop(ctx, b.Bed) }); err != nil {

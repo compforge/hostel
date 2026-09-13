@@ -497,18 +497,17 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 	}()
 
 	// Enter EVICTING: remember the activity watermark we snapshot against.
+	m.mu.Lock()
 	b.mu.Lock()
-	if b.Bed.Status().Lifecycle.Phase == PhaseEvicting {
+	started, err := m.beginEvictionLocked(b, expiryCutoff, false)
+	if !started {
 		b.mu.Unlock()
-		return false, nil // another evict is already in flight
+		m.mu.Unlock()
+		return false, err
 	}
-	if b.inflight > 0 || (expiryCutoff != nil && (b.retainUntil.IsZero() || b.retainUntil.After(*expiryCutoff))) {
-		b.mu.Unlock()
-		return false, nil
-	}
-	m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseEvicting, Ready: true, Reason: "Evicting", UpdatedAt: time.Now()})
 	activitySeq := b.activitySeq
 	b.mu.Unlock()
+	m.mu.Unlock()
 
 	// Revoke BEFORE persist (docs/kernel.md): stateful sessions cannot be
 	// waited out, so evict actively ends them — and their writes must not race
@@ -521,7 +520,7 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 
 	if err := m.persistBed(ctx, b, "evict"); err != nil {
 		b.mu.Lock()
-		m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: true, Reason: "Initialized", UpdatedAt: time.Now()})
+		m.setLifecycle(b.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: true, Reason: "Initialized", UpdatedAt: time.Now()})
 		b.mu.Unlock()
 		return false, fmt.Errorf("bed: persist before evict %s: %w", id, err)
 	}
@@ -536,7 +535,7 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 	b.mu.Lock()
 	current, present := m.beds[id]
 	if !present || current != b || b.activitySeq != activitySeq || b.inflight > 0 {
-		m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: true, Reason: "Initialized", UpdatedAt: time.Now()})
+		m.setLifecycle(b.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: true, Reason: "Initialized", UpdatedAt: time.Now()})
 		b.mu.Unlock()
 		m.mu.Unlock()
 		return false, nil

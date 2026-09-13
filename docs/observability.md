@@ -25,7 +25,8 @@ hostel 需要从三个层面回答同一组问题：
 - `activity=active|idle` 表示 resident / 仍在持久化复核的 evicting Bed 当前有无 operation，由 inflight 派生；
 - `evicting` + `readiness.reason=CleanupPending` 表示已经停止准入但仍持有待清理资源，只占 occupied 名额，不占 resident，也不报告 activity；
 - `generation` 表示本地数据版本；
-- `retained_until` 表示最早安全回收期限；
+- `keepalive_at` 是可位于未来的保活计时基准，不表示真实活动；`retained_until`
+  由它加 idleTTL 派生，表示自动回收的最早允许时间，有 operation 时仍不能回收；
 - `inflight` 表示仍在执行的 bed 请求数。
 - `executor` 表示 resident bed 当前的进程域 identity、backend 与 state；没有执行需求时可为空。
 

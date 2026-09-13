@@ -40,6 +40,7 @@ type bedView struct {
 	Workspace    string        `json:"workspace,omitempty"`
 	CreatedAt    time.Time     `json:"created_at,omitzero"`
 	LastActiveAt time.Time     `json:"last_active_at,omitzero"`
+	KeepaliveAt  time.Time     `json:"keepalive_at,omitzero"`
 	RetainUntil  time.Time     `json:"retained_until,omitzero"`
 }
 
@@ -57,6 +58,7 @@ func (s *Server) viewFromStatus(b *bed.Resident, status bed.ResidentStatus) bedV
 		Workspace:    b.Workspace(),
 		CreatedAt:    b.Spec().CreatedAt,
 		LastActiveAt: status.LastActiveAt,
+		KeepaliveAt:  status.KeepaliveAt,
 		RetainUntil:  status.RetainUntil,
 	}
 }
