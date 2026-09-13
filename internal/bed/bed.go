@@ -3,6 +3,7 @@
 package bed
 
 import (
+	"maps"
 	"sync"
 	"time"
 
@@ -27,6 +28,9 @@ type Bed struct {
 }
 
 type Spec struct {
+	// Env is the immutable base environment for ordinary executions and session
+	// shells. Services use their own declaration, not this overlay.
+	Env             map[string]string
 	Services        []ServiceSpec
 	Dir             string
 	CreatedAt       time.Time
@@ -55,6 +59,7 @@ func clonePolicy(p *NetworkPolicy) *NetworkPolicy {
 	return &c
 }
 func cloneSpec(s Spec) Spec {
+	s.Env = maps.Clone(s.Env)
 	s.Services = CloneServices(s.Services)
 	s.NetworkPolicy = clonePolicy(s.NetworkPolicy)
 	s.RecoveryDirs = append([]string(nil), s.RecoveryDirs...)

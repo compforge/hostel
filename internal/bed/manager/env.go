@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -27,6 +28,15 @@ import (
 // ErrInvalidEnvironment marks a caller- or deployment-supplied environment
 // that cannot safely become part of a bed process.
 var ErrInvalidEnvironment = errors.New("bed: invalid environment")
+
+var ErrEnvConflict = errors.New("bed: cannot change declared environment")
+
+func checkBedEnv(options CreateOptions, actual map[string]string) error {
+	if !options.lookup && !maps.Equal(options.Env, actual) {
+		return ErrEnvConflict
+	}
+	return nil
+}
 
 var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
@@ -78,17 +88,21 @@ func (m *Manager) SetCarrierEnvironment(hostEnv []string) []string {
 // adapter starts work. buildBedEnv repeats the check at the core boundary so
 // non-HTTP callers cannot bypass it.
 func ValidateRequestEnv(env map[string]string) error {
+	return validateEnv("request", env)
+}
+
+func validateEnv(scope string, env map[string]string) error {
 	keys := make([]string, 0, len(env))
 	for name := range env {
 		keys = append(keys, name)
 	}
 	slices.Sort(keys)
 	for _, name := range keys {
-		if err := validateExternalEnvName("request", name); err != nil {
+		if err := validateExternalEnvName(scope, name); err != nil {
 			return err
 		}
 		if strings.ContainsRune(env[name], '\x00') {
-			return fmt.Errorf("%w: request variable %q contains NUL", ErrInvalidEnvironment, name)
+			return fmt.Errorf("%w: %s variable %q contains NUL", ErrInvalidEnvironment, scope, name)
 		}
 	}
 	return nil
@@ -107,16 +121,25 @@ func validateExternalEnvName(scope, name string) error {
 	return nil
 }
 
-// buildBedEnv composes the only environment shape used to spawn bed code:
-// carrier software + bed-owned context + one invocation's explicit overlay.
+// buildExecutionEnv applies the Bed's ordinary execution defaults before the
+// invocation overlay. Existing session shells retain their own process state.
+// +spec=`Bed Env belongs to ordinary executions and session shells; services never implicitly inherit it.`
+func (m *Manager) buildExecutionEnv(b *managedBed, requestEnv map[string]string) ([]string, error) {
+	return m.buildBedEnv(b, b.Spec().Env, requestEnv)
+}
+
+// buildBedEnv composes carrier software and Bed context with ordered overlays.
+// Service launch passes only its own resolved environment here.
 //
 // +spec=`Every execution inherits the Carrier environment except Hostel-reserved variables; deployment owners are responsible for all other inherited values.`
 // +case:id=carrier_software_persists,desc=`Install PyPI and npm packages, then run a new execution`,expect=`both executions resolve the carrier-owned /usr/local installation`
-func (m *Manager) buildBedEnv(b *managedBed, requestEnv map[string]string) ([]string, error) {
-	if err := ValidateRequestEnv(requestEnv); err != nil {
-		return nil, err
+func (m *Manager) buildBedEnv(b *managedBed, overlays ...map[string]string) ([]string, error) {
+	for _, overlay := range overlays {
+		if err := ValidateRequestEnv(overlay); err != nil {
+			return nil, err
+		}
 	}
-	env := make(map[string]string, len(m.processEnv.carrier)+len(requestEnv)+7)
+	env := make(map[string]string, len(m.processEnv.carrier)+7)
 	for name, value := range m.processEnv.carrier {
 		env[name] = value
 	}
@@ -132,8 +155,8 @@ func (m *Manager) buildBedEnv(b *managedBed, requestEnv map[string]string) ([]st
 	if endpoint := m.bedCDPEndpoint(b); endpoint != "" {
 		env["PLAYWRIGHT_MCP_CDP_ENDPOINT"] = m.networkEndpoint(b, endpoint)
 	}
-	for name, value := range requestEnv {
-		env[name] = value
+	for _, overlay := range overlays {
+		maps.Copy(env, overlay)
 	}
 
 	keys := make([]string, 0, len(env))

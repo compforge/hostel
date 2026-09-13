@@ -94,7 +94,7 @@ type Shell struct {
 
 // startShell launches the shell in the Bed's current Executor. cwdInBed, when
 // set, becomes the starting directory through the isolation process view. env
-// is the bed-scoped environment (Manager.buildBedEnv) — the session shell would otherwise
+// is the execution environment (Manager.buildExecutionEnv) — the session shell would otherwise
 // inherit the daemon env, which lacks the bed identity and endpoints. Stdio is
 // explicit os.Pipe pairs (not StdinPipe/StdoutPipe) so the raw fds can cross a
 // process boundary when supervisor is the Executor backend.
@@ -256,7 +256,7 @@ func (s *Shell) runLocked(ctx context.Context, command string, onLine func(strin
 // by the caller via BedFS).
 func (m *Manager) CreateShell(b *managedBed, cwdInBed string) (string, error) {
 	m.touchBed(b)
-	env, err := m.buildBedEnv(b, nil)
+	env, err := m.buildExecutionEnv(b, nil)
 	if err != nil {
 		return "", err
 	}
@@ -316,7 +316,7 @@ func (m *Manager) ForegroundShell(b *managedBed) (*Shell, error) {
 	}
 	b.mu.Unlock()
 
-	env, err := m.buildBedEnv(b, nil)
+	env, err := m.buildExecutionEnv(b, nil)
 	if err != nil {
 		return nil, err
 	}
