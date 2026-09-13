@@ -292,7 +292,7 @@ func (m *Manager) beginInitialization(
 		spec.RecoveryDirs = s.RecoveryDirs
 		*s = spec
 	})
-	m.owners.Lifecycle.Set(initialization.model, model.LifecycleStatus{Phase: PhaseInitializing, Reason: "InitializationQueued", UpdatedAt: now})
+	m.setLifecycle(initialization.model, model.LifecycleStatus{Phase: PhaseInitializing, Reason: "InitializationQueued", UpdatedAt: now})
 	m.initializations[id] = initialization
 	m.mu.Unlock()
 
@@ -363,7 +363,8 @@ func (m *Manager) publishInitializedBed(initialization *bedInitialization, resid
 	if !ready {
 		reason = "RequiredServiceUnavailable"
 	}
-	m.owners.Lifecycle.Set(resident.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: ready, Reason: reason, UpdatedAt: time.Now()})
+	m.keepaliveLocked(resident, time.Now())
+	m.setLifecycle(resident.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: ready, Reason: reason, UpdatedAt: time.Now()})
 	m.beds[resident.Name] = resident
 	delete(m.initializations, resident.Name)
 	if resident.Name != m.defaultBed {
@@ -400,11 +401,11 @@ func (m *Manager) finishInitialization(initialization *bedInitialization, reside
 		if err == nil {
 			delete(m.initializations, initialization.snapshot().ID)
 		} else if m.retirements[initialization.model.Name] != nil {
-			m.owners.Lifecycle.Set(initialization.model, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "CleanupPending", Message: err.Error(), UpdatedAt: time.Now()})
+			m.setLifecycle(initialization.model, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "CleanupPending", Message: err.Error(), UpdatedAt: time.Now()})
 			delete(m.initializations, initialization.model.Name)
 		} else if !errors.Is(err, context.Canceled) {
 			now := time.Now()
-			m.owners.Lifecycle.Set(initialization.model, model.LifecycleStatus{Phase: PhaseFailed, Reason: failedReason, Message: err.Error(), UpdatedAt: now})
+			m.setLifecycle(initialization.model, model.LifecycleStatus{Phase: PhaseFailed, Reason: failedReason, Message: err.Error(), UpdatedAt: now})
 		} else {
 			delete(m.initializations, initialization.snapshot().ID)
 		}
@@ -439,7 +440,7 @@ func (m *Manager) updateInitialization(initialization *bedInitialization, reason
 	if !ok || current != initialization || current.snapshot().Phase != PhaseInitializing {
 		return
 	}
-	m.owners.Lifecycle.Set(current.model, model.LifecycleStatus{Phase: PhaseInitializing, Reason: reason, Message: message, UpdatedAt: time.Now()})
+	m.setLifecycle(current.model, model.LifecycleStatus{Phase: PhaseInitializing, Reason: reason, Message: message, UpdatedAt: time.Now()})
 }
 
 func (m *Manager) updateInitializationStageIn(initialization *bedInitialization, step store.StageInStep) {

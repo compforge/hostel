@@ -101,7 +101,7 @@ func (m *Manager) recoverLocalIdentities() error {
 		if err := m.saveLocalIdentity(local); err != nil {
 			return err
 		}
-		m.owners.Lifecycle.Set(local.bed, model.LifecycleStatus{Phase: PhaseDormant, Reason: "NotResident", UpdatedAt: time.Now()})
+		m.setLifecycle(local.bed, model.LifecycleStatus{Phase: PhaseDormant, Reason: "NotResident", UpdatedAt: time.Now()})
 		if err := m.privileges.Recover(context.Background(), local.bed); err != nil {
 			return fmt.Errorf("recover bed %s privilege: %w", local.bed.Name, err)
 		}
@@ -260,7 +260,7 @@ func (m *Manager) removeIdentityTrees(ctx context.Context, local *localIdentity,
 	m.mu.Lock()
 	if m.localIdentities[local.bed.Name] == local {
 		delete(m.localIdentities, local.bed.Name)
-		m.owners.Lifecycle.Set(local.bed, model.LifecycleStatus{Phase: PhaseDormant, Reason: "Forgotten", UpdatedAt: time.Now()})
+		m.setLifecycle(local.bed, model.LifecycleStatus{Phase: PhaseDormant, Reason: "Forgotten", UpdatedAt: time.Now()})
 	}
 	m.mu.Unlock()
 	log.Printf("hostel local identity forgotten: bed=%s", local.bed.Name)

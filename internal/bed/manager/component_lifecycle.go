@@ -36,13 +36,13 @@ func (m *Manager) teardown(ctx context.Context, b *managedBed) (retErr error) {
 	initializing := b.Bed.Status().Lifecycle.Phase == PhaseInitializing
 	defer func() {
 		if retErr != nil && !initializing {
-			m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "CleanupPending", Message: retErr.Error(), UpdatedAt: time.Now()})
+			m.setLifecycle(b.Bed, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "CleanupPending", Message: retErr.Error(), UpdatedAt: time.Now()})
 		}
 	}()
 	// Initialization remains joinable while its rollback releases partial
 	// resources. Preserve its failed stage until the owner publishes failure.
 	if !initializing {
-		m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "RuntimeCleanup", UpdatedAt: time.Now()})
+		m.setLifecycle(b.Bed, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "RuntimeCleanup", UpdatedAt: time.Now()})
 	}
 	if err := m.services.Stop(ctx, b.Bed); err != nil {
 		return err
@@ -69,7 +69,7 @@ func (m *Manager) teardown(ctx context.Context, b *managedBed) (retErr error) {
 		if retiring {
 			phase, reason = PhaseEvicting, "CleanupPending"
 		}
-		m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: phase, Reason: reason, UpdatedAt: time.Now()})
+		m.setLifecycle(b.Bed, model.LifecycleStatus{Phase: phase, Reason: reason, UpdatedAt: time.Now()})
 	}
 	return nil
 }

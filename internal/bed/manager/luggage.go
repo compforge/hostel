@@ -205,6 +205,7 @@ type InventoryBed struct {
 	DataSynced         bool           `json:"data_synced"`
 	Pinned             bool           `json:"pinned"`
 	LastActiveAt       time.Time      `json:"last_active_at"`
+	KeepaliveAt        time.Time      `json:"keepalive_at,omitzero"`
 	RetainUntil        time.Time      `json:"retained_until,omitzero"` // resident beds only
 	// Usage lets the scheduler weigh placement and migration: command
 	// rate/duration derive from deltas between polls; Last{Persist,Restore}Ms
@@ -250,6 +251,7 @@ func (m *Manager) captureInventory() ([]InventoryBed, bool) {
 			DataSynced:         status.DataSynced,
 			Pinned:             status.Pinned,
 			LastActiveAt:       status.LastActiveAt,
+			KeepaliveAt:        status.KeepaliveAt,
 			RetainUntil:        status.RetainUntil,
 			Usage:              status.Usage,
 		}

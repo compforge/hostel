@@ -215,8 +215,9 @@ NodePort 或 Ingress。调用方向保持外部到 Service，服务访问 UP/S3 
 
 ### 活跃度不能由常驻进程代替
 
-Service 常驻本身不永久持有 Bed 活跃租约，内部 readiness 轮询也不延长空闲寿命。
-状态查询不续租。当前直连/发布端口使用显式的限时 Bed operation 保留，不能把 TCP
+Service 生命周期完全跟随所属 Bed，没有独立的保活计时。常驻进程本身不永久持有
+Bed operation，内部 readiness 轮询和状态查询也不刷新 Bed 保活。当前 access 接口
+提供显式的限时 Bed operation 保留，不能把 TCP
 连接数当作业务任务完成或 Bed 活跃度的证明。
 
 HTTP 返回不代表服务内部的异步任务已经完成。通用 Service Manager 不能推断这些

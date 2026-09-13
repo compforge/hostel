@@ -15,7 +15,7 @@ import (
 // initializeResidentBed privately prepares one allocation. Only the composite
 // publishes Ready after all domain prerequisites and the initial policy pass.
 func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitialization) (resolved *managedBed, retErr error) {
-	b := &managedBed{cleanupMu: semaphore.NewWeighted(1), Bed: init.model, local: init.local, executors: m.executorManager,
+	b := &managedBed{cleanupMu: semaphore.NewWeighted(1), Bed: init.model, local: init.local, executors: m.executorManager, idleTTL: m.bedIdleTTL,
 		shells: make(map[string]*Shell), sessions: make(map[string]*Session), inflightByKind: make(map[OperationKind]int)}
 	m.bindRuntimeLifecycle(b)
 	trace := beginLifecycle(ctx, b.Name, lifecycleInitialize)
@@ -74,9 +74,6 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		}
 		if staged.Restored {
 			b.usage.LastRestoreMs = staged.RestoreDuration.Milliseconds()
-		}
-		if m.bedIdleTTL > 0 {
-			b.retainUntil = now.Add(m.bedIdleTTL)
 		}
 		m.store.ObserveLocal(b.Bed, &store.SnapshotInfo{Generation: meta.SnapshotGeneration, Bytes: meta.SnapshotBytes}, filepathx.DirBytes(spec.Dir))
 		return nil

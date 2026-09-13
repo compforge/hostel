@@ -26,11 +26,14 @@ type Status struct {
 	Resource   ResourceStatus
 }
 type LifecycleStatus struct {
-	Phase     LifecyclePhase `json:"phase"`
-	Ready     bool           `json:"ready"`
-	Reason    string         `json:"reason"`
-	Message   string         `json:"message"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	// KeepaliveAt is the retention clock base, not an activity timestamp.
+	// Explicit renewal may advance it into the future.
+	KeepaliveAt time.Time      `json:"keepalive_at,omitzero"`
+	Phase       LifecyclePhase `json:"phase"`
+	Ready       bool           `json:"ready"`
+	Reason      string         `json:"reason"`
+	Message     string         `json:"message"`
+	UpdatedAt   time.Time      `json:"updated_at"`
 }
 type FilesystemStatus struct {
 	Home      string `json:"-"`

@@ -203,6 +203,7 @@ func (s *Server) routes() {
 		v1.POST("", s.bedCreate)
 		v1.GET("/capabilities", s.capabilities)
 		v1.GET("/:bedId", s.bedGet)
+		v1.POST("/:bedId/renew-expiration", s.bedRenewExpiration)
 		v1.GET("/:bedId/services", s.serviceList)
 		v1.GET("/:bedId/services/:service", s.serviceGet)
 		v1.GET("/:bedId/services/:service/logs", s.serviceLogs)

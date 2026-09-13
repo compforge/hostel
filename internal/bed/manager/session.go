@@ -100,7 +100,7 @@ func (m *Manager) OpenSession(b *managedBed, kind SessionKind, closeFn func()) (
 			return nil, err
 		}
 	}
-	b.touchLocked(time.Now(), m.bedIdleTTL)
+	m.touchLocked(b, time.Now())
 	b.sessions[s.ID] = s
 	m.adjustPinnedLocked(b, wasPinned)
 	b.mu.Unlock()
