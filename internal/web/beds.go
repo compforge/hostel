@@ -23,6 +23,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/go-stdx/randx"
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/instance"
 
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
@@ -134,9 +135,10 @@ func (s *Server) bedList(c *gin.Context) {
 }
 
 type createBedRequest struct {
-	NetworkPolicy *network.Policy `json:"networkPolicy,omitempty"`
-	ID            string          `json:"id,omitempty"`
-	Sync          string          `json:"sync,omitempty"`
+	Services      []model.ServiceSpec `json:"services,omitempty"`
+	NetworkPolicy *network.Policy     `json:"networkPolicy,omitempty"`
+	ID            string              `json:"id,omitempty"`
+	Sync          string              `json:"sync,omitempty"`
 }
 
 // POST /v1/beds — create (or return existing) a bed. Empty id → server-assigned.
@@ -155,7 +157,7 @@ func (s *Server) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Sync: req.Sync, NetworkPolicy: req.NetworkPolicy})
+	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Sync: req.Sync, NetworkPolicy: req.NetworkPolicy, Services: req.Services})
 	if err != nil {
 		if errors.Is(err, network.ErrUnavailable) {
 			respondError(c, http.StatusServiceUnavailable, ErrServiceUnavailable, "bed network policy is unavailable")
@@ -312,6 +314,7 @@ func (s *Server) capabilities(c *gin.Context) {
 		"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
 		"persistence":                    s.mgr.SyncName(),
 		"bed_sync_selection":             true,
+		"bed_services":                   true,
 		"transfer_syncs":                 []string{"copy", "restic"},
 		"file_transfers":                 s.mgr.TransfersConfigured(),
 		"transfer_instance_id":           s.mgr.TransferInstanceID(),

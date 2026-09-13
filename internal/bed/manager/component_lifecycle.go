@@ -13,10 +13,12 @@ import (
 // receive the exact shared Bed whose resources they allocated.
 func (m *Manager) bindRuntimeLifecycle(b *managedBed) {
 	b.stopSequence = model.NewSequence(model.Stop,
+		model.Participant{Name: "service", Lifecycle: m.services},
 		model.Participant{Name: "store", Lifecycle: m.store},
 		model.Participant{Name: "executor", Lifecycle: m.executorManager},
 	)
 	b.releaseSequence = model.NewSequence(model.Release,
+		model.Participant{Name: "service", Lifecycle: m.services},
 		model.Participant{Name: "amenity", Lifecycle: amenityLifecycle{manager: m.amenities}},
 		model.Participant{Name: "executor", Lifecycle: m.executorManager},
 		model.Participant{Name: "resource", Lifecycle: m.resourceManager},
@@ -41,6 +43,9 @@ func (m *Manager) teardown(ctx context.Context, b *managedBed) (retErr error) {
 	// resources. Preserve its failed stage until the owner publishes failure.
 	if !initializing {
 		m.owners.Lifecycle.Set(b.Bed, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "RuntimeCleanup", UpdatedAt: time.Now()})
+	}
+	if err := m.services.Stop(ctx, b.Bed); err != nil {
+		return err
 	}
 	m.executions.killBed(b.Name, CauseBedTeardown)
 	m.revokeSessions(ctx, b)

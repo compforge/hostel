@@ -14,14 +14,17 @@ import (
 // without exposing its network namespace to isolated processes. All requests are
 // bounded by a common concurrency limit and timeout; this is not a DNS cache.
 type dnsForwarder struct {
-	policy    *policyControl
-	address   string
-	upstreams []string
-	udp       *net.UDPConn
-	tcp       net.Listener
-	slots     chan struct{}
-	stop      context.CancelFunc
-	wg        sync.WaitGroup
+	ports      *PortManager
+	owner      string
+	allocation *PortAllocation
+	policy     *policyControl
+	address    string
+	upstreams  []string
+	udp        *net.UDPConn
+	tcp        net.Listener
+	slots      chan struct{}
+	stop       context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 func newDNSForwarder(address string, upstreams []string) *dnsForwarder {
@@ -36,7 +39,11 @@ func (d *dnsForwarder) Start() error {
 	if err != nil {
 		return fmt.Errorf("network: DNS UDP: %w", err)
 	}
-	d.tcp, err = net.Listen("tcp4", d.address)
+	if d.ports != nil {
+		d.allocation, d.tcp, err = d.ports.Listen(d.owner, d.address)
+	} else {
+		d.tcp, err = net.Listen("tcp4", d.address)
+	}
 	if err != nil {
 		_ = d.udp.Close()
 		return fmt.Errorf("network: DNS TCP: %w", err)
@@ -59,6 +66,9 @@ func (d *dnsForwarder) Close() {
 		_ = d.tcp.Close()
 	}
 	d.wg.Wait()
+	if d.allocation != nil {
+		_ = d.allocation.Release()
+	}
 }
 func (d *dnsForwarder) serveUDP(ctx context.Context) {
 	for {

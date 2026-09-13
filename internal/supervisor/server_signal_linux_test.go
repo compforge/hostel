@@ -50,3 +50,18 @@ func TestServerSignalsOnlyLiveChildIdentity(t *testing.T) {
 		t.Fatalf("signal calls = %d, want 1", calls)
 	}
 }
+
+func TestServerSupportsGracefulServiceSignal(t *testing.T) {
+	original := signalSpawnedProcessGroup
+	defer func() { signalSpawnedProcessGroup = original }()
+	called := false
+	signalSpawnedProcessGroup = func(pid int, signal syscall.Signal) error {
+		called = pid == 42 && signal == syscall.SIGTERM
+		return nil
+	}
+	p := &processRecord{id: "service", pid: 42, done: make(chan struct{})}
+	s := &server{executorID: "e", processes: map[string]*processRecord{p.id: p}, byPID: map[int]*processRecord{p.pid: p}}
+	if reply := s.signal(p.id, int(syscall.SIGTERM)); reply.Error != "" || !called {
+		t.Fatalf("TERM not delivered: %+v", reply)
+	}
+}

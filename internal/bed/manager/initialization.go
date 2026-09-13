@@ -100,7 +100,7 @@ func (m *Manager) InitializeBedWithOptions(ctx context.Context, id string, optio
 // the same initialization as POST /v1/beds, but waits for readiness before
 // returning a Bed so no operation can observe a partial BedFS.
 func (m *Manager) Ensure(ctx context.Context, id string) (*managedBed, error) {
-	initialization, resident, err := m.beginInitialization(ctx, id, CreateOptions{})
+	initialization, resident, err := m.beginInitialization(ctx, id, CreateOptions{lookup: true})
 	if err != nil || resident != nil {
 		return resident, err
 	}
@@ -170,6 +170,11 @@ func (m *Manager) beginInitialization(
 	if err := m.Start(ctx); err != nil {
 		return nil, nil, err
 	}
+	resolvedServices, err := m.services.Resolve(options.Services)
+	if err != nil {
+		return nil, nil, err
+	}
+	options.Services = resolvedServices
 	requestedSync := options.Sync
 	if options.NetworkPolicy != nil {
 		normalized, err := network.NormalizePolicy(*options.NetworkPolicy)
@@ -224,11 +229,11 @@ func (m *Manager) beginInitialization(
 
 	if resident, ok := m.beds[id]; ok {
 		m.mu.Unlock()
-		return nil, resident, errors.Join(checkBedSync(requestedSync, selected, resident.Spec().Sync), checkInitialPolicy(options.NetworkPolicy, resident.Spec().NetworkPolicy))
+		return nil, resident, errors.Join(checkBedSync(requestedSync, selected, resident.Spec().Sync), checkInitialPolicy(options.NetworkPolicy, resident.Spec().NetworkPolicy), checkServices(options, resident.Spec().Services))
 	}
 	if current, ok := m.initializations[id]; ok && current.snapshot().Phase == PhaseInitializing {
 		m.mu.Unlock()
-		return current, nil, errors.Join(checkBedSync(requestedSync, selected, current.snapshot().Sync), checkInitialPolicy(options.NetworkPolicy, current.model.Spec().NetworkPolicy))
+		return current, nil, errors.Join(checkBedSync(requestedSync, selected, current.snapshot().Sync), checkInitialPolicy(options.NetworkPolicy, current.model.Spec().NetworkPolicy), checkServices(options, current.model.Spec().Services))
 	}
 	if m.retirements[id] != nil {
 		m.mu.Unlock()
@@ -237,6 +242,19 @@ func (m *Manager) beginInitialization(
 	if selectionErr != nil {
 		m.mu.Unlock()
 		return nil, nil, selectionErr
+	}
+	if local := m.localIdentities[id]; local != nil {
+		actual := local.bed.Spec().Services
+		if err := checkServices(options, actual); err != nil {
+			m.mu.Unlock()
+			return nil, nil, err
+		}
+		resolved, err := m.services.Resolve(actual)
+		if err != nil {
+			m.mu.Unlock()
+			return nil, nil, err
+		}
+		options.Services = resolved
 	}
 	// A new request retries a failed initialization. Its previous status remains
 	// observable until this explicit desired-state signal arrives.
@@ -265,6 +283,7 @@ func (m *Manager) beginInitialization(
 	}
 	localMeta, localPresent := loadMeta(filepath.Join(m.root, id))
 	spec := model.Spec{Dir: filepath.Join(m.root, id), Sync: selected, CreatedAt: localMeta.CreatedAt, LocalPresent: localPresent, LocalGeneration: localMeta.Generation}
+	spec.Services = options.Services
 	if options.NetworkPolicy != nil {
 		spec.NetworkPolicy = network.ToModel(*options.NetworkPolicy)
 	}
@@ -339,7 +358,12 @@ func (m *Manager) publishInitializedBed(initialization *bedInitialization, resid
 	if _, exists := m.beds[resident.Name]; exists {
 		return fmt.Errorf("bed %s became resident during initialization", resident.Name)
 	}
-	m.owners.Lifecycle.Set(resident.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: true, Reason: "Initialized", UpdatedAt: time.Now()})
+	ready := m.services.Ready(resident.Bed)
+	reason := "Initialized"
+	if !ready {
+		reason = "RequiredServiceUnavailable"
+	}
+	m.owners.Lifecycle.Set(resident.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: ready, Reason: reason, UpdatedAt: time.Now()})
 	m.beds[resident.Name] = resident
 	delete(m.initializations, resident.Name)
 	if resident.Name != m.defaultBed {
@@ -496,6 +520,8 @@ func residentInitializationStatus(resident *managedBed) InitializationStatus {
 // overrides the instance default. After eviction, callers must repeat overrides
 // because the local Bed metadata is removed together with its workspace.
 type CreateOptions struct {
+	Services      []model.ServiceSpec
+	lookup        bool // native Ensure joins desired state; an explicit create compares it
 	Sync          string
 	NetworkPolicy *network.Policy
 }

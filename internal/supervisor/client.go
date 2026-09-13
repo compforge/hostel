@@ -51,7 +51,16 @@ func (c *Client) Describe() error {
 // Start is idempotent by processID + spec fingerprint. If the first response
 // is lost after fork, retrying cannot launch a duplicate command.
 func (c *Client) Start(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File) (int, error) {
+	return c.start(processID, argv, dir, env, stdin, stdout, stderr, false)
+}
+
+func (c *Client) StartService(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File) (int, error) {
+	return c.start(processID, argv, dir, env, stdin, stdout, stderr, true)
+}
+
+func (c *Client) start(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File, drainGroup bool) (int, error) {
 	req := request{
+		DrainGroup: drainGroup,
 		Operation:  opStart,
 		ExecutorID: c.executorID,
 		ProcessID:  processID,
@@ -91,11 +100,15 @@ func (c *Client) Wait(processID string) (ExitStatus, error) {
 }
 
 func (c *Client) Kill(processID string) error {
+	return c.Signal(processID, syscall.SIGKILL)
+}
+
+func (c *Client) Signal(processID string, signal syscall.Signal) error {
 	_, err := c.call(request{
 		Operation:  opSignal,
 		ExecutorID: c.executorID,
 		ProcessID:  processID,
-		Signal:     int(syscall.SIGKILL),
+		Signal:     int(signal),
 	}, nil)
 	return err
 }

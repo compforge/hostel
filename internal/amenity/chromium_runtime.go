@@ -98,8 +98,12 @@ func (c *chromium) startBrowser(ctx context.Context) error {
 	} else {
 		opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
 		opts = append(opts, chromedp.ExecPath(c.cfg.ExecPath), chromedp.NoSandbox)
-		if c.cfg.DebugPort > 0 {
-			opts = append(opts, chromedp.Flag("remote-debugging-port", strconv.Itoa(c.cfg.DebugPort)))
+		port := c.cfg.DebugPort
+		if c.listenPort > 0 {
+			port = c.listenPort
+		}
+		if port > 0 {
+			opts = append(opts, chromedp.Flag("remote-debugging-port", strconv.Itoa(port)))
 		}
 		allocCtx, allocStop = chromedp.NewExecAllocator(base, opts...)
 	}
@@ -109,6 +113,9 @@ func (c *chromium) startBrowser(ctx context.Context) error {
 		masterCtl()
 		allocStop()
 		return fmt.Errorf("amenity: chromium start: %w", err)
+	}
+	if c.portAllocation != nil {
+		_ = c.portAllocation.Confirm()
 	}
 	c.mu.Lock()
 	if c.closed {
@@ -166,6 +173,9 @@ func (c *chromium) stopBrowser() {
 	}
 	if allocStop != nil {
 		allocStop()
+	}
+	if c.portAllocation != nil {
+		c.portAllocation.Unconfirm()
 	}
 }
 
@@ -368,6 +378,9 @@ func (c *chromium) Close(ctx context.Context) error {
 	go func() { c.workers.Wait(); close(done) }()
 	select {
 	case <-done:
+		if c.portAllocation != nil {
+			return c.portAllocation.Release()
+		}
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

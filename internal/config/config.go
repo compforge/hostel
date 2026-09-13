@@ -41,9 +41,13 @@ const defaultBedPressureThresholdPercent = 80
 const defaultAutoPackFileThreshold = 100
 
 type Config struct {
-	Bed         BedConfig
-	ShowVersion bool
-	HealthCheck bool
+	ServiceTemplates     string
+	ServiceAdvertiseHost string
+	PortRangeStart       int
+	PortRangeEnd         int
+	Bed                  BedConfig
+	ShowVersion          bool
+	HealthCheck          bool
 	// EnableTracing exports W3C-propagated HTTP and domain traces over OTLP.
 	// gRPC wins when both endpoints are set, matching sandctl deployment policy.
 	EnableTracing          bool
@@ -104,6 +108,10 @@ func Load(args []string, explicit Options) (*Config, error) {
 		bedUID, bedGID = 1000, 1000
 	}
 	fs.StringVar(&c.Addr, "addr", osx.EnvStr("HOSTEL_ADDR", DefaultAddr), "HTTP listen address")
+	fs.StringVar(&c.ServiceTemplates, "service-templates", osx.EnvStr("HOSTEL_SERVICE_TEMPLATES", ""), "deployment-owned directory of Bed Service JSON templates")
+	fs.StringVar(&c.ServiceAdvertiseHost, "service-advertise-host", osx.EnvStr("HOSTEL_SERVICE_ADVERTISE_HOST", "127.0.0.1"), "reachable service IP or hostname (Pod IP in Kubernetes)")
+	fs.IntVar(&c.PortRangeStart, "port-range-start", osx.EnvInt("HOSTEL_PORT_RANGE_START", 20000), "first dynamic TCP service port")
+	fs.IntVar(&c.PortRangeEnd, "port-range-end", osx.EnvInt("HOSTEL_PORT_RANGE_END", 29999), "last dynamic TCP service port")
 	// Preflight flags handled by main (used by the image HEALTHCHECK); real
 	// flags so addr resolution stays identical to the running server.
 	fs.BoolVar(&c.ShowVersion, "version", false, "print version and exit")
@@ -184,6 +192,12 @@ func Load(args []string, explicit Options) (*Config, error) {
 	}
 	if err := c.Bed.Resource.Validate(); err != nil {
 		return nil, fmt.Errorf("resource: %w", err)
+	}
+	if c.PortRangeStart < 1 || c.PortRangeEnd > 65535 || c.PortRangeEnd < c.PortRangeStart {
+		return nil, fmt.Errorf("invalid dynamic port range")
+	}
+	if c.ServiceAdvertiseHost == "" || strings.ContainsAny(c.ServiceAdvertiseHost, "/?#@ \t\r\n") {
+		return nil, fmt.Errorf("service advertise host must be an IP or hostname")
 	}
 	return c, nil
 }

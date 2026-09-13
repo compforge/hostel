@@ -46,6 +46,7 @@ type acquisition struct {
 // Pool owns named network allocations. Keys are opaque caller-owned identities.
 // allocationMu serializes address selection without blocking existing networks.
 type Pool struct {
+	ports        *PortManager
 	needsProbe   bool
 	startErr     error
 	mu           sync.Mutex
@@ -64,11 +65,14 @@ func New(_ context.Context) *Pool {
 	return &Pool{needsProbe: true, report: Status{Backend: "shared", Reason: "not started"}, allocations: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 
-func probePool(ctx context.Context) *Pool {
+// SetPortManager is startup-only configuration supplied by the daemon.
+func (m *Pool) SetPortManager(ports *PortManager) { m.ports = ports }
+
+func probePool(ctx context.Context, ports ...*PortManager) *Pool {
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	b, probe := probeBackend(ctx)
+	b, probe := probeBackend(ctx, ports...)
 	report := Status{Available: b != nil && probe.Error == "", Backend: "shared", Probe: probe}
 	report.Probe.DurationMS = time.Since(started).Milliseconds()
 	if report.Available {
@@ -206,6 +210,20 @@ func (a *attachment) Gateway() string {
 	return a.endpoint.Gateway()
 }
 
+// Address is the namespace-side IP reachable from the carrier; it is not the
+// gateway (the carrier-side endpoint of the veth).
+func (a *attachment) Address() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.active || !a.current() {
+		return ""
+	}
+	if e, ok := a.endpoint.(interface{ Address() string }); ok {
+		return e.Address()
+	}
+	return ""
+}
+
 func (a *attachment) Close(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -281,7 +299,7 @@ func (m *Pool) Start(ctx context.Context) error {
 	if !m.needsProbe {
 		return m.startErr
 	}
-	p := probePool(ctx)
+	p := probePool(ctx, m.ports)
 	m.backend, m.report, m.needsProbe = p.backend, p.report, false
 	if p.backend != nil && !p.report.Available {
 		m.startErr = fmt.Errorf("network probe cleanup remains pending: %s", p.report.Reason)

@@ -19,6 +19,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"io"
 	"log"
 	"net"
@@ -40,6 +41,7 @@ import (
 
 // ChromiumConfig selects launch-or-attach (docs/amenity.md §5).
 type ChromiumConfig struct {
+	Ports *hostnetwork.PortManager
 	// ExecPath launches a hostel-owned Chromium ("" = probe common locations).
 	ExecPath string
 	// CDPURL attaches to an existing instance (sidecar/supervisor deployments
@@ -61,8 +63,10 @@ type ChromiumConfig struct {
 // chromium is the first amenity: one shared browser, one isolated
 // BrowserContext per bed.
 type chromium struct {
-	cfg    ChromiumConfig
-	attach bool
+	portAllocation *hostnetwork.PortAllocation
+	listenPort     int
+	cfg            ChromiumConfig
+	attach         bool
 
 	// mu protects only in-memory state. No browser I/O or waiting under it.
 	mu            sync.Mutex
@@ -161,6 +165,14 @@ func (c *chromium) Start(ctx context.Context) error {
 		} else {
 			c.cfg.ExecPath = path
 		}
+	}
+	if reason == "" && !c.attach && c.cfg.Ports != nil && c.portAllocation == nil {
+		a, err := c.cfg.Ports.Reserve("amenity/chromium", "", fmt.Sprintf("127.0.0.1:%d", c.cfg.DebugPort))
+		if err != nil {
+			return fmt.Errorf("chromium debug port: %w", err)
+		}
+		c.portAllocation = a
+		c.listenPort = a.Port()
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

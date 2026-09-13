@@ -102,5 +102,9 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		return nil, err
 	}
 	b.environment = bindEnvironment(m.iso, b.filesystem, m.network.Attachment(b.Bed), m.privileges.User(b.Bed))
+	m.updateInitialization(init, "PreparingServices", "starting declared Bed services")
+	if err := m.services.PrepareBed(ctx, b.Bed, serviceRuntime{manager: m, bed: b}); err != nil {
+		return nil, err
+	}
 	return b, nil
 }

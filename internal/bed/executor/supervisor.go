@@ -196,6 +196,14 @@ func (e *supervisedExecutor) Exit() Exit {
 }
 
 func (e *supervisedExecutor) Start(ctx context.Context, processID string, cmd *exec.Cmd) (Process, error) {
+	return e.start(ctx, processID, cmd, false)
+}
+
+func (e *supervisedExecutor) StartService(ctx context.Context, processID string, cmd *exec.Cmd) (Process, error) {
+	return e.start(ctx, processID, cmd, true)
+}
+
+func (e *supervisedExecutor) start(ctx context.Context, processID string, cmd *exec.Cmd, drainGroup bool) (Process, error) {
 	if processID == "" {
 		return nil, errors.New("executor: process id is required")
 	}
@@ -235,7 +243,11 @@ func (e *supervisedExecutor) Start(ctx context.Context, processID string, cmd *e
 	const maxAttempts = 2
 	var pid int
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		pid, err = e.client.Start(processID, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr)
+		if drainGroup {
+			pid, err = e.client.StartService(processID, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr)
+		} else {
+			pid, err = e.client.Start(processID, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr)
+		}
 		if err == nil {
 			if attempt > 1 {
 				e.recordTransportRecovered(ctx, "start", processID, attempt)
@@ -359,6 +371,10 @@ type supervisedProcess struct {
 
 func (p *supervisedProcess) ID() string { return p.id }
 func (p *supervisedProcess) PID() int   { return p.pid }
+
+func (p *supervisedProcess) Signal(signal syscall.Signal) error {
+	return p.executor.client.Signal(p.id, signal)
+}
 
 func (p *supervisedProcess) Kill() {
 	if err := p.executor.client.Kill(p.id); err != nil {

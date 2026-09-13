@@ -24,6 +24,7 @@
 - **房型（dorm / room / suite）**：bed 的文件隔离档，与 bed 正交（见〈关键约定〉isolation）。
 - **luggage**：非正常生命周期状态，只表达异常退出或旧版 Hostel 遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
 - **amenity**：bed 外由 hostel 统一管理、按 bed 分配状态的共享设施（Chromium / Jupyter / MCP 连接池）。
+- **bed service**：Bed 定义中的可选托管服务，与用户命令共用 Bed Environment/Executor；程序与模板由部署方提供，Hostel 不依赖 hictld。端口通过 daemon 级 Port Manager 统一申请，见 `docs/bed-service.md`。
 - **executor**：某个 bed 当前的、可替换的进程承载域。bed 持久存在，executor 丢失或关闭后可用新 id 重建；Linux 默认使用 supervisor backend，非 Linux / 显式 local 使用 daemon 直接派生。
 - **execution**：一次命令运行。每次有独立 id，且记录其所属 bed id 与 executor id。
 
@@ -87,10 +88,12 @@ internal/
 │   │   ├── sync/      noop/auto/cas/pack/tar/copy/restic 同步策略
 │   │   └── backend/   S3 位置、共享客户端和对象操作
 │   ├── executor/      可替换进程域的 Manager、local / supervisor backend
+│   ├── service/       Bed 声明服务的模板、就绪、监督、端口发布与停止
 │   └── resource/      cgroup accounting、carrier admission 与采样循环；未施加 per-Bed limits
 ├── amenity/           daemon 直属独立设施；Manager 维护 Bed ID 到 Tenant ID 的绑定，设施隐藏资源实现
 ├── host/              通用宿主能力；不依赖 Bed/Amenity 模型，不预设使用方
-│   ├── network/       namespace、地址、DNS、出站规则与 allocation 池
+│   ├── network/       namespace、地址、DNS、出站规则与统一 TCP Port Manager
+│   ├── process/       持有进程身份期间的服务进程组清理
 │   ├── filesystem/    mount、Landlock、pathshim/PRoot 进程视图与 ptrace 探测
 │   ├── cgroup/        组层次、放置句柄、用量与释放；无 Bed/Executor 组织策略
 │   ├── privilege/     UID/GID、capability 清除与 ownership 操作
@@ -136,6 +139,8 @@ internal/
 - 通用小工具优先用 [go-stdx](https://github.com/qiankunli/go-stdx)（env 解析、随机 id、shell quote、原子写文件、目录字节数等），不要在仓内再手写它已有的操作；沉淀出的新通用件也应迁去 go-stdx 而非留在 internal。
 
 ## References
+
+- Bed 粒度托管服务、统一 TCP 端口、模板与管理 API：`docs/bed-service.md`
 
 - 启动配置、Feature 策略与环境前提：`docs/configuration.md`
 

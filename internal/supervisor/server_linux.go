@@ -15,6 +15,7 @@
 package supervisor
 
 import (
+	"errors"
 	"flag"
 	"log"
 	"net"
@@ -27,6 +28,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 )
 
 // Run is the Executor supervisor process entry
@@ -138,48 +141,85 @@ type server struct {
 }
 
 type processRecord struct {
-	id       string
-	specHash string
-	pid      int
-	done     chan struct{}
-	status   *ExitStatus
+	drainGroup bool
+	cleaning   bool
+	id         string
+	specHash   string
+	pid        int
+	done       chan struct{}
+	status     *ExitStatus
 }
 
-// reap is the single wait loop: dispatches exit codes for spawned children and
-// silently collects adopted orphans. Nobody else may wait4 — os/exec is
-// deliberately unused in this process.
+// reap dispatches exit codes and collects adopted orphans. A service leader's
+// wait4 is delegated exclusively to drainService while cleaning is set;
+// os/exec is deliberately unused in this process.
 func (s *server) reap(sigc <-chan os.Signal) {
 	for range sigc {
 		for {
-			// Fork+registration, group signalling, and reaping share this
-			// lock. Therefore a numeric PID can never be signalled after
-			// Wait4 releases it for reuse.
 			s.mu.Lock()
-			var ws syscall.WaitStatus
-			pid, err := syscall.Wait4(-1, &ws, syscall.WNOHANG, nil)
-			if pid <= 0 || err != nil {
-				s.mu.Unlock()
-				break
-			}
-			if !ws.Exited() && !ws.Signaled() {
-				s.mu.Unlock()
-				continue // stopped/continued: not terminal
-			}
-			status := ExitStatus{Kind: ExitStatusExited, ExitCode: ws.ExitStatus()}
-			if ws.Signaled() {
-				status = ExitStatus{
-					Kind:       ExitStatusSignaled,
-					Signal:     int(ws.Signal()),
-					CoreDumped: ws.CoreDump(),
+			progress := false
+			// Wait individual children, including adopted orphans. Wait4(-1)
+			// could reap a service leader whose group cleanup still pins it.
+			for _, pid := range childrenOf(os.Getpid()) {
+				process := s.byPID[pid]
+				if process != nil && process.drainGroup {
+					if !process.cleaning {
+						var info unix.Siginfo
+						if err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOWAIT|unix.WNOHANG, nil); err == nil && info.Signo != 0 {
+							process.cleaning = true
+							go s.drainService(process)
+						}
+					}
+					continue
+				}
+				var ws syscall.WaitStatus
+				got, err := syscall.Wait4(pid, &ws, syscall.WNOHANG, nil)
+				if err == nil && got > 0 {
+					s.publishExitLocked(pid, ws)
+					progress = true
 				}
 			}
-			if process, ok := s.byPID[pid]; ok {
-				delete(s.byPID, pid)
-				process.status = &status
-				close(process.done)
-			}
 			s.mu.Unlock()
+			if !progress {
+				break
+			}
 		}
+	}
+}
+
+func (s *server) drainService(process *processRecord) {
+	for {
+		if err := hostprocess.DrainGroup(process.pid); err == nil {
+			break
+		} else {
+			log.Printf("supervisor: service group cleanup pending: pid=%d err=%v", process.pid, err)
+		}
+		time.Sleep(time.Second)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var ws syscall.WaitStatus
+	for {
+		pid, err := syscall.Wait4(process.pid, &ws, 0, nil)
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if err == nil && pid > 0 {
+			s.publishExitLocked(pid, ws)
+		}
+		break
+	}
+}
+
+func (s *server) publishExitLocked(pid int, ws syscall.WaitStatus) {
+	status := ExitStatus{Kind: ExitStatusExited, ExitCode: ws.ExitStatus()}
+	if ws.Signaled() {
+		status = ExitStatus{Kind: ExitStatusSignaled, Signal: int(ws.Signal()), CoreDumped: ws.CoreDump()}
+	}
+	if process := s.byPID[pid]; process != nil {
+		delete(s.byPID, pid)
+		process.status = &status
+		close(process.done)
 	}
 }
 
@@ -232,7 +272,7 @@ func (s *server) start(req request, fds []int) reply {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.processes[req.ProcessID]; ok {
-		if existing.specHash != req.SpecHash {
+		if existing.specHash != req.SpecHash || existing.drainGroup != req.DrainGroup {
 			base.Error = "process id reused with different specification"
 			return base
 		}
@@ -255,7 +295,7 @@ func (s *server) start(req request, fds []int) reply {
 		base.Error = "fork: " + err.Error()
 		return base
 	}
-	process := &processRecord{id: req.ProcessID, specHash: req.SpecHash, pid: pid, done: make(chan struct{})}
+	process := &processRecord{id: req.ProcessID, specHash: req.SpecHash, pid: pid, done: make(chan struct{}), drainGroup: req.DrainGroup}
 	s.processes[process.id] = process
 	s.byPID[pid] = process
 	return s.replyForLocked(process)
@@ -286,8 +326,8 @@ func (s *server) wait(processID string) reply {
 
 func (s *server) signal(processID string, signal int) reply {
 	base := reply{ExecutorID: s.executorID, ProcessID: processID}
-	if signal != int(syscall.SIGKILL) {
-		base.Error = "only SIGKILL is supported"
+	if signal != int(syscall.SIGKILL) && signal != int(syscall.SIGTERM) {
+		base.Error = "only SIGTERM and SIGKILL are supported"
 		return base
 	}
 	s.mu.Lock()
@@ -297,8 +337,8 @@ func (s *server) signal(processID string, signal int) reply {
 		base.Error = "process not found"
 		return base
 	}
-	if process.status == nil {
-		_ = signalSpawnedProcessGroup(process.pid, syscall.SIGKILL)
+	if process.status == nil && !process.cleaning {
+		_ = signalSpawnedProcessGroup(process.pid, syscall.Signal(signal))
 	}
 	return s.replyForLocked(process)
 }
