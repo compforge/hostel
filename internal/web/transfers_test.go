@@ -459,7 +459,7 @@ func TestResticTransfersHTTPReferenceAndNoopBed(t *testing.T) {
 	if err != nil || info.Mode != 0o755 {
 		t.Fatalf("metadata: %+v %v", info, err)
 	}
-	// Explicit repositories are addressed directly, so existing hictld layouts
+	// Explicit repositories are addressed directly, so existing repository layouts
 	// can be read without a hidden transfer-specific prefix.
 	fixture.mu.Lock()
 	_, exists := fixture.objects["/bucket/hostel/tenants/test/repositories/one/config"]

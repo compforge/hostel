@@ -9,20 +9,20 @@ Bed Service 是归属于某个 Bed、由 Hostel 托管生命周期的常驻程�
 服务通过 Bed 的统一执行入口运行，与用户命令使用相同的目录视图和隔离策略。
 
 Service 是 Bed 定义的一部分。一个 Bed 可以没有服务，也可以声明多个服务；省略声明
-等同于空列表。实例安装了服务模板，不意味着每个 Bed 都启用它。
+等同于空列表。Carrier 镜像包含某个程序，不意味着每个 Bed 都启用它。
 
-### 服务模板、Bed 声明与运行实例
+### 服务声明与运行实例
 
 | 对象 | Owner | 职责 |
 |---|---|---|
-| 服务模板 | Hostel 部署方，例如 Bedbox | 提供程序、依赖、启动定义、允许覆盖的参数、凭据来源及探测策略 |
-| Bed 服务声明 | Bed Spec，由 Bed Manager 写入 | 选择服务模板，指定 Bed 内唯一的实例名和允许的 Bed 级配置 |
+| `ServiceSpec` | Bed 创建者 | 完整描述进程 argv、工作目录、环境引用、监督策略和可选 HTTP 能力 |
+| Bed 服务声明 | Bed Spec，由 Bed Manager 写入 | 保存规范化后的非敏感 `ServiceSpec`，作为 Bed 不可变定义的一部分 |
 | Service 运行状态 | Service Manager | 维护期望运行、就绪、重启及 endpoint 状态 |
 | Service Execution | Executor 与既有执行记录机制 | 承载一次实际运行，记录进程退出事实及执行归属 |
 | Port allocation | daemon 级 Port Manager | 统一管理各领域申请的端口、监听占用及具体 allocation 的释放 |
 
-服务以 `(Bed ID, service name)` 定位，模板名不充当实例身份。同一 Bed 可从同一个模板
-创建多个服务，例如 `hictld-main` 和 `hictld-tools`。每次重启产生新的 Execution ID，
+服务以 `(Bed ID, service name)` 定位。同一 Bed 可用相同的程序定义创建多个服务，例如
+`api-main` 和 `api-tools`。每次重启产生新的 Execution ID，
 并记录所属 Executor ID；同名 Bed 在 Forget 后重新创建，不继承旧运行实例。
 
 ### 与 Amenity、Executor 的边界
@@ -52,24 +52,30 @@ Hostel
 
 ### 部署与创建
 
-Hostel 启动时加载部署方提供的服务模板目录，解析程序位置、启动参数、就绪检查、
-重启与停止策略、可选 endpoint 和受控配置来源。模板加载不启动服务。
+Hostel 不维护业务服务目录，也不解释具体业务概念。可信控制面在创建 Bed 时提交
+完整 `ServiceSpec`；Carrier 镜像负责提供声明引用的程序、动态库和其他运行依赖。
 
 Bed 创建声明示例（HTTP API 使用对应 JSON）：
 
 ```yaml
-id: hibot-bed
+id: agent-bed
 services:
-  - name: hictld-main
-    template: hictld
+  - name: workspace-api
+    command: [/opt/bed-services/workspace-api, --listen, "${LISTEN_ADDR}"]
+    directory: /workspace
     env:
-      HIBOT_WORKSPACE_ID: workspace-xxx
-  - name: index-worker
-    template: index-worker
+      WORKSPACE_ID: workspace-xxx
+    env_files:
+      OBJECT_STORE_TOKEN: /run/hostel/service-secrets/workspace-api/OBJECT_STORE_TOKEN
+    required: true
+    restart: on-failure
+    http:
+      ready_path: /healthz
+      token_env: SERVICE_ADMIN_TOKEN
 ```
 
-创建准入校验模板存在、实例名唯一、覆盖项允许且必要能力可用。Bed Manager 将解析后的
-非敏感服务声明纳入 Bed Spec。服务集合在创建时确定；重复创建同名 Bed 必须检查声明
+创建准入校验实例名唯一、argv 与监督参数合法、凭据只使用文件引用，并确认 HTTP 发布
+所需的 Port Manager 可用。Bed Manager 将规范化后的完整声明纳入 Bed Spec。服务集合在创建时确定；重复创建同名 Bed 必须检查声明
 一致性，不能静默添加或删除服务。请求为空列表与省略字段使用同一语义。
 原生数据面内部的 `Ensure` 只加入已有声明，不把未传服务解释成修改服务集合。
 
@@ -118,9 +124,9 @@ macOS 使用 kqueue 退出通知；清理失败不提前发布完成。整个 Ex
 
 Service 与 command、session 共同复用 `manager.Environment` 和 Executor 启动链路。
 文件视图、BedUser、网络 allocation、权限准备与最终降权顺序由 Bed Manager 统一组合，
-服务执行计入对应 Bed 的资源归属。模板不能通过另一条 Carrier 进程启动路径绕过这些规则。
+服务执行计入对应 Bed 的资源归属。`ServiceSpec` 不能通过另一条 Carrier 进程启动路径绕过这些规则。
 
-服务访问的 `/workspace`、工作目录和其他路径使用相同 BedFS 语义。Bedbox 中的程序
+服务访问的 `/workspace`、工作目录和其他路径使用相同 BedFS 语义。Carrier 镜像中的程序
 与动态库、解释器等依赖需通过受控只读路径纳入所选执行视图；不能假定 Carrier 上存在
 某个路径就能在所有房型中执行。服务 runtime 目录是否持久化仍由 Store 规则决定，
 默认不把 socket、进程状态和临时文件纳入 workspace 快照。
@@ -130,9 +136,9 @@ Service 与 command、session 共同复用 `manager.Environment` 和 Executor �
 
 ### 默认 TCP 监听，端口冲突由 Hostel 管理
 
-非 Web 服务不需要 endpoint。Web 服务默认 TCP 监听，在 Bedbox Pod 部署下对外提供
-`PodIP:port`。服务模板声明如何接收监听地址，Service Manager 向 Port Manager 申请地址并注入
-启动参数或环境；不要求 hictld 使用 Unix socket，也不要求上层手工为各 Bed 配置端口。
+非 Web 服务不需要 endpoint。Web 服务默认 TCP 监听，在 Pod 部署下对外提供
+`PodIP:port`。服务声明通过 `${PORT}` / `${LISTEN_ADDR}` 表达如何接收监听地址，Service Manager 向 Port Manager 申请地址并注入
+启动参数或环境；不要求服务使用 Unix socket，也不要求上层手工为各 Bed 配置端口。
 
 daemon 创建唯一 Port Manager，统一供 Amenity、Bed、Service 以及 Hostel 自身监听
 入口使用，避免各领域分别维护端口池。Service Manager 将返回的 allocation 绑定到
@@ -171,8 +177,8 @@ Port Manager 管理经 Hostel 申请的端口，不拦截 Bed 用户程序自行
 阻止其他进程抢占端口。内核实际 bind
 是占用事实；探测端口后关闭再启动不是无竞争预留。对于接受端口参数的普通程序，必须
 处理这个窗口中的 bind 失败。程序支持继承监听 FD 时可以持续持有 listener 并交接；
-支持 `port=0` 时可从受控本地启动通道获取实际地址，无需向 Sandctl 注册回调。
-这两类交接方式尚未提供；当前模板使用 `${PORT}` / `${LISTEN_ADDR}` 接收候选端口，
+支持 `port=0` 时可从受控本地启动通道获取实际地址，无需向上层控制面注册回调。
+这两类交接方式尚未提供；当前 `ServiceSpec` 使用 `${PORT}` / `${LISTEN_ADDR}` 接收候选端口，
 通过 Linux `/proc` 或 macOS `lsof` 核对进程组的监听归属，再做 HTTP 就绪检查。
 
 目标进程的绑定事实和探活必须关联本次运行实例；不能仅因候选端口返回 HTTP 200，
@@ -189,8 +195,8 @@ Port Manager 管理经 Hostel 申请的端口，不拦截 Bed 用户程序自行
 Hostel 持有单独的 Carrier 监听端口，转发到该 Bed 可达的 TCP endpoint：
 
 ```text
-共享网络：Sandctl → PodIP:分配端口 → hictld
-独立网络：Sandctl → PodIP:发布端口 → Hostel TCP 转发 → BedIP:监听端口 → hictld
+共享网络：调用方 → PodIP:分配端口 → Bed Service
+独立网络：调用方 → PodIP:发布端口 → Hostel TCP 转发 → BedIP:监听端口 → Bed Service
 ```
 
 两种模式都必须经过统一的端口分配、实例归属和就绪发布规则。代理入口由 Hostel
@@ -206,7 +212,7 @@ PodIP 和动态端口不作为永久业务标识。调用方通过发现结果�
 最多 128 个并发连接，每连接最多两小时，停止时关闭已有连接。上传下载、SSE、
 WebSocket 的业务正确性仍需部署方结合实际服务验证。
 
-直接访问 hictld 不经过 Hostel HTTP 准入，因此调用方须在发起操作前持有 Bed 保留
+直接访问 Bed Service 不经过 Hostel HTTP 准入，因此调用方须在发起操作前持有 Bed 保留
 机制；不能假设 Service Manager 能统计该端口的业务活动。
 
 对外地址取决于 Pod 网络可达性及网络策略，Hostel 不自动创建 Kubernetes Service、
@@ -227,9 +233,9 @@ HTTP 返回不代表服务内部的异步任务已经完成。通用 Service Man
 
 ### 凭据、配置与独立发布
 
-Hostel 核心不包含 hictld 业务代码。Bedbox 固定 hictld 二进制版本、依赖与启动定义，
-Sandctl 创建 Bed 时选择对应服务实例并传入允许的配置。更新服务程序只需发布新的
-Bedbox 镜像；不要求同时升级 Hostel，也不热替换正在运行的 Bed 二进制。
+Hostel 核心不包含具体业务服务代码。Carrier 镜像只负责提供二进制及依赖，上层控制面
+把业务需求翻译为通用 `ServiceSpec`。更新服务程序可独立发布 Carrier 镜像；不要求
+同时升级 Hostel，也不热替换正在运行的 Bed 二进制。
 
 服务专用凭据从部署方控制的来源按需注入，只保存引用，不写入 Bed metadata、工作区
 快照、日志或状态。不能把这些凭据直接放入可被所有 Bed 继承的 Carrier 通用环境。
@@ -240,8 +246,8 @@ Service 只继承 Carrier 通用环境和 Hostel 注入的 Bed 上下文，再�
 普通执行的 `Bed.Spec.Env` 不传给 Service。共用 Bed Environment 表达目录、身份和隔离
 视图一致，不代表共用所有进程环境变量。普通命令与会话的环境契约见 [kernel.md](kernel.md#执行与进程归属)。
 
-非敏感 Bed 服务声明与模板版本标识随本地 Bed 身份保留。恢复时验证模板仍可用且定义
-匹配，不因模板目录更新静默改变原 Bed 的启动语义。跨实例创建由上层重新声明服务，
+规范化后的非敏感 Bed 服务声明及其摘要随本地 Bed 身份保留。恢复直接使用完整声明，
+不依赖部署时仍存在某份模板，也不会因 daemon 配置变化静默改变原 Bed 的启动语义。跨实例创建由上层重新声明服务，
 workspace 快照不携带本地进程身份、endpoint 或部署凭据。
 
 ## 四、部署配置与 API
@@ -250,36 +256,37 @@ workspace 快照不携带本地进程身份、endpoint 或部署凭据。
 
 | CLI / 环境变量 | 默认值 | 含义 |
 |---|---|---|
-| `--service-templates` / `HOSTEL_SERVICE_TEMPLATES` | 空 | 部署方提供的 JSON 模板目录 |
-| `--service-advertise-host` / `HOSTEL_SERVICE_ADVERTISE_HOST` | `127.0.0.1` | 调用方可达地址；Bedbox Pod 中应注入 Pod IP |
+| `--service-advertise-host` / `HOSTEL_SERVICE_ADVERTISE_HOST` | `127.0.0.1` | 调用方可达地址；Pod 部署中应注入 Pod IP |
 | `--port-range-start` / `HOSTEL_PORT_RANGE_START` | `20000` | 动态 TCP 端口池起点 |
 | `--port-range-end` / `HOSTEL_PORT_RANGE_END` | `29999` | 动态 TCP 端口池终点（含） |
 
-部署方为程序提供模板，例如 `example-http.json`：
+`POST /v1/beds` 直接携带完整声明，例如：
 
 ```json
-{
-  "name": "example-http",
-  "command": ["/opt/bed-services/example-http", "--listen", "${LISTEN_ADDR}"],
-  "directory": "/workspace",
-  "allow_env": ["WORKSPACE_ID"],
-  "env_files": {"UP_SECRET": "/run/secrets/up-secret"},
-  "required": true,
-  "restart": "on-failure",
-  "max_restarts": 5,
-  "startup_seconds": 30,
-  "stop_seconds": 5,
-  "http": {"ready_path": "/ready", "token_env": "SERVICE_TOKEN"}
-}
+{"id":"agent","services":[{
+  "name":"example-http",
+  "command":["/opt/bed-services/example-http","--listen","${LISTEN_ADDR}"],
+  "directory":"/workspace",
+  "env":{"WORKSPACE_ID":"workspace-1"},
+  "env_files":{"UP_SECRET":"/run/hostel/service-secrets/example/UP_SECRET"},
+  "required":true,
+  "restart":"on-failure",
+  "max_restarts":5,
+  "startup_seconds":30,
+  "stop_seconds":5,
+  "http":{"ready_path":"/ready","token_env":"SERVICE_TOKEN"}
+}]}
 ```
 
-这是启动契约示例，Hostel 不自带该程序或 hictld。Bedbox 负责二进制、依赖和可执行的
+这是进程启动契约示例，Hostel 不自带该程序。Carrier 镜像负责二进制、依赖和可执行的
 目录投影。`command` 是 argv，不隐式经过 shell；工作目录使用 BedFS 路径。仅替换监听
 占位符，不把 Bed 配置当作 shell 表达式求值。
 
-`env` 提供模板默认值，`allow_env` 限定创建者可传的非敏感覆盖项；`env_files` 从
-daemon 可读的绝对路径按需读取凭据，不能由创建请求覆盖。模板只在启动时加载，
-定义摘要随 `.identities/<bed>.local` 保存；本地恢复时定义变更会明确失败。
+`env` 只用于可持久化的非敏感值；`env_files` 保存 daemon 可读的绝对路径，并在每次
+启动时读取凭据值。Secret 值不进入 Bed identity、状态、日志或 workspace 快照。
+创建接口属于可信内部控制面：部署必须限制其访问，并只允许调用方引用专用凭据目录，
+不能把任意宿主文件路径开放给非可信租户。规范化声明和摘要随 `.identities/<bed>.local`
+保存；客户端不应填写 `spec_digest`，该字段由 Hostel 生成并用于本地恢复校验。
 
 `required` 默认 false；`restart` 默认 `never`，还支持 `on-failure`、`always`。
 `max_restarts=0` 使用默认预算 5，最高 100；退避从一秒增长到最多三十秒。
@@ -287,7 +294,7 @@ Executor 丢失也在该预算内恢复服务，与应用自然退出的重启�
 启动超时默认 30 秒（1–120），停止宽限默认 5 秒（1–30）。
 明确端口冲突换端口最多尝试三次，不把任意应用失败归类为端口冲突。
 
-HTTP 模板必须声明 `token_env`。每次运行注入新 token；程序必须校验
+HTTP 服务必须声明 `token_env`。每次运行注入新 token；程序必须校验
 `Authorization: Bearer <token>`，就绪检查也使用此凭据。不跟随重定向，
 单请求两秒超时，最多 16 个并发 HTTP 探测。
 非 HTTP worker 不声明 `http`，仅以进程存活就绪。
@@ -331,14 +338,14 @@ daemon 组装 `internal/host/network` 下的 Port Manager，并向需要分配�
 注入同一实例。Amenity、Bed、Service 与控制面使用统一申请入口；原有监听逐项明确
 归属并接入，不能只为 Bed Service 新建一个与其他设施互不知情的私有端口池。
 
-当前范围为预置模板、创建时选择、统一隔离启动、就绪与重启、停止回收和 TCP 发布。
+当前范围为创建时完整声明、统一隔离启动、就绪与重启、停止回收和 TCP 发布。
 服务集合创建后固定，暂不提供动态安装、依赖图、任意 TCP 代理或独立 start/stop 期望状态。
 Web 默认 TCP 监听与 PodIP 端口发布，必须一起实现端口分配、绑定冲突处理和发现；
 独立 netns 的对外访问由 Hostel TCP 转发承接。
 
-验收以通用测试服务证明 Hostel 能力，实际 hictld 集成由 Bedbox 验证：
+验收以通用测试服务证明 Hostel 能力，具体业务服务集成由其所属项目验证：
 
-- 同实例内无服务、有服务、同模板多实例的 Bed 共存；重复声明与冲突明确处理。
+- 同实例内无服务、有服务、相同进程定义多实例的 Bed 共存；重复声明与冲突明确处理。
 - 服务与用户命令看到同一文件，身份、网络与资源归属符合 Bed 实际能力。
 - 跨 Bed、同 Bed 多实例并发启动不重复分配冲突端口，覆盖共享网络及独立 netns 的发布入口。
 - Amenity、Bed、Service 与控制面并发申请时共享冲突检查，Bed 回收不释放共享设施的 listener。
@@ -348,8 +355,8 @@ Web 默认 TCP 监听与 PodIP 端口发布，必须一起实现端口分配、�
 - 停止与代理/重启并发时无残留进程，旧实例事件和旧连接不影响新实例。
 - 空闲常驻服务可随 Bed 回收，真实操作有租约保护，异步任务不能获得虚假的完成证明。
 - 流式上传下载、断连取消、服务鉴权头保留以及未登记 endpoint 的拒绝行为正确。
-- 凭据不进入状态和持久化声明，本地恢复检查模板版本，原有无服务 Bed 契约保持成立。
+- 凭据值不进入状态和持久化声明，本地恢复使用固定的完整声明，原有无服务 Bed 契约保持成立。
 
 单元测试验证声明、状态和协调；真实隔离与进程清理由现有 Linux 单机 E2E 验证，
 按项目显式执行规则运行。单测与交叉编译不等于 Linux E2E 证明，尤其 netns、实际权限
-组合和 Bedbox/hictld 集成必须在对应环境显式验证；上面的验收目标不表示已全部执行通过。
+组合和具体业务服务集成必须在对应环境显式验证；上面的验收目标不表示已全部执行通过。

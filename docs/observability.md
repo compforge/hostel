@@ -123,7 +123,7 @@ stderr、路径和错误原文以外的用户数据。
 
 非零退出、非预期 signal 和 executor lost 标记为 error；client cancel、interrupt、bed teardown、
 daemon shutdown 属于预期控制动作，不把 trace 标红。启用 Trace 但未配置 endpoint 时保持 no-op；
-两种 endpoint 同时存在时优先 gRPC，与 sandctl 的部署语义一致。
+两种 endpoint 同时存在时优先 gRPC。
 
 supervisor backend 的 transport 失败以 `executor.transport.failure` event 和 warning 日志记录 operation、
 attempt、executor/process identity 与错误原文；重连成功再记录 `executor.transport.recovered`。因此瞬态

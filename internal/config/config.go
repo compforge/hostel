@@ -41,7 +41,6 @@ const defaultBedPressureThresholdPercent = 80
 const defaultAutoPackFileThreshold = 100
 
 type Config struct {
-	ServiceTemplates     string
 	ServiceAdvertiseHost string
 	PortRangeStart       int
 	PortRangeEnd         int
@@ -49,7 +48,7 @@ type Config struct {
 	ShowVersion          bool
 	HealthCheck          bool
 	// EnableTracing exports W3C-propagated HTTP and domain traces over OTLP.
-	// gRPC wins when both endpoints are set, matching sandctl deployment policy.
+	// gRPC wins when both endpoints are set.
 	EnableTracing          bool
 	OTLPTracesGRPCEndpoint string
 	OTLPTracesHTTPEndpoint string
@@ -108,7 +107,6 @@ func Load(args []string, explicit Options) (*Config, error) {
 		bedUID, bedGID = 1000, 1000
 	}
 	fs.StringVar(&c.Addr, "addr", osx.EnvStr("HOSTEL_ADDR", DefaultAddr), "HTTP listen address")
-	fs.StringVar(&c.ServiceTemplates, "service-templates", osx.EnvStr("HOSTEL_SERVICE_TEMPLATES", ""), "deployment-owned directory of Bed Service JSON templates")
 	fs.StringVar(&c.ServiceAdvertiseHost, "service-advertise-host", osx.EnvStr("HOSTEL_SERVICE_ADVERTISE_HOST", "127.0.0.1"), "reachable service IP or hostname (Pod IP in Kubernetes)")
 	fs.IntVar(&c.PortRangeStart, "port-range-start", osx.EnvInt("HOSTEL_PORT_RANGE_START", 20000), "first dynamic TCP service port")
 	fs.IntVar(&c.PortRangeEnd, "port-range-end", osx.EnvInt("HOSTEL_PORT_RANGE_END", 29999), "last dynamic TCP service port")

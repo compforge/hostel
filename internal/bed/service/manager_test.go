@@ -56,12 +56,8 @@ func (p *fakeProcess) Stop(context.Context, time.Duration) error {
 
 func testController(t *testing.T, required bool) (*Manager, *bed.Bed) {
 	t.Helper()
-	c, err := NewCatalog([]Template{{Name: "worker", Command: []string{"worker"}, Required: required, MaxRestarts: 1}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := NewManager(c, nil, "", nil)
-	b := bed.New("test", "", bed.Spec{Services: []bed.ServiceSpec{{Name: "worker", Template: "worker"}}})
+	m := NewManager(nil, "", nil)
+	b := bed.New("test", "", bed.Spec{Services: []bed.ServiceSpec{{Name: "worker", Command: []string{"worker"}, Required: required, MaxRestarts: 1}}})
 	t.Cleanup(func() {
 		if err := m.Close(context.Background()); err != nil {
 			t.Error(err)

@@ -46,12 +46,12 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 			return
 		}
 		failure := err != nil || outcome.Kind != executor.ProcessExited || outcome.ExitCode != 0
-		automatic := r.template.Restart == "always" || (r.template.Restart == "on-failure" && failure) || outcome.Kind == executor.ProcessLost
+		automatic := r.spec.Restart == "always" || (r.spec.Restart == "on-failure" && failure) || outcome.Kind == executor.ProcessLost
 		if explicit {
 			restarts = 0
 			continue
 		}
-		if automatic && restarts < r.template.MaxRestarts {
+		if automatic && restarts < r.spec.MaxRestarts {
 			restarts++
 			m.update(g, r, func(s *Status) {
 				s.Phase = "backoff"
@@ -95,13 +95,12 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		return false, outcome, err
 	}
 	m.update(g, r, func(s *Status) { s.Phase = "starting"; s.Endpoint = "" })
-	t := r.template
-	env := maps.Clone(t.Env)
+	spec := r.spec
+	env := maps.Clone(spec.Env)
 	if env == nil {
 		env = make(map[string]string)
 	}
-	maps.Copy(env, r.spec.Env)
-	for k, file := range t.EnvFiles {
+	for k, file := range spec.EnvFiles {
 		value, err := os.ReadFile(file)
 		if err != nil {
 			return false, outcome, fmt.Errorf("credential source unavailable for %s", k)
@@ -114,7 +113,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 	var allocation *hostnetwork.PortAllocation
 	var scope, host, address, token string
 	var forward *hostnetwork.TCPForwarder
-	if t.HTTP != nil {
+	if spec.HTTP != nil {
 		var err error
 		scope, host, err = g.runtime.Network()
 		if err != nil {
@@ -127,21 +126,21 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		defer allocation.Release()
 		address = net.JoinHostPort(host, strconv.Itoa(allocation.Port()))
 		token = randx.Hex(32)
-		env[t.HTTP.TokenEnv] = token
+		env[spec.HTTP.TokenEnv] = token
 	}
-	command := append([]string(nil), t.Command...)
+	command := append([]string(nil), spec.Command...)
 	if allocation != nil {
 		replace := strings.NewReplacer("${PORT}", strconv.Itoa(allocation.Port()), "${LISTEN_ADDR}", allocation.Address())
 		for i, v := range command {
 			command[i] = replace.Replace(v)
 		}
 		for k, v := range env {
-			if k != t.HTTP.TokenEnv {
+			if k != spec.HTTP.TokenEnv {
 				env[k] = replace.Replace(v)
 			}
 		}
 	}
-	proc, err := g.runtime.Start(ctx, Launch{Command: command, Directory: t.Directory, Env: env})
+	proc, err := g.runtime.Start(ctx, Launch{Command: command, Directory: spec.Directory, Env: env})
 	if err != nil {
 		return false, outcome, fmt.Errorf("service process start failed: %w", err)
 	}
@@ -155,8 +154,8 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		// Keep this owner alive if cleanup fails. Stop callers retain the group
 		// and can retry; never release a live process's port or filesystem.
 		for {
-			cleanup, cancel := context.WithTimeout(context.Background(), time.Duration(t.StopSeconds+5)*time.Second)
-			err := proc.Stop(cleanup, time.Duration(t.StopSeconds)*time.Second)
+			cleanup, cancel := context.WithTimeout(context.Background(), time.Duration(spec.StopSeconds+5)*time.Second)
+			err := proc.Stop(cleanup, time.Duration(spec.StopSeconds)*time.Second)
 			cancel()
 			if err == nil {
 				break
@@ -169,7 +168,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		m.update(g, r, func(s *Status) { s.Outcome = &outcome })
 	}()
 	m.update(g, r, func(s *Status) { s.ExecutionID = proc.ExecutionID(); s.ExecutorID = proc.ExecutorID(); s.Outcome = nil })
-	startup, cancel := context.WithTimeout(ctx, time.Duration(t.StartupSeconds)*time.Second)
+	startup, cancel := context.WithTimeout(ctx, time.Duration(spec.StartupSeconds)*time.Second)
 	defer cancel()
 	for {
 		select {
@@ -177,14 +176,14 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 			return false, proc.Outcome(), startupExitError(startup, address)
 		default:
 		}
-		ready := t.HTTP == nil
-		if t.HTTP != nil {
+		ready := spec.HTTP == nil
+		if spec.HTTP != nil {
 			owned, err := hostnetwork.OwnsTCPListener(startup, proc.PID(), allocation.Port())
 			if err != nil {
 				return false, outcome, fmt.Errorf("socket ownership verification failed")
 			}
 			if owned {
-				ready = probeHTTP(startup, address, t.HTTP.ReadyPath, token)
+				ready = probeHTTP(startup, address, spec.HTTP.ReadyPath, token)
 			}
 			if !owned {
 				conn, dialErr := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(startup, "tcp", address)
@@ -247,9 +246,9 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		case <-proc.Done():
 			return false, proc.Outcome(), nil
 		case <-ticker.C:
-			if t.HTTP != nil {
+			if spec.HTTP != nil {
 				owned, err := hostnetwork.OwnsTCPListener(ctx, proc.PID(), allocation.Port())
-				if err != nil || !owned || !probeHTTP(ctx, address, t.HTTP.ReadyPath, token) {
+				if err != nil || !owned || !probeHTTP(ctx, address, spec.HTTP.ReadyPath, token) {
 					return false, outcome, fmt.Errorf("service lost readiness")
 				}
 			}

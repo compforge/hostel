@@ -9,18 +9,13 @@ import (
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
-	"github.com/qiankunli/hostel/internal/bed/service"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 func TestServiceManagementRoutesAndDeclarationConflict(t *testing.T) {
 	root := t.TempDir()
 	host := hostfacts.Collect()
-	catalog, err := service.NewCatalog([]service.Template{{Name: "worker", Command: []string{"/bin/sh", "-c", "sleep 60"}, Required: true}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := bed.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "dorm", root), nil, 0, nil, bed.WithServices(catalog, nil, ""))
+	m, err := bed.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "dorm", root), nil, 0, nil, bed.WithServices(nil, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +28,7 @@ func TestServiceManagementRoutesAndDeclarationConflict(t *testing.T) {
 		s.Handler().ServeHTTP(w, r)
 		return w
 	}
-	w := request(http.MethodPost, "/v1/beds", `{"id":"service-bed","services":[{"name":"worker","template":"worker"}]}`)
+	w := request(http.MethodPost, "/v1/beds", `{"id":"service-bed","services":[{"name":"worker","command":["/bin/sh","-c","sleep 60"],"required":true}]}`)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("create %d: %s", w.Code, w.Body)
 	}
