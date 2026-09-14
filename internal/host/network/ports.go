@@ -7,13 +7,14 @@ import (
 	"net/netip"
 	"strconv"
 	"sync"
+	"syscall"
 )
 
 var ErrPortsExhausted = errors.New("port pool exhausted")
 
 // PortManager owns daemon-wide TCP allocations, not application lifecycles.
-// An external candidate is only a logical reservation: Confirm must follow
-// verification of the application's actual bind, never just a successful dial.
+// An external candidate is only a logical reservation: the consumer must
+// validate readiness and disclose whether listener ownership was verifiable.
 type PortManager struct {
 	mu                sync.Mutex
 	first, last, next int
@@ -48,7 +49,33 @@ func NewPortManager(first, last int) (*PortManager, error) {
 func (m *PortManager) Reserve(owner, scope, address string) (*PortAllocation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.reserve(owner, scope, address)
+	attempts := 1
+	if _, port, err := net.SplitHostPort(address); err == nil && port == "0" {
+		attempts = m.last - m.first + 1
+	}
+	for range attempts {
+		a, err := m.reserve(owner, scope, address)
+		if err != nil {
+			return nil, err
+		}
+		if scope != "" {
+			return a, nil // The daemon cannot bind in another network scope.
+		}
+		// Exclude existing external listeners before starting a process. Closing
+		// this probe does not eliminate the subsequent application bind race.
+		ln, err := net.Listen("tcp", a.status.Address)
+		if err == nil {
+			err = ln.Close()
+			if err == nil {
+				return a, nil
+			}
+		}
+		delete(m.allocations, a)
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			return nil, fmt.Errorf("check candidate listener: %w", err)
+		}
+	}
+	return nil, fmt.Errorf("%w: %s", ErrPortsExhausted, address)
 }
 
 func (m *PortManager) reserve(owner, scope, address string) (*PortAllocation, error) {

@@ -34,15 +34,16 @@ type Runtime interface {
 	Network() (scope, host string, err error)
 }
 type Status struct {
-	Name        string                   `json:"name"`
-	Required    bool                     `json:"required"`
-	Phase       string                   `json:"phase"`
-	ExecutionID string                   `json:"execution_id,omitempty"`
-	ExecutorID  string                   `json:"executor_id,omitempty"`
-	Restarts    int                      `json:"restarts"`
-	Endpoint    string                   `json:"endpoint,omitempty"`
-	Reason      string                   `json:"reason,omitempty"`
-	Outcome     *executor.ProcessOutcome `json:"outcome,omitempty"`
+	Name        string                          `json:"name"`
+	Required    bool                            `json:"required"`
+	Phase       string                          `json:"phase"`
+	ExecutionID string                          `json:"execution_id,omitempty"`
+	ExecutorID  string                          `json:"executor_id,omitempty"`
+	Restarts    int                             `json:"restarts"`
+	Endpoint    string                          `json:"endpoint,omitempty"`
+	Reason      string                          `json:"reason,omitempty"`
+	Outcome     *executor.ProcessOutcome        `json:"outcome,omitempty"`
+	Listener    *hostnetwork.ListenerInspection `json:"listener,omitempty"`
 }
 
 // Access is a credential-bearing response, separate from diagnostic status.
@@ -53,12 +54,13 @@ type Access struct {
 }
 type Manager struct {
 	bed.Noop
-	ports     *hostnetwork.PortManager
-	advertise string
-	mu        sync.Mutex
-	closed    bool
-	groups    map[*bed.Bed]*group
-	onChange  func(*bed.Bed)
+	ports           *hostnetwork.PortManager
+	advertise       string
+	mu              sync.Mutex
+	closed          bool
+	groups          map[*bed.Bed]*group
+	onChange        func(*bed.Bed)
+	inspectListener func(context.Context, int, string) (hostnetwork.ListenerInspection, error)
 }
 type group struct {
 	mu      sync.Mutex
@@ -78,7 +80,7 @@ type record struct {
 }
 
 func NewManager(ports *hostnetwork.PortManager, advertise string, onChange func(*bed.Bed)) *Manager {
-	return &Manager{ports: ports, advertise: advertise, groups: make(map[*bed.Bed]*group), onChange: onChange}
+	return &Manager{ports: ports, advertise: advertise, groups: make(map[*bed.Bed]*group), onChange: onChange, inspectListener: hostnetwork.InspectTCPListener}
 }
 func (m *Manager) Resolve(specs []bed.ServiceSpec) ([]bed.ServiceSpec, error) {
 	resolved, err := Normalize(specs)
@@ -171,6 +173,10 @@ func (m *Manager) Status(b *bed.Bed) []Status {
 	defer g.mu.Unlock()
 	for _, r := range g.records {
 		s := r.status
+		if s.Listener != nil {
+			v := *s.Listener
+			s.Listener = &v
+		}
 		if s.Outcome != nil {
 			v := *s.Outcome
 			v.Detail = ""

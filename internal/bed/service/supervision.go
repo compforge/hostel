@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"net"
 	"net/http"
@@ -53,6 +54,11 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 		}
 		if automatic && restarts < r.spec.MaxRestarts {
 			restarts++
+			failureReason := "process did not exit successfully"
+			if err != nil {
+				failureReason = err.Error()
+			}
+			log.Printf("hostel service restart scheduled: bed=%s id=%s service=%s restart=%d reason=%q outcome=%s exit_code=%d signal=%d", g.bed.Name, g.bed.ID, r.spec.Name, restarts, failureReason, outcome.Kind, outcome.ExitCode, outcome.Signal)
 			m.update(g, r, func(s *Status) {
 				s.Phase = "backoff"
 				s.Endpoint = ""
@@ -94,7 +100,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 	if err := ctx.Err(); err != nil {
 		return false, outcome, err
 	}
-	m.update(g, r, func(s *Status) { s.Phase = "starting"; s.Endpoint = "" })
+	m.update(g, r, func(s *Status) { s.Phase = "starting"; s.Endpoint = ""; s.Listener = nil })
 	spec := r.spec
 	env := maps.Clone(spec.Env)
 	if env == nil {
@@ -170,35 +176,26 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 	m.update(g, r, func(s *Status) { s.ExecutionID = proc.ExecutionID(); s.ExecutorID = proc.ExecutorID(); s.Outcome = nil })
 	startup, cancel := context.WithTimeout(ctx, time.Duration(spec.StartupSeconds)*time.Second)
 	defer cancel()
+	checkReadiness := m.readinessCheck(g, r, proc, address, token)
 	for {
 		select {
 		case <-proc.Done():
-			return false, proc.Outcome(), startupExitError(startup, address)
+			return false, proc.Outcome(), fmt.Errorf("process exited before readiness")
 		default:
 		}
 		ready := spec.HTTP == nil
 		if spec.HTTP != nil {
-			owned, err := hostnetwork.OwnsTCPListener(startup, proc.PID(), allocation.Port())
+			ready, err = checkReadiness(startup)
 			if err != nil {
-				return false, outcome, fmt.Errorf("socket ownership verification failed")
-			}
-			if owned {
-				ready = probeHTTP(startup, address, spec.HTTP.ReadyPath, token)
-			}
-			if !owned {
-				conn, dialErr := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(startup, "tcp", address)
-				if dialErr == nil {
-					conn.Close()
-					// Recheck after dial: the service may have bound during the
-					// inspection window. Only a foreign listener means conflict.
-					owned, err = hostnetwork.OwnsTCPListener(startup, proc.PID(), allocation.Port())
-					if err == nil && !owned {
-						return false, outcome, errBindingConflict
-					}
-				}
+				return false, outcome, err
 			}
 		}
 		if ready {
+			select {
+			case <-proc.Done():
+				return false, proc.Outcome(), fmt.Errorf("process exited before readiness")
+			default:
+			}
 			break
 		}
 		timer := time.NewTimer(100 * time.Millisecond)
@@ -208,7 +205,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 			return false, outcome, fmt.Errorf("service readiness timeout")
 		case <-proc.Done():
 			timer.Stop()
-			return false, proc.Outcome(), startupExitError(startup, address)
+			return false, proc.Outcome(), fmt.Errorf("process exited before readiness")
 		case <-r.restart:
 			timer.Stop()
 			return true, outcome, nil
@@ -247,8 +244,11 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 			return false, proc.Outcome(), nil
 		case <-ticker.C:
 			if spec.HTTP != nil {
-				owned, err := hostnetwork.OwnsTCPListener(ctx, proc.PID(), allocation.Port())
-				if err != nil || !owned || !probeHTTP(ctx, address, spec.HTTP.ReadyPath, token) {
+				ready, err := checkReadiness(ctx)
+				if err != nil {
+					return false, outcome, err
+				}
+				if !ready {
 					return false, outcome, fmt.Errorf("service lost readiness")
 				}
 			}
@@ -274,15 +274,4 @@ func probeHTTP(ctx context.Context, address, path, token string) bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
-}
-
-func startupExitError(ctx context.Context, address string) error {
-	if address != "" {
-		conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(ctx, "tcp", address)
-		if err == nil {
-			conn.Close()
-			return errBindingConflict
-		}
-	}
-	return fmt.Errorf("process exited before readiness")
 }
