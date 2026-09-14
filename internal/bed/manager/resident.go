@@ -34,6 +34,9 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		}
 	}()
 	m.store.ObserveStage(b.Bed, func(step store.StageInStep) { m.updateInitializationStageIn(init, step) })
+	if err := trace.stage("prepare_configuration", func() error { return m.configurations.Prepare(ctx, b.Bed) }); err != nil {
+		return nil, fmt.Errorf("bed: prepare configuration: %w", err)
+	}
 	if err := trace.stage("stage_in_bedfs", func() error {
 		err := m.store.Prepare(ctx, b.Bed)
 		trace.source = b.Bed.Status().Store.Source

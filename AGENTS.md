@@ -90,6 +90,7 @@ internal/
 │   │   ├── sync/      noop/auto/cas/pack/tar/copy/restic 同步策略
 │   │   └── backend/   S3 位置、共享客户端和对象操作
 │   ├── executor/      可替换进程域的 Manager、local / supervisor backend
+│   ├── configuration/ 进程配置来源的宿主观测、解析与 Bed 生命周期内的值管理
 │   ├── service/       Bed ServiceSpec 的规范化、就绪、监督、端口发布与停止
 │   └── resource/      cgroup accounting、carrier admission 与采样循环；未施加 per-Bed limits
 ├── amenity/           daemon 直属独立设施；Manager 维护 Bed ID 到 Tenant ID 的绑定，设施隐藏资源实现
@@ -141,6 +142,8 @@ internal/
 - 通用小工具优先用 [go-stdx](https://github.com/qiankunli/go-stdx)（env 解析、随机 id、shell quote、原子写文件、目录字节数等），不要在仓内再手写它已有的操作；沉淀出的新通用件也应迁去 go-stdx 而非留在 internal。
 
 ## References
+
+- Bed 进程配置与命名文件来源：`docs/bed-configuration.md`
 
 - Bed 粒度托管服务、统一 TCP 端口、ServiceSpec 与管理 API：`docs/bed-service.md`
 

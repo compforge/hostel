@@ -87,7 +87,9 @@ func TestBedServiceOptionalAuthentication(t *testing.T) {
 			if err := m.services.Restart(b.Bed, "main"); err != nil {
 				t.Fatal(err)
 			}
-			waitService(t, m, b, "main", func(s service.Status) bool { return s.Phase == "ready" && s.ExecutionID != first.ExecutionID })
+			waitService(t, m, b, "main", func(s service.Status) bool {
+				return s.Phase == "running" && s.Ready && s.ExecutionID != first.ExecutionID
+			})
 			current, err := m.services.Access(b.Bed, "main")
 			if err != nil {
 				t.Fatal(err)

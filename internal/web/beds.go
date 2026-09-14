@@ -137,11 +137,14 @@ func (s *Server) bedList(c *gin.Context) {
 }
 
 type createBedRequest struct {
-	Env           map[string]string   `json:"env,omitempty"`
-	Services      []model.ServiceSpec `json:"services,omitempty"`
-	NetworkPolicy *network.Policy     `json:"networkPolicy,omitempty"`
-	ID            string              `json:"id,omitempty"`
-	Sync          string              `json:"sync,omitempty"`
+	EnvFiles      map[string]string                    `json:"env_files,omitempty"`
+	EnvFrom       []string                             `json:"env_from,omitempty"`
+	EnvValueFrom  map[string]model.ConfigurationKeyRef `json:"env_value_from,omitempty"`
+	Env           map[string]string                    `json:"env,omitempty"`
+	Services      []model.ServiceSpec                  `json:"services,omitempty"`
+	NetworkPolicy *network.Policy                      `json:"networkPolicy,omitempty"`
+	ID            string                               `json:"id,omitempty"`
+	Sync          string                               `json:"sync,omitempty"`
 }
 
 // POST /v1/beds — create (or return existing) a bed. Empty id → server-assigned.
@@ -160,7 +163,7 @@ func (s *Server) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Env: req.Env, Sync: req.Sync, NetworkPolicy: req.NetworkPolicy, Services: req.Services})
+	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Env: req.Env, EnvFiles: req.EnvFiles, EnvFrom: req.EnvFrom, EnvValueFrom: req.EnvValueFrom, Sync: req.Sync, NetworkPolicy: req.NetworkPolicy, Services: req.Services})
 	if err != nil {
 		if errors.Is(err, network.ErrUnavailable) {
 			respondError(c, http.StatusServiceUnavailable, ErrServiceUnavailable, "bed network policy is unavailable")

@@ -17,28 +17,18 @@ package manager
 import (
 	"context"
 	"errors"
-	"fmt"
+	"github.com/qiankunli/hostel/internal/bed/configuration"
 	"maps"
 	"net/url"
-	"regexp"
 	"slices"
 	"strings"
 )
 
 // ErrInvalidEnvironment marks a caller- or deployment-supplied environment
 // that cannot safely become part of a bed process.
-var ErrInvalidEnvironment = errors.New("bed: invalid environment")
+var ErrInvalidEnvironment = configuration.ErrInvalid
 
 var ErrEnvConflict = errors.New("bed: cannot change declared environment")
-
-func checkBedEnv(options CreateOptions, actual map[string]string) error {
-	if !options.lookup && !maps.Equal(options.Env, actual) {
-		return ErrEnvConflict
-	}
-	return nil
-}
-
-var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // processEnv is the immutable carrier environment shared by every bed. Hostel
 // keeps only its own namespaces private; deployment owners are responsible for
@@ -88,44 +78,18 @@ func (m *Manager) SetCarrierEnvironment(hostEnv []string) []string {
 // adapter starts work. buildBedEnv repeats the check at the core boundary so
 // non-HTTP callers cannot bypass it.
 func ValidateRequestEnv(env map[string]string) error {
-	return validateEnv("request", env)
-}
-
-func validateEnv(scope string, env map[string]string) error {
-	keys := make([]string, 0, len(env))
-	for name := range env {
-		keys = append(keys, name)
-	}
-	slices.Sort(keys)
-	for _, name := range keys {
-		if err := validateExternalEnvName(scope, name); err != nil {
-			return err
-		}
-		if strings.ContainsRune(env[name], '\x00') {
-			return fmt.Errorf("%w: %s variable %q contains NUL", ErrInvalidEnvironment, scope, name)
-		}
-	}
-	return nil
-}
-
-func validateExternalEnvName(scope, name string) error {
-	if !envNameRe.MatchString(name) {
-		return fmt.Errorf("%w: %s variable name %q is invalid", ErrInvalidEnvironment, scope, name)
-	}
-	if strings.HasPrefix(name, "HOSTEL_") || strings.HasPrefix(name, "BED_") {
-		return fmt.Errorf("%w: %s variable %q uses a reserved namespace", ErrInvalidEnvironment, scope, name)
-	}
-	if name == "PLAYWRIGHT_MCP_CDP_ENDPOINT" {
-		return fmt.Errorf("%w: %s variable %q is managed by the bed", ErrInvalidEnvironment, scope, name)
-	}
-	return nil
+	return configuration.ValidateEnv(env)
 }
 
 // buildExecutionEnv applies the Bed's ordinary execution defaults before the
 // invocation overlay. Existing session shells retain their own process state.
 // +spec=`Bed Env belongs to ordinary executions and session shells; services never implicitly inherit it.`
 func (m *Manager) buildExecutionEnv(b *managedBed, requestEnv map[string]string) ([]string, error) {
-	return m.buildBedEnv(b, b.Spec().Env, requestEnv)
+	env, err := m.configurations.Main(b.Bed)
+	if err != nil {
+		return nil, err
+	}
+	return m.buildBedEnv(b, env, requestEnv)
 }
 
 // buildBedEnv composes carrier software and Bed context with ordered overlays.

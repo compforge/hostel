@@ -31,6 +31,9 @@ type Spec struct {
 	// Env is the immutable base environment for ordinary executions and session
 	// shells. Services use their own declaration, not this overlay.
 	Env             map[string]string
+	EnvFiles        map[string]string
+	EnvFrom         []string
+	EnvValueFrom    map[string]ConfigurationKeyRef
 	Services        []ServiceSpec
 	Dir             string
 	CreatedAt       time.Time
@@ -60,6 +63,9 @@ func clonePolicy(p *NetworkPolicy) *NetworkPolicy {
 }
 func cloneSpec(s Spec) Spec {
 	s.Env = maps.Clone(s.Env)
+	s.EnvFiles = maps.Clone(s.EnvFiles)
+	s.EnvFrom = append([]string(nil), s.EnvFrom...)
+	s.EnvValueFrom = maps.Clone(s.EnvValueFrom)
 	s.Services = CloneServices(s.Services)
 	s.NetworkPolicy = clonePolicy(s.NetworkPolicy)
 	s.RecoveryDirs = append([]string(nil), s.RecoveryDirs...)

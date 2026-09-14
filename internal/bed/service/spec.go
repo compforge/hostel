@@ -5,17 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/configuration"
 )
 
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
-var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Normalize validates caller-owned service units, applies stable defaults and
 // pins the resulting desired state for local recovery.
@@ -51,18 +50,8 @@ func Normalize(specs []bed.ServiceSpec) ([]bed.ServiceSpec, error) {
 		if s.Directory == "" {
 			s.Directory = "/workspace"
 		}
-		for k, v := range s.Env {
-			if !validEnv(k) || strings.ContainsRune(v, 0) {
-				return nil, fmt.Errorf("invalid service environment %s", k)
-			}
-		}
-		for k, p := range s.EnvFiles {
-			if !validEnv(k) || !filepath.IsAbs(p) {
-				return nil, fmt.Errorf("invalid credential source for %s", k)
-			}
-			if _, ok := s.Env[k]; ok {
-				return nil, fmt.Errorf("duplicate env key %s", k)
-			}
+		if err := configuration.Validate(s.Configuration()); err != nil {
+			return nil, err
 		}
 		if s.HTTP != nil {
 			if !strings.HasPrefix(s.HTTP.ReadyPath, "/") || strings.HasPrefix(s.HTTP.ReadyPath, "//") {
@@ -88,26 +77,23 @@ func validateAuthentication(s bed.ServiceSpec) error {
 	if auth == nil {
 		return nil
 	}
-	if auth.Scheme != "bearer" || !validEnv(auth.TokenEnv) {
+	if auth.Scheme != "bearer" || !configuration.ValidName(auth.TokenEnv) {
 		return fmt.Errorf("HTTP service %s requires bearer authentication and a valid token env", s.Name)
 	}
 	value, hasEnv := s.Env[auth.TokenEnv]
 	_, hasFile := s.EnvFiles[auth.TokenEnv]
+	_, hasRef := s.EnvValueFrom[auth.TokenEnv]
 	switch auth.TokenSource {
 	case bed.TokenSourceGenerated:
-		if hasEnv || hasFile {
+		if hasEnv || hasFile || hasRef {
 			return fmt.Errorf("HTTP service %s generated token conflicts with configured env %s", s.Name, auth.TokenEnv)
 		}
 	case bed.TokenSourceEnvironment:
-		if !hasFile && value == "" {
+		if !hasFile && !hasRef && len(s.EnvFrom) == 0 && value == "" {
 			return fmt.Errorf("HTTP service %s requires token env %s from Env or EnvFiles", s.Name, auth.TokenEnv)
 		}
 	default:
 		return fmt.Errorf("HTTP service %s requires an explicit supported token source", s.Name)
 	}
 	return nil
-}
-
-func validEnv(k string) bool {
-	return envName.MatchString(k) && !strings.HasPrefix(k, "HOSTEL_") && !strings.HasPrefix(k, "BED_")
 }

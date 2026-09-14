@@ -184,9 +184,10 @@ Health and capability responses report the selected mechanisms, scope and reason
 for unavailable capabilities. See [the isolation design](docs/isolation.md) for
 the full model and [the backlog](docs/backlog.md) for remaining gaps.
 
-Instance status (`GET /v1/status`, schema version 4) groups global domain reports
+Instance status (`GET /v1/status`, schema version 5) groups global domain reports
 under `components` and facility reports under `amenities`, alongside Bed inventory
-and capacity summaries. `isolation` reports the cross-domain profile; filesystem
+and capacity summaries. `host.fact` contains boot-time system facts;
+`host.status.ports` reports current Hostel-managed port allocations. `isolation` reports the cross-domain profile; filesystem
 grades are `shared/confined/private` under `components.filesystem`. Bed details (`GET /v1/beds/:id`) use `status.lifecycle`,
 `status.components` and `status.amenities`; the latter contains the IDs and
 domain-specific status of tenants bound to that Bed. Status reads allocate no tenants.

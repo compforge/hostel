@@ -34,7 +34,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	components := []daemonComponent{
 		{"filesystem", m.files}, {"privilege", m.privileges}, {"resource", m.resourceManager},
 		{"store", m.store}, {"network", m.network}, {"executor", m.executorManager},
-		{"service", m.services},
+		{"configuration", m.configurations}, {"service", m.services},
 	}
 	for _, component := range components {
 		// Start may allocate before failing; register cleanup ownership first.

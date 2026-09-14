@@ -18,6 +18,7 @@ import (
 	"time"
 
 	model "github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/configuration"
 
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem"
@@ -36,12 +37,13 @@ type Status struct {
 	LocalCleanups []LocalCleanupReport `json:"local_cleanups"`
 	Environment   EnvironmentReport    `json:"environment"`
 	Components    struct {
-		Filesystem filesystem.Status `json:"filesystem"`
-		Privilege  privilege.Status  `json:"privilege"`
-		Network    network.Status    `json:"network"`
-		Executor   executor.Status   `json:"executor"`
-		Store      store.Status      `json:"store"`
-		Resource   resource.Status   `json:"resource"`
+		Configuration configuration.Report `json:"configuration"`
+		Filesystem    filesystem.Status    `json:"filesystem"`
+		Privilege     privilege.Status     `json:"privilege"`
+		Network       network.Status       `json:"network"`
+		Executor      executor.Status      `json:"executor"`
+		Store         store.Status         `json:"store"`
+		Resource      resource.Status      `json:"resource"`
 	} `json:"components"`
 }
 
@@ -72,6 +74,7 @@ func (m *Manager) Status() Status {
 	report := Status{InventoryStatus: m.InventoryStatus(), LocalCleanups: m.localCleanupReports(), Environment: environment,
 		Isolation: m.RoomStatus(), Combinations: append([]CombinationAttempt(nil), m.combinationAttempts...)}
 	report.Components.Filesystem = m.files.Status()
+	report.Components.Configuration = m.configurations.Status()
 	report.Components.Privilege = m.privileges.Status()
 	report.Components.Network = m.network.Status()
 	report.Components.Executor = m.executorManager.Status()

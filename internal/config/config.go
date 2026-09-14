@@ -16,6 +16,7 @@
 package config
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -103,6 +104,8 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs := flag.NewFlagSet("hostel", flag.ContinueOnError)
 	c := &Config{}
 	var persistedPaths string
+	var configurationSources string
+	fs.StringVar(&configurationSources, "configuration-sources", osx.EnvStr("HOSTEL_CONFIGURATION_SOURCES", "{}"), "JSON object of named configuration directories")
 	bedUID, bedGID := os.Geteuid(), os.Getegid()
 	if bedUID == 0 {
 		bedUID, bedGID = 1000, 1000
@@ -162,6 +165,11 @@ func Load(args []string, explicit Options) (*Config, error) {
 	c.BedIdleTTL = *idle
 	c.PersistInterval = *persist
 	c.ChromiumIdleStop = *idleStop
+	if explicit.Bed.ConfigurationSources == nil {
+		if err := json.Unmarshal([]byte(configurationSources), &c.Bed.Configuration.Sources); err != nil {
+			return nil, fmt.Errorf("configuration sources must be a JSON object of directory paths")
+		}
+	}
 	explicit.apply(c)
 	c.Bed.Privilege.Explicit = explicit.Bed.Privilege.UID != nil || explicit.Bed.Privilege.GID != nil
 	for _, key := range []string{"HOSTEL_BED_UID", "HOSTEL_BED_GID"} {
@@ -199,6 +207,9 @@ func Load(args []string, explicit Options) (*Config, error) {
 	// above high would make GC loop uselessly, so clamp it.
 	if c.LuggageHighBytes > 0 && (c.LuggageLowBytes <= 0 || c.LuggageLowBytes > c.LuggageHighBytes) {
 		c.LuggageLowBytes = c.LuggageHighBytes * 8 / 10
+	}
+	if err := c.Bed.Configuration.Validate(); err != nil {
+		return nil, err
 	}
 	if err := c.Bed.Filesystem.Validate(); err != nil {
 		return nil, err

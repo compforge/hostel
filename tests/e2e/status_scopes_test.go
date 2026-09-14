@@ -72,8 +72,13 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 		t.Fatal("observation changed identity or activity")
 	}
 	var global struct {
-		Schema     int                        `json:"schema_version"`
-		Host       map[string]json.RawMessage `json:"host"`
+		Schema int `json:"schema_version"`
+		Host   struct {
+			Fact   map[string]json.RawMessage `json:"fact"`
+			Status struct {
+				Ports []json.RawMessage `json:"ports"`
+			} `json:"status"`
+		} `json:"host"`
 		Components map[string]json.RawMessage `json:"components"`
 		Amenities  map[string]struct {
 			Tenants int `json:"tenants"`
@@ -87,10 +92,10 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	must2xx(t, "instance status", response)
-	if global.Host["runtime"] == nil || global.Host["process"] == nil {
+	if global.Host.Fact["runtime"] == nil || global.Host.Fact["process"] == nil || global.Host.Status.Ports == nil {
 		t.Fatalf("missing host facts: %+v", global.Host)
 	}
-	if global.Schema != 4 || len(global.Components) != 6 || global.Amenities["mcp"].Tenants != 1 {
+	if global.Schema != 5 || len(global.Components) != 7 || global.Components["configuration"] == nil || global.Amenities["mcp"].Tenants != 1 {
 		t.Fatalf("global status: %+v", global)
 	}
 	for _, b := range global.Beds {

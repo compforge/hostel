@@ -325,6 +325,8 @@ workspace 快照不携带本地进程身份、endpoint 或部署凭据。
 
 `env` 只用于可持久化的非敏感值；`env_files` 保存 daemon 可读的绝对路径，并在每次
 启动时读取凭据值。Secret 值不进入 Bed identity、状态、日志或 workspace 快照。
+Service 也可用 `env_from` 导入命名来源，或用 `env_value_from` 选择其中的键；
+与普通执行共用 Configuration Manager，但独立消费配置，见 [bed-configuration.md](bed-configuration.md)。
 创建接口属于可信内部控制面：部署必须限制其访问，并只允许调用方引用专用凭据目录，
 不能把任意宿主文件路径开放给非可信租户。规范化声明和摘要随 `.identities/<bed>.local`
 保存；客户端不应填写 `spec_digest`，该字段由 Hostel 生成并用于本地恢复校验。
@@ -376,8 +378,9 @@ Bed 回收不会释放它。UDP DNS 仍由网络组件实际绑定和释放，�
 | `POST /v1/beds/{bed}/services/{service}/access` | 传 `{"hold_seconds":300}`，取得 endpoint、可选 token、Execution ID 和限时 hold |
 | `DELETE /v1/beds/{bed}/service-holds/{hold}` | 提前释放 hold，幂等 |
 
-Bed 详情的 `status.components.services` 展示服务状态；`GET /v1/status` 的 `ports`
-展示 owner、scope、address 和 `reserved/listening` 状态。诊断和持久化声明不含 token。
+Bed 详情的 `status.components.services` 展示服务状态；`GET /v1/status` 的 `host.status.ports`
+展示 Hostel 管理的端口分配及其 owner、scope、address 和 `reserved/listening` 状态，
+不枚举操作系统全部监听端口；端口预留也不代表服务就绪。诊断和持久化声明不含 token。
 
 调用方先获取 access，再直连 endpoint，任务结束后释放 hold。hold 为 1–7200 秒，
 到期自动结束 operation，期间普通/显式 eviction 都不能销毁 Bed；daemon shutdown

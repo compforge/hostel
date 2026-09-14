@@ -2,12 +2,14 @@
 
 ## 概念
 
-Hostel 的 daemon 启动配置按组件组合。Filesystem、Network、Resource、Privilege、Executor、Store
+Hostel 的 daemon 启动配置按组件组合。Filesystem、Network、Resource、Privilege、Executor、Store、Configuration
 分别拥有自己的 Config；总配置负责把它们组装起来。Config 不仅承载 Feature 开关，也包含普通运行参数，
 例如 Store 的 S3 endpoint、bucket、凭据和同步策略。
 
 Bed Service 的完整声明、Pod IP 发布地址及 daemon 统一 TCP 端口池参数见
 [bed-service.md](bed-service.md#四部署配置与-api)。Carrier 包含服务程序不会自动为每个 Bed 启用服务。
+普通执行与 Service 的环境变量、命名文件来源及 `--configuration-sources` 见
+[bed-configuration.md](bed-configuration.md)。
 
 输入 Options 使用指针区分未指定与显式零值。启动入口按下列优先级生成确定的 Config：
 
