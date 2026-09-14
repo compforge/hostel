@@ -53,19 +53,3 @@ func TestStartupRejectsFeatureConflictsAndUnknownFlags(t *testing.T) {
 		t.Fatal("accepted room with required bwrap")
 	}
 }
-
-func TestTypedStorePathsOverrideEnvironmentWithoutResplitting(t *testing.T) {
-	t.Setenv("HOSTEL_PERSISTED_PATHS", "invalid")
-	paths := []string{"/workspace", "/data,with,commas"}
-	c, err := Load(nil, Options{Bed: BedOptions{Store: store.Options{PersistedPaths: &paths}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(c.Bed.Store.PersistedPaths) != 2 || c.Bed.Store.PersistedPaths[1] != "/data,with,commas" {
-		t.Fatal(c.Bed.Store.PersistedPaths)
-	}
-	paths[0] = "/changed"
-	if c.Bed.Store.PersistedPaths[0] != "/workspace" {
-		t.Fatal("runtime config aliases caller input")
-	}
-}

@@ -41,19 +41,14 @@ import (
 type tarStore struct {
 	obj    objects
 	prefix string
-	filter snapshotFilter
 }
 
 // A tar object can be much larger than one CAS chunk or pack. Keep its object
 // operation bounded, but allow enough time for a full workspace on a slow link.
 const tarOpTimeout = 30 * time.Minute
 
-func newTarStore(obj objects, prefix string, filters ...snapshotFilter) *tarStore {
-	filter := defaultSnapshotFilter()
-	if len(filters) > 0 {
-		filter = filters[0]
-	}
-	return &tarStore{obj: obj, prefix: prefix, filter: filter}
+func newTarStore(obj objects, prefix string) *tarStore {
+	return &tarStore{obj: obj, prefix: prefix}
 }
 
 func (s *tarStore) Name() Kind { return KindTar }
@@ -80,7 +75,11 @@ func (s *tarStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error
 	return info, nil
 }
 
-func (s *tarStore) Persist(ctx context.Context, bedID, dir string, generation int64) error {
+func (s *tarStore) Persist(ctx context.Context, bedID, dir string, generation int64, syncPaths []string) error {
+	filter, err := newSnapshotFilter(syncPaths)
+	if err != nil {
+		return err
+	}
 	meta, _, exists, err := s.obj.Head(ctx, s.snapshotKey(bedID))
 	if err != nil {
 		return fmt.Errorf("store: persist %s: pre-write stat: %w", bedID, err)
@@ -99,7 +98,7 @@ func (s *tarStore) Persist(ctx context.Context, bedID, dir string, generation in
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
 
-	if err := writeTarGzip(dir, tmp, s.filter); err != nil {
+	if err := writeTarGzip(dir, tmp, filter); err != nil {
 		return fmt.Errorf("store: persist %s: archive: %w", bedID, err)
 	}
 	size, err := tmp.Seek(0, io.SeekEnd)

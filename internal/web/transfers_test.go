@@ -510,7 +510,7 @@ func TestResticAutomaticSyncAndFormatSwitch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "data/tmp/volatile"), []byte("skip"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Persist(ctx, store.SyncRestic, "automatic", dir, 1); err != nil {
+	if err := manager.Persist(ctx, store.SyncRestic, "automatic", dir, 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, kind := range []store.SyncKind{store.SyncCAS, store.SyncAuto, store.SyncRestic} {
@@ -529,10 +529,10 @@ func TestResticAutomaticSyncAndFormatSwitch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "data/workspace/run"), []byte("second"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Persist(ctx, store.SyncTar, "automatic", dir, 2); err != nil {
+	if err := manager.Persist(ctx, store.SyncTar, "automatic", dir, 2, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Persist(ctx, store.SyncRestic, "automatic", dir, 2); !errors.Is(err, store.ErrConflict) {
+	if err := manager.Persist(ctx, store.SyncRestic, "automatic", dir, 2, nil); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("generation conflict: %v", err)
 	}
 	target := filepath.Join(t.TempDir(), "newest")

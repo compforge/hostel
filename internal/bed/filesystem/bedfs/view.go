@@ -81,6 +81,11 @@ func MountedProjectedView(fs *FS, homeMount string, projections []PathProjection
 
 // Path maps a confined carrier path into this Executor view.
 func (v View) Path(host string) (string, error) {
+	for _, mapping := range v.fs.PathMappings() {
+		if rel, ok := relativeTo(mapping.HostPath, host); ok {
+			return joinProcessPath(mapping.BedPath, rel), nil
+		}
+	}
 	homeRel, ok := relativeTo(v.fs.Home(), host)
 	if !ok {
 		return "", fmt.Errorf("bedfs: carrier path %q is outside bed_home %q", host, v.fs.Home())

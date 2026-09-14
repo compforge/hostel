@@ -21,8 +21,8 @@ Hostel 在一个 Carrier 内维护 Bed 的声明、工作负载和生命周期�
 - **bed 目录**：`{workspace-root}/{bed name}`，含 `meta.json`（可移植身份）+ `data/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面首次请求通过 `Ensure` 加入同一初始化并等待，详见 `docs/kernel.md`。
 - **BedFS**：Bed 持有的文件系统数据域；统一拥有 bed_home、workspace、客户端/宿主/Executor 三个路径空间与文件操作。Executor 替换不改变 BedFS 身份，详见 `docs/filesystem.md`。
 - **bed_home（data 目录）**：BedFS 的宿主根 `{bed 目录}/data`——**客户端视角的 `/`**，任意客户端绝对路径单射 rebase 到它下面、回显对称；bed 只见它，但它不整体持久化。
-- **bed workspace**：`bed_home/workspace` 真实子目录（非别名）——OpenSandbox 契约的 `/workspace`（`bedfs.WorkspacePath`）、相对路径的基准、默认 cwd、suite 下的真实挂载点，也是 `HOSTEL_PERSISTED_PATHS` 默认唯一持久化的数据子树。
-- **path projection**：调用方配置的通用 `BedFS path → Executor path` 投影；可配置多个，Hostel 不解释路径的业务含义。`/workspace` 是内置投影，不通过该配置声明。
+- **bed workspace**：`bed_home/workspace` 真实子目录（非别名）——OpenSandbox 契约的 `/workspace`（`bedfs.WorkspacePath`）、相对路径的基准、默认 cwd、suite 下的真实挂载点，也是 `Bed.Spec.SyncPaths` 默认唯一持久化的数据子树。
+- **PathMapping**：BedFS 默认 `/ → bed_home`，Bed 可声明额外 `HostPath → BedPath` 映射以访问 Carrier 已有数据；命中额外映射优先。`SyncPaths` 仅声明 Store 自动同步的默认映射子树，外部映射的耐久性由其存储方负责，详见 `docs/filesystem.md`。
 - **房型（dorm / room / suite）**：Bed 跨领域隔离保证的对外统称，不是 Filesystem 的等级或 backend；各 domain 将自己的 Level 映射为房型要求（见 `docs/isolation.md`）。
 - **luggage**：非正常生命周期状态，只表达异常退出或旧版 Hostel 遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
 - **amenity**：bed 外由 hostel 统一管理、按 bed 分配状态的共享设施（Chromium / Jupyter / MCP 连接池）。
@@ -132,7 +132,7 @@ internal/
 - **隔离按 Bed 的统一目标尽量兑现**：各 domain 拥有 facts → `LevelStatus.Supported`、配置选择与 `Level.Room()`；房型取已选等级满足要求的最低档，不反向削弱更强的组件。Feature 是机制及其采用策略，不是另一套 Level。启动组合验证允许有限回退，required 不丢弃，清理失败终止；live Bed 不重选。当前缺口见 `docs/isolation.md` 与 `docs/backlog.md`。
   - daemon 身份与 BedUser 正交：command/session/Service 使用 resident Bed 的同一身份；Privilege 独立决定 shared/dedicated，Filesystem 不分配 UID。自动基线允许继承 daemon 身份，不以切换用户为前提；Linux 子进程仍须通过 capability 清理与 no_new_privs 验证。见 `docs/privilege.md`。
   - BedFS 路径映射在所有档位一致；PRoot/pathshim 改善进程路径体验，不提供安全边界，也不提高文件隔离档位。
-  - Store 独立选择需持久化的 BedFS 子树；新增 projection 不自动获得耐久性，详见 `docs/store.md`。
+  - Bed.Spec.SyncPaths 声明 Store 自动同步的 BedFS 子树；额外 PathMappings 不进入快照，详见 `docs/store.md`。
 - **amenity 通则**：共享设施按 Bed 分配应用状态，产物落对应 workspace；设施状态、Bed 级凭据与 Bed 生命周期分别管理。北向使用 Bed 级动作或受限代理，不裸透传共享设施的管理协议。应用切分不等于文件、网络或资源完整隔离，当前机制与缺口见 `docs/amenity.md`。
 - **常驻 shell 的坑**：一个 Shell 只能有**一个** stdout reader（否则 run 间串输出——v1 踩过）；Run 之间串行；Shell 持有启动时的 Executor View，session run 的 cwd 必须经 `RunAt` 投影并作为独立控制步骤执行，禁止 Web 拼接 `cd` 或 Executor path；`exit` 会杀死 session，非零退出码用子 shell（`sh -c "exit N"`）。**锁纪律**：`runMu` 串行化 Run 且只有 Run 碰；`mu` 只护 `dead` 标志、纳秒级持有——曾因单锁设计让「shell 死亡+未断开客户端」死锁整个 daemon（含 healthz），别往 `mu` 里加阻塞代码（见 shell.go LOCKING 注释）。
 - **配置在启动入口收敛**：显式 Options > CLI > env > 默认值，组件只读确定的 Config；指针区分未指定与显式零值。按 Component → Feature → Requirements 组织选择与诊断，Feature 使用 auto/off/required，Linux Capabilities 属于实现前提。内部配置不自动扩展成公开参数，见 `docs/configuration.md`。

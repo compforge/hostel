@@ -12,5 +12,8 @@ func processMappings(fs *bedfs.FS, projections []bedfs.PathProjection) []hostfs.
 	for _, p := range projections {
 		mappings = append(mappings, hostfs.Mapping{Source: p.CarrierPath(fs.Home()), Target: p.ProcessPath})
 	}
+	for _, m := range fs.PathMappings() {
+		mappings = append(mappings, hostfs.Mapping{Source: m.HostPath, Target: m.BedPath})
+	}
 	return mappings
 }

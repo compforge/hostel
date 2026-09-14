@@ -22,6 +22,7 @@
 package bedfs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -73,8 +74,10 @@ type Permission struct {
 // +spec=`File and directory APIs preserve client path spelling while every read and mutation remains confined to one bed_home.`
 // +case:id=filesystem_api_contract,desc=`Create, inspect, replace, chmod, move, search, slice-read, and delete a workspace tree`,expect=`all operations round-trip through the public client path without escaping the BedFS`
 type FS struct {
-	paths paths
-	root  *os.Root
+	mappings []mappedRoot
+	readOnly bool
+	paths    paths
+	root     *os.Root
 	// uid/gid of the workspace dir when it differs from the daemon's euid
 	// (uid-isolated beds), else -1. Mechanism-independent invariant: whatever
 	// lands in a bed's workspace belongs to the bed — BedFS runs as the
@@ -117,7 +120,13 @@ func (o *FS) RefreshOwner() error {
 // Close releases the descriptor anchoring this BedFS. A Bed keeps it open for
 // its resident lifetime so renames and symlink swaps cannot redirect daemon
 // file operations outside bed_home.
-func (o *FS) Close() error { return o.root.Close() }
+func (o *FS) Close() error {
+	err := o.root.Close()
+	for _, m := range o.mappings {
+		err = errors.Join(err, m.fs.Close())
+	}
+	return err
+}
 
 func (o *FS) relative(full string) (string, error) {
 	rel, err := filepath.Rel(o.Home(), full)
@@ -193,12 +202,36 @@ func (o *FS) mkdirAllOwned(dir string) error {
 // must already be bed_home-confined (Resolve guarantees this); ownership
 // handover keeps it usable under the uid isolation tier.
 func (o *FS) EnsureDir(dir string) error {
+	for _, m := range o.mappings {
+		if _, ok := relativeTo(m.fs.Home(), dir); ok {
+			return m.fs.EnsureDir(dir)
+		}
+	}
+	if o.readOnly {
+		rel, err := o.relative(dir)
+		if err != nil {
+			return err
+		}
+		info, err := o.root.Stat(rel)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("bedfs: cwd is not a directory")
+		}
+		return nil
+	}
 	return o.mkdirAllOwned(dir)
 }
 
 // Resolve maps a client path to a carrier path under bed_home. It is shared by
 // file operations and structured Executor paths such as cwd.
-func (o *FS) Resolve(p string) (string, error) { return o.paths.FromClient(p) }
+func (o *FS) Resolve(p string) (string, error) {
+	if mapped := o.mapped(p); mapped != nil {
+		return mapped.paths.FromClient(p)
+	}
+	return o.paths.FromClient(p)
+}
 
 // Home is the carrier path of bed_home, which is the client's "/".
 func (o *FS) Home() string { return o.paths.Home() }
@@ -227,6 +260,10 @@ func (o *FS) info(full string, li os.FileInfo) FileInfo {
 
 // Stat returns metadata for one path.
 func (o *FS) Stat(p string) (FileInfo, error) {
+	o, routeErr := o.route(p, false)
+	if routeErr != nil {
+		return FileInfo{}, routeErr
+	}
 	full, err := o.Resolve(p)
 	if err != nil {
 		return FileInfo{}, err
@@ -244,6 +281,10 @@ func (o *FS) Stat(p string) (FileInfo, error) {
 
 // Read returns full file contents.
 func (o *FS) Read(p string) ([]byte, error) {
+	o, routeErr := o.route(p, false)
+	if routeErr != nil {
+		return nil, routeErr
+	}
 	full, err := o.Resolve(p)
 	if err != nil {
 		return nil, err
@@ -278,6 +319,10 @@ func (o *FS) ReadLines(p string, offset, limit int) (string, error) {
 
 // Write creates/overwrites a file (0644 when mode==0), making parent dirs.
 func (o *FS) Write(p string, data []byte, mode int) error {
+	o, routeErr := o.route(p, true)
+	if routeErr != nil {
+		return routeErr
+	}
 	full, err := o.Resolve(p)
 	if err != nil {
 		return err
@@ -303,6 +348,19 @@ func (o *FS) Write(p string, data []byte, mode int) error {
 // Remove deletes files (not directories); missing files are ignored.
 func (o *FS) Remove(paths []string) error {
 	for _, p := range paths {
+		if err := o.guardMappingRoot(p); err != nil {
+			return err
+		}
+		target, err := o.route(p, true)
+		if err != nil {
+			return err
+		}
+		if target != o {
+			if err := target.Remove([]string{p}); err != nil {
+				return err
+			}
+			continue
+		}
 		full, err := o.Resolve(p)
 		if err != nil {
 			return err
@@ -330,6 +388,21 @@ func (o *FS) Remove(paths []string) error {
 
 // Rename moves src to dest (creating dest parents).
 func (o *FS) Rename(src, dest string) error {
+	if err := errors.Join(o.guardMappingRoot(src), o.guardMappingRoot(dest)); err != nil {
+		return err
+	}
+	source, err := o.route(src, true)
+	if err != nil {
+		return err
+	}
+	destination, err := o.route(dest, true)
+	if err != nil {
+		return err
+	}
+	if source != destination {
+		return fmt.Errorf("bedfs: rename crosses path mappings")
+	}
+	o = source
 	s, err := o.Resolve(src)
 	if err != nil {
 		return err
@@ -356,6 +429,10 @@ func (o *FS) Rename(src, dest string) error {
 // not applied in v1 (single-uid beds); real setuid lands with the OSEP-0013
 // isolation port.
 func (o *FS) Chmod(p string, perm Permission) error {
+	o, routeErr := o.route(p, true)
+	if routeErr != nil {
+		return routeErr
+	}
 	full, err := o.Resolve(p)
 	if err != nil {
 		return err
@@ -374,6 +451,10 @@ func (o *FS) Chmod(p string, perm Permission) error {
 
 // Replace substitutes all occurrences of old with new in one file.
 func (o *FS) Replace(p string, item ReplaceItem) (ReplaceResult, error) {
+	o, routeErr := o.route(p, true)
+	if routeErr != nil {
+		return ReplaceResult{}, routeErr
+	}
 	full, err := o.Resolve(p)
 	if err != nil {
 		return ReplaceResult{}, err
@@ -407,6 +488,10 @@ func (o *FS) Replace(p string, item ReplaceItem) (ReplaceResult, error) {
 
 // MakeDir creates a directory (and parents).
 func (o *FS) MakeDir(p string) error {
+	o, routeErr := o.route(p, true)
+	if routeErr != nil {
+		return routeErr
+	}
 	full, err := o.Resolve(p)
 	if err != nil {
 		return err
@@ -416,6 +501,13 @@ func (o *FS) MakeDir(p string) error {
 
 // RemoveDir removes a directory tree.
 func (o *FS) RemoveDir(p string) error {
+	if err := o.guardMappingRoot(p); err != nil {
+		return err
+	}
+	o, routeErr := o.route(p, true)
+	if routeErr != nil {
+		return routeErr
+	}
 	full, err := o.Resolve(p)
 	if err != nil {
 		return err
@@ -439,6 +531,10 @@ func (o *FS) RemoveDir(p string) error {
 
 // List returns entries of a directory down to depth levels (1 = immediate).
 func (o *FS) List(p string, depth int) ([]FileInfo, error) {
+	o, routeErr := o.route(p, false)
+	if routeErr != nil {
+		return nil, routeErr
+	}
 	full, err := o.Resolve(p)
 	if err != nil {
 		return nil, err
@@ -463,6 +559,11 @@ func (o *FS) List(p string, depth int) ([]FileInfo, error) {
 	var out []FileInfo
 	var walk func(dir, rel string, d int) error
 	walk = func(dir, rel string, d int) error {
+		if mapped := o.mapped(o.virtual(dir)); mapped != nil {
+			entries, err := mapped.List(o.virtual(dir), d)
+			out = append(out, entries...)
+			return err
+		}
 		opened, err := o.root.Open(rel)
 		if err != nil {
 			return err
@@ -480,7 +581,14 @@ func (o *FS) List(p string, depth int) ([]FileInfo, error) {
 			if err != nil {
 				continue
 			}
-			out = append(out, o.info(filepath.Join(dir, e.Name()), fi))
+			entry := o.info(filepath.Join(dir, e.Name()), fi)
+			if o.mapped(entry.Path) != nil {
+				entry, err = o.Stat(entry.Path)
+				if err != nil {
+					return err
+				}
+			}
+			out = append(out, entry)
 			if e.IsDir() && d > 1 {
 				if err := walk(filepath.Join(dir, e.Name()), filepath.Join(rel, e.Name()), d-1); err != nil {
 					return err
@@ -502,6 +610,10 @@ const searchLimit = 1000
 // Search walks under p and returns files whose base name matches pattern
 // (glob when pattern contains meta characters, substring otherwise).
 func (o *FS) Search(p, pattern string) ([]FileInfo, error) {
+	o, routeErr := o.route(p, false)
+	if routeErr != nil {
+		return nil, routeErr
+	}
 	full, err := o.Resolve(p)
 	if err != nil {
 		return nil, err
@@ -524,6 +636,15 @@ func (o *FS) Search(p, pattern string) ([]FileInfo, error) {
 	var out []FileInfo
 	var walk func(dir, rel string) error
 	walk = func(dir, rel string) error {
+		if mapped := o.mapped(o.virtual(dir)); mapped != nil {
+			entries, err := mapped.Search(o.virtual(dir), pattern)
+			remaining := searchLimit - len(out)
+			if len(entries) > remaining {
+				entries = entries[:remaining]
+			}
+			out = append(out, entries...)
+			return err
+		}
 		opened, err := o.root.Open(rel)
 		if err != nil {
 			return err

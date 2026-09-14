@@ -10,7 +10,6 @@ import (
 
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
-	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/privilege"
@@ -20,13 +19,12 @@ import (
 )
 
 type RuntimeConfig struct {
-	Room        bed.RoomType
-	Filesystem  isolation.Config
-	Privilege   privilege.Config
-	Network     network.Config
-	Resource    resource.Config
-	Executor    executor.Config
-	Projections []bedfs.PathProjection
+	Room       bed.RoomType
+	Filesystem isolation.Config
+	Privilege  privilege.Config
+	Network    network.Config
+	Resource   resource.Config
+	Executor   executor.Config
 }
 
 type RuntimeSelection struct {
@@ -91,7 +89,7 @@ func resolveRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell st
 		if err := ctx.Err(); err != nil {
 			return selection, err
 		}
-		iso, err := isolation.Resolve(host, files, root, isolation.WithPathProjections(cfg.Projections))
+		iso, err := isolation.Resolve(host, files, root)
 		if err != nil {
 			return selection, err
 		}

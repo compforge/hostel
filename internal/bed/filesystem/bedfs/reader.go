@@ -40,7 +40,7 @@ func NewReader(primary *FS, fallbackRoot string) *Reader {
 
 func readWithFallback[T any](r *Reader, clientPath string, read func(*FS) (T, error)) (T, error) {
 	value, err := read(r.primary)
-	if err == nil || r.fallbackRoot == "" || !path.IsAbs(clientPath) || !os.IsNotExist(err) {
+	if r.primary.mapped(clientPath) != nil || err == nil || r.fallbackRoot == "" || !path.IsAbs(clientPath) || !os.IsNotExist(err) {
 		return value, err
 	}
 

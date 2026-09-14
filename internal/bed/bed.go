@@ -4,6 +4,7 @@ package bed
 
 import (
 	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -28,6 +29,9 @@ type Bed struct {
 }
 
 type Spec struct {
+	PathMappings []PathMapping
+	// SyncPaths selects Store-managed BedFS data. nil defaults to /workspace; [] syncs metadata only.
+	SyncPaths []string
 	// Env is the immutable base environment for ordinary executions and session
 	// shells. Services use their own declaration, not this overlay.
 	Env             map[string]string
@@ -62,6 +66,8 @@ func clonePolicy(p *NetworkPolicy) *NetworkPolicy {
 	return &c
 }
 func cloneSpec(s Spec) Spec {
+	s.PathMappings = slices.Clone(s.PathMappings)
+	s.SyncPaths = slices.Clone(s.SyncPaths)
 	s.Env = maps.Clone(s.Env)
 	s.EnvFiles = maps.Clone(s.EnvFiles)
 	s.EnvFrom = append([]string(nil), s.EnvFrom...)

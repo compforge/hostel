@@ -109,17 +109,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("hostel: HTTP listener: %v", err)
 	}
-	pathProjections, err := config.ParseProjectedPaths(cfg.Bed.Filesystem.ProjectedPaths)
-	if err != nil {
-		log.Fatalf("hostel: configure path projections: %v", err)
-	}
-
 	host := hostfacts.Collect()
 	room, _ := bedmodel.ParseRoomType(cfg.Bed.RoomType) // Config.Load validates the public profile.
 	selectionCtx, cancelSelection := context.WithTimeout(context.Background(), 60*time.Second)
 	selection, err := bed.ResolveRuntime(selectionCtx, host, cfg.WorkspaceRoot, cfg.ShellPath, bed.RuntimeConfig{
 		Room: room, Filesystem: cfg.Bed.Filesystem, Privilege: cfg.Bed.Privilege,
-		Network: cfg.Bed.Network, Resource: cfg.Bed.Resource, Executor: cfg.Bed.Executor, Projections: pathProjections,
+		Network: cfg.Bed.Network, Resource: cfg.Bed.Resource, Executor: cfg.Bed.Executor,
 	}, ports)
 	cancelSelection()
 	if err != nil {

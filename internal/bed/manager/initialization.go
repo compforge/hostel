@@ -169,6 +169,11 @@ func (m *Manager) beginInitialization(
 	id string,
 	options CreateOptions,
 ) (*bedInitialization, *managedBed, error) {
+	mappings, syncPaths, pathsErr := model.NormalizePaths(options.PathMappings, options.SyncPaths)
+	if pathsErr != nil {
+		return nil, nil, pathsErr
+	}
+	options.PathMappings, options.SyncPaths = mappings, syncPaths
 	if err := configuration.Validate(options.configuration()); err != nil {
 		return nil, nil, err
 	}
@@ -244,6 +249,7 @@ func (m *Manager) beginInitialization(
 			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
 			checkServices(options, actual.Services),
 			checkBedConfiguration(options, actual),
+			checkBedPaths(options, actual),
 		)
 	}
 	if current, ok := m.initializations[id]; ok && current.snapshot().Phase == PhaseInitializing {
@@ -254,6 +260,7 @@ func (m *Manager) beginInitialization(
 			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
 			checkServices(options, actual.Services),
 			checkBedConfiguration(options, actual),
+			checkBedPaths(options, actual),
 		)
 	}
 	if m.retirements[id] != nil {
@@ -266,7 +273,7 @@ func (m *Manager) beginInitialization(
 	}
 	if local := m.localIdentities[id]; local != nil {
 		actual := local.bed.Spec()
-		if err := errors.Join(checkServices(options, actual.Services), checkBedConfiguration(options, actual)); err != nil {
+		if err := errors.Join(checkServices(options, actual.Services), checkBedConfiguration(options, actual), checkBedPaths(options, actual)); err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
@@ -276,6 +283,12 @@ func (m *Manager) beginInitialization(
 			return nil, nil, err
 		}
 		options.Services = resolved
+		if options.PathMappings == nil {
+			options.PathMappings = actual.PathMappings
+		}
+		if options.SyncPaths == nil {
+			options.SyncPaths = actual.SyncPaths
+		}
 		options.Env = actual.Env
 		options.EnvFiles, options.EnvFrom, options.EnvValueFrom = actual.EnvFiles, actual.EnvFrom, actual.EnvValueFrom
 	}
@@ -306,6 +319,7 @@ func (m *Manager) beginInitialization(
 	}
 	localMeta, localPresent := loadMeta(filepath.Join(m.root, id))
 	spec := model.Spec{Dir: filepath.Join(m.root, id), Sync: selected, CreatedAt: localMeta.CreatedAt, LocalPresent: localPresent, LocalGeneration: localMeta.Generation}
+	spec.PathMappings, spec.SyncPaths = options.PathMappings, options.SyncPaths
 	spec.Services = options.Services
 	spec.Env = options.Env
 	spec.EnvFiles, spec.EnvFrom, spec.EnvValueFrom = options.EnvFiles, options.EnvFrom, options.EnvValueFrom
@@ -547,6 +561,8 @@ func residentInitializationStatus(resident *managedBed) InitializationStatus {
 // empty). Native Ensure instead joins the existing declaration. After eviction,
 // callers must repeat overrides because the local identity has been removed.
 type CreateOptions struct {
+	PathMappings  []model.PathMapping
+	SyncPaths     []string
 	Env           map[string]string
 	EnvFiles      map[string]string
 	EnvFrom       []string

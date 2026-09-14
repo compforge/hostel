@@ -660,6 +660,7 @@ func (m *Manager) persistBed(ctx context.Context, b *managedBed, trigger string)
 		if !ok {
 			meta = bedMeta{Version: 1, BedID: b.Name, CreatedAt: b.Spec().CreatedAt, Sync: b.Spec().Sync}
 		}
+		meta.SyncPaths = b.Spec().SyncPaths
 		meta.Generation++
 		// Flush counters before packing so they travel with the snapshot.
 		// LastPersistMs necessarily lags one persist behind because this

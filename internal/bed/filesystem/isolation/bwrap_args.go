@@ -15,6 +15,7 @@
 package isolation
 
 import (
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 )
@@ -61,7 +62,7 @@ const carrierSoftwareRoot = "/usr/local"
 //
 // maskPaths are host paths that exist. Environment ownership lives in bed's
 // process-env builder, so isolation mechanisms never inherit or filter it.
-func buildBwrapArgs(workspaceRoot, bedHome, workspace string, projections []bedfs.PathProjection, cwd string, maskPaths []string) []string {
+func buildBwrapArgs(workspaceRoot, bedHome, workspace string, projections []bedfs.PathProjection, cwd string, maskPaths []string, mappings []model.PathMapping) []string {
 	// Bed policy owns this mount order: mask siblings and credentials before
 	// exposing the selected data roots. The host mechanism only encodes the plan.
 	mounts := []hostfs.Mount{
@@ -81,6 +82,18 @@ func buildBwrapArgs(workspaceRoot, bedHome, workspace string, projections []bedf
 		hostfs.Mount{Kind: hostfs.Bind, Source: bedHome, Target: bwrapBedHomeMountPoint},
 		hostfs.Mount{Kind: hostfs.Bind, Source: workspace, Target: bedfs.WorkspacePath},
 	)
+	for _, m := range mappings {
+		kind := hostfs.Bind
+		if m.ReadOnly {
+			kind = hostfs.ReadOnlyBind
+			// /usr/local is otherwise rebound writable for shared software installs.
+			// Protect the carrier spelling too, or the process could bypass ReadOnly.
+			if model.PathsOverlap(m.HostPath, carrierSoftwareRoot) {
+				mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: m.HostPath, Target: m.HostPath})
+			}
+		}
+		mounts = append(mounts, hostfs.Mount{Kind: kind, Source: m.HostPath, Target: m.BedPath})
+	}
 	for _, p := range projections {
 		mounts = append(mounts, hostfs.Mount{Kind: hostfs.Bind, Source: p.CarrierPath(bedHome), Target: p.ProcessPath})
 	}

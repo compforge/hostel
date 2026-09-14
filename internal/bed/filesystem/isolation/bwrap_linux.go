@@ -147,7 +147,7 @@ func bwrapSmoke(path, workspaceRoot string, masks []string, projections []bedfs.
 		}
 	}
 
-	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, projections, bedfs.WorkspacePath, masks)
+	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, projections, bedfs.WorkspacePath, masks, nil)
 	cmd := exec.Command(path, append(argv, "true")...)
 	report := hostfacts.RunExecProbe(cmd)
 	if report.Error != "" {
@@ -171,7 +171,7 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err != nil {
 		return err
 	}
-	argv := buildBwrapArgs(b.root, fs.Home(), fs.Workspace(), b.projections, processCwd, b.maskPaths)
+	argv := buildBwrapArgs(b.root, fs.Home(), fs.Workspace(), b.projections, processCwd, b.maskPaths, fs.PathMappings())
 	userArgs := cmd.Args
 	cmd.Args = make([]string, 0, len(argv)+len(userArgs)+1)
 	cmd.Args = append(cmd.Args, b.path)

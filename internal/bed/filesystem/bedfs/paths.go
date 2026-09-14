@@ -36,12 +36,13 @@ import (
 //
 // Immutable value; safe to copy.
 type paths struct {
-	home string // bed_home carrier dir ({bed dir}/data) — the bed's "/"
+	prefix string
+	home   string // bed_home carrier dir ({bed dir}/data) — the bed's "/"
 }
 
 // newPaths builds the converter for one bed, anchored at bed_home.
 func newPaths(home string) paths {
-	return paths{home: filepath.Clean(home)}
+	return paths{home: filepath.Clean(home), prefix: "/"}
 }
 
 // Home is the bed_home host dir this converter is anchored at.
@@ -73,6 +74,13 @@ func (p paths) FromClient(cp string) (string, error) {
 	}
 	// Normalize under a fake root to neutralize any ".." segments.
 	clean := path.Clean("/" + strings.TrimPrefix(rel, "/"))
+	if p.prefix != "" {
+		rel, ok := relativeTo(p.prefix, clean)
+		if !ok {
+			return "", fmt.Errorf("bedfs: path outside mapping")
+		}
+		clean = rel
+	}
 	full := filepath.Join(p.home, filepath.FromSlash(clean))
 	if r, err := filepath.Rel(p.home, full); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("bedfs: path %q escapes the bed", cp)
@@ -86,7 +94,10 @@ func (p paths) FromClient(cp string) (string, error) {
 func (p paths) ToClient(host string) string {
 	rel, err := filepath.Rel(p.home, host)
 	if err != nil || rel == "." {
+		if p.prefix != "" {
+			return p.prefix
+		}
 		return "/"
 	}
-	return "/" + filepath.ToSlash(rel)
+	return path.Join("/", p.prefix, filepath.ToSlash(rel))
 }

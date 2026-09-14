@@ -9,8 +9,6 @@ import (
 
 // Config controls selection without changing host observations or BedFS ownership.
 type Config struct {
-	// ProjectedPaths adds BedFS-to-process mappings alongside the built-in /workspace.
-	ProjectedPaths       string
 	DormReadFallbackRoot string
 	Level                string
 	Bwrap                feature.Policy
@@ -26,7 +24,6 @@ type Config struct {
 
 // Options preserves explicit Auto independently of omitted configuration.
 type Options struct {
-	ProjectedPaths       *string
 	DormReadFallbackRoot *string
 	Bwrap                *feature.Policy
 	Landlock             *feature.Policy

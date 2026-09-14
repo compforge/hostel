@@ -181,7 +181,7 @@ Persist 顺序固定为 **pack → snapshot manifest → head**，所以读者�
 
 #### 全量 tar 布局
 
-`tar` 不做 CDC 或跨 checkpoint 复用：每次 Persist 都重新遍历 bed 目录，只保留 `meta.json` 与 `HOSTEL_PERSISTED_PATHS` 选择的 BedFS 子树，生成完整 tar.gz 到临时文件，然后用一次 PUT 原子替换固定 key。即使内容没有变化，也会完成一次全量打包和上传；相应地，一张 bed 始终只有一个远端对象，不产生历史 manifest、chunk 或 pack。
+`tar` 不做 CDC 或跨 checkpoint 复用：每次 Persist 都重新遍历 bed 目录，只保留 `meta.json` 与 `Bed.Spec.SyncPaths` 选择的 BedFS 子树，生成完整 tar.gz 到临时文件，然后用一次 PUT 原子替换固定 key。即使内容没有变化，也会完成一次全量打包和上传；相应地，一张 bed 始终只有一个远端对象，不产生历史 manifest、chunk 或 pack。
 
 ```text
 <prefix>/
@@ -269,7 +269,13 @@ noop 只是 `Persist/Restore/Stat/Delete` 的空实现，不改变 lifecycle：B
     <other>/   # 运行期数据，不跨 carrier 恢复
 ```
 
-**默认快照内容 = `meta.json + data/workspace/**`**：`meta.json` 始终保存；BedFS 数据由逗号分隔的 `HOSTEL_PERSISTED_PATHS`（默认 `/workspace`）选择，可在确有需要时加入更多绝对非根路径。新增任意绝对路径或 projection 不会自动扩大耐久性与对象存储同步量。
+**默认快照内容 = `meta.json + data/workspace/**`**：`meta.json` 始终保存；BedFS 数据由 `Bed.Spec.SyncPaths` 选择，只同步默认 `/ → bed_home` 映射中的绝对非根路径。新 Bed 未指定该字段时默认 `[/workspace]`，显式 `[]` 只保存元数据；新增路径或 PathMapping 不会扩大同步范围。
+
+同步范围是 Bed 的不可变数据契约。共享 Store 在每次 Persist 时接收该 Bed 的 SyncPaths，所有快照格式和 auto 阈值判断使用同一份过滤规则，不在共享 Store 上切换配置。`sync_paths` 随 `meta.json` 进入快照；恢复时先采用快照声明，再准备文件系统和进程，调用方显式声明与快照冲突则初始化失败。
+
+`path_mappings` 与 `sync_paths` 都保存在本地身份记录中，以便重启恢复。HostPath 不可移植，不进入远端快照；跨实例恢复由调用方重新声明映射。额外映射的数据由 PVC 或其他存储方负责持久化，不能与 SyncPaths 交叉。
+
+重复创建省略路径字段表示复用已有声明，显式字段必须与已有声明一致。路径配置不再有实例级 env、CLI 或默认模板入口；调用方在创建 Bed 时提交自己的模板。
 
 `meta.json` 位于 BedFS 根之外，不属于结构化 file API 的主映射；显式配置的 Dorm 只读根
 回退另见 [filesystem.md](filesystem.md)。suite 的普通路径视图

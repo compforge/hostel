@@ -57,21 +57,15 @@ type Auto struct {
 	tar               *tarStore
 	restic            *resticStore
 	packFileThreshold int
-	filter            snapshotFilter
 }
 
-func newAutoStore(obj objects, prefix string, packFileThreshold int, filters ...snapshotFilter) *Auto {
-	filter := defaultSnapshotFilter()
-	if len(filters) > 0 {
-		filter = filters[0]
-	}
+func newAutoStore(obj objects, prefix string, packFileThreshold int) *Auto {
 	return &Auto{
 		kind:              KindAuto,
-		cas:               newCASStore(obj, prefix, filter),
-		pack:              newPackStore(obj, prefix, filter),
-		tar:               newTarStore(obj, prefix, filter),
+		cas:               newCASStore(obj, prefix),
+		pack:              newPackStore(obj, prefix),
+		tar:               newTarStore(obj, prefix),
 		packFileThreshold: packFileThreshold,
-		filter:            filter,
 	}
 }
 
@@ -159,7 +153,11 @@ func (s *Auto) Restore(ctx context.Context, bedID, dir string) error {
 	return state.selected.store.Restore(ctx, bedID, dir)
 }
 
-func (s *Auto) Persist(ctx context.Context, bedID, dir string, generation int64) error {
+func (s *Auto) Persist(ctx context.Context, bedID, dir string, generation int64, syncPaths []string) error {
+	filter, err := newSnapshotFilter(syncPaths)
+	if err != nil {
+		return err
+	}
 	state, err := s.inspect(ctx, bedID)
 	if err != nil {
 		return err
@@ -177,7 +175,7 @@ func (s *Auto) Persist(ctx context.Context, bedID, dir string, generation int64)
 		target = state.selected.routedBackend
 	}
 	if s.kind == KindAuto && state.selected != nil && state.selected.layout == layoutCAS {
-		usePack, err := exceedsSnapshotFileThreshold(dir, s.packFileThreshold, s.filter)
+		usePack, err := exceedsSnapshotFileThreshold(dir, s.packFileThreshold, filter)
 		if err != nil {
 			return fmt.Errorf("store: persist %s: count snapshot files: %w", bedID, err)
 		}
@@ -195,7 +193,7 @@ func (s *Auto) Persist(ctx context.Context, bedID, dir string, generation int64)
 	case KindTar:
 		target = routedBackend{layout: layoutTar, store: s.tar}
 	}
-	return target.store.Persist(ctx, bedID, dir, generation)
+	return target.store.Persist(ctx, bedID, dir, generation, syncPaths)
 }
 
 func (s *Auto) Delete(ctx context.Context, bedID string) error {
@@ -253,12 +251,8 @@ func exceedsSnapshotFileThreshold(root string, threshold int, filters ...snapsho
 
 // NewAuto assembles snapshot layouts over one shared backend. Explicit kinds
 // choose subsequent writes while all layouts remain readable and purgeable.
-func NewAuto(obj objects, prefix string, threshold int, paths []string, restic *Restic) (*Auto, error) {
-	filter, err := newSnapshotFilter(paths)
-	if err != nil {
-		return nil, err
-	}
-	s := newAutoStore(obj, prefix, threshold, filter)
-	s.restic = &resticStore{obj: obj, prefix: prefix, command: restic, filter: filter}
+func NewAuto(obj objects, prefix string, threshold int, restic *Restic) (*Auto, error) {
+	s := newAutoStore(obj, prefix, threshold)
+	s.restic = &resticStore{obj: obj, prefix: prefix, command: restic}
 	return s, nil
 }
