@@ -27,6 +27,7 @@ import (
 	"github.com/qiankunli/go-stdx/filepathx"
 	"github.com/qiankunli/hostel/internal/amenity"
 	model "github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/configuration"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
@@ -42,6 +43,8 @@ import (
 
 // Manager owns the set of beds and their lifecycle. Safe for concurrent use.
 type Manager struct {
+	configurations      *configuration.Manager
+	configurationConfig configuration.Config
 	ports               *hostnetwork.PortManager
 	services            *service.Manager
 	serviceStatusMu     sync.Mutex
@@ -186,9 +189,15 @@ func NewManager(host hostfacts.Snapshot, root, defaultBed, shellPath string, iso
 	for _, option := range opts {
 		option(m)
 	}
+	configurations, configErr := configuration.NewManager(m.configurationConfig)
+	if configErr != nil {
+		return nil, configErr
+	}
+	m.configurations = configurations
 	if m.services == nil {
 		m.services = service.NewManager(nil, "", m.servicesChanged)
 	}
+	m.services.SetConfigurationManager(configurations)
 	m.files = filesystem.NewManager(iso, m.owners.Filesystem)
 	m.executorManager = executor.NewManager(m.executorFactory, m.owners.Executor)
 	m.resourceManager = resource.NewManager(m.resources, m.owners.Resource)

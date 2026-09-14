@@ -190,7 +190,8 @@ Configuration restrictions exercise selection; they do not prove kernel permissi
 rejection or failure halfway through allocation. Keep real restricted-container
 cases alongside these deterministic tests. See [configuration design](../../docs/configuration.md).
 
-Status schema 4 separates `healthz.isolation` (requested/effective room profile) from
+Status schema 5 groups boot-time host facts under `host.fact` and managed port
+allocations under `host.status.ports`. It separates `healthz.isolation` (requested/effective room profile) from
 `/v1/status.components.filesystem` (shared/confined/private). Filesystem assertions
 must use the latter: a degraded room profile may retain a private file view.
 These cases require an explicit E2E run; compile-only validation is not execution evidence.

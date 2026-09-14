@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	model "github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/configuration"
 	"log"
 	"maps"
 	"path/filepath"
@@ -168,10 +169,13 @@ func (m *Manager) beginInitialization(
 	id string,
 	options CreateOptions,
 ) (*bedInitialization, *managedBed, error) {
-	if err := validateEnv("bed", options.Env); err != nil {
+	if err := configuration.Validate(options.configuration()); err != nil {
 		return nil, nil, err
 	}
 	options.Env = maps.Clone(options.Env)
+	options.EnvFiles = maps.Clone(options.EnvFiles)
+	options.EnvFrom = append([]string(nil), options.EnvFrom...)
+	options.EnvValueFrom = maps.Clone(options.EnvValueFrom)
 	if err := m.Start(ctx); err != nil {
 		return nil, nil, err
 	}
@@ -239,7 +243,7 @@ func (m *Manager) beginInitialization(
 			checkBedSync(requestedSync, selected, actual.Sync),
 			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
 			checkServices(options, actual.Services),
-			checkBedEnv(options, actual.Env),
+			checkBedConfiguration(options, actual),
 		)
 	}
 	if current, ok := m.initializations[id]; ok && current.snapshot().Phase == PhaseInitializing {
@@ -249,7 +253,7 @@ func (m *Manager) beginInitialization(
 			checkBedSync(requestedSync, selected, actual.Sync),
 			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
 			checkServices(options, actual.Services),
-			checkBedEnv(options, actual.Env),
+			checkBedConfiguration(options, actual),
 		)
 	}
 	if m.retirements[id] != nil {
@@ -262,7 +266,7 @@ func (m *Manager) beginInitialization(
 	}
 	if local := m.localIdentities[id]; local != nil {
 		actual := local.bed.Spec()
-		if err := errors.Join(checkServices(options, actual.Services), checkBedEnv(options, actual.Env)); err != nil {
+		if err := errors.Join(checkServices(options, actual.Services), checkBedConfiguration(options, actual)); err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
@@ -273,6 +277,7 @@ func (m *Manager) beginInitialization(
 		}
 		options.Services = resolved
 		options.Env = actual.Env
+		options.EnvFiles, options.EnvFrom, options.EnvValueFrom = actual.EnvFiles, actual.EnvFrom, actual.EnvValueFrom
 	}
 	// A new request retries a failed initialization. Its previous status remains
 	// observable until this explicit desired-state signal arrives.
@@ -303,6 +308,7 @@ func (m *Manager) beginInitialization(
 	spec := model.Spec{Dir: filepath.Join(m.root, id), Sync: selected, CreatedAt: localMeta.CreatedAt, LocalPresent: localPresent, LocalGeneration: localMeta.Generation}
 	spec.Services = options.Services
 	spec.Env = options.Env
+	spec.EnvFiles, spec.EnvFrom, spec.EnvValueFrom = options.EnvFiles, options.EnvFrom, options.EnvValueFrom
 	if options.NetworkPolicy != nil {
 		spec.NetworkPolicy = network.ToModel(*options.NetworkPolicy)
 	}
@@ -542,6 +548,9 @@ func residentInitializationStatus(resident *managedBed) InitializationStatus {
 // callers must repeat overrides because the local identity has been removed.
 type CreateOptions struct {
 	Env           map[string]string
+	EnvFiles      map[string]string
+	EnvFrom       []string
+	EnvValueFrom  map[string]model.ConfigurationKeyRef
 	Services      []model.ServiceSpec
 	lookup        bool // native Ensure joins desired state; an explicit create compares it
 	Sync          string

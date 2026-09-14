@@ -3,6 +3,7 @@ package config
 import (
 	"time"
 
+	"github.com/qiankunli/hostel/internal/bed/configuration"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem"
 	"github.com/qiankunli/hostel/internal/bed/network"
@@ -12,22 +13,24 @@ import (
 )
 
 type BedConfig struct {
-	RoomType   string
-	Filesystem filesystem.Config
-	Network    network.Config
-	Resource   resource.Config
-	Privilege  privilege.Config
-	Executor   executor.Config
-	Store      store.Config
+	Configuration configuration.Config
+	RoomType      string
+	Filesystem    filesystem.Config
+	Network       network.Config
+	Resource      resource.Config
+	Privilege     privilege.Config
+	Executor      executor.Config
+	Store         store.Config
 }
 type BedOptions struct {
-	RoomType   *string
-	Filesystem filesystem.Options
-	Network    network.Options
-	Resource   resource.Options
-	Privilege  privilege.Options
-	Executor   executor.Options
-	Store      store.Options
+	ConfigurationSources *map[string]string
+	RoomType             *string
+	Filesystem           filesystem.Options
+	Network              network.Options
+	Resource             resource.Options
+	Privilege            privilege.Options
+	Executor             executor.Options
+	Store                store.Options
 }
 
 // Options contains only explicitly supplied values. Pointer presence, not the
@@ -61,6 +64,7 @@ type Options struct {
 }
 
 func (o Options) apply(c *Config) {
+	apply(&c.Bed.Configuration.Sources, o.Bed.ConfigurationSources)
 	apply(&c.Bed.RoomType, o.Bed.RoomType)
 	apply(&c.ServiceAdvertiseHost, o.ServiceAdvertiseHost)
 	apply(&c.PortRangeStart, o.PortRangeStart)

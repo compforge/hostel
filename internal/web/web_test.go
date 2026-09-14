@@ -141,12 +141,23 @@ func TestStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode diagnostics: %v", err)
 	}
-	if body["schema_version"] != float64(4) {
+	if body["schema_version"] != float64(5) {
 		t.Fatalf("diagnostics schema_version = %v", body["schema_version"])
 	}
 	components, _ := body["components"].(map[string]any)
 	isolationFacts, _ := components["filesystem"].(map[string]any)
-	system, _ := body["host"].(map[string]any)
+	host, _ := body["host"].(map[string]any)
+	system, _ := host["fact"].(map[string]any)
+	hostStatus, _ := host["status"].(map[string]any)
+	if _, ok := hostStatus["ports"].([]any); !ok {
+		t.Fatalf("host.status.ports must be an array: %v", hostStatus)
+	}
+	if _, exists := body["ports"]; exists {
+		t.Fatal("ports duplicated at top level")
+	}
+	if len(host) != 2 {
+		t.Fatalf("host must contain only fact and status: %v", host)
+	}
 	if _, exists := isolationFacts["system"]; exists {
 		t.Fatal("host facts duplicated under filesystem component")
 	}

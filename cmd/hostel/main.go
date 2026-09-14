@@ -150,6 +150,7 @@ func main() {
 	mgr, err := bed.NewManager(host, cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
 		bed.WithRuntimeSelection(selection),
 		bed.WithServices(ports, cfg.ServiceAdvertiseHost),
+		bed.WithConfiguration(cfg.Bed.Configuration),
 	)
 	if err != nil {
 		log.Fatalf("hostel: init bed manager: %v", err)

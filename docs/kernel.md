@@ -115,8 +115,11 @@ Host 按能力分包，不设置统一 HostManager，也不预设调用方是 Be
 Host 不导入 Bed/Amenity 模型，不解释 `/workspace`、房型或 Tenant。BedFS 路径语义、
 房型与降级、BedUser/UID 租约、Bed → Executor 资源层次和准入仍由领域负责。
 PRoot/pathshim 提供路径视图，不因此成为安全边界。Host 返回真实结果和资源句柄，
-领域决定是否允许降级并发布 component status。实例聚合器将 Host 的只读启动事实放入
-`/v1/status.host`，与 `components`、`amenities` 并列；Host 不组装接口或业务 readiness。
+领域决定是否允许降级并发布 component status。实例聚合器将 Host 分为 `host.fact` 与
+`host.status`：前者保留只读启动事实，后者组合资源管理者维护的动态状态（如端口分配）。
+查询只读快照，不临时探测；启动事实不保证机制当前可用。Host 不组装接口或业务 readiness。
+`host.status` 是宿主侧动态资源分配与回收现状的聚合入口，按实际需要纳入各资源管理者的记录，
+不预建空资源类型，也不充当历史事件日志。记录保留资源归属与实际状态，不由此推导业务就绪。
 
 资源按具体分配清理，关闭旧句柄不能影响同名的新分配；部分失败保留原清理 owner，成功后才允许复用。
 提取通用机制不自动让 Amenity 获得隔离，设施仍自行选择和组合所需能力。

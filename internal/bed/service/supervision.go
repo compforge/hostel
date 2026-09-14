@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"maps"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -104,19 +102,9 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 	}
 	m.update(g, r, func(s *Status) { s.Phase = "starting"; s.Endpoint = ""; s.Listener = nil })
 	spec := r.spec
-	env := maps.Clone(spec.Env)
-	if env == nil {
-		env = make(map[string]string)
-	}
-	for k, file := range spec.EnvFiles {
-		value, err := os.ReadFile(file)
-		if err != nil {
-			return false, outcome, fmt.Errorf("credential source unavailable for %s", k)
-		}
-		if len(value) > 65536 || strings.ContainsRune(string(value), 0) {
-			return false, outcome, fmt.Errorf("invalid credential value for %s", k)
-		}
-		env[k] = strings.TrimSuffix(string(value), "\n")
+	env, err := m.configurations.Resolve(spec.Configuration())
+	if err != nil {
+		return false, outcome, err
 	}
 	var allocation *hostnetwork.PortAllocation
 	var scope, host, address, token string
@@ -125,6 +113,9 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		auth := spec.HTTP.Authentication
 		switch auth.TokenSource {
 		case bed.TokenSourceGenerated:
+			if _, exists := env[auth.TokenEnv]; exists {
+				return false, outcome, fmt.Errorf("service %s generated token conflicts with resolved configuration", spec.Name)
+			}
 			token = randx.Hex(32)
 			env[auth.TokenEnv] = token
 		case bed.TokenSourceEnvironment:

@@ -15,6 +15,7 @@ import (
 	"github.com/qiankunli/go-stdx/osx"
 
 	model "github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/configuration"
 )
 
 // A local identity owns the shared Bed even while it has no resident runtime. Renaming its data
@@ -91,10 +92,11 @@ func (m *Manager) recoverLocalIdentities() error {
 					return fmt.Errorf("read bed %s identity: %w", local.bed.Name, err)
 				}
 				id = record.ID
-				if err := validateEnv("bed", record.Env); err != nil {
+				if err := configuration.Validate(model.Configuration{Env: record.Env, EnvFiles: record.EnvFiles, EnvFrom: record.EnvFrom, EnvValueFrom: record.EnvValueFrom}); err != nil {
 					return fmt.Errorf("recover bed %s environment: %w", local.bed.Name, err)
 				}
 				spec.Env = record.Env
+				spec.EnvFiles, spec.EnvFrom, spec.EnvValueFrom = record.EnvFiles, record.EnvFrom, record.EnvValueFrom
 				spec.Services = record.Services
 			}
 			if !strings.HasPrefix(id, "bed-") || len(id) != 36 {
@@ -125,7 +127,7 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 		return err
 	}
 	spec := local.bed.Spec()
-	data, err := json.Marshal(localIdentityRecord{ID: local.bed.ID.String(), Env: spec.Env, Services: spec.Services})
+	data, err := json.Marshal(localIdentityRecord{ID: local.bed.ID.String(), Env: spec.Env, EnvFiles: spec.EnvFiles, EnvFrom: spec.EnvFrom, EnvValueFrom: spec.EnvValueFrom, Services: spec.Services})
 	if err != nil {
 		return err
 	}
@@ -133,9 +135,12 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 }
 
 type localIdentityRecord struct {
-	Env      map[string]string   `json:"env,omitempty"`
-	ID       string              `json:"id"`
-	Services []model.ServiceSpec `json:"services,omitempty"`
+	EnvFiles     map[string]string                    `json:"env_files,omitempty"`
+	EnvFrom      []string                             `json:"env_from,omitempty"`
+	EnvValueFrom map[string]model.ConfigurationKeyRef `json:"env_value_from,omitempty"`
+	Env          map[string]string                    `json:"env,omitempty"`
+	ID           string                               `json:"id"`
+	Services     []model.ServiceSpec                  `json:"services,omitempty"`
 }
 
 // waitForLocalCleanup only joins an active attempt. An idle/failed cleanup is

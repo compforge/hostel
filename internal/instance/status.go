@@ -25,15 +25,30 @@ func NewObserver(host facts.Snapshot, beds *manager.Manager, amenities *amenity.
 // Status separates host observations from domain and facility status.
 // Inventory contains summaries, never tenant details.
 type Status struct {
-	Ports         []hostnetwork.PortStatus `json:"ports"`
-	SchemaVersion int                      `json:"schema_version"`
-	Host          facts.SystemFacts        `json:"host"`
+	SchemaVersion int  `json:"schema_version"`
+	Host          Host `json:"host"`
 	manager.Status
 	Amenities map[string]amenity.Status `json:"amenities"`
 }
 
+// Host separates the immutable boot snapshot from live resource observations.
+// Neither branch performs probes during a status read.
+type Host struct {
+	Fact   facts.SystemFacts `json:"fact"`
+	Status HostStatus        `json:"status"`
+}
+
+type HostStatus struct {
+	// Ports contains Hostel-managed allocations, not every OS listener.
+	Ports []hostnetwork.PortStatus `json:"ports"`
+}
+
 func (o Observer) Status() Status {
-	return Status{SchemaVersion: 4, Host: o.host, Status: o.Beds.Status(), Amenities: o.Amenities.Status(), Ports: o.Beds.PortStatus()}
+	return Status{
+		SchemaVersion: 5,
+		Host:          Host{Fact: o.host, Status: HostStatus{Ports: o.Beds.PortStatus()}},
+		Status:        o.Beds.Status(), Amenities: o.Amenities.Status(),
+	}
 }
 
 // BedStatus uses the same component/amenity organization at unit granularity.

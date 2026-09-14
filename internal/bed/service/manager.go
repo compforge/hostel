@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/configuration"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
@@ -56,6 +57,7 @@ type Access struct {
 }
 type Manager struct {
 	bed.Noop
+	configurations  *configuration.Manager
 	ports           *hostnetwork.PortManager
 	advertise       string
 	mu              sync.Mutex
@@ -82,8 +84,12 @@ type record struct {
 }
 
 func NewManager(ports *hostnetwork.PortManager, advertise string, onChange func(*bed.Bed)) *Manager {
-	return &Manager{ports: ports, advertise: advertise, groups: make(map[*bed.Bed]*group), onChange: onChange, inspectListener: hostnetwork.InspectTCPListener}
+	configurations, _ := configuration.NewManager(configuration.Config{})
+	return &Manager{configurations: configurations, ports: ports, advertise: advertise, groups: make(map[*bed.Bed]*group), onChange: onChange, inspectListener: hostnetwork.InspectTCPListener}
 }
+
+// SetConfigurationManager binds the shared configuration domain before Start.
+func (m *Manager) SetConfigurationManager(c *configuration.Manager) { m.configurations = c }
 func (m *Manager) Resolve(specs []bed.ServiceSpec) ([]bed.ServiceSpec, error) {
 	resolved, err := Normalize(specs)
 	if err != nil {

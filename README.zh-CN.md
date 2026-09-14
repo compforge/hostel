@@ -81,7 +81,7 @@ Bed 的理想语义是独立执行空间，文件、进程、网络和资源相�
 网络 namespace 覆盖 Bed 命令、shell 和 Service，共享
 Chromium/MCP 的出站仍走 Carrier。资源记账不等于硬限额；PRoot/pathshim 改善路径体验，
 不提供安全边界。健康与能力接口分别披露实际机制、作用域和能力缺席原因。
-状态 schema 为 4：`isolation` 报告跨领域房型，`components.filesystem` 报告 shared/confined/private 文件等级；Bed Service 的运行阶段与 `ready` 分别报告。
+状态 schema 为 5：`host.fact` 报告启动时的宿主事实，`host.status.ports` 报告当前由 Hostel 管理的端口分配。`isolation` 报告跨领域房型，`components.filesystem` 报告 shared/confined/private 文件等级；Bed Service 的运行阶段与 `ready` 分别报告。
 完整模型见 [隔离设计](docs/isolation.md)，未完成项见 [backlog](docs/backlog.md)。
 
 ## amenity(共享设施)
