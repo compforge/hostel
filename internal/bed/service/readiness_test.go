@@ -90,7 +90,7 @@ func TestSharedHTTPServiceDegradesAfterReadyAndRestarts(t *testing.T) {
 	degraded.Store(true)
 	waitHTTPStatus(t, m, b, func(s Status) bool { return s.Listener != nil && s.Listener.State == hostnetwork.ListenerUnavailable })
 	status := m.Status(b)[0]
-	if status.Phase != "ready" || status.ExecutionID != first.ExecutionID || status.Restarts != 0 {
+	if status.Phase != "running" || !status.Ready || status.ExecutionID != first.ExecutionID || status.Restarts != 0 {
 		t.Fatalf("inspection failure killed service: %+v", status)
 	}
 	resp, err := http.Get(first.Endpoint + "/ready")
@@ -104,7 +104,7 @@ func TestSharedHTTPServiceDegradesAfterReadyAndRestarts(t *testing.T) {
 	if err := m.Restart(b, "web"); err != nil {
 		t.Fatal(err)
 	}
-	waitHTTPStatus(t, m, b, func(s Status) bool { return s.Phase == "ready" && s.ExecutionID != first.ExecutionID })
+	waitHTTPStatus(t, m, b, func(s Status) bool { return s.Phase == "running" && s.Ready && s.ExecutionID != first.ExecutionID })
 	second, err := m.Access(b, "web")
 	if err != nil {
 		t.Fatal(err)
@@ -198,6 +198,16 @@ func TestUnavailableInspectionStillRequiresHTTPReadiness(t *testing.T) {
 	if status.Endpoint != "" || !strings.Contains(status.Reason, "readiness timeout") {
 		t.Fatalf("status=%+v", status)
 	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if status.Ready || status.Phase != "failed" || len(runtime.processes) != 1 {
+		t.Fatalf("startup timeout changed lifecycle: %+v", status)
+	}
+	select {
+	case <-runtime.processes[0].Done():
+	default:
+		t.Fatal("startup timeout left the failed execution running")
+	}
 }
 
 func TestListenerAbsentWaitsRatherThanConflicts(t *testing.T) {
@@ -252,7 +262,8 @@ func TestExitDuringProbeDoesNotPublishOrRetryAsConflict(t *testing.T) {
 
 func waitHTTPStatus(t *testing.T, m *Manager, b *bed.Bed, predicate func(Status) bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	// A failed HTTP probe can consume two seconds after the one-second tick.
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if predicate(m.Status(b)[0]) {
 			return

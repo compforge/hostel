@@ -121,7 +121,7 @@ func TestExecutorLossRecoversDesiredServiceEvenWithNeverRestart(t *testing.T) {
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		status := m.Status(b)
-		if status[0].Phase == "ready" && status[0].ExecutionID != first.id {
+		if status[0].Phase == "running" && status[0].Ready && status[0].ExecutionID != first.id {
 			if status[0].ExecutorID == first.ExecutorID() || status[0].Restarts != 1 {
 				t.Fatalf("bad recovered ownership: %+v", status)
 			}
@@ -177,13 +177,13 @@ func TestBedScopedHTTPServiceWithUnavailableInspection(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := m.Status(b)[0]
-	if status.Phase != "ready" || status.Restarts != 0 || status.Endpoint == "" || status.Listener.State != hostnetwork.ListenerUnavailable {
+	if status.Phase != "running" || !status.Ready || status.Restarts != 0 || status.Endpoint == "" || status.Listener.State != hostnetwork.ListenerUnavailable {
 		t.Fatalf("scoped service status = %+v", status)
 	}
 	// Network scope is not reported as process ownership, including steady state.
 	time.Sleep(1100 * time.Millisecond)
 	current := m.Status(b)[0]
-	if current.Phase != "ready" || current.ExecutionID != status.ExecutionID {
+	if current.Phase != "running" || !current.Ready || current.ExecutionID != status.ExecutionID {
 		t.Fatalf("scoped service lost readiness: before=%+v after=%+v", status, current)
 	}
 }
@@ -205,5 +205,26 @@ func TestReleaseAndPrepareKeepsNewServiceGroup(t *testing.T) {
 	}
 	if !m.Ready(b) || m.group(b) == old {
 		t.Fatal("old cleanup changed replacement")
+	}
+}
+
+func TestReadinessIsIndependentFromRunningPhase(t *testing.T) {
+	for _, required := range []bool{false, true} {
+		m := NewManager(nil, "", nil)
+		g := &group{bed: bed.New("status", "", bed.Spec{}), changed: make(chan struct{})}
+		r := &record{spec: bed.ServiceSpec{Required: required}, status: Status{Phase: "running"}}
+		g.records = []*record{r}
+		ready, failed := groupReadiness(g)
+		if ready == required || failed != "" {
+			t.Fatalf("running unready service: required=%t ready=%t failed=%s", required, ready, failed)
+		}
+		m.update(g, r, func(s *Status) { s.Ready = true })
+		if ready, _ := groupReadiness(g); !ready {
+			t.Fatal("recovery did not restore readiness")
+		}
+		m.update(g, r, func(s *Status) { s.Phase = "stopping" })
+		if r.status.Ready {
+			t.Fatal("leaving running retained readiness")
+		}
 	}
 }

@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -42,6 +43,14 @@ func TestServiceManagementRoutesAndDeclarationConflict(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("GET %s: %d %s", path, w.Code, w.Body)
 		}
+	}
+	w = request(http.MethodGet, "/v1/beds/service-bed/services/worker", "")
+	var status struct {
+		Phase string `json:"phase"`
+		Ready bool   `json:"ready"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Phase != "running" || !status.Ready {
+		t.Fatalf("service lifecycle/readiness contract: %s %v", w.Body, err)
 	}
 	if !b.Status().LastActiveAt.Equal(before) {
 		t.Fatal("service diagnostics renewed activity")

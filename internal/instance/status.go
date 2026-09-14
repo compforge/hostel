@@ -33,7 +33,7 @@ type Status struct {
 }
 
 func (o Observer) Status() Status {
-	return Status{SchemaVersion: 3, Host: o.host, Status: o.Beds.Status(), Amenities: o.Amenities.Status(), Ports: o.Beds.PortStatus()}
+	return Status{SchemaVersion: 4, Host: o.host, Status: o.Beds.Status(), Amenities: o.Amenities.Status(), Ports: o.Beds.PortStatus()}
 }
 
 // BedStatus uses the same component/amenity organization at unit granularity.

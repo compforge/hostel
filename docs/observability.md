@@ -177,7 +177,7 @@ Bed 详情的 `status.lifecycle` 由 Bed Manager 提供；Tenant 状态由设施
 不复制进 Bed。Tenant Status 的字段跟随设施领域：浏览器就绪和 MCP 连接池不是同一种状态。
 接口不根据 Status 推导更强的隔离保证，也不执行生命周期 hook、探测或远端 I/O。状态读取只读取已发布的内存状态，不持有慢操作的协调锁；Tenant 存在不代表设施提供强制隔离。
 
-`GET /v1/status` 的 `schema_version` 为 `3`。`host` 报告 runtime、process、security_modules、
+`GET /v1/status` 的 `schema_version` 为 `4`。Bed Service 的 `phase` 表达运行阶段，独立的 `ready` 表达当前可用性；readiness 变化不终止运行实例。`host` 报告 runtime、process、security_modules、
 namespace_limits、kernel_features 与 ptrace 等启动事实；状态读取复用快照，不重新探测。
 `components.filesystem` 报告文件隔离和
 启动探测，`components.privilege` 报告 daemon/Bed 用户前置条件；Network、Executor、Store、

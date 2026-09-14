@@ -12,6 +12,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -36,6 +38,9 @@ func TestServiceHelperProcess(t *testing.T) {
 	}
 	_ = os.WriteFile("service-started", []byte(os.Getenv("BED_ID")), 0600)
 	_ = os.WriteFile("service-credential", []byte(os.Getenv("SERVICE_FILE_VALUE")), 0600)
+	var unavailable atomic.Bool
+	releaseTask := make(chan struct{})
+	var releaseOnce sync.Once
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+os.Getenv("SERVICE_TOKEN") {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -43,6 +48,28 @@ func TestServiceHelperProcess(t *testing.T) {
 		}
 		if r.URL.Path == "/exit" {
 			go func() { time.Sleep(10 * time.Millisecond); os.Exit(1) }()
+		}
+		switch r.URL.Path {
+		case "/unready":
+			unavailable.Store(true)
+		case "/recover":
+			unavailable.Store(false)
+		case "/ready":
+			if unavailable.Load() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+		case "/task":
+			_, _ = fmt.Fprintf(w, "started %d\n", os.Getpid())
+			w.(http.Flusher).Flush()
+			select {
+			case <-releaseTask:
+				_, _ = fmt.Fprintf(w, "completed %d\n", os.Getpid())
+			case <-r.Context().Done():
+			}
+			return
+		case "/release-task":
+			releaseOnce.Do(func() { close(releaseTask) })
 		}
 		_, _ = io.WriteString(w, "ready")
 	})}
@@ -176,7 +203,9 @@ func TestBedServiceRestartChangesIdentityAndToken(t *testing.T) {
 	if err := m.services.Restart(b.Bed, "main"); err != nil {
 		t.Fatal(err)
 	}
-	waitService(t, m, b, "main", func(s service.Status) bool { return s.Phase == "ready" && s.ExecutionID != old.ExecutionID })
+	waitService(t, m, b, "main", func(s service.Status) bool {
+		return s.Phase == "running" && s.Ready && s.ExecutionID != old.ExecutionID
+	})
 	current, _ := m.services.Access(b.Bed, "main")
 	if old.Token == current.Token {
 		t.Fatal("restarted service reused token")

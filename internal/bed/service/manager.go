@@ -34,9 +34,11 @@ type Runtime interface {
 	Network() (scope, host string, err error)
 }
 type Status struct {
-	Name        string                          `json:"name"`
-	Required    bool                            `json:"required"`
-	Phase       string                          `json:"phase"`
+	Name     string `json:"name"`
+	Required bool   `json:"required"`
+	Phase    string `json:"phase"`
+	// Ready is current availability, not a process-lifecycle phase.
+	Ready       bool                            `json:"ready"`
 	ExecutionID string                          `json:"execution_id,omitempty"`
 	ExecutorID  string                          `json:"executor_id,omitempty"`
 	Restarts    int                             `json:"restarts"`
@@ -143,7 +145,7 @@ func (m *Manager) PrepareBed(ctx context.Context, b *bed.Bed, runtime Runtime) e
 func groupReadiness(g *group) (bool, string) {
 	ready := !g.stopped
 	for _, r := range g.records {
-		if r.spec.Required && r.status.Phase != "ready" {
+		if r.spec.Required && !r.status.Ready {
 			ready = false
 			if r.status.Phase == "failed" || r.status.Phase == "stopped" {
 				return false, r.spec.Name
@@ -194,7 +196,7 @@ func (m *Manager) Access(b *bed.Bed, name string) (Access, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for _, r := range g.records {
-		if r.spec.Name == name && !g.stopped && r.status.Phase == "ready" && r.status.Endpoint != "" {
+		if r.spec.Name == name && !g.stopped && r.status.Ready && r.status.Endpoint != "" {
 			return Access{Endpoint: r.status.Endpoint, ExecutionID: r.status.ExecutionID, Token: r.token}, nil
 		}
 	}
@@ -221,16 +223,21 @@ func (m *Manager) Restart(b *bed.Bed, name string) error {
 	}
 	return fmt.Errorf("service not found")
 }
+
+// +rule=`Only a running Service can be ready. Leaving the execution lifecycle withdraws admission, but losing readiness never ends the execution.`
 func (m *Manager) update(g *group, r *record, fn func(*Status)) {
 	g.mu.Lock()
 	before := r.status
 	fn(&r.status)
+	if r.status.Phase != "running" {
+		r.status.Ready = false
+	}
 	after := r.status
 	close(g.changed)
 	g.changed = make(chan struct{})
 	g.mu.Unlock()
-	if before.Phase != after.Phase || before.ExecutionID != after.ExecutionID {
-		log.Printf("hostel service transition: bed=%s id=%s service=%s phase=%s execution=%s reason=%s", g.bed.Name, g.bed.ID, after.Name, after.Phase, after.ExecutionID, after.Reason)
+	if before.Phase != after.Phase || before.Ready != after.Ready || before.ExecutionID != after.ExecutionID {
+		log.Printf("hostel service transition: bed=%s id=%s service=%s phase=%s ready=%t execution=%s reason=%s", g.bed.Name, g.bed.ID, after.Name, after.Phase, after.Ready, after.ExecutionID, after.Reason)
 	}
 	if m.onChange != nil {
 		m.onChange(g.bed)

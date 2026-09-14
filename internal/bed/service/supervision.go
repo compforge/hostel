@@ -96,6 +96,7 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 	}
 }
 
+// +spec=`Readiness loss changes admission only: preserve the process, Execution ID, token, port allocations, forwarder and existing connections until this run actually ends.`
 func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, outcome executor.ProcessOutcome, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return false, outcome, err
@@ -173,7 +174,12 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		outcome = proc.Outcome()
 		m.update(g, r, func(s *Status) { s.Outcome = &outcome })
 	}()
-	m.update(g, r, func(s *Status) { s.ExecutionID = proc.ExecutionID(); s.ExecutorID = proc.ExecutorID(); s.Outcome = nil })
+	m.update(g, r, func(s *Status) {
+		s.Phase = "running"
+		s.ExecutionID = proc.ExecutionID()
+		s.ExecutorID = proc.ExecutorID()
+		s.Outcome = nil
+	})
 	startup, cancel := context.WithTimeout(ctx, time.Duration(spec.StartupSeconds)*time.Second)
 	defer cancel()
 	checkReadiness := m.readinessCheck(g, r, proc, address, token)
@@ -183,14 +189,14 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 			return false, proc.Outcome(), fmt.Errorf("process exited before readiness")
 		default:
 		}
-		ready := spec.HTTP == nil
+		result := readinessResult{Ready: spec.HTTP == nil}
 		if spec.HTTP != nil {
-			ready, err = checkReadiness(startup)
+			result, err = checkReadiness(startup)
 			if err != nil {
 				return false, outcome, err
 			}
 		}
-		if ready {
+		if result.Ready {
 			select {
 			case <-proc.Done():
 				return false, proc.Outcome(), fmt.Errorf("process exited before readiness")
@@ -198,6 +204,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 			}
 			break
 		}
+		m.update(g, r, func(s *Status) { s.Reason = result.Reason })
 		timer := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-startup.Done():
@@ -231,7 +238,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 	g.mu.Lock()
 	r.token = token
 	g.mu.Unlock()
-	m.update(g, r, func(s *Status) { s.Phase = "ready"; s.Endpoint = endpoint; s.Reason = "" })
+	m.update(g, r, func(s *Status) { s.Ready = true; s.Endpoint = endpoint; s.Reason = "" })
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -244,34 +251,44 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 			return false, proc.Outcome(), nil
 		case <-ticker.C:
 			if spec.HTTP != nil {
-				ready, err := checkReadiness(ctx)
+				result, err := checkReadiness(ctx)
 				if err != nil {
 					return false, outcome, err
 				}
-				if !ready {
-					return false, outcome, fmt.Errorf("service lost readiness")
+				// A completed probe must not republish an execution that stopped
+				// during the check. Only this loop owns readiness transitions.
+				select {
+				case <-ctx.Done():
+					return false, outcome, ctx.Err()
+				case <-proc.Done():
+					return false, proc.Outcome(), nil
+				default:
 				}
+				m.update(g, r, func(s *Status) { s.Ready = result.Ready; s.Reason = result.Reason })
 			}
 		}
 	}
 }
 
-func probeHTTP(ctx context.Context, address, path, token string) bool {
+func probeHTTP(ctx context.Context, address, path, token string) readinessResult {
 	select {
 	case probeSlots <- struct{}{}:
 		defer func() { <-probeSlots }()
 	case <-ctx.Done():
-		return false
+		return readinessResult{Reason: "ReadinessProbeUnavailable"}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+path, nil)
 	if err != nil {
-		return false
+		return readinessResult{Reason: "ReadinessProbeInvalid"}
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := readinessClient.Do(req)
 	if err != nil {
-		return false
+		return readinessResult{Reason: "ReadinessProbeFailed"}
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return readinessResult{Reason: fmt.Sprintf("ReadinessHTTPStatus%d", resp.StatusCode)}
+	}
+	return readinessResult{Ready: true}
 }
