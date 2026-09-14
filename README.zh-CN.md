@@ -70,25 +70,7 @@ docker run --rm -p 127.0.0.1:8872:8872 hostel:dev
 通过 `/healthz` 和 `/v1/status` 查看实际能力。房型受环境能力约束；共享 Chromium/MCP
 的出站仍使用 carrier 网络，按 bed 统计资源用量也不代表施加了 CPU 或内存硬限额。
 API 应置于可信访问边界内。执行恶意或不可信工作负载时，应使用具有相应隔离能力的 carrier，
-例如独占 VM 或 microVM。详见[隔离设计](docs/isolation.md)和[部署权限](docs/privilege.md)。
-
-## 深入使用
-
-通过 `./bin/hostel --help` 查看参数。Daemon 也支持 `HOSTEL_*` 环境变量，
-详见[启动配置](docs/configuration.md)。
-
-| 需要做什么 | 文档 |
-|---|---|
-| 管理 bed、就绪状态与保活 | [运行模型与生命周期](docs/kernel.md) |
-| 配置命令和服务的执行环境 | [Bed 配置](docs/bed-configuration.md) |
-| 运行托管服务 | [Bed Service](docs/bed-service.md) |
-| 理解路径与文件访问 | [文件系统](docs/filesystem.md) |
-| 保存和恢复工作区，与 S3 传输文件 | [Store](docs/store.md)、[文件传输](docs/transfers.md) |
-| 使用浏览器动作、CDP 或远端 MCP 工具 | [共享设施](docs/amenity.md)、[MCP](docs/mcp.md) |
-| 配置网络和容量 | [网络](docs/network.md)、[资源管理](docs/resource.md) |
-| 查看日志、Trace 与运行状态 | [可观测性](docs/observability.md) |
-| 验证二进制或容器镜像 | [端到端测试](tests/e2e/README.md) |
-| 了解尚未完成的能力 | [Backlog](docs/backlog.md) |
+例如独占 VM 或 microVM。
 
 ## 许可与致谢
 

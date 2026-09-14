@@ -75,26 +75,7 @@ Check `/healthz` and `/v1/status` for actual capabilities. Profiles depend on th
 host; shared Chromium/MCP traffic uses the carrier network, and per-bed resource
 accounting does not impose CPU or memory limits. Put the API behind a trusted
 access boundary. For hostile workloads, use an appropriately isolated carrier
-such as a dedicated VM or microVM. See [isolation](docs/isolation.md) and
-[deployment permissions](docs/privilege.md).
-
-## Learn more
-
-Run `./bin/hostel --help` for flags. Daemon settings also use `HOSTEL_*`
-environment variables; see [configuration](docs/configuration.md).
-
-| Task | Documentation |
-|---|---|
-| Manage beds, readiness and retention | [Runtime model and lifecycle](docs/kernel.md) |
-| Configure command and service environments | [Bed configuration](docs/bed-configuration.md) |
-| Run managed services | [Bed services](docs/bed-service.md) |
-| Understand paths and file access | [Filesystem](docs/filesystem.md) |
-| Save and restore workspaces; transfer files to S3 | [Store](docs/store.md), [transfers](docs/transfers.md) |
-| Use browser actions, CDP or remote MCP tools | [Shared facilities](docs/amenity.md), [MCP](docs/mcp.md) |
-| Configure networking and capacity | [Network](docs/network.md), [resources](docs/resource.md) |
-| Inspect logs, traces and runtime status | [Observability](docs/observability.md) |
-| Validate a binary or container image | [End-to-end tests](tests/e2e/README.md) |
-| Check remaining limitations | [Backlog](docs/backlog.md) |
+such as a dedicated VM or microVM.
 
 ## License and acknowledgements
 
