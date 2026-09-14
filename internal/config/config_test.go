@@ -28,8 +28,12 @@ func TestIsolationAndManagedServiceConfigContract(t *testing.T) {
 	// a host mechanism is deliberately tested in internal/isolation.
 	for _, mode := range []string{"dorm", "room", "suite", "auto"} {
 		c := mustLoad(t, []string{"-isolation", mode, "-workspace-root", "/var/lib/hostel"})
-		if c.Bed.Filesystem.Level != mode || c.WorkspaceRoot != "/var/lib/hostel" {
-			t.Fatalf("mode %q: isolation=%q root=%q", mode, c.Bed.Filesystem.Level, c.WorkspaceRoot)
+		if c.Bed.RoomType != mode || c.WorkspaceRoot != "/var/lib/hostel" {
+			t.Fatalf("mode %q: isolation=%q root=%q", mode, c.Bed.RoomType, c.WorkspaceRoot)
+		}
+		wantFiles := map[string]string{"dorm": "shared", "room": "confined", "suite": "private", "auto": "private"}[mode]
+		if c.Bed.Filesystem.Level != wantFiles {
+			t.Fatalf("profile %s maps to files %s, want %s", mode, c.Bed.Filesystem.Level, wantFiles)
 		}
 	}
 	// Managed services are optional and configured independently of isolation;

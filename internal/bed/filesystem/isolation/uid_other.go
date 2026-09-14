@@ -21,5 +21,5 @@ import hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 // newUID: uid isolation relies on Linux setuid/setgid + /proc caps. Report room
 // as unavailable elsewhere.
 func newUID(hostfacts.Snapshot, string) (Isolator, hostfacts.ProbeReport) {
-	return unavailable{name: "uid", lvl: Room}, hostfacts.ProbeReport{}
+	return unavailable{name: "uid", lvl: Confined}, hostfacts.ProbeReport{}
 }

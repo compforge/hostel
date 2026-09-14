@@ -79,7 +79,7 @@ func wrapRuntimeCommand(boundary Boundary, workspace workspaceBackend, cmd *exec
 // priority only after support is known. Helper packaging is therefore an image
 // concern rather than Hostel configuration.
 //
-// +spec=`Below suite, Hostel discovers pathshim and PRoot through PATH, probes every candidate whose prerequisites are satisfied, then resolves the process view in PRoot → pathshim → carrier order without changing the selected isolation level.`
+// +spec=`For shared/confined files, Hostel discovers pathshim and PRoot through PATH, probes every candidate whose prerequisites are satisfied, then resolves the process view in PRoot → pathshim → carrier order without changing the selected isolation level.`
 // +case:id=workspace_view_fallback,desc=`Vary helper discovery, ptrace, pathshim, and PRoot probe outcomes independently`,expect=`Diagnostics preserve discovery facts; PRoot wins when usable, pathshim is next, and carrier is the final fallback`
 func resolveWorkspaceView(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport) (workspaceBackend, WorkspaceViewReport) {
 	return resolveWorkspaceViewWithConfig(base, workspaceRoot, projections, ptraceProbe, probes, Config{})
@@ -137,6 +137,14 @@ func resolveWorkspaceViewWithConfig(base Boundary, workspaceRoot string, project
 		}
 	}
 
+	if reason := config.Excluded["proot"]; reason != "" && config.PRoot != feature.Required {
+		prootCandidate = nil
+		reasons = append(reasons, "proot combination: "+reason)
+	}
+	if reason := config.Excluded["pathshim"]; reason != "" && config.Pathshim != feature.Required {
+		pathshimCandidate = nil
+		reasons = append(reasons, "pathshim combination: "+reason)
+	}
 	if prootCandidate != nil && config.Pathshim != feature.Required {
 		log.Printf("isolation: workspace view selected mode=proot")
 		return prootCandidate, prootReport

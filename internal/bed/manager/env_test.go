@@ -31,7 +31,7 @@ import (
 
 func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 	root := t.TempDir()
-	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, nil)
+	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestManagerBedUserIsFixedAtConstruction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, nil, WithBedUser(user))
+	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, nil, WithBedUser(user))
 	if err != nil {
 		t.Fatal(err)
 	}

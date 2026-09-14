@@ -4,15 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"runtime"
 	"strconv"
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/hostel/internal/bed/executor"
+	"github.com/qiankunli/hostel/internal/bed/service"
 	"github.com/qiankunli/hostel/internal/bed/store"
 )
+
+// ProbeCleanupError prevents startup fallback from abandoning an allocation.
+type ProbeCleanupError struct{ Err error }
+
+func (e *ProbeCleanupError) Error() string { return "environment probe cleanup: " + e.Err.Error() }
+func (e *ProbeCleanupError) Unwrap() error { return e.Err }
 
 // ProbeEnvironment exercises the selected composition through the same Bed,
 // command and session entry points used by clients. Run before HTTP admission.
@@ -29,7 +35,9 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		retErr = errors.Join(retErr, m.Purge(cleanup, id))
+		if err := m.Purge(cleanup, id); err != nil {
+			retErr = errors.Join(retErr, &ProbeCleanupError{Err: err})
+		}
 	}()
 	select {
 	case <-ctx.Done():
@@ -54,10 +62,10 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 		" && test \"$(/usr/bin/id -g)\" = " + strconv.Itoa(b.environment.BedUser().GID())
 	if runtime.GOOS == "linux" {
 		capabilitySets := "Inh|Prm|Eff|Amb"
-		if os.Geteuid() == 0 {
+		if b.environment.BedUser().UID() == 0 {
 			capabilitySets += "|Bnd"
 		}
-		command += " && /usr/bin/awk '$1 == \"NoNewPrivs:\" { n=$2 } $1 ~ /^Cap(" + capabilitySets + "):/ { if ($2 != \"0000000000000000\") exit 1 } END { exit n == 1 ? 0 : 1 }' /proc/self/status"
+		command += " && /usr/bin/awk '$1 == \"NoNewPrivs:\" { n=$2 } $1 ~ /^Cap(" + capabilitySets + "):/ && $2 != \"0000000000000000\" { bad=1 } END { exit (bad || n != 1) }' /proc/self/status"
 	}
 	result, err := m.RunForeground(ctx, b, command, cwd, nil, 5*time.Second, nil)
 	if err != nil {
@@ -81,6 +89,33 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	}
 	if run.ExitCode != 0 {
 		return fmt.Errorf("isolation: combined shell probe exited %d", run.ExitCode)
+	}
+	// Exercise the Service process entry point too, without defining a hosted
+	// application or making a readiness/restart policy part of the probe.
+	p, err := (serviceRuntime{manager: m, bed: b}).Start(ctx, service.Launch{
+		Command:   []string{"/bin/sh", "-c", command + " && printf service > service-marker"},
+		Directory: "/workspace/.hostel-environment-probe",
+	})
+	if err != nil {
+		return fmt.Errorf("isolation: combined service probe: %w", err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := p.Stop(cleanup, time.Second); err != nil {
+			retErr = errors.Join(retErr, &ProbeCleanupError{Err: err})
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-p.Done():
+	}
+	if outcome := p.Outcome(); outcome.Kind != executor.ProcessExited || outcome.ExitCode != 0 {
+		return fmt.Errorf("isolation: combined service probe failed: %+v", outcome)
+	}
+	if _, err := b.BedFS().Stat("/workspace/.hostel-environment-probe/service-marker"); err != nil {
+		return fmt.Errorf("isolation: service/file view probe: %w", err)
 	}
 	return nil
 }

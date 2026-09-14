@@ -171,7 +171,7 @@ func newTransferTestServer(t *testing.T, fixture *transferS3Fixture) (*Server, *
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, stores)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, stores)
 	if err != nil {
 		t.Fatal(err)
 	}

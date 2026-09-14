@@ -69,7 +69,7 @@ func TestResourceAdmissionChecksSyncedIdleAndNewBeds(t *testing.T) {
 
 func TestResourceAdmissionAllowsUnsyncedIdleBed(t *testing.T) {
 	root := t.TempDir()
-	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
+	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestResourceAdmissionAllowsUnsyncedIdleBed(t *testing.T) {
 
 func TestEnsureKeepsSyncedIdleBedEligibleForAdmission(t *testing.T) {
 	root := t.TempDir()
-	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
+	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}

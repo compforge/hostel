@@ -26,18 +26,19 @@ func TestIsolationLevels(t *testing.T) {
 			if err != nil || result.Status != http.StatusOK {
 				t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
 			}
-			if health.Isolation.Requested != requested || health.Isolation.Level != health.Isolation.Effective {
+			files := c.filesystemStatus(t)
+			if health.Isolation.Requested != requested {
 				t.Fatalf("isolation resolution: %+v", health.Isolation)
 			}
 			if required[requested] && health.Isolation.Effective != requested {
-				t.Fatalf("required isolation %s degraded to %s (ceiling=%s mechanism=%s)", requested, health.Isolation.Effective, health.Isolation.Ceiling, health.Isolation.Mechanism)
+				t.Fatalf("required isolation %s degraded to %s (files=%+v)", requested, health.Isolation.Effective, files)
 			}
-			if health.WorkspaceMount != (health.Isolation.Effective == "suite") {
+			if health.WorkspaceMount != (files.Effective == "private") {
 				t.Fatalf("workspace_mount=%v for effective isolation %s", health.WorkspaceMount, health.Isolation.Effective)
 			}
-			t.Logf("requested=%s effective=%s ceiling=%s mechanism=%s", requested, health.Isolation.Effective, health.Isolation.Ceiling, health.Isolation.Mechanism)
+			t.Logf("requested=%s effective=%s files=%+v", requested, health.Isolation.Effective, files)
 			helperRequired := strings.TrimSpace(os.Getenv(pathshimEnv)) != "" || strings.TrimSpace(os.Getenv(prootEnv)) != ""
-			if helperRequired && health.Isolation.Effective != "suite" &&
+			if helperRequired && files.Effective != "private" &&
 				((health.WorkspaceView.Mode != "pathshim" && health.WorkspaceView.Mode != "proot") || !health.WorkspaceView.Available) {
 				t.Fatalf("required workspace view unavailable: %+v", health.WorkspaceView)
 			}
@@ -61,13 +62,13 @@ func TestIsolationLevels(t *testing.T) {
 				"timeout": 30_000,
 			})
 			must2xx(t, "cross-bed isolation probe", response)
-			switch health.Isolation.Effective {
-			case "dorm":
+			switch files.Effective {
+			case "shared":
 				assertCommandExit(t, read, 0)
 				if read.Stdout != "secret-a" {
 					t.Fatalf("dorm did not expose shared carrier path: stdout=%q stderr=%q", read.Stdout, read.Stderr)
 				}
-			case "room", "suite":
+			case "confined", "private":
 				if read.Result == nil || read.Result.Process.ExitCode == nil || *read.Result.Process.ExitCode == 0 {
 					t.Fatalf("%s allowed sibling workspace read: %+v stdout=%q stderr=%q", health.Isolation.Effective, read.Result, read.Stdout, read.Stderr)
 				}

@@ -56,7 +56,7 @@ func newBwrap(facts hostfacts.Snapshot, workspaceRoot string, projections []bedf
 	}
 	if path == "" {
 		report.Error = facts.BwrapLookupError
-		return unavailable{name: "bwrap", lvl: Suite}, report
+		return unavailable{name: "bwrap", lvl: Private}, report
 	}
 
 	// bwrap cannot mkdir the mount point inside the read-only root bind, so
@@ -89,7 +89,7 @@ func newBwrap(facts hostfacts.Snapshot, workspaceRoot string, projections []bedf
 			log.Printf("isolation: suite blocked despite unprivileged userns — AppArmor profile %q likely denies mount; "+
 				"grant the pod an AppArmor-unconfined annotation to reach suite (else degrading to a lower tier)", facts.AppArmorProfile)
 		}
-		return unavailable{name: "bwrap", lvl: Suite}, report
+		return unavailable{name: "bwrap", lvl: Private}, report
 	}
 	return &bwrap{
 		path:        path,
@@ -157,7 +157,7 @@ func bwrapSmoke(path, workspaceRoot string, masks []string, projections []bedfs.
 }
 
 func (b *bwrap) Name() string           { return "bwrap" }
-func (b *bwrap) Level() Level           { return Suite }
+func (b *bwrap) Level() Level           { return Private }
 func (b *bwrap) Available() bool        { return true } // only constructed when probe passed
 func (b *bwrap) WorkspaceMounted() bool { return true }
 func (b *bwrap) View(fs *bedfs.FS) bedfs.View {

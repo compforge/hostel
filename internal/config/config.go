@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/osx"
+	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/feature"
 )
@@ -118,7 +119,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs.StringVar(&c.OTLPTracesGRPCEndpoint, "otel-traces-grpc-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_GRPC_ENDPOINT", ""), "OTLP gRPC traces endpoint")
 	fs.StringVar(&c.OTLPTracesHTTPEndpoint, "otel-traces-http-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_HTTP_ENDPOINT", ""), "OTLP HTTP traces endpoint")
 	fs.StringVar(&c.WorkspaceRoot, "workspace-root", osx.EnvStr("HOSTEL_WORKSPACE_ROOT", "/workspace"), "parent dir for per-bed workspaces")
-	fs.StringVar(&c.Bed.Filesystem.Level, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "data-isolation level: dorm | room | suite | auto (auto=env ceiling)")
+	fs.StringVar(&c.Bed.RoomType, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "Bed room type: dorm | room | suite | auto (auto=highest available profile)")
 	fs.StringVar(&c.Bed.Filesystem.ProjectedPaths, "projected-paths", osx.EnvStr("HOSTEL_PROJECTED_PATHS", ""), "comma-separated additional BedFS-to-process path projections; /workspace=/workspace is built in")
 	fs.StringVar(&persistedPaths, "persisted-paths", osx.EnvStr("HOSTEL_PERSISTED_PATHS", "/workspace"), "comma-separated BedFS paths included in Store snapshots")
 	fs.StringVar(&c.Bed.Filesystem.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")
@@ -162,6 +163,23 @@ func Load(args []string, explicit Options) (*Config, error) {
 	c.PersistInterval = *persist
 	c.ChromiumIdleStop = *idleStop
 	explicit.apply(c)
+	c.Bed.Privilege.Explicit = explicit.Bed.Privilege.UID != nil || explicit.Bed.Privilege.GID != nil
+	for _, key := range []string{"HOSTEL_BED_UID", "HOSTEL_BED_GID"} {
+		if _, exists := os.LookupEnv(key); exists {
+			c.Bed.Privilege.Explicit = true
+		}
+	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "bed-uid" || f.Name == "bed-gid" {
+			c.Bed.Privilege.Explicit = true
+		}
+	})
+	room, roomErr := bed.ParseRoomType(c.Bed.RoomType)
+	if roomErr != nil {
+		return nil, roomErr
+	}
+	c.Bed.Filesystem = c.Bed.Filesystem.ForRoom(room)
+	c.Bed.Network = c.Bed.Network.ForRoom(room)
 	var paths []string
 	if explicit.Bed.Store.PersistedPaths != nil {
 		paths = *explicit.Bed.Store.PersistedPaths

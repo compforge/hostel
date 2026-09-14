@@ -34,12 +34,32 @@ func NewManager(policy BedUserReport, fixed BedUser, effectiveCaps uint64, statu
 }
 func (m *Manager) Status() Status {
 	report := m.report
+	report.Selection.Supported = append([]Level(nil), report.Selection.Supported...)
 	report.Requirements.Capabilities = append([]string(nil), report.Requirements.Capabilities...)
 	report.Requirements.MissingCapabilities = append([]string(nil), report.Requirements.MissingCapabilities...)
 	m.allocator.mu.Lock()
 	report.ReservedUsers = len(m.allocator.byBed)
 	m.allocator.mu.Unlock()
 	return report
+}
+
+// SetSelection binds the immutable startup choice before any Bed is prepared.
+func (m *Manager) SetSelection(s Selection) {
+	s.Supported = append([]Level(nil), s.Supported...)
+	m.report.Selection = s
+}
+
+func (m *Manager) LevelStatus() bed.LevelStatus {
+	if len(m.report.Selection.Supported) == 0 {
+		// An embedded manager without startup selection still participates in
+		// isolation grading; it must not advertise an unprobed dedicated user.
+		return bed.LevelStatus{Supported: []bed.Level{Shared}}
+	}
+	levels := make([]bed.Level, len(m.report.Selection.Supported))
+	for i, level := range m.report.Selection.Supported {
+		levels[i] = level
+	}
+	return bed.LevelStatus{Supported: levels}
 }
 
 func (m *Manager) Recover(_ context.Context, b *bed.Bed) error {

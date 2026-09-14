@@ -1,9 +1,11 @@
 package privilege
 
-// Config selects the fixed identity; UID isolation still allocates dedicated users.
+// Config supplies an explicit fixed-identity requirement. Without one, the
+// domain selects shared or dedicated identities from the profile and host facts.
 type Config struct {
-	UID int
-	GID int
+	UID      int
+	GID      int
+	Explicit bool
 }
 type Options struct {
 	UID *int

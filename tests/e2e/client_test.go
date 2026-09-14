@@ -46,13 +46,34 @@ type healthView struct {
 	} `json:"workspace_view"`
 	MaxBeds   int `json:"max_beds"`
 	Isolation struct {
-		Level     string `json:"level"`
-		Mechanism string `json:"mechanism"`
 		Requested string `json:"requested"`
 		Effective string `json:"effective"`
-		Ceiling   string `json:"ceiling"`
 	} `json:"isolation"`
 	Amenities map[string]string `json:"amenities"`
+}
+
+type filesystemView struct {
+	Requested string `json:"requested"`
+	Effective string `json:"effective"`
+	Ceiling   string `json:"ceiling"`
+	Mechanism string `json:"mechanism"`
+}
+
+func (c *apiClient) filesystemStatus(t *testing.T) filesystemView {
+	t.Helper()
+	var status struct {
+		Components struct {
+			Filesystem filesystemView `json:"filesystem"`
+		} `json:"components"`
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	response, err := c.json(ctx, "GET", "/v1/status", "", nil, &status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must2xx(t, "filesystem status", response)
+	return status.Components.Filesystem
 }
 
 type readinessView struct {

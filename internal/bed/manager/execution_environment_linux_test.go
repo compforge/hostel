@@ -15,7 +15,7 @@ import (
 type testFileBoundary struct{}
 
 func (testFileBoundary) Name() string                 { return "test-file" }
-func (testFileBoundary) Level() isolation.Level       { return isolation.Dorm }
+func (testFileBoundary) Level() isolation.Level       { return isolation.Shared }
 func (testFileBoundary) Available() bool              { return true }
 func (testFileBoundary) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
 func (testFileBoundary) WorkspaceMounted() bool       { return false }

@@ -15,7 +15,7 @@ import (
 func TestServiceManagementRoutesAndDeclarationConflict(t *testing.T) {
 	root := t.TempDir()
 	host := hostfacts.Collect()
-	m, err := bed.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "dorm", root), nil, 0, nil, bed.WithServices(nil, ""))
+	m, err := bed.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "shared", root), nil, 0, nil, bed.WithServices(nil, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

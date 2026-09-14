@@ -21,15 +21,14 @@ import (
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
-// newBwrap on non-Linux falls back to direct: bubblewrap is Linux-only, and
-// hostel's dev target (macOS) has no namespaces. Keeps `--isolation suite`
-// from failing to boot during local development.
+// Non-Linux cannot provide a bwrap boundary. The domain resolver may choose
+// direct, but that fallback must not be reported as bwrap being available.
 func newBwrap(facts hostfacts.Snapshot, _ string, _ []bedfs.PathProjection) (Isolator, hostfacts.ProbeReport) {
-	return direct{}, hostfacts.ProbeReport{
+	return unavailable{name: "bwrap", lvl: Private}, hostfacts.ProbeReport{
 		ConfiguredPath: "bwrap",
 		ResolvedPath:   facts.BwrapPath,
 		Exists:         facts.BwrapPath != "",
 		Executable:     facts.BwrapPath != "",
-		Error:          facts.BwrapLookupError,
+		Error:          "unsupported operating system",
 	}
 }

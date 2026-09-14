@@ -48,7 +48,7 @@ func newUID(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfacts
 	helper, helperErr := hostprivilege.ProcessCredentialHelper()
 	if helperErr != nil {
 		discovery := hostfacts.ProbeReport{ConfiguredPath: "setpriv", Error: "find binary: " + helperErr.Error()}
-		return unavailable{name: "uid", lvl: Room}, discovery
+		return unavailable{name: "uid", lvl: Confined}, discovery
 	}
 	discovery := hostfacts.DiscoverExecutable(helper)
 	discovery.ConfiguredPath = "setpriv"
@@ -56,7 +56,7 @@ func newUID(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfacts
 	// the resolver falls through to the next mechanism and logs honestly.
 	if miss := missingUIDCaps(facts); miss != "" {
 		discovery.Error = "missing capabilities: " + miss
-		return unavailable{name: "uid", lvl: Room}, discovery
+		return unavailable{name: "uid", lvl: Confined}, discovery
 	}
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		log.Printf("isolation: cannot create workspace root %s: %v", workspaceRoot, err)
@@ -66,7 +66,7 @@ func newUID(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfacts
 	report := hostfacts.WithExecutionProbe(discovery, uidSmoke(workspaceRoot))
 	if report.Failed() {
 		log.Printf("isolation: uid isolation caps present but unusable (%s)", report.Error)
-		return unavailable{name: "uid", lvl: Room}, report
+		return unavailable{name: "uid", lvl: Confined}, report
 	}
 	return &uidIso{}, report
 }
@@ -106,10 +106,10 @@ func uidSmoke(workspaceRoot string) hostfacts.ProbeReport {
 	if err := os.WriteFile(secret, []byte("s"), 0o600); err != nil {
 		return hostfacts.ProbeReport{Error: "smoke test: " + err.Error()}
 	}
-	if err := prepareUIDDir(own, uidBase); err != nil {
+	if err := prepareUIDDir(own, privilege.UIDMin); err != nil {
 		return hostfacts.ProbeReport{Error: "smoke test: prepare own: " + err.Error()}
 	}
-	if err := prepareUIDDir(sibling, uidBase+1); err != nil {
+	if err := prepareUIDDir(sibling, privilege.UIDMin+1); err != nil {
 		return hostfacts.ProbeReport{Error: "smoke test: prepare sibling: " + err.Error()}
 	}
 
@@ -117,7 +117,7 @@ func uidSmoke(workspaceRoot string) hostfacts.ProbeReport {
 	cmd := exec.Command("/bin/sh", "-c", script)
 	// Production chdirs before dropping UID; the probe must exercise the same order.
 	cmd.Dir = own
-	user, err := privilege.NewBedUser(uidBase, uidBase)
+	user, err := privilege.NewBedUser(privilege.UIDMin, privilege.UIDMin)
 	if err != nil {
 		return hostfacts.ProbeReport{Error: "smoke test: " + err.Error()}
 	}
@@ -140,7 +140,7 @@ func uidSmoke(workspaceRoot string) hostfacts.ProbeReport {
 }
 
 func (u *uidIso) Name() string                 { return "uid" }
-func (u *uidIso) Level() Level                 { return Room }
+func (u *uidIso) Level() Level                 { return Confined }
 func (u *uidIso) Available() bool              { return true } // only constructed when the smoke passed
 func (u *uidIso) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
 func (u *uidIso) WorkspaceMounted() bool       { return false }
@@ -172,4 +172,3 @@ func prepareUIDDir(dir string, uid int) error {
 	}
 	return user.Prepare(filesystem)
 }
-func (*uidIso) dedicatedBedUsers() bool { return true }

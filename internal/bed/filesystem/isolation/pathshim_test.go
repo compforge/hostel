@@ -35,12 +35,12 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	iso := New(hostfacts.Collect(), "dorm", root, WithPathProjections([]bedfs.PathProjection{projection}))
+	iso := New(hostfacts.Collect(), "shared", root, WithPathProjections([]bedfs.PathProjection{projection}))
 	report := iso.(Report).WorkspaceView()
 	if report.Mode != "pathshim" || !report.Available {
 		t.Fatalf("workspace view = %+v", report)
 	}
-	if iso.Name() != "direct" || iso.Level() != Dorm || iso.WorkspaceMounted() {
+	if iso.Name() != "direct" || iso.Level() != Shared || iso.WorkspaceMounted() {
 		t.Fatalf("pathshim changed isolation facts: %s/%s mount=%v", iso.Name(), iso.Level(), iso.WorkspaceMounted())
 	}
 
@@ -82,7 +82,7 @@ func TestPathshimProbeFailureFallsBackToCarrierView(t *testing.T) {
 	root := t.TempDir()
 	probe := fakePathshim(t, "passthrough", 1)
 	t.Setenv("PATH", filepath.Dir(probe))
-	iso := New(hostfacts.Collect(), "dorm", root)
+	iso := New(hostfacts.Collect(), "shared", root)
 	report := iso.(Report).WorkspaceView()
 	if report.Mode != "carrier" || report.Available || !strings.Contains(report.Reason, "passthrough") {
 		t.Fatalf("workspace view = %+v", report)
@@ -109,7 +109,7 @@ func TestPathshimRunsInsideSelectedRoomMechanism(t *testing.T) {
 type prefixRoom struct{}
 
 func (prefixRoom) Name() string                 { return "landlock" }
-func (prefixRoom) Level() Level                 { return Room }
+func (prefixRoom) Level() Level                 { return Confined }
 func (prefixRoom) Available() bool              { return true }
 func (prefixRoom) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
 func (prefixRoom) WorkspaceMounted() bool       { return false }

@@ -322,7 +322,7 @@ func (s *Server) healthz(c *gin.Context) {
 			"reason":    resources.Reason,
 		},
 		"resource_admission": resourceAdmissionView(s.mgr.ResourceAdmissionReport()),
-		"isolation":          isolationView(iso),
+		"isolation":          s.mgr.RoomStatus(),
 		"default_bed":        s.mgr.DefaultBedID(),
 		// Watermarks only — live luggage bytes require a scan; poll
 		// /v1/beds for those.
@@ -365,20 +365,6 @@ func resourceAdmissionView(report resource.AdmissionReport) gin.H {
 		view["sampled_at"] = report.SampledAt
 	}
 	return view
-}
-
-// isolationView reports the data-isolation resolution: the effective level, the
-// mechanism realizing it, the requested wish, and the environment ceiling
-// (docs/isolation.md). Falls back gracefully if the isolator predates the
-// Report interface.
-func isolationView(iso isolation.Isolator) gin.H {
-	v := gin.H{"level": iso.Level().String(), "mechanism": iso.Name()}
-	if r, ok := iso.(isolation.Report); ok {
-		v["requested"] = r.Requested().String()
-		v["effective"] = r.Effective().String()
-		v["ceiling"] = r.Ceiling().String()
-	}
-	return v
 }
 
 func workspaceView(iso isolation.Isolator) isolation.WorkspaceViewReport {

@@ -65,6 +65,9 @@ func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
 }
 func (m *Manager) Close(ctx context.Context) error { return m.StopTransfers(ctx, "") }
 
+// Persistence policy does not grade the Bed execution boundary.
+func (m *Manager) LevelStatus() bed.LevelStatus { return bed.LevelStatus{} }
+
 var _ bed.Component[Status] = (*Manager)(nil)
 
 func (m *Manager) PersistBed(ctx context.Context, b *bed.Bed, generation int64) error {

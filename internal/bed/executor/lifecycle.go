@@ -145,4 +145,8 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 func (m *Manager) Close(context.Context) error { return m.factory.Close() }
 func (m *Manager) Status() Status              { return Describe(m.factory) }
 
+// Executor backends apply the selected Environment; they do not add a separate
+// isolation guarantee merely by supervising processes.
+func (m *Manager) LevelStatus() bed.LevelStatus { return bed.LevelStatus{} }
+
 var _ bed.Component[Status] = (*Manager)(nil)

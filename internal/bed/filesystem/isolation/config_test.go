@@ -16,7 +16,7 @@ func TestOffFeaturesDoNotExecuteHelpers(t *testing.T) {
 	if err := os.WriteFile(helper, []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 1\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	config := Config{Level: "suite", Bwrap: feature.Off, Landlock: feature.Off, UID: feature.Off, PRoot: feature.Off, Pathshim: feature.Off}
+	config := Config{Level: "private", Bwrap: feature.Off, Landlock: feature.Off, UID: feature.Off, PRoot: feature.Off, Pathshim: feature.Off}
 	iso, err := Resolve(hostfacts.Snapshot{BwrapPath: helper}, config, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -44,8 +44,8 @@ func TestFeatureConflicts(t *testing.T) {
 		{Bwrap: feature.Required, UID: feature.Required},
 		{Landlock: feature.Required, UID: feature.Required},
 		{PRoot: feature.Required, Pathshim: feature.Required},
-		{Level: "room", Bwrap: feature.Required},
-		{Level: "dorm", UID: feature.Required},
+		{Level: "confined", Bwrap: feature.Required},
+		{Level: "shared", UID: feature.Required},
 		{Bwrap: feature.Required, Pathshim: feature.Required},
 		{Bwrap: "typo"},
 	} {
@@ -56,12 +56,12 @@ func TestFeatureConflicts(t *testing.T) {
 }
 
 func TestRequiredFeatureWinsOverAutomaticPriority(t *testing.T) {
-	candidates := []Boundary{fakeMech{"bwrap", Suite, true}, fakeMech{"landlock", Room, true}, fakeMech{"uid", Room, true}}
+	candidates := []Boundary{fakeMech{"bwrap", Private, true}, fakeMech{"landlock", Confined, true}, fakeMech{"uid", Confined, true}}
 	for _, tc := range []struct {
 		config Config
 		want   string
 	}{
-		{Config{Level: "room"}, "landlock"},
+		{Config{Level: "confined"}, "landlock"},
 		{Config{UID: feature.Required}, "uid"},
 		{Config{Landlock: feature.Required}, "landlock"},
 		{Config{Bwrap: feature.Off, Landlock: feature.Off}, "uid"},

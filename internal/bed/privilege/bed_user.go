@@ -69,6 +69,7 @@ type Requirements struct {
 
 // Status is the cached, operator-facing privilege configuration and verdict.
 type Status struct {
+	Selection              Selection     `json:"selection"`
 	ReservedUsers          int           `json:"reserved_users"`
 	PreconditionsSatisfied bool          `json:"preconditions_satisfied"`
 	Daemon                 Identity      `json:"daemon"`
@@ -152,8 +153,9 @@ func NewBedUser(uid, gid int) (BedUser, error) {
 	return BedUser{uid: uid, gid: gid}, nil
 }
 
-// CurrentBedUser preserves the embedding process identity. cmd/hostel replaces
-// it with the configured non-root user before it can initialize any Bed.
+// CurrentBedUser preserves the embedding process identity. Automatic startup
+// may use it as the shared baseline after verifying child credentials; an
+// inherited UID 0 is accepted only with empty capability sets and no_new_privs.
 func CurrentBedUser() BedUser {
 	return BedUser{uid: os.Geteuid(), gid: os.Getegid()}
 }

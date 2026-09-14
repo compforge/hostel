@@ -4,6 +4,8 @@
 
 **面向 AI agent 的 sandbox runtime**：在一台机器 / 一个容器内管理多个隔离执行单元（**bed**）。资源与文件 API 以 OpenSandbox 为设计基线，执行协议由 hostel 自己拥有。形态上 daemon 组装 **Web Server、Bed Manager、Amenity Manager**；Bed Manager 以唯一 Bed 模型组合驱动各领域 Manager。可单机跑（laptop/VM/CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
 
+Hostel 在一个 Carrier 内维护 Bed 的声明、工作负载和生命周期，按实际能力组合运行环境，并报告任务可用性与隔离保证；弱隔离环境下的功能兼容性与隔离能力随真实 case 的积累持续完善。
+
 - **做**：bed 生命周期、exec / file、共享多租服务（Chromium/Jupyter/MCP…）管理。
 - **不做**（留给上层调度系统）：实例调度、跨实例路由、计费配额。
 - 参考 OpenSandbox execd（Apache-2.0）净重写，非其 fork；归属见 `NOTICE`。设计见 `docs/kernel.md`，未交付项见 `docs/backlog.md`。
@@ -21,7 +23,7 @@
 - **bed_home（data 目录）**：BedFS 的宿主根 `{bed 目录}/data`——**客户端视角的 `/`**，任意客户端绝对路径单射 rebase 到它下面、回显对称；bed 只见它，但它不整体持久化。
 - **bed workspace**：`bed_home/workspace` 真实子目录（非别名）——OpenSandbox 契约的 `/workspace`（`bedfs.WorkspacePath`）、相对路径的基准、默认 cwd、suite 下的真实挂载点，也是 `HOSTEL_PERSISTED_PATHS` 默认唯一持久化的数据子树。
 - **path projection**：调用方配置的通用 `BedFS path → Executor path` 投影；可配置多个，Hostel 不解释路径的业务含义。`/workspace` 是内置投影，不通过该配置声明。
-- **房型（dorm / room / suite）**：bed 的文件隔离档，与 bed 正交（见〈关键约定〉isolation）。
+- **房型（dorm / room / suite）**：Bed 跨领域隔离保证的对外统称，不是 Filesystem 的等级或 backend；各 domain 将自己的 Level 映射为房型要求（见 `docs/isolation.md`）。
 - **luggage**：非正常生命周期状态，只表达异常退出或旧版 Hostel 遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
 - **amenity**：bed 外由 hostel 统一管理、按 bed 分配状态的共享设施（Chromium / Jupyter / MCP 连接池）。
 - **bed service**：Bed 定义中的可选托管服务，与用户命令共用 Bed Environment/Executor；创建者提交通用完整 `ServiceSpec`，Carrier 镜像提供程序与依赖，Hostel 不依赖具体业务服务。端口通过 daemon 级 Port Manager 统一申请，见 `docs/bed-service.md`。
@@ -56,11 +58,11 @@ tini (pid1)                       pod 级收尸兜底
       └─ <other>/                 运行期数据；可按配置投影，不进 Store 快照
 
 Executor View：
-  suite       → 整个 bed_home 内部挂载 + workspace 和配置项的规范投影
-  dorm/room   → 独立探测 PRoot/pathshim，按 PRoot → pathshim → Carrier 选择进程视图
+  private files          → 整个 bed_home 内部挂载 + workspace 和配置项的规范投影
+  shared/confined files  → 独立探测 PRoot/pathshim，按 PRoot → pathshim → Carrier 选择进程视图
 ```
 
-Bed 的理想语义是独立执行空间，文件、进程、网络和资源按环境能力尽量隔离，并如实披露实际共享与缺口。文件房型只描述文件边界，不代表全维度隔离；所有档位保持同一 BedFS 路径归属。目标、机制组合与实际保证见 `docs/isolation.md`。
+Bed 的理想语义是独立执行空间，文件、进程、网络和资源按环境能力尽量隔离，并如实披露实际共享与缺口。房型汇总已选领域等级，不等于所有维度完整隔离；所有档位保持同一 BedFS 路径归属。目标、机制组合与实际保证见 `docs/isolation.md`。
 
 独占 Dorm carrier 可显式开启只读 file API 的进程根回退：BedFS 路径不存在且客户端传入绝对路径时，Reader 回读配置的进程根；BedFS 同名路径优先，mutation 不回退。该配置会暴露进程根、共享 carrier 禁止开启，详见 `docs/filesystem.md`。
 
@@ -109,7 +111,7 @@ internal/
 
 ## 关键约定
 
-- **bed = 客人单元 = 对外一个 sandbox**（workspace + 常驻 shell，状态跨命令保持）；**房型(dorm/room/suite)是这张床的文件隔离档、与 bed 正交**——bed 是跨档不变的基本单位，房型只描述"床周围的墙"有多严，不替代 bed 命名（见 `docs/isolation.md`）。
+- **bed = 客人单元 = 对外一个 sandbox**（workspace + 常驻 shell，状态跨命令保持）；**房型是 Bed 跨领域隔离保证的虚拟统称**——bed 是跨档不变的基本单位，房型不替代 bed 命名（见 `docs/isolation.md`）。
   - **默认 bed 兜底**：不带 bed 的原生请求落 `default`，单租户调用方可无视 bed 概念；default bed 不暴露为 isolated session，永不被清数据、不可 purge、不占任何 bed 数量名额。
   - **生命周期事实分维度**：
     - inventory 的 `status.phase=initializing|resident|evicting|purging|dormant|failed` 表达 Bed 所处阶段，`status.readiness` 表达能否服务；Bed 详情将这组事实置于 `status.lifecycle`。
@@ -126,8 +128,8 @@ internal/
     - Hostel 只上报事实，不自行选择 carrier；同步 trigger 的节奏、合并与重试由 Store 同步循环统一负责，详见 `docs/resource.md` / `docs/store.md`。
 - **执行层次是 `Bed → Executor → Execution`**：Bed 是 workspace / sandbox 的持久身份；Executor 是当前可替换的进程域；Execution 是一次运行。Executor 丢失只终结归属它的进程，不丢 Bed 数据，下一次请求在旧 Executor 清理成功后创建新 Executor。每次前台、后台或 session run 都生成 `Execution`；`execution_start` 先于输出，之后恰有一个 `execution_end`。`ProcessOutcome` 表达 exited / signaled / lost，termination cause 独立表达 timeout / cancel / interrupt / teardown / executor_lost，禁止再用裸 EOF、`-1` 或错误字符串承载多种语义。
 - **Trace 是生命周期事实的投影**：HTTP 使用路由模板 span，bed initialize/persist/evict 与 execution 使用稳定领域 span，stage 只记 event；不得把 command、env、stdout/stderr 写入 span。后台 initialization / execution 继承 trace identity 但不继承 HTTP cancel。详见 `docs/observability.md`。
-- **隔离按 Bed 的统一目标尽量兑现**：dorm/room/suite 是文件数据隔离档位；进程视图、网络与资源能力分别选择和披露。环境能力不足可以降级，已选机制执行失败不能静默放开边界。组合必须满足准备、降权与回收的顺序约束；当前缺口见 `docs/isolation.md` 与 `docs/backlog.md`。
-  - daemon 身份与 BedUser 正交：daemon 可保留资源管理权限，所有 command/session 使用 resident Bed 已解析的 BedUser；普通房型使用实例固定用户，uid 机制使用稳定的 per-Bed 用户。身份生命周期、capability 与降权顺序见 `docs/privilege.md`。
+- **隔离按 Bed 的统一目标尽量兑现**：各 domain 拥有 facts → `LevelStatus.Supported`、配置选择与 `Level.Room()`；房型取已选等级满足要求的最低档，不反向削弱更强的组件。Feature 是机制及其采用策略，不是另一套 Level。启动组合验证允许有限回退，required 不丢弃，清理失败终止；live Bed 不重选。当前缺口见 `docs/isolation.md` 与 `docs/backlog.md`。
+  - daemon 身份与 BedUser 正交：command/session/Service 使用 resident Bed 的同一身份；Privilege 独立决定 shared/dedicated，Filesystem 不分配 UID。自动基线允许继承 daemon 身份，不以切换用户为前提；Linux 子进程仍须通过 capability 清理与 no_new_privs 验证。见 `docs/privilege.md`。
   - BedFS 路径映射在所有档位一致；PRoot/pathshim 改善进程路径体验，不提供安全边界，也不提高文件隔离档位。
   - Store 独立选择需持久化的 BedFS 子树；新增 projection 不自动获得耐久性，详见 `docs/store.md`。
 - **amenity 通则**：共享设施按 Bed 分配应用状态，产物落对应 workspace；设施状态、Bed 级凭据与 Bed 生命周期分别管理。北向使用 Bed 级动作或受限代理，不裸透传共享设施的管理协议。应用切分不等于文件、网络或资源完整隔离，当前机制与缺口见 `docs/amenity.md`。

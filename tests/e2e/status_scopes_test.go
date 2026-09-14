@@ -90,7 +90,7 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 	if global.Host["runtime"] == nil || global.Host["process"] == nil {
 		t.Fatalf("missing host facts: %+v", global.Host)
 	}
-	if global.Schema != 2 || len(global.Components) != 6 || global.Amenities["mcp"].Tenants != 1 {
+	if global.Schema != 3 || len(global.Components) != 6 || global.Amenities["mcp"].Tenants != 1 {
 		t.Fatalf("global status: %+v", global)
 	}
 	for _, b := range global.Beds {

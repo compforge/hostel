@@ -92,7 +92,7 @@ func (m *Manager) InventoryStatus() InventoryStatus {
 		Status: statusOfInstance(beds, defaultOccupied, time.Now()),
 		Sync:   m.SyncName(), BedSyncSelection: true, TransferSyncs: []string{"copy", "restic"},
 		FileTransfers: m.TransfersConfigured(), TransferInstanceID: m.TransferInstanceID(),
-		Network: m.NetworkReport(), NetworkPolicy: true, Isolation: m.iso.Level().String(),
+		Network: m.NetworkReport(), NetworkPolicy: true, Isolation: string(m.RoomStatus().Effective),
 		MaxBeds: m.maxBeds, MaxPinnedBeds: m.maxPinnedBeds, BedPressureThresholdPercent: m.pressurePercent,
 		LuggageHighBytes: m.luggageHigh, LuggageLowBytes: m.luggageLow, ResourceAdmission: m.ResourceAdmissionReport(),
 		PhaseCounts: map[string]int{}, ActivityCounts: map[string]int{string(ActivityIdle): 0, string(ActivityActive): 0},

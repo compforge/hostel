@@ -212,11 +212,16 @@ func requireSupportedArchiveReplaceView(t *testing.T, c *apiClient, requested st
 	if err != nil || result.Status != http.StatusOK {
 		t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
 	}
-	if health.Isolation.Effective != requested {
+	files := c.filesystemStatus(t)
+	wantFiles := map[string]string{"dorm": "shared", "room": "confined", "suite": "private"}[requested]
+	if requiredIsolationLevels()[requested] && health.Isolation.Effective != requested {
+		t.Fatalf("required profile %s degraded: %+v", requested, health.Isolation)
+	}
+	if files.Effective != wantFiles {
 		if requiredIsolationLevels()[requested] {
-			t.Fatalf("test environment promised isolation %s but host degraded it to %s (ceiling=%s mechanism=%s)", requested, health.Isolation.Effective, health.Isolation.Ceiling, health.Isolation.Mechanism)
+			t.Fatalf("test environment promised files %s but got %+v", wantFiles, files)
 		}
-		t.Skipf("host capability unavailable: requested isolation %s degraded to %s (ceiling=%s mechanism=%s)", requested, health.Isolation.Effective, health.Isolation.Ceiling, health.Isolation.Mechanism)
+		t.Skipf("host capability unavailable: requested files %s, got %+v", wantFiles, files)
 	}
 
 	if requested == "suite" {

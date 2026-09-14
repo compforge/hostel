@@ -28,7 +28,7 @@ import (
 
 func (s *Server) fileReader(ops *bedfs.FS) *bedfs.Reader {
 	fallbackRoot := ""
-	if s.mgr.Isolator().Level() == isolation.Dorm {
+	if s.mgr.Isolator().Level() == isolation.Shared {
 		fallbackRoot = s.dormReadFallbackRoot
 	}
 	return bedfs.NewReader(ops, fallbackRoot)

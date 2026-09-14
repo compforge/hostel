@@ -48,7 +48,7 @@ func testNetworkPolicyTraffic(t *testing.T, executor string) {
 			_ = connection.Close()
 		}
 	}()
-	c := startTarget(t, targetOptions{executor: executor}).client
+	c := startTarget(t, targetOptions{executor: executor, isolation: "suite"}).client
 	deny := map[string]any{"defaultAction": "deny", "egress": []any{}}
 	policyRequest(t, c, "POST", "/v1/beds", map[string]any{"id": "policy-a", "networkPolicy": deny}, http.StatusAccepted)
 	c.waitBed(t, "policy-a", func(b bedView) bool { return b.Status.Readiness.Ready }, "initial deny policy installed")

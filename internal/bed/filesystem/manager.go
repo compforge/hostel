@@ -70,6 +70,7 @@ type Status struct {
 	Requested     string                           `json:"requested"`
 	Effective     string                           `json:"effective"`
 	Ceiling       string                           `json:"ceiling"`
+	Supported     []string                         `json:"supported"`
 	Mechanism     string                           `json:"mechanism"`
 	WorkspaceView isolation.WorkspaceViewReport    `json:"workspace_view"`
 	Probes        map[string]hostfacts.ProbeReport `json:"probes"`
@@ -95,7 +96,27 @@ func (m *Manager) Status() Status {
 		view.Probes = details.Probes
 		view.Features = details.Features
 	}
+	for _, level := range m.LevelStatus().Supported {
+		view.Supported = append(view.Supported, level.(isolation.Level).String())
+	}
 	return view
+}
+
+func (m *Manager) LevelStatus() bed.LevelStatus {
+	confined, private := m.isolator.Level() == isolation.Confined, m.isolator.Level() == isolation.Private
+	if report, ok := m.isolator.(isolation.Report); ok {
+		features := report.Diagnostics().Features
+		confined = confined || features["landlock"].Probe == "available" || features["uid"].Probe == "available"
+		private = private || features["bwrap"].Probe == "available"
+	}
+	levels := []bed.Level{isolation.Shared}
+	if confined {
+		levels = append(levels, isolation.Confined)
+	}
+	if private {
+		levels = append(levels, isolation.Private)
+	}
+	return bed.LevelStatus{Supported: levels}
 }
 
 var _ bed.Component[Status] = (*Manager)(nil)

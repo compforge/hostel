@@ -125,8 +125,14 @@ PRoot/pathshim 提供路径视图，不因此成为安全边界。Host 返回真
 
 领域 Manager 有三个驱动面：daemon 的 `Start/Close`、带 `*bed.Bed` 的单 Bed hooks，以及可选的
 `Run(ctx)` 后台循环。Start 完成同步初始化后返回，Run 阻塞到取消或终止错误；定时节奏、合并与退避
-由领域自己决定。`Component[S]` 汇合启停、Bed lifecycle 和类型化诊断，允许未参与的阶段嵌入 Noop。
+由领域自己决定。`component.go` 中的 `Component[S]` 汇合启停、Bed lifecycle、类型化诊断和
+`LevelStatus()`；`lifecycle.go` 仅拥有生命周期契约及顺序执行，允许未参与的阶段嵌入 Noop。
 Bed Manager 明确安排跨领域顺序；不使用动态注册顺序推导依赖，也不统一抽象 Tick。
+
+`LevelStatus.Supported` 只报告领域已确认支持的隔离等级，不包含用户期望或生效等级；领域结合
+Config 选择候选等级，组合验证后确定运行环境。`Level` 仅提供 `Room() RoomType` 房型映射，
+等级的大小比较和选择规则由各 domain 自己定义，不跨 domain 比较。状态查询不触发探测。
+不参与隔离评估的组件显式返回空 Supported；只有弱隔离的组件必须报告其基线等级，不能用空列表代替。
 
 Amenity 的全局启停直属 daemon；Bed Manager 通过薄生命周期适配器通知 Amenity Manager 释放 Bed 绑定的 Tenant。Web handler 负责协议适配，Bed 级
 文件、网络、浏览器、MCP 与执行都经过 Bed Manager 的准入。隔离是多个领域共同实现的结果，
@@ -296,8 +302,8 @@ Hostel。Hostel 没有 drain 接口，也不因空闲自行退出；它通过 `i
 
 ## 五、Bed 独立性与共享实现
 
-隔离沿 Bed 的统一目标演进，各维度按环境尽量兑现。文件房型 dorm/room/suite 只表示文件
-边界的兑现程度，不代表网络、进程或资源已经全面隔离。BedFS 的路径归属在所有档位一致，
+隔离沿 Bed 的统一目标演进，各维度按环境尽量兑现。dorm/room/suite 是各 domain 实际等级共同满足的
+对外房型；不代表 PID、资源硬限额或共享设施已经全面隔离。BedFS 的路径归属在所有档位一致，
 具体进程视图与强制访问控制由选中的机制提供。完整模型、组合约束和能力缺口见
 [isolation.md](isolation.md)。
 

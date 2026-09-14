@@ -14,12 +14,15 @@ import (
 
 // Status is the component status: mechanism facts plus the Bed execution scope.
 type Status struct {
-	Features map[string]feature.Status `json:"features"`
-	Enabled  bool                      `json:"enabled"`
-	Backend  string                    `json:"backend"`
-	Scope    string                    `json:"scope"`
-	Reason   string                    `json:"reason,omitempty"`
-	Probe    hostnetwork.Probe         `json:"probe"`
+	Expected  Level                     `json:"expected"`
+	Effective Level                     `json:"effective"`
+	Supported []Level                   `json:"supported"`
+	Features  map[string]feature.Status `json:"features"`
+	Enabled   bool                      `json:"enabled"`
+	Backend   string                    `json:"backend"`
+	Scope     string                    `json:"scope"`
+	Reason    string                    `json:"reason,omitempty"`
+	Probe     hostnetwork.Probe         `json:"probe"`
 }
 
 // These protocol types are shared with the network mechanism; Bed model
@@ -105,7 +108,17 @@ func (m *Manager) Status() Status {
 	}
 	return m.describe(Status{Enabled: report.Available, Backend: report.Backend, Scope: scope, Reason: report.Reason, Probe: report.Probe})
 }
+func (m *Manager) LevelStatus() bed.LevelStatus {
+	status := m.Status()
+	levels := make([]bed.Level, len(status.Supported))
+	for i, level := range status.Supported {
+		levels[i] = level
+	}
+	return bed.LevelStatus{Supported: levels}
+}
+
 func (m *Manager) describe(s Status) Status {
+	available := s.Enabled
 	policy := feature.Auto
 	if m != nil {
 		policy = m.config.NetNS.Effective()
@@ -116,12 +129,31 @@ func (m *Manager) describe(s Status) Status {
 		s.Scope = "carrier"
 		s.Reason = "disabled_by_config"
 	}
+	s.Expected = Private
+	if m != nil && m.config.Level == Shared {
+		s.Expected = Shared
+		s.Enabled, s.Backend, s.Scope = false, "shared", "carrier"
+		if policy != feature.Off {
+			s.Reason = "shared network selected by profile"
+		}
+	}
+	if m != nil && m.config.FallbackReason != "" {
+		s.Expected = Private
+		s.Reason = m.config.FallbackReason
+	}
+	s.Effective, s.Supported = Shared, []Level{Shared}
+	if available && policy != feature.Off {
+		s.Supported = append(s.Supported, Private)
+	}
+	if s.Enabled {
+		s.Effective = Private
+	}
 	requirements := feature.Requirements{Capabilities: []string{"CAP_NET_ADMIN", "CAP_SYS_ADMIN"}, Tools: []string{"ip", "nft", "setpriv"}, Conditions: []string{"Linux", "IPv4 forwarding", "DNS resolvers", "namespace entry and connectivity probe"}}
-	s.Features = map[string]feature.Status{"netns": feature.Describe(policy, requirements, s.Probe.Stage != "", s.Enabled, s.Enabled, s.Reason)}
+	s.Features = map[string]feature.Status{"netns": feature.Describe(policy, requirements, s.Probe.Stage != "", available, s.Enabled, s.Reason)}
 	return s
 }
 func (m *Manager) Acquire(ctx context.Context, id string) (Attachment, error) {
-	if m != nil && m.config.NetNS.Effective() == feature.Off {
+	if !m.Status().Enabled {
 		return nil, nil
 	}
 	if m != nil && m.provider != nil {
@@ -129,13 +161,10 @@ func (m *Manager) Acquire(ctx context.Context, id string) (Attachment, error) {
 	}
 	// Optional isolation is a Bed policy. The host pool itself returns an
 	// unavailable error and never silently admits an unisolated allocation.
-	if !m.Status().Enabled {
-		return nil, nil
-	}
 	return m.pool.Acquire(ctx, id)
 }
 func (m *Manager) NetworkPolicy(ctx context.Context, id string, change PolicyMutation) (PolicyStatus, error) {
-	if m != nil && m.config.NetNS.Effective() == feature.Off {
+	if !m.Status().Enabled {
 		return PolicyStatus{}, ErrUnavailable
 	}
 	if m != nil && m.provider != nil {

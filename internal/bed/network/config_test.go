@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -28,6 +29,29 @@ func TestOffNetworkDoesNotConstructHostPool(t *testing.T) {
 	}
 	if err := m.Close(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNetworkCapabilityFactsDoNotFollowSelection(t *testing.T) {
+	m := &Manager{config: Config{Level: Shared}}
+	s := m.describe(Status{Enabled: true, Backend: "netns", Scope: "bed_processes"})
+	if s.Enabled || s.Effective != Shared || !reflect.DeepEqual(s.Supported, []Level{Shared, Private}) {
+		t.Fatalf("profile hid host support or enabled unrequested isolation: %+v", s)
+	}
+	m.config = Config{Level: Private}
+	strong := m.describe(Status{Enabled: true, Backend: "netns", Scope: "bed_processes"})
+	if !strong.Enabled || !reflect.DeepEqual(strong.Supported, s.Supported) {
+		t.Fatalf("selection changed capability list: %+v", strong)
+	}
+	next, ok := m.config.WithoutOptionalNamespace("combination failed")
+	if !ok || next.NetNS != m.config.NetNS || next.Level != Shared {
+		t.Fatalf("fallback changed feature policy: %+v", next)
+	}
+	if _, ok := next.WithoutOptionalNamespace("still failed"); ok {
+		t.Fatal("fallback made no progress")
+	}
+	if _, ok := (Config{NetNS: feature.Required, Level: Private}).WithoutOptionalNamespace("failed"); ok {
+		t.Fatal("dropped required namespace")
 	}
 }
 

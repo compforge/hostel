@@ -72,6 +72,9 @@ func (m *Manager) Status() Status {
 	return Status{Accounting: m.tracker.Report(), Admission: m.admission.Report()}
 }
 
+// Accounting and carrier admission do not enforce per-Bed resource limits.
+func (m *Manager) LevelStatus() bed.LevelStatus { return bed.LevelStatus{} }
+
 var _ bed.Component[Status] = (*Manager)(nil)
 
 func (m *Manager) SetAdmission(a Admitter) { m.admission = a }
