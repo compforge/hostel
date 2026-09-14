@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	model "github.com/qiankunli/hostel/internal/bed"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
@@ -35,7 +35,7 @@ func TestWorkspaceViewProbesSupportedHelpersBeforeApplyingPriority(t *testing.T)
 	exitCode := 0
 
 	workspace, report := resolveWorkspaceView(
-		direct{}, root, nil,
+		direct{}, root,
 		hostfacts.ProbeReport{Attempted: true, ExitCode: &exitCode},
 		probes,
 	)
@@ -64,7 +64,7 @@ func TestWorkspaceViewUsesPathshimWhenPtraceFails(t *testing.T) {
 	probes := map[string]hostfacts.ProbeReport{}
 
 	workspace, report := resolveWorkspaceView(
-		direct{}, root, nil,
+		direct{}, root,
 		hostfacts.ProbeReport{Attempted: true, Error: "ptrace TRACEME: operation not permitted"},
 		probes,
 	)
@@ -84,7 +84,7 @@ func TestWorkspaceViewReportsMissingHelpers(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	probes := map[string]hostfacts.ProbeReport{}
 	_, report := resolveWorkspaceView(
-		direct{}, t.TempDir(), nil,
+		direct{}, t.TempDir(),
 		hostfacts.ProbeReport{Attempted: true, Error: "ptrace denied"},
 		probes,
 	)
@@ -108,7 +108,7 @@ func TestWorkspaceViewReportsPresentNonExecutableHelper(t *testing.T) {
 	probes := map[string]hostfacts.ProbeReport{}
 	exitCode := 0
 	_, _ = resolveWorkspaceView(
-		direct{}, t.TempDir(), nil,
+		direct{}, t.TempDir(),
 		hostfacts.ProbeReport{Attempted: true, ExitCode: &exitCode},
 		probes,
 	)
@@ -118,16 +118,19 @@ func TestWorkspaceViewReportsPresentNonExecutableHelper(t *testing.T) {
 	}
 }
 
-func TestProotWrapsWorkspaceAndConfiguredProjections(t *testing.T) {
+func TestProotWrapsWorkspaceAndBedMappings(t *testing.T) {
 	root := t.TempDir()
 	fs := newTestFS(t, root)
-	projection, err := bedfs.NewPathProjection("/memory", "/mnt/memory")
+	source, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.SetPathMappings([]model.PathMapping{{HostPath: source, BedPath: "/mnt/memory"}}); err != nil {
 		t.Fatal(err)
 	}
 	runtime := &resolved{
 		boundary:  prefixRoom{},
-		workspace: &prootView{path: "/usr/bin/proot", projections: []bedfs.PathProjection{projection}},
+		workspace: &prootView{path: "/usr/bin/proot"},
 	}
 	cmd := exec.Command("/bin/sh", "-c", "true")
 	if err := runtime.Wrap(cmd, fs, filepath.Join(fs.Workspace(), "sub")); err != nil {
@@ -137,7 +140,7 @@ func TestProotWrapsWorkspaceAndConfiguredProjections(t *testing.T) {
 		"/usr/bin/room-helper", "--",
 		"/usr/bin/proot", "-v", "-1",
 		"-b", fs.Workspace() + ":/workspace!",
-		"-b", filepath.Join(fs.Home(), "memory") + ":/mnt/memory!",
+		"-b", source + ":/mnt/memory!",
 		"-w", "/workspace/sub",
 	}
 	if len(cmd.Args) < len(want) || !slices.Equal(cmd.Args[:len(want)], want) {
@@ -152,7 +155,7 @@ func TestWorkspaceViewFallsBackToCarrierWhenBothHelpersFail(t *testing.T) {
 	probes := map[string]hostfacts.ProbeReport{}
 	exitCode := 0
 	_, report := resolveWorkspaceView(
-		direct{}, t.TempDir(), nil,
+		direct{}, t.TempDir(),
 		hostfacts.ProbeReport{Attempted: true, ExitCode: &exitCode},
 		probes,
 	)

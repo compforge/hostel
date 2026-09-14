@@ -36,7 +36,7 @@ type isolatedBlockingStore struct {
 	release chan struct{}
 }
 
-func (s *isolatedBlockingStore) Persist(ctx context.Context, _ string, _ string, _ int64) error {
+func (s *isolatedBlockingStore) Persist(ctx context.Context, _ string, _ string, _ int64, _ []string) error {
 	select {
 	case s.started <- struct{}{}:
 	default:

@@ -72,7 +72,7 @@ var _ bed.Component[Status] = (*Manager)(nil)
 
 func (m *Manager) PersistBed(ctx context.Context, b *bed.Bed, generation int64) error {
 	spec := b.Spec()
-	if err := m.Persist(ctx, spec.Sync, b.Name, spec.Dir, generation); err != nil {
+	if err := m.Persist(ctx, spec.Sync, b.Name, spec.Dir, generation, spec.SyncPaths); err != nil {
 		return err
 	}
 	m.status.Update(b, func(s *bed.StoreStatus) { s.SnapshotGeneration = generation })

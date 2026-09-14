@@ -46,7 +46,6 @@ import (
 type casStore struct {
 	obj    objects
 	prefix string
-	filter snapshotFilter
 }
 
 // Chunk size bounds (min/avg/max) for the CDC chunker. Larger than casync's
@@ -72,12 +71,8 @@ var casConverters = desync.Converters{desync.Compressor{}}
 // ContentLength says nothing about the workspace.
 const casMetaBytes = "bytes"
 
-func newCASStore(obj objects, prefix string, filters ...snapshotFilter) *casStore {
-	filter := defaultSnapshotFilter()
-	if len(filters) > 0 {
-		filter = filters[0]
-	}
-	return &casStore{obj: obj, prefix: prefix, filter: filter}
+func newCASStore(obj objects, prefix string) *casStore {
+	return &casStore{obj: obj, prefix: prefix}
 }
 
 func (s *casStore) Name() Kind { return KindCAS }
@@ -113,7 +108,11 @@ func (s *casStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error
 	return info, nil
 }
 
-func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation int64) error {
+func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation int64, syncPaths []string) error {
+	filter, err := newSnapshotFilter(syncPaths)
+	if err != nil {
+		return err
+	}
 	// Fencing guard (docs/store.md §3.5): remote generation >= ours
 	// means another instance persisted this bed after our initialization —
 	// refuse rather than silently overwrite.
@@ -151,7 +150,7 @@ func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation in
 	// memory bounded by chunk max × workers.
 	pr, pw := io.Pipe()
 	go func() {
-		src := &filteredFS{inner: desync.NewLocalFS(dir, desync.LocalFSOptions{}), root: dir, filter: s.filter}
+		src := &filteredFS{inner: desync.NewLocalFS(dir, desync.LocalFSOptions{}), root: dir, filter: filter}
 		pw.CloseWithError(desync.Tar(ctx, pw, src))
 	}()
 	chunker, err := desync.NewChunker(pr, casChunkMin, casChunkAvg, casChunkMax)

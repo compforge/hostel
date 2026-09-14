@@ -81,10 +81,10 @@ func wrapRuntimeCommand(boundary Boundary, workspace workspaceBackend, cmd *exec
 //
 // +spec=`For shared/confined files, Hostel discovers pathshim and PRoot through PATH, probes every candidate whose prerequisites are satisfied, then resolves the process view in PRoot → pathshim → carrier order without changing the selected isolation level.`
 // +case:id=workspace_view_fallback,desc=`Vary helper discovery, ptrace, pathshim, and PRoot probe outcomes independently`,expect=`Diagnostics preserve discovery facts; PRoot wins when usable, pathshim is next, and carrier is the final fallback`
-func resolveWorkspaceView(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport) (workspaceBackend, WorkspaceViewReport) {
-	return resolveWorkspaceViewWithConfig(base, workspaceRoot, projections, ptraceProbe, probes, Config{})
+func resolveWorkspaceView(base Boundary, workspaceRoot string, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport) (workspaceBackend, WorkspaceViewReport) {
+	return resolveWorkspaceViewWithConfig(base, workspaceRoot, ptraceProbe, probes, Config{})
 }
-func resolveWorkspaceViewWithConfig(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport, config Config) (workspaceBackend, WorkspaceViewReport) {
+func resolveWorkspaceViewWithConfig(base Boundary, workspaceRoot string, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport, config Config) (workspaceBackend, WorkspaceViewReport) {
 	pathshimDiscovery := hostfacts.ProbeReport{Error: "disabled_by_config"}
 	prootDiscovery := hostfacts.ProbeReport{Error: "disabled_by_config"}
 	if config.Pathshim.Effective() != feature.Off {
@@ -112,7 +112,7 @@ func resolveWorkspaceViewWithConfig(base Boundary, workspaceRoot string, project
 	var pathshimReport, prootReport WorkspaceViewReport
 
 	if pathshimDiscovery.Error == "" {
-		candidate, report, probe := newPathshimView(base, workspaceRoot, projections, pathshimDiscovery)
+		candidate, report, probe := newPathshimView(base, workspaceRoot, pathshimDiscovery)
 		probes["pathshim"] = probe
 		if report.Available {
 			pathshimCandidate, pathshimReport = candidate, report
@@ -128,7 +128,7 @@ func resolveWorkspaceViewWithConfig(base Boundary, workspaceRoot string, project
 	} else if !ptraceProbe.Succeeded() {
 		reasons = append(reasons, "ptrace: "+rawProbeFailure(ptraceProbe))
 	} else {
-		candidate, report, probe := newProotView(base, workspaceRoot, projections, prootDiscovery)
+		candidate, report, probe := newProotView(base, workspaceRoot, prootDiscovery)
 		probes["proot"] = probe
 		if report.Available {
 			prootCandidate, prootReport = candidate, report

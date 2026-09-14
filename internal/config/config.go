@@ -20,13 +20,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path"
 	"strings"
 	"time"
 
 	"github.com/qiankunli/go-stdx/osx"
 	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/feature"
 )
 
@@ -103,7 +101,6 @@ type Config struct {
 func Load(args []string, explicit Options) (*Config, error) {
 	fs := flag.NewFlagSet("hostel", flag.ContinueOnError)
 	c := &Config{}
-	var persistedPaths string
 	var configurationSources string
 	fs.StringVar(&configurationSources, "configuration-sources", osx.EnvStr("HOSTEL_CONFIGURATION_SOURCES", "{}"), "JSON object of named configuration directories")
 	bedUID, bedGID := os.Geteuid(), os.Getegid()
@@ -123,8 +120,6 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs.StringVar(&c.OTLPTracesHTTPEndpoint, "otel-traces-http-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_HTTP_ENDPOINT", ""), "OTLP HTTP traces endpoint")
 	fs.StringVar(&c.WorkspaceRoot, "workspace-root", osx.EnvStr("HOSTEL_WORKSPACE_ROOT", "/workspace"), "parent dir for per-bed workspaces")
 	fs.StringVar(&c.Bed.RoomType, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "Bed room type: dorm | room | suite | auto (auto=highest available profile)")
-	fs.StringVar(&c.Bed.Filesystem.ProjectedPaths, "projected-paths", osx.EnvStr("HOSTEL_PROJECTED_PATHS", ""), "comma-separated additional BedFS-to-process path projections; /workspace=/workspace is built in")
-	fs.StringVar(&persistedPaths, "persisted-paths", osx.EnvStr("HOSTEL_PERSISTED_PATHS", "/workspace"), "comma-separated BedFS paths included in Store snapshots")
 	fs.StringVar(&c.Bed.Filesystem.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")
 	fs.StringVar(&c.DefaultBed, "default-bed", osx.EnvStr("HOSTEL_DEFAULT_BED", "default"), "bed id used when a request omits one")
 	fs.StringVar(&c.ShellPath, "shell", osx.EnvStr("HOSTEL_SHELL", "/bin/bash"), "shell for bed sessions")
@@ -188,18 +183,6 @@ func Load(args []string, explicit Options) (*Config, error) {
 	}
 	c.Bed.Filesystem = c.Bed.Filesystem.ForRoom(room)
 	c.Bed.Network = c.Bed.Network.ForRoom(room)
-	var paths []string
-	if explicit.Bed.Store.PersistedPaths != nil {
-		paths = *explicit.Bed.Store.PersistedPaths
-	} else {
-		paths = strings.Split(persistedPaths, ",")
-	}
-	var err error
-	c.Bed.Store.PersistedPaths, err = normalizePersistedPaths(paths)
-	if err != nil {
-		return nil, err
-	}
-
 	for _, p := range []*feature.Policy{&c.Bed.Filesystem.Bwrap, &c.Bed.Filesystem.Landlock, &c.Bed.Filesystem.UID, &c.Bed.Filesystem.PRoot, &c.Bed.Filesystem.Pathshim, &c.Bed.Network.NetNS, &c.Bed.Resource.Cgroup} {
 		*p = p.Effective()
 	}
@@ -227,56 +210,4 @@ func Load(args []string, explicit Options) (*Config, error) {
 		return nil, fmt.Errorf("service advertise host must be an IP or hostname")
 	}
 	return c, nil
-}
-
-// ParseProjectedPaths converts the deployment string into Hostel's generic
-// filesystem projection model. The whole set is validated together so startup
-// cannot accept ambiguous nested mappings.
-func ParseProjectedPaths(raw string) ([]bedfs.PathProjection, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, nil
-	}
-	parts := strings.Split(raw, ",")
-	projections := make([]bedfs.PathProjection, 0, len(parts))
-	for _, part := range parts {
-		bedPath, processPath, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok || strings.TrimSpace(bedPath) == "" || strings.TrimSpace(processPath) == "" {
-			return nil, fmt.Errorf("invalid path projection %q: expected BED_PATH=PROCESS_PATH", part)
-		}
-		projection, err := bedfs.NewPathProjection(bedPath, processPath)
-		if err != nil {
-			return nil, fmt.Errorf("invalid path projection %q: %w", part, err)
-		}
-		projections = append(projections, projection)
-	}
-	if err := bedfs.ValidatePathProjections(projections); err != nil {
-		return nil, fmt.Errorf("invalid path projections: %w", err)
-	}
-	return projections, nil
-}
-
-// ParsePersistedPaths validates the business-neutral BedFS durability allowlist.
-// Root would make every caller-created path durable again, so it is rejected.
-func ParsePersistedPaths(raw string) ([]string, error) {
-	return normalizePersistedPaths(strings.Split(raw, ","))
-}
-func normalizePersistedPaths(parts []string) ([]string, error) {
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("store persisted paths must contain at least one path")
-	}
-	paths := make([]string, 0, len(parts))
-	for _, part := range parts {
-		persistPath := path.Clean(strings.TrimSpace(part))
-		if !path.IsAbs(persistPath) || persistPath == "/" {
-			return nil, fmt.Errorf("persist path %q must be an absolute non-root BedFS path", part)
-		}
-		for _, previous := range paths {
-			if persistPath == previous || strings.HasPrefix(persistPath, previous+"/") || strings.HasPrefix(previous, persistPath+"/") {
-				return nil, fmt.Errorf("persist paths %q and %q overlap", previous, persistPath)
-			}
-		}
-		paths = append(paths, persistPath)
-	}
-	return paths, nil
 }

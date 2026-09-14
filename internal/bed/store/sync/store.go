@@ -63,10 +63,10 @@ type Store interface {
 	Restore(ctx context.Context, bedID, dir string) error
 	// Persist snapshots dir as the bed's durable copy, replacing any previous
 	// snapshot. Called on evict, explicit checkpoint, and the periodic safety
-	// net. dir is the bed dir; only portable meta.json and data/workspace are
-	// durable. Every other BedFS path is runtime-local by default. generation is
-	// the meta's persist counter, surfaced back through Stat.
-	Persist(ctx context.Context, bedID, dir string, generation int64) error
+	// net. dir is the bed dir; meta.json and the selected syncPaths are durable.
+	// nil paths defaults to /workspace; an empty slice persists metadata only.
+	// generation is the meta's persist counter, surfaced back through Stat.
+	Persist(ctx context.Context, bedID, dir string, generation int64, syncPaths []string) error
 	// Delete removes the bed's snapshot — the purge path: after this the bed
 	// identity no longer exists anywhere. Deleting a missing snapshot is not
 	// an error.
@@ -78,7 +78,7 @@ type snapshotFilter struct {
 }
 
 func newSnapshotFilter(persistedPaths []string) (snapshotFilter, error) {
-	if len(persistedPaths) == 0 {
+	if persistedPaths == nil {
 		persistedPaths = []string{"/workspace"}
 	}
 	filter := snapshotFilter{roots: make([]string, 0, len(persistedPaths))}
@@ -112,9 +112,6 @@ func (f snapshotFilter) excluded(rel string) bool {
 		return false
 	}
 	roots := f.roots
-	if len(roots) == 0 {
-		roots = []string{"data/workspace"}
-	}
 	for _, root := range roots {
 		if pathWithin(rel, root) || pathWithin(root, rel) {
 			return false

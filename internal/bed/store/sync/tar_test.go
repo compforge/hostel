@@ -36,7 +36,7 @@ func TestTarObjectLayoutAndRoundtrip(t *testing.T) {
 	src := t.TempDir()
 	writeTree(t, src)
 
-	if err := s.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
 	if got := s.snapshotKey("bed1"); got != "sandbox/tar/bed1/snapshot.tar.gz" {
@@ -92,11 +92,11 @@ func TestTarAlwaysReplacesFullSnapshot(t *testing.T) {
 	src := t.TempDir()
 	writeTree(t, src)
 
-	if err := s.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	before := obj.puts
-	if err := s.Persist(ctx, "bed1", src, 2); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 2, nil); err != nil {
 		t.Fatal(err)
 	}
 	if delta := obj.puts - before; delta != 1 {
@@ -111,7 +111,7 @@ func TestTarAlwaysReplacesFullSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	before = obj.puts
-	if err := s.Persist(ctx, "bed1", src, 3); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 3, nil); err != nil {
 		t.Fatal(err)
 	}
 	if delta := obj.puts - before; delta != 1 {
@@ -127,15 +127,12 @@ func TestTarAlwaysReplacesFullSnapshot(t *testing.T) {
 }
 
 func TestTarPersistsConfiguredBedFSPaths(t *testing.T) {
-	filter, err := newSnapshotFilter([]string{"/workspace", "/memory"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	syncPaths := []string{"/workspace", "/memory"}
 	obj := newMemObj()
-	s := newTarStore(obj, "sandbox", filter)
+	s := newTarStore(obj, "sandbox")
 	src := t.TempDir()
 	writeTree(t, src)
-	if err := s.Persist(t.Context(), "bed1", src, 1); err != nil {
+	if err := s.Persist(t.Context(), "bed1", src, 1, syncPaths); err != nil {
 		t.Fatal(err)
 	}
 	dst := t.TempDir()
@@ -156,10 +153,10 @@ func TestTarConflictAndDelete(t *testing.T) {
 	src := t.TempDir()
 	writeTree(t, src)
 
-	if err := s.Persist(ctx, "bed1", src, 5); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 5, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Persist(ctx, "bed1", src, 5); !errors.Is(err, ErrConflict) {
+	if err := s.Persist(ctx, "bed1", src, 5, nil); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale persist = %v, want ErrConflict", err)
 	}
 	if err := s.Delete(ctx, "bed1"); err != nil {

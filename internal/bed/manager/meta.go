@@ -48,9 +48,10 @@ type Usage struct {
 
 // bedMeta is hostel's durable per-bed bookkeeping (docs/store.md §4).
 type bedMeta struct {
-	Sync    store.SyncKind `json:"sync,omitempty"`
-	Version int            `json:"version"`
-	BedID   string         `json:"bed_id"`
+	SyncPaths []string       `json:"sync_paths"`
+	Sync      store.SyncKind `json:"sync,omitempty"`
+	Version   int            `json:"version"`
+	BedID     string         `json:"bed_id"`
 	// CreatedAt is when the bed identity was first created — it survives
 	// evict/resume cycles via the snapshot.
 	CreatedAt time.Time `json:"created_at"`

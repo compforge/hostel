@@ -171,7 +171,7 @@ func TestCASRoundtrip(t *testing.T) {
 	src := t.TempDir()
 	writeTree(t, src)
 
-	if err := s.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
 	info, err := s.Stat(ctx, "bed1")
@@ -235,7 +235,7 @@ func TestCASIncrementalAndGC(t *testing.T) {
 	src := t.TempDir()
 	writeTree(t, src)
 
-	if err := s.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	basePuts := obj.puts
@@ -245,7 +245,7 @@ func TestCASIncrementalAndGC(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "data/workspace/src/a.go"), []byte("package a // changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Persist(ctx, "bed1", src, 2); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 2, nil); err != nil {
 		t.Fatal(err)
 	}
 	delta := obj.puts - basePuts
@@ -288,7 +288,7 @@ func TestCASUnchangedContentUpdatesGeneration(t *testing.T) {
 	src := t.TempDir()
 	writeTree(t, src)
 
-	if err := s.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	before := obj.puts
@@ -298,7 +298,7 @@ func TestCASUnchangedContentUpdatesGeneration(t *testing.T) {
 	}
 	// Same content, higher generation: chunks stay untouched, but the index
 	// is committed once so remote freshness follows the new generation.
-	if err := s.Persist(ctx, "bed1", src, 2); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 2, nil); err != nil {
 		t.Fatal(err)
 	}
 	if delta := obj.puts - before; delta != 1 {
@@ -322,11 +322,11 @@ func TestCASConflict(t *testing.T) {
 	src := t.TempDir()
 	writeTree(t, src)
 
-	if err := s.Persist(ctx, "bed1", src, 5); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 5, nil); err != nil {
 		t.Fatal(err)
 	}
 	// A writer whose generation isn't ahead of the remote lost the race.
-	err := s.Persist(ctx, "bed1", src, 5)
+	err := s.Persist(ctx, "bed1", src, 5, nil)
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("persist with stale generation: %v, want ErrConflict", err)
 	}
@@ -338,7 +338,7 @@ func TestCASDelete(t *testing.T) {
 	src := t.TempDir()
 	writeTree(t, src)
 
-	if err := s.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := s.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Delete(ctx, "bed1"); err != nil {

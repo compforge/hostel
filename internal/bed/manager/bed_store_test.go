@@ -34,9 +34,9 @@ func (s *countedStore) Restore(ctx context.Context, id, dir string) error {
 	s.record("restore", id)
 	return s.fakeStore.Restore(ctx, id, dir)
 }
-func (s *countedStore) Persist(ctx context.Context, id, dir string, generation int64) error {
+func (s *countedStore) Persist(ctx context.Context, id, dir string, generation int64, syncPaths []string) error {
 	s.record("persist", id)
-	return s.fakeStore.Persist(ctx, id, dir, generation)
+	return s.fakeStore.Persist(ctx, id, dir, generation, syncPaths)
 }
 func (s *countedStore) Delete(ctx context.Context, id string) error {
 	s.record("delete", id)

@@ -3,6 +3,7 @@ package filesystem
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -41,6 +42,23 @@ func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
 	m.mu.Lock()
 	m.files[b] = fs
 	m.mu.Unlock()
+	if err := fs.SetPathMappings(b.Spec().PathMappings); err != nil {
+		return err
+	}
+	if len(fs.PathMappings()) > 0 {
+		status := m.Status()
+		if status.WorkspaceView.Mode == "carrier" {
+			return fmt.Errorf("filesystem: path mappings require a process path view")
+		}
+		if status.Mechanism == "landlock" {
+			return fmt.Errorf("filesystem: external path mappings are unavailable with Landlock")
+		}
+		for _, mapping := range fs.PathMappings() {
+			if mapping.ReadOnly && !m.isolator.WorkspaceMounted() {
+				return fmt.Errorf("filesystem: read-only path mappings require a mount view")
+			}
+		}
+	}
 	if p, ok := m.isolator.(isolation.Preparer); ok {
 		if err := p.Prepare(fs); err != nil {
 			return err

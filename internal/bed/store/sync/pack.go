@@ -49,7 +49,6 @@ type packStore struct {
 	obj         objects
 	prefix      string
 	targetBytes int
-	filter      snapshotFilter
 }
 
 const (
@@ -82,12 +81,8 @@ type packLocation struct {
 	length int64
 }
 
-func newPackStore(obj objects, prefix string, filters ...snapshotFilter) *packStore {
-	filter := defaultSnapshotFilter()
-	if len(filters) > 0 {
-		filter = filters[0]
-	}
-	return &packStore{obj: obj, prefix: prefix, targetBytes: packTargetBytes, filter: filter}
+func newPackStore(obj objects, prefix string) *packStore {
+	return &packStore{obj: obj, prefix: prefix, targetBytes: packTargetBytes}
 }
 
 func (s *packStore) Name() Kind { return KindPack }
@@ -129,7 +124,11 @@ func (s *packStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, erro
 	return info, nil
 }
 
-func (s *packStore) Persist(ctx context.Context, bedID, dir string, generation int64) error {
+func (s *packStore) Persist(ctx context.Context, bedID, dir string, generation int64, syncPaths []string) error {
+	filter, err := newSnapshotFilter(syncPaths)
+	if err != nil {
+		return err
+	}
 	prevMeta, _, prevExists, err := s.obj.Head(ctx, s.headKey(bedID))
 	if err != nil {
 		return fmt.Errorf("store: persist %s: pre-write stat: %w", bedID, err)
@@ -166,7 +165,7 @@ func (s *packStore) Persist(ctx context.Context, bedID, dir string, generation i
 
 	pr, pw := io.Pipe()
 	go func() {
-		src := &filteredFS{inner: desync.NewLocalFS(dir, desync.LocalFSOptions{}), root: dir, filter: s.filter}
+		src := &filteredFS{inner: desync.NewLocalFS(dir, desync.LocalFSOptions{}), root: dir, filter: filter}
 		pw.CloseWithError(desync.Tar(ctx, pw, src))
 	}()
 	chunker, err := desync.NewChunker(pr, casChunkMin, casChunkAvg, casChunkMax)

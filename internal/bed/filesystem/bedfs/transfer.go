@@ -32,6 +32,10 @@ var ErrTransferFileType = errors.New("copy supports regular files and directorie
 // WalkTransferFiles streams regular source files within the anchored BedFS.
 // Symlinks and special files are rejected; a raced-in FIFO cannot block Open.
 func (o *FS) WalkTransferFiles(ctx context.Context, source string, visit func(relative string, file *os.File, size int64) error) error {
+	o, routeErr := o.transferRoute(source, false)
+	if routeErr != nil {
+		return routeErr
+	}
 	full, err := o.Resolve(source)
 	if err != nil {
 		return err
@@ -91,6 +95,10 @@ func (o *FS) WalkTransferFiles(ctx context.Context, source string, visit func(re
 // WriteTransferFile publishes a fully downloaded file. Link provides atomic
 // create-if-absent; Rename replaces the target entry without following it.
 func (o *FS) WriteTransferFile(ctx context.Context, destination string, body io.Reader, overwrite bool) (int64, error) {
+	o, routeErr := o.transferRoute(destination, true)
+	if routeErr != nil {
+		return 0, routeErr
+	}
 	full, err := o.Resolve(destination)
 	if err != nil {
 		return 0, err

@@ -46,8 +46,8 @@ func (s *stageTestStore) Restore(_ context.Context, _ string, dir string) error 
 	return s.restoreErr
 }
 
-func (*stageTestStore) Persist(context.Context, string, string, int64) error { return nil }
-func (*stageTestStore) Delete(context.Context, string) error                 { return nil }
+func (*stageTestStore) Persist(context.Context, string, string, int64, []string) error { return nil }
+func (*stageTestStore) Delete(context.Context, string) error                           { return nil }
 
 func TestStageInBedFSUsesCurrentLuggage(t *testing.T) {
 	bedDir := filepath.Join(t.TempDir(), "bed-1")

@@ -45,6 +45,9 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		return nil, fmt.Errorf("bed: stage in BedFS %s: %w", b.Name, err)
 	}
 	staged := m.store.StageResult(b.Bed)
+	if err := trace.stage("prepare_paths", func() error { return m.preparePaths(init) }); err != nil {
+		return nil, err
+	}
 	m.updateInitialization(init, "PreparingBedFS", "preparing BedFS and isolation")
 	if err := trace.stage("prepare_bedfs", func() error {
 		if err := m.files.Prepare(ctx, b.Bed); err != nil {
@@ -63,6 +66,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 			meta = bedMeta{Version: 1, BedID: b.Name, CreatedAt: now, Sync: spec.Sync}
 		}
 		meta.Sync = spec.Sync
+		meta.SyncPaths = spec.SyncPaths
 		if staged.Snapshot != nil {
 			meta.SnapshotGeneration = staged.Snapshot.Generation
 			meta.SnapshotBytes = staged.Snapshot.Bytes

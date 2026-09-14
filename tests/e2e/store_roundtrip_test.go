@@ -22,7 +22,6 @@ func TestMixedBedStoresRoundTrip(t *testing.T) {
 		t.Fatal("S3 round trip requires the binary profile")
 	}
 	objects := newS3Fixture(t)
-	t.Setenv("HOSTEL_PERSISTED_PATHS", "/workspace")
 	root := filepath.Join(t.TempDir(), "source")
 	source := startTarget(t, targetOptions{store: "noop", maxBeds: 8, workspaceRoot: root}).client
 	beds := []struct{ id, store string }{

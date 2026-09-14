@@ -2,7 +2,6 @@ package store
 
 // Options holds explicit daemon startup overrides; Config contains resolved values.
 type Options struct {
-	PersistedPaths        *[]string
 	Sync                  *string
 	ResticBinary          *string
 	ResticPassword        *string

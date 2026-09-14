@@ -16,7 +16,7 @@ BedFS 统一拥有以下语义：
 
 - `bed_home`：客户端 `/` 对应的数据根；
 - workspace：`bed_home/workspace`，客户端与进程的规范路径为 `/workspace`；
-- path projections：调用方可配置多个 `BedFS path → Executor path`，Hostel 不解释其业务含义；
+- PathMappings：默认 `/ → bed_home`，调用方可为 Bed 声明额外的 `HostPath → BedPath` 数据映射；
 - client path → carrier path：file API、cwd 等结构化路径的存放位置；
 - carrier path → Executor path：不同隔离机制下进程应使用的路径；
 - Bed 内文件操作、属主交接与 symlink 防逃逸边界。
@@ -88,13 +88,32 @@ UID backend 以独立进程身份兑现 confined 的数据访问边界，目录�
 | `/tmp/job` | `<bed_home>/tmp/job` |
 | `a` | `<bed_home>/workspace/a` |
 
-绝对路径在客户端命名空间中先规范化，再单射 rebase 到 bed_home；返回路径使用逆映射。房型只改变访问屏障和进程投影，不改变数据落点。
+BedFS 隐式建立 `BedPath=/ → HostPath=<bed_home>`。路径先在客户端命名空间中规范化；命中额外 PathMapping 时使用对应目录，否则使用默认根映射。返回路径使用选中映射的逆转换。这个根映射是数据路径规则，不表示进程的 `/` 被替换成 bed_home。
+
+Bed 创建请求示例：
+
+```json
+{
+  "id": "example",
+  "path_mappings": [
+    {"host_path": "/volumes/project", "bed_path": "/project"},
+    {"host_path": "/volumes/reference", "bed_path": "/reference", "read_only": true}
+  ],
+  "sync_paths": ["/workspace", "/memory"]
+}
+```
+
+`HostPath` 是 daemon 可见的已有目录，例如 Pod 级 PVC 挂载点；Hostel 不创建、接管属主或删除它。调用方负责授权来源目录、挂载和访问权限。额外映射在文件 API、command/session/Service 的结构化路径与执行视图中指向同一份数据；映射本身不声明自动持久化。执行后端只读取当前 BedFS 的映射，不再持有独立的 projection 声明或配置 Option。
+
+额外 `BedPath` 必须绝对、非根，不能与其他映射、内置 `/workspace`、内核目录或内部挂载点重叠。`HostPath` 不得覆盖 Hostel 工作区或彼此重叠。映射目标不能遮蔽已有 BedFS 数据，也不能与 SyncPaths 重叠。默认根由 Hostel 建立，不在 Spec 中重复提交。
+
+文件 API 为每个选中目录持有独立的 `os.Root` 句柄，禁止 symlink 逃出该目录；删除或重命名映射根及其父目录会失败。跨映射 rename 不支持；Transfer 应显式选择一个映射目录，跨映射父目录的导入/导出会失败。删除 Bed 只删除默认根的数据，不触碰额外映射的目录。
 
 ## 四、Executor 视图
 
 ### shared / confined 文件
 
-Executor 与 daemon 共享 mount namespace。Hostel 启动时从 `PATH` 发现固定命令名 `proot`、`pathshim`，先记录文件是否存在、可执行及实际解析路径，再探测包含内置 `bed_home/workspace → /workspace` 和 `HOSTEL_PROJECTED_PATHS` 全部条目的进程视图。前者与配置项是同一种 `BedFS source → Executor target` 投影，只因 `/workspace` 是 Hostel 基础契约而内置，不在 env 中重复声明；配置项只承载额外投影。每个候选只有完整集合通过才可用，禁止部分生效；PRoot、pathshim 均失败时退回 Carrier 语义。
+Executor 与 daemon 共享 mount namespace。Hostel 启动时从 `PATH` 发现 `proot`、`pathshim`，探测内置工作区路径视图，并按 PRoot → pathshim → Carrier 选择后端。额外 PathMappings 在 Bed 初始化时接入；Carrier 视图不能兑现额外路径映射，声明了映射的 Bed 会初始化失败，不能静默忽略。当前 Landlock 规则未接入外部目录，因此该组合也明确拒绝。
 
 PRoot 的路径 syscall 覆盖更完整，但依赖 ptrace；pathshim 不依赖 ptrace，作为次选。两者都可用时选择 PRoot。Landlock 或 uid 始终独立负责访问边界，workspace helper 不参与 isolation level 判定。
 
@@ -107,15 +126,7 @@ confined (UID): dedicated BedUser → proot / pathshim → command
 private: selected BedUser → bwrap → command
 ```
 
-PRoot 与 pathshim 都把每项 projection 指向对应 BedFS source；它们没有 COW、whiteout 或 invocation 私有状态，因此多个 command/session 共享同一 source 时并发语义就是普通底层文件系统并发。二者都是用户态进程视图，不是真实 mount、安全边界或完整 guest root。
-
-配置格式是逗号分隔的 `BED_PATH=PROCESS_PATH`，例如：
-
-```text
-HOSTEL_PROJECTED_PATHS=/memory=/mnt/memory,/cache=/mnt/cache
-```
-
-两侧必须是绝对非根路径；配置项之间以及与内置 `/workspace` 不得重叠，`/dev`、`/proc`、`/sys` 不能作为目标。source 目录由 Hostel 按 Bed 创建，但不会因 projection 自动进入 Store 快照。
+PRoot 与 pathshim 将 Bed 的映射目录接入声明路径，没有 COW、whiteout 或每次调用的私有副本。多个 command/session 访问同一目录时，遵守底层文件系统的并发语义。它们提供用户态路径视图，不提供 mount namespace 或安全边界；当前只支持读写映射，只读映射需要 bwrap，能力不足时 Bed 在 Ready 前失败。
 
 ### private 文件
 
@@ -123,7 +134,7 @@ bwrap 先遮蔽 `<workspace-root>`，再投影同一 BedFS：
 
 - 整个 `bed_home` bind 到机制私有路径 `/tmp/.hostel/bed`，使 `/`、`/tmp/job` 等任意结构化 cwd 都有进程视图；
 - `bed_home/workspace` 额外 bind 到稳定的 `/workspace`，保持 OpenSandbox 与 agent 工具链约定；
-- 每个配置 projection 把对应 BedFS source bind 到声明的 Executor path；
+- 每个 PathMapping 将已有 HostPath bind 到 BedPath；ReadOnly 使用只读 bind；
 - BedFS 的 workspace 子树优先使用 `/workspace`，其余路径使用内部 bed_home 投影。
 
 内部挂载点不是北向协议。调用方继续传 Client path；例如 `cwd="/"` 由 BedFS 解析为 bed_home，再投影到当前 Executor。
@@ -136,7 +147,7 @@ Hostel 解析 file API 的 `path`、命令的 `cwd` 等结构化字段，因此�
 
 PRoot 或 pathshim 可用时，shared/confined 文件视图的命令字面 `/workspace/x` 及配置目标会指向对应 BedFS source；映射外绝对路径仍由 Carrier 进程视图解释。helper 全部失败时可尝试 Carrier 视图，Hostel 通过能力与 diagnostics 接口如实上报降级和各项原始探测记录；完整组合仍须可执行。
 
-shared 文件视图与 carrier 共享 mount namespace，命令中的字面绝对路径可能成功写到进程根，而不是 BedFS。独占 carrier 可显式配置沿用原名称的 `--dorm-read-fallback-root /`：只读 file API 在 BedFS 主映射不存在时，把客户端绝对路径按该进程根作为第二候选重试；两处都存在时始终以 BedFS 为准。相对路径不回退，因为它本来就以 bed workspace 为执行与 API 基准。
+shared 文件视图与 carrier 共享 mount namespace，命令中的字面绝对路径可能成功写到进程根，而不是 BedFS。独占 carrier 可显式配置沿用原名称的 `--dorm-read-fallback-root /`：只读 file API 在 未命中额外映射且 BedFS 路径不存在时，把客户端绝对路径按该进程根作为第二候选重试；两处都存在时始终以 BedFS 为准。相对路径不回退，因为它本来就以 bed workspace 为执行与 API 基准。
 
 这是一条默认关闭的只读候选策略，不是第二套路径映射或写入语义。上传、替换、改权限、移动和删除始终只操作 BedFS；confined/private 文件也不启用回退。配置的 root 会暴露给 file API 读取，因此共享 carrier 不得开启，也不得把它理解为隔离保证。
 
@@ -145,8 +156,8 @@ shared 文件视图与 carrier 共享 mount namespace，命令中的字面绝对
 - Bed owns BedFS：`bed_home`、workspace、generation 与快照身份随 Bed 存续；
 - Executor owns process realm：只持有 BedFS View，可丢失和替换；
 - Shell owns its Executor View：session run 的结构化 cwd 由 Shell 投影并更新持久 cwd；
-- Store consumes configured durable roots：快照始终包含 `meta.json`，并包含 `HOSTEL_PERSISTED_PATHS` 选择的 BedFS 子树（默认 `/workspace`）；
+- Store consumes Bed SyncPaths：快照始终包含 `meta.json`，并包含 `Bed.Spec.SyncPaths` 选择的默认映射子树（默认 `/workspace`）；
 - isolation realizes View：不拥有数据命名和持久化规则；
 - web 只选择与房型、部署配置匹配的 BedFS 读取策略：不能自行拼 carrier 路径或 mount point。
 
-daemon 文件 API 先做客户端路径规范化，再以 `bed_home` 的目录句柄执行 descriptor-relative 文件操作。路径中的 symlink 只允许解析到该根之内；逃出根目录或与并发 symlink 替换竞态的操作会失败。这条安全边界属于 BedFS，不散落到各 handler。
+daemon 文件 API 先做客户端路径规范化，再以选中映射的目录句柄执行 descriptor-relative 文件操作。路径中的 symlink 只允许解析到该根之内；逃出根目录或与并发 symlink 替换竞态的操作会失败。这条安全边界属于 BedFS，不散落到各 handler。

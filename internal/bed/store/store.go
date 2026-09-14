@@ -55,9 +55,6 @@ type Config struct {
 	// persisted tree contains more than this many non-directory entries.
 	// Zero disables the automatic transition.
 	AutoPackFileThreshold int
-	// PersistedPaths is the BedFS durability allowlist. Empty preserves the
-	// default /workspace contract for programmatic callers.
-	PersistedPaths []string
 }
 
 func (c Config) remoteConfig() backend.Config {

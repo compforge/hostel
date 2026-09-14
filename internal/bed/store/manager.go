@@ -130,7 +130,7 @@ func (s *Manager) forSync(ctx context.Context, kind SyncKind) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	automatic, err := storesync.NewAuto(obj, s.cfg.Prefix, s.cfg.AutoPackFileThreshold, s.cfg.PersistedPaths, s.restic)
+	automatic, err := storesync.NewAuto(obj, s.cfg.Prefix, s.cfg.AutoPackFileThreshold, s.restic)
 	if err != nil {
 		return nil, err
 	}
@@ -149,12 +149,12 @@ func (s *Manager) Stat(ctx context.Context, kind SyncKind, bedID string) (*Snaps
 	return implementation.Stat(ctx, bedID)
 }
 
-func (s *Manager) Persist(ctx context.Context, kind SyncKind, bedID, dir string, generation int64) error {
+func (s *Manager) Persist(ctx context.Context, kind SyncKind, bedID, dir string, generation int64, syncPaths []string) error {
 	implementation, err := s.forSync(ctx, kind)
 	if err != nil {
 		return err
 	}
-	return implementation.Persist(ctx, bedID, dir, generation)
+	return implementation.Persist(ctx, bedID, dir, generation, syncPaths)
 }
 
 func (s *Manager) Delete(ctx context.Context, kind SyncKind, bedID string) error {

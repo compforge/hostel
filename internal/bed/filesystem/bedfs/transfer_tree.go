@@ -33,6 +33,10 @@ import (
 // path, where a concurrent symlink swap could otherwise escape its boundary.
 // excluded, when non-nil, receives source-relative paths (automatic durability).
 func (o *FS) ExportTransferTree(ctx context.Context, source, directory string, excluded func(string) bool) error {
+	o, routeErr := o.transferRoute(source, false)
+	if routeErr != nil {
+		return routeErr
+	}
 	full, err := o.Resolve(source)
 	if err != nil {
 		return err
@@ -59,6 +63,10 @@ func (o *FS) ExportTransferTree(ctx context.Context, source, directory string, e
 // Regular permissions, modification times, empty directories and confined
 // relative symlinks are preserved. File ownership belongs to the receiving Bed.
 func (o *FS) ImportTransferTree(ctx context.Context, directory, destination string, overwrite bool, completed func(int64)) error {
+	o, routeErr := o.transferRoute(destination, true)
+	if routeErr != nil {
+		return routeErr
+	}
 	full, err := o.Resolve(destination)
 	if err != nil {
 		return err

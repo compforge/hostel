@@ -196,7 +196,7 @@ func TestLifecycleObservations(t *testing.T) {
 	if lifecycle.LastInitialization == nil || lifecycle.LastInitialization.Result != "success" || lifecycle.LastInitialization.Source != "fresh" {
 		t.Fatalf("LastInitialization = %+v", lifecycle.LastInitialization)
 	}
-	if got := lifecycleStageNames(lifecycle.LastInitialization); got != "prepare_configuration,stage_in_bedfs,prepare_bedfs,prepare_resident" {
+	if got := lifecycleStageNames(lifecycle.LastInitialization); got != "prepare_configuration,stage_in_bedfs,prepare_paths,prepare_bedfs,prepare_resident" {
 		t.Fatalf("initialization stages = %q", got)
 	}
 
@@ -993,7 +993,7 @@ func (s *initializationBlockingStore) calls() int {
 	return s.statCalls
 }
 
-func (s *blockingStore) Persist(ctx context.Context, id, dir string, generation int64) error {
+func (s *blockingStore) Persist(ctx context.Context, id, dir string, generation int64, syncPaths []string) error {
 	select {
 	case s.started <- struct{}{}:
 	default:
@@ -1002,7 +1002,7 @@ func (s *blockingStore) Persist(ctx context.Context, id, dir string, generation 
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-s.release:
-		return s.fakeStore.Persist(ctx, id, dir, generation)
+		return s.fakeStore.Persist(ctx, id, dir, generation, syncPaths)
 	}
 }
 
@@ -1033,7 +1033,7 @@ func (f *fakeStore) Restore(_ context.Context, id, dir string) error {
 	}
 	return os.WriteFile(filepath.Join(dir, "data", "workspace", "restored.txt"), f.snaps[id], 0o644)
 }
-func (f *fakeStore) Persist(_ context.Context, id, dir string, generation int64) error {
+func (f *fakeStore) Persist(_ context.Context, id, dir string, generation int64, syncPaths []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail {
@@ -1455,9 +1455,9 @@ type slowStore struct {
 	gate chan struct{} // Persist blocks until this closes
 }
 
-func (s *slowStore) Persist(ctx context.Context, id, dir string, generation int64) error {
+func (s *slowStore) Persist(ctx context.Context, id, dir string, generation int64, syncPaths []string) error {
 	<-s.gate
-	return s.fakeStore.Persist(ctx, id, dir, generation)
+	return s.fakeStore.Persist(ctx, id, dir, generation, syncPaths)
 }
 
 // Activity during an evict's persist window must CANCEL the eviction —
@@ -1918,9 +1918,9 @@ func TestProfileAccumulatesAndSurvivesEvict(t *testing.T) {
 // node-specific migration-cost fields have something to record.
 type sleepyStore struct{ *fakeStore }
 
-func (s sleepyStore) Persist(ctx context.Context, id, dir string, generation int64) error {
+func (s sleepyStore) Persist(ctx context.Context, id, dir string, generation int64, syncPaths []string) error {
 	time.Sleep(20 * time.Millisecond)
-	return s.fakeStore.Persist(ctx, id, dir, generation)
+	return s.fakeStore.Persist(ctx, id, dir, generation, syncPaths)
 }
 func (s sleepyStore) Restore(ctx context.Context, id, dir string) error {
 	time.Sleep(20 * time.Millisecond)

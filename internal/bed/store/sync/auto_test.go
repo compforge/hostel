@@ -54,7 +54,7 @@ func TestAutoDetectsExistingLayout(t *testing.T) {
 			obj := newMemObj()
 			src := t.TempDir()
 			writeAutoTree(t, src, 2)
-			if err := test.new(obj).Persist(ctx, "bed1", src, 3); err != nil {
+			if err := test.new(obj).Persist(ctx, "bed1", src, 3, nil); err != nil {
 				t.Fatal(err)
 			}
 			auto := newAutoStore(obj, "sandbox", 1)
@@ -85,7 +85,7 @@ func TestAutoStartsPack(t *testing.T) {
 	src := t.TempDir()
 	writeAutoTree(t, src, 2)
 
-	if err := auto.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := auto.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ := auto.pack.Stat(ctx, "bed1"); info == nil || info.Generation != 1 {
@@ -103,10 +103,10 @@ func TestAutoKeepsExistingCASBelowThreshold(t *testing.T) {
 	src := t.TempDir()
 	writeAutoTree(t, src, 2)
 
-	if err := auto.cas.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := auto.cas.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := auto.Persist(ctx, "bed1", src, 2); err != nil {
+	if err := auto.Persist(ctx, "bed1", src, 2, nil); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ := auto.cas.Stat(ctx, "bed1"); info == nil || info.Generation != 2 {
@@ -124,10 +124,10 @@ func TestAutoSwitchesCASToPackAboveThreshold(t *testing.T) {
 	src := t.TempDir()
 	writeAutoTree(t, src, 4)
 
-	if err := auto.cas.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := auto.cas.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := auto.Persist(ctx, "bed1", src, 2); err != nil {
+	if err := auto.Persist(ctx, "bed1", src, 2, nil); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ := auto.pack.Stat(ctx, "bed1"); info == nil || info.Generation != 2 {
@@ -146,7 +146,7 @@ func TestAutoSwitchesCASToPackAboveThreshold(t *testing.T) {
 	if err := os.Remove(filepath.Join(src, "data/workspace/files/d.txt")); err != nil {
 		t.Fatal(err)
 	}
-	if err := auto.Persist(ctx, "bed1", src, 3); err != nil {
+	if err := auto.Persist(ctx, "bed1", src, 3, nil); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ := auto.pack.Stat(ctx, "bed1"); info == nil || info.Generation != 3 {
@@ -161,10 +161,10 @@ func TestAutoKeepsExistingTar(t *testing.T) {
 	src := t.TempDir()
 	writeAutoTree(t, src, 3)
 
-	if err := auto.tar.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := auto.tar.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := auto.Persist(ctx, "bed1", src, 2); err != nil {
+	if err := auto.Persist(ctx, "bed1", src, 2, nil); err != nil {
 		t.Fatal(err)
 	}
 	if info, _ := auto.tar.Stat(ctx, "bed1"); info == nil || info.Generation != 2 {
@@ -182,10 +182,10 @@ func TestAutoRejectsAmbiguousLayoutsAndPurgeDeletesAll(t *testing.T) {
 	src := t.TempDir()
 	writeAutoTree(t, src, 1)
 
-	if err := auto.cas.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := auto.cas.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := auto.pack.Persist(ctx, "bed1", src, 1); err != nil {
+	if err := auto.pack.Persist(ctx, "bed1", src, 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := auto.Stat(ctx, "bed1"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
@@ -236,7 +236,7 @@ func TestPoliciesReadAndReplaceOtherLayouts(t *testing.T) {
 				after := automatic.WithKind(next)
 				src := t.TempDir()
 				writeAutoTree(t, src, 2)
-				if err := before.Persist(ctx, "bed", src, 7); err != nil {
+				if err := before.Persist(ctx, "bed", src, 7, nil); err != nil {
 					t.Fatal(err)
 				}
 				info, err := after.Stat(ctx, "bed")
@@ -252,13 +252,13 @@ func TestPoliciesReadAndReplaceOtherLayouts(t *testing.T) {
 				if err != nil || string(data) != "a" {
 					t.Fatalf("restore = %q, %v", data, err)
 				}
-				if err := after.Persist(ctx, "bed", src, 7); !errors.Is(err, ErrConflict) {
+				if err := after.Persist(ctx, "bed", src, 7, nil); !errors.Is(err, ErrConflict) {
 					t.Fatalf("stale write = %v", err)
 				}
 				if err := os.WriteFile(filepath.Join(src, name), []byte("new policy"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				if err := after.Persist(ctx, "bed", src, 8); err != nil {
+				if err := after.Persist(ctx, "bed", src, 8, nil); err != nil {
 					t.Fatal(err)
 				}
 				state, err := automatic.inspect(ctx, "bed")

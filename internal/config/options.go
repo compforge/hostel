@@ -76,7 +76,6 @@ func (o Options) apply(c *Config) {
 	apply(&c.OTLPTracesHTTPEndpoint, o.OTLPTracesHTTPEndpoint)
 	apply(&c.Addr, o.Addr)
 	apply(&c.WorkspaceRoot, o.WorkspaceRoot)
-	apply(&c.Bed.Filesystem.ProjectedPaths, o.Bed.Filesystem.ProjectedPaths)
 	apply(&c.Bed.Filesystem.DormReadFallbackRoot, o.Bed.Filesystem.DormReadFallbackRoot)
 	apply(&c.DefaultBed, o.DefaultBed)
 	apply(&c.BedIdleTTL, o.BedIdleTTL)

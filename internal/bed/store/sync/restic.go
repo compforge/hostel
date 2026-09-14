@@ -31,7 +31,6 @@ type resticStore struct {
 	obj     objects
 	prefix  string
 	command *Restic
-	filter  snapshotFilter
 }
 
 type resticHead struct {
@@ -78,7 +77,11 @@ func (s *resticStore) readHead(ctx context.Context, id string) (resticHead, erro
 	return head, nil
 }
 
-func (s *resticStore) Persist(ctx context.Context, id, dir string, generation int64) error {
+func (s *resticStore) Persist(ctx context.Context, id, dir string, generation int64, syncPaths []string) error {
+	filter, err := newSnapshotFilter(syncPaths)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, tarOpTimeout)
 	defer cancel()
 	if err := s.command.Available(ctx); err != nil {
@@ -111,7 +114,7 @@ func (s *resticStore) Persist(ctx context.Context, id, dir string, generation in
 		return err
 	}
 	defer source.Close()
-	if err := source.ExportTransferTree(ctx, "/", staging, s.filter.excluded); err != nil {
+	if err := source.ExportTransferTree(ctx, "/", staging, filter.excluded); err != nil {
 		return err
 	}
 	summary, err := s.command.upload(ctx, s.repository(id), staging, parent)

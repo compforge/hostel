@@ -126,20 +126,6 @@ type Report interface {
 	Diagnostics() DiagnosticsReport
 }
 
-type options struct {
-	projections []bedfs.PathProjection
-}
-
-// Option configures process-view projection without changing the requested
-// isolation level.
-type Option func(*options)
-
-// WithPathProjections configures business-neutral BedFS-to-Executor path
-// projections. Callers validate the set before constructing the runtime.
-func WithPathProjections(projections []bedfs.PathProjection) Option {
-	return func(o *options) { o.projections = append([]bedfs.PathProjection(nil), projections...) }
-}
-
 // Preparer is an optional Boundary capability: a mechanism that must prepare a
 // bed's data dir before its commands run. uid isolation tightens directory
 // traversal here; BedUser owns the common ownership handoff. Mount- and
@@ -158,7 +144,6 @@ type resolved struct {
 	req, eff, ceil Level
 	workspaceView  WorkspaceViewReport
 	diagnostics    DiagnosticsReport
-	projections    []bedfs.PathProjection
 }
 
 func (r *resolved) Name() string                       { return r.boundary.Name() }
@@ -190,15 +175,6 @@ func (r *resolved) Diagnostics() DiagnosticsReport {
 // (uid), else no-ops — so the bed manager can assert Preparer on the result
 // unconditionally, without knowing which mechanism won.
 func (r *resolved) Prepare(fs *bedfs.FS) error {
-	for _, projection := range r.projections {
-		hostPath, err := fs.Resolve(projection.BedPath)
-		if err != nil {
-			return err
-		}
-		if err := fs.EnsureDir(hostPath); err != nil {
-			return err
-		}
-	}
 	if p, ok := r.boundary.(Preparer); ok {
 		return p.Prepare(fs)
 	}
@@ -214,8 +190,8 @@ func (r *resolved) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 //
 // +spec=`effective isolation is the strongest available level not exceeding the request, and requested/effective/ceiling remain observable.`
 // +case:id=isolation_level_boundaries,desc=`Run the same sibling-path probe under shared, confined, and private file requests`,expect=`shared permits, confined denies, private hides, and unavailable levels degrade honestly`
-func New(facts hostfacts.Snapshot, requested, workspaceRoot string, opts ...Option) Isolator {
-	iso, err := Resolve(facts, Config{Level: requested}, workspaceRoot, opts...)
+func New(facts hostfacts.Snapshot, requested, workspaceRoot string) Isolator {
+	iso, err := Resolve(facts, Config{Level: requested}, workspaceRoot)
 	if err != nil {
 		panic(err) // Invalid programmer-supplied level; external config uses Resolve.
 	}
@@ -225,13 +201,9 @@ func New(facts hostfacts.Snapshot, requested, workspaceRoot string, opts ...Opti
 // Resolve selects features once. Off excludes probes; Required constrains selection
 // rather than merely asserting availability. Runtime failures never reopen selection.
 // +spec=`Feature policies restrict selection without inventing host facts; every Required feature must be selected before readiness.`
-func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string, opts ...Option) (Isolator, error) {
+func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string) (Isolator, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
-	}
-	cfg := options{}
-	for _, option := range opts {
-		option(&cfg)
 	}
 	req := parseRequest(config.Level)
 	policies := config.policies()
@@ -254,7 +226,7 @@ func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string, opts
 		var probe hostfacts.ProbeReport
 		switch name {
 		case "bwrap":
-			candidate, probe = newBwrap(facts, workspaceRoot, cfg.projections)
+			candidate, probe = newBwrap(facts, workspaceRoot)
 		case "landlock":
 			candidate, probe = newLandlock(facts, workspaceRoot)
 		case "uid":
@@ -277,7 +249,7 @@ func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string, opts
 			return nil, err
 		}
 	}
-	workspace, view := resolveWorkspaceViewWithConfig(chosen, workspaceRoot, cfg.projections, ptraceProbe, probes, config)
+	workspace, view := resolveWorkspaceViewWithConfig(chosen, workspaceRoot, ptraceProbe, probes, config)
 	for _, name := range []string{"proot", "pathshim"} {
 		probe := probes[name]
 		reason := probe.Error
@@ -296,7 +268,7 @@ func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string, opts
 		}
 	}
 	return &resolved{boundary: chosen, workspace: workspace, req: req, eff: chosen.Level(), ceil: ceiling, workspaceView: view,
-		diagnostics: DiagnosticsReport{Probes: probes, Features: reports}, projections: append([]bedfs.PathProjection(nil), cfg.projections...)}, nil
+		diagnostics: DiagnosticsReport{Probes: probes, Features: reports}}, nil
 }
 
 // unavailable is a mechanism that probed as not usable on this host. It keeps
