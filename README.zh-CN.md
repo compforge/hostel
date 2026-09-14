@@ -68,16 +68,20 @@ bed 的记账组，CPU 数量和总内存仍表示共享 carrier 容量；当前
 Bed 的理想语义是独立执行空间，文件、进程、网络和资源相互隔离。Hostel 根据环境能力
 尽量兑现，并如实报告实际边界；共享运行环境降低承载成本，具体机制决定哪些边界受到强制保护。
 
-文件隔离按房型分档：`--isolation dorm|room|suite|auto`（默认 auto 选择环境上限，
-请求超过上限时降级到可达档位）。
+`--isolation dorm|room|suite|auto` 设置实例级房型预期，各领域按实际能力选择自己的隔离等级。
+默认 auto 期望 suite，能力不足时允许降级。
 
-- `dorm`：逻辑分床，没有强制跨 Bed 文件访问屏障。
-- `room`：通过 Landlock 或独立 UID 限制邻居数据访问，目录存在性和公共系统路径仍可见。
-- `suite`：bwrap 提供私有 mount 视图，遮蔽兄弟工作区，并挂载自己的 `/workspace`。
+- `dorm`：逻辑文件归属、共享身份、共享 Carrier 网络。
+- `room`：跨 Bed 文件访问受限、独立 Bed 身份、共享网络。
+- `suite`：私有文件视图、独立 Bed 身份、独立 Bed 网络。
 
-房型只表示文件隔离程度。网络 namespace 独立探测，目前覆盖 Bed 命令与 shell，共享
+生效房型取各领域实际保证共同满足的最高档，不超过用户预期，也不反向削弱更强的已选组件。
+启动会验证 command/session/Service 的完整环境组合，只在清理成功后有限回退可选机制；required 或清理失败阻止启动。
+运行中的 Bed 不静默降级。自动共享身份基线不以切换用户为前提，子进程权限仍须验证；弱隔离的兼容性随真实 case 持续完善。
+网络 namespace 覆盖 Bed 命令、shell 和 Service，共享
 Chromium/MCP 的出站仍走 Carrier。资源记账不等于硬限额；PRoot/pathshim 改善路径体验，
 不提供安全边界。健康与能力接口分别披露实际机制、作用域和能力缺席原因。
+状态 schema 为 3：`isolation` 报告跨领域房型，`components.filesystem` 报告 shared/confined/private 文件等级。
 完整模型见 [隔离设计](docs/isolation.md)，未完成项见 [backlog](docs/backlog.md)。
 
 ## amenity(共享设施)

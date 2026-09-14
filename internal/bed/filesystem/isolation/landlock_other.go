@@ -27,7 +27,7 @@ const ConfineArg = "__confine"
 
 // newLandlock: Landlock is Linux-only. Report room as unavailable elsewhere.
 func newLandlock(hostfacts.Snapshot, string) (Isolator, hostfacts.ProbeReport) {
-	return unavailable{name: "landlock", lvl: Room}, hostfacts.ProbeReport{}
+	return unavailable{name: "landlock", lvl: Confined}, hostfacts.ProbeReport{}
 }
 
 // ApplyConfine should never run off Linux (no landlock isolator can be chosen).

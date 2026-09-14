@@ -72,7 +72,7 @@ func TestPrepareUIDDir(t *testing.T) {
 	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	const uid = uidBase + 42
+	const uid = privilege.UIDMin + 42
 	err := prepareUIDDir(dir, uid)
 	if os.Geteuid() != 0 {
 		// Non-root: Lchown to a foreign uid is refused; prepareUIDDir surfaces
@@ -115,7 +115,7 @@ func TestUIDPrepareRefreshesBedFSOwner(t *testing.T) {
 	if err := iso.Prepare(fs); err != nil {
 		t.Fatal(err)
 	}
-	user, err := privilege.NewBedUser(uidBase+42, uidBase+42)
+	user, err := privilege.NewBedUser(privilege.UIDMin+42, privilege.UIDMin+42)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,8 +130,8 @@ func TestUIDPrepareRefreshesBedFSOwner(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := info.Sys().(*syscall.Stat_t).Uid; got != uint32(uidBase+42) {
-			t.Fatalf("%s owner=%d, want %d", path, got, uidBase+42)
+		if got := info.Sys().(*syscall.Stat_t).Uid; got != uint32(privilege.UIDMin+42) {
+			t.Fatalf("%s owner=%d, want %d", path, got, privilege.UIDMin+42)
 		}
 	}
 }

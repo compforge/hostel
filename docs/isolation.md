@@ -10,7 +10,7 @@ Hostel 面向 AI Agent，用一份重运行环境低成本承载多个 Bed。**�
 
 隔离能力都按环境条件尽量兑现。Hostel 可以运行在 laptop、VM、CI 或容器内，无法假定
 每处都有同样的 namespace、LSM、用户身份和 cgroup 能力。能力不足时仍保留 Bed 的身份、
-文件归属与执行入口，使用可行机制提供尽可能多的隔离，同时把实际共享与缺口告诉调用方。
+文件归属与执行入口，使用可行机制提供尽可能多的隔离，同时把实际共享与缺口告诉调用方。弱隔离下的功能兼容性随真实 case 积累持续完善。
 
 共享是成本取舍：工具链、软件环境和重型设施可以在 Carrier 内复用，以应用级切分或
 内核机制尽量保持 Bed 的独立性。共享实现是否影响数据、网络或故障边界，需要逐项说明，
@@ -22,7 +22,7 @@ Hostel 面向 AI Agent，用一份重运行环境低成本承载多个 Bed。**�
 ### 控制面与运行边界
 
 Bed ID、header 和 query 参数用于选择资源，不是调用方的身份凭据。HTTP 控制面可以操作
-多个 Bed，入口认证与 Bed 访问授权由接入方负责；文件房型和 netns 不会自动补上这层授权。
+多个 Bed，入口认证与 Bed 访问授权由接入方负责；房型和 netns 不会自动补上这层授权。
 同理，Bed 级代理 token 不能替代 token 下发接口的访问控制。共享设施的原始端口与管理
 接口是否可达也须纳入实际边界，不能只看用户命令的 namespace。
 
@@ -38,11 +38,35 @@ Bed 是跨机制不变的单元；Executor 是它当前可替换的进程承载�
 这些身份及主流程见 [kernel.md](kernel.md)。房型和 backend 描述兑现方式或程度，不产生
 另一种 Bed，也不能反过来改变 BedFS 的文件归属和路径语义。
 
+### 对外房型与领域等级
+
+Component 探测 Facts，结合配置组合 Features，提供本领域的 Level；Hostel 验证跨组件的运行组合，
+将多个 Component 实际提供的 Level 汇总为用户看到的 RoomType。
+
+房型是用户选择的虚拟统称，各 domain 拥有 facts、支持等级列表、排序和选择规则。公共 `Level` 只提供
+`Room() RoomType`，表示这个等级最高满足哪个房型的本领域要求；不同 domain 的等级不直接比较。
+`LevelStatus` 只包含 Supported；domain 结合 Config 选择等级，最终以完整组合验证结果为准。
+
+| 房型预期 | Filesystem | Privilege | Network |
+|---|---|---|---|
+| dorm | shared：逻辑文件归属 | shared：实例共享身份 | shared：Carrier 网络 |
+| room | confined：跨 Bed 文件访问受限 | dedicated：每 Bed 独立身份 | shared：Carrier 网络 |
+| suite / auto | private：私有文件视图 | dedicated：每 Bed 独立身份 | private：每 Bed netns |
+
+Privilege 的 dedicated 映射到 suite，Network 的 shared 映射到 room：它们分别满足该房型在本领域的要求，
+不代表单独一个组件就提供整个房型。Bed 汇总各实际等级的 `Room()`，取不超过用户预期的最低房型；
+例如 private 文件 + dedicated 身份 + shared 网络汇总为 room，但保留 private 文件视图。
+配置是实例级的，不新增逐 Bed 房型开关。Resource 当前只有可选记账与准入，不提供硬限额；它与 Store、Executor
+暂不参与隔离等级汇总，显式返回空 Supported。弱隔离组件则须报告基线，不能用空列表冒充不参与。
+
+Feature 表达实现机制与采用策略，不是另一套等级。bwrap 提供 private 文件，Landlock 或 UID/DAC 提供 confined；
+PRoot/pathshim 只改善路径兼容性，不提高 Level。`auto/off/required` 继续约束机制选择，见 [configuration.md](configuration.md)。
+
 ### 各维度的目标与当前兑现程度
 
 | 维度 | 理想状态 | 当前能力与缺口 |
 |---|---|---|
-| 文件与路径 | 每个 Bed 使用自己的文件空间，不能读写邻居数据 | BedFS 统一结构化路径；文件房型决定进程侧的访问屏障；用户态投影只改善路径体验 |
+| 文件与路径 | 每个 Bed 使用自己的文件空间，不能读写邻居数据 | BedFS 统一结构化路径；Filesystem Level 决定进程侧的访问屏障；用户态投影只改善路径体验 |
 | 进程与身份 | 执行独立、可完整回收，不能观察或干扰邻居进程 | daemon 保留管理权限，BedUser 统一约束命令身份；Executor/supervisor 管理进程归属与回收；当前 suite 没有私有 PID namespace |
 | 网络 | 每个 Bed 有独立网络空间，并受自己的出站约束 | 可选 netns 与按 Bed 配置的出站策略覆盖命令和 shell；不可用时共享 Carrier；共享设施出站尚未纳入该边界 |
 | CPU / 内存 | 一个 Bed 的失控负载不挤占或拖垮邻居 | Carrier 准入与可选 per-bed cgroup 记账已有；per-bed 硬限额尚未实现 |
@@ -68,22 +92,23 @@ Resource 管资源记账与准入。各领域持有并清理自己的资源。
 - **准备完成才可服务**：不能把半恢复目录或尚未分配的必需网络当成 Ready。
 - **特权步骤先于最终降权**：网络进入、文件视图准备和用户身份切换须按依赖顺序完成，
   再把控制权交给用户命令。任何单一组件都不能提前丢掉后续准备仍需要的能力。
-- **同一 Bed 的执行入口一致**：一次性命令和常驻 shell 应使用同一套能力组合；共享设施
+- **同一 Bed 的执行入口一致**：一次性命令、常驻 shell 和 Bed Service 应使用同一套能力组合；共享设施
   没有进入该进程树时，必须单独说明其边界，不能自动继承 Bed 命令的隔离声明。
 - **释放中的资源不再服务新执行**：失败清理仍需有人负责，但不能因此继续被视为可用。
   同 ID 的重新初始化不得复用残缺资源，也不得被上一轮清理回收。
 
 `manager.Environment` 绑定一个 resident Bed 的文件视图、具体网络 allocation 和最终
-`BedUser`，命令和 shell 都通过它组装。Network 先使用 daemon 权限完成 netns entry，随后切换
+`BedUser`，命令、shell 和 Service 都通过它组装。Network 先使用 daemon 权限完成 netns entry，随后切换
 身份并最终降权，文件边界、路径 helper 和用户程序都在 Bed 身份下运行。BedUser 的选择、UID
 租约、capability 要求与回收契约由 [privilege.md](privilege.md) 统一定义。Store、Network 和
 Executor 仍各自提供能力，Bed 协调其生命周期。共享 Chromium 位于 Bed 进程树之外，不从某个
 BedUser 派生运行身份。
 
-实例选定能力后，以临时 Bed 走真实命令和常驻 shell 的子目录读写路径，并核对 file API
-可见同一产物，同时核对最终 UID/GID、实际 capability 集合与 `NoNewPrivs`；root daemon
-还会清空并核对 capability bounding set。组合探测失败会阻止
-HTTP 服务启动，不在运行时降级。这个探测证明选中路径可执行，跨 Bed 拒绝访问、权限
+实例选择期间，以临时 Bed 走真实命令、常驻 shell 和 Service 进程入口的子目录读写路径，并核对 file API
+可见同一产物，同时核对最终 UID/GID、实际 capability 集合与 `NoNewPrivs`；拥有 SETPCAP 时
+清空 bounding set，继承 UID 0 的基线必须证明 bounding set 也为空。失败组合在清理成功后可有限回退；
+required、清理失败、候选耗尽或期限耗尽会阻止 HTTP 服务启动。选定后不在 live Bed 中降级。
+这个探测证明选中路径可执行，不等于所有应用都兼容；跨 Bed 拒绝访问、权限
 集合与失败回收仍由对应机制 probe 和回归测试验证。
 
 ## 三、关键设计
@@ -108,7 +133,8 @@ conda、本地 node_modules 等生态机制解决。共享软件的更改可能�
 
 ### 网络与资源独立演进
 
-网络能力不从文件房型推导。实例探测 netns 可用时为 Bed 分配网络，命令和 shell 共用，
+网络等级由 Network 根据房型预期选择，不从文件 backend 推导。suite 期望 private 网络；dorm/room 选择 shared。
+实例探测 netns 可用且实际选用时为 Bed 分配网络，命令、shell 和 Service 共用，
 Executor 替换不改变该 resident Bed 的网络身份；能力不可用时共享 Carrier 网络。
 当前 netns 作用域是 Bed 进程，Chromium/MCP 的出站仍来自 Carrier。BrowserContext
 切分浏览器状态，不构成 OS 网络边界；机制、DNS、诊断与出站约束见 [network.md](network.md)。
@@ -119,7 +145,7 @@ Executor 替换不改变该 resident Bed 的网络身份；能力不可用时共
 
 ### 尽力兑现与失败语义
 
-**能力不足时可以降级；已选机制执行失败时必须明确失败。** 启动预检只能排除不具备前提
+**启动选择允许能力与组合回退；live Bed 已选机制执行失败时必须明确失败。** 启动预检只能排除不具备前提
 的候选，不能证明机制真正生效；实际选择依赖 smoke，避免把存在的二进制、内核版本或
 capability 当成隔离成功。不同机制分别通过，还需要检验它们的组合。
 
@@ -134,7 +160,11 @@ capability 当成隔离成功。不同机制分别通过，还需要检验它们
 
 ## 四、能力披露与验证
 
-诊断接口报告文件请求、有效档位、环境上限与机制、workspace 进程视图和网络作用域；
+`/healthz.isolation` 和 `/v1/status.isolation` 报告跨领域房型的 requested/effective/reasons；
+`/v1/status.components.filesystem` 报告 shared/confined/private 文件等级、上限、机制及视图；
+Privilege 与 Network 分别报告自己的 supported 和选择结果，`combinations` 保留启动组合尝试及失败原因。
+状态 schema 版本为 3；不再将 healthz.isolation 的 level/mechanism/ceiling 当作文件机制入口。
+诊断接口还报告 workspace 进程视图和网络作用域；
 health / capabilities 还报告资源记账、准入与设施可用性。各投影的边界见
 [observability.md](observability.md)，具体字段由 API 和配置代码维护。当前没有一个
 “已隔离”布尔值能代表上述全部保证。Bed Ready 表示初始化完成，不等于所有维度达到理想状态。
@@ -143,7 +173,7 @@ health / capabilities 还报告资源记账、准入与设施可用性。各投�
 
 - 三档使用相同的结构化路径用例，验证数据落点与回显一致；
 - 两个 Bed 验证自己的数据可用、邻居访问符合实际机制，并检查共享路径的边界；
-- 一次性命令、后台执行和 session 验证同一套身份、网络与文件视图；
+- 一次性命令、后台执行、session 和 Service 验证同一套身份、网络与文件视图；
 - 在候选机制及其组合上验证真实准备、降权和执行，纯 argv 测试不代表内核隔离已生效；
 - 验证初始化取消、部分清理失败、同 ID 重建与 Executor 替换，不把残缺资源发布为可用。
 

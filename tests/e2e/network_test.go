@@ -41,7 +41,12 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 		t.Fatal(err)
 	}
 	must2xx(t, "diagnostics", response)
-	if !diagnostics.Components.Network.Enabled || diagnostics.Components.Network.Scope != "bed_processes" {
+	private := level == "suite"
+	wantScope := "carrier"
+	if private {
+		wantScope = "bed_processes"
+	}
+	if diagnostics.Components.Network.Enabled != private || diagnostics.Components.Network.Scope != wantScope {
 		t.Fatalf("network: %+v", diagnostics.Components.Network)
 	}
 	var health healthView
@@ -53,7 +58,7 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 	if requiredIsolationLevels()[level] && health.Isolation.Effective != level {
 		t.Fatalf("required %s degraded: %+v", level, health.Isolation)
 	}
-	t.Logf("executor=%s file=%s mechanism=%s", backend, health.Isolation.Effective, health.Isolation.Mechanism)
+	t.Logf("executor=%s room=%s files=%+v", backend, health.Isolation.Effective, c.filesystemStatus(t))
 	check, response := c.command(t, "network-a", map[string]any{"command": "grep -E '^(CapEff|CapPrm|CapInh|CapAmb|CapBnd|NoNewPrivs):' /proc/self/status", "timeout": 30000})
 	must2xx(t, "privilege probe", response)
 	assertCommandExit(t, check, 0)
@@ -81,8 +86,8 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 		assertCommandExit(t, result, 0)
 		ids[bed] = strings.TrimSpace(result.Stdout)
 	}
-	if ids["network-a"] == ids["network-b"] {
-		t.Fatal("commands share netns")
+	if (ids["network-a"] != ids["network-b"]) != private {
+		t.Fatalf("network namespace sharing disagrees with profile %s: %v", level, ids)
 	}
 	var session struct {
 		ID string `json:"session_id"`

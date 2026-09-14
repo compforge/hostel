@@ -31,11 +31,11 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/amenity"
+	bedmodel "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/bed/network"
-	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/resource"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	"github.com/qiankunli/hostel/internal/config"
@@ -114,19 +114,18 @@ func main() {
 		log.Fatalf("hostel: configure path projections: %v", err)
 	}
 
-	// New resolves the requested level against the environment ceiling and
-	// logs the outcome; the returned isolator is always usable.
 	host := hostfacts.Collect()
-	iso, err := isolation.Resolve(host, cfg.Bed.Filesystem, cfg.WorkspaceRoot,
-		isolation.WithPathProjections(pathProjections),
-	)
+	room, _ := bedmodel.ParseRoomType(cfg.Bed.RoomType) // Config.Load validates the public profile.
+	selectionCtx, cancelSelection := context.WithTimeout(context.Background(), 60*time.Second)
+	selection, err := bed.ResolveRuntime(selectionCtx, host, cfg.WorkspaceRoot, cfg.ShellPath, bed.RuntimeConfig{
+		Room: room, Filesystem: cfg.Bed.Filesystem, Privilege: cfg.Bed.Privilege,
+		Network: cfg.Bed.Network, Resource: cfg.Bed.Resource, Executor: cfg.Bed.Executor, Projections: pathProjections,
+	}, ports)
+	cancelSelection()
 	if err != nil {
-		log.Fatalf("hostel: filesystem features: %v", err)
+		log.Fatalf("hostel: select Bed environment: %v", err)
 	}
-	bedUser, err := privilege.NewBedUser(cfg.Bed.Privilege.UID, cfg.Bed.Privilege.GID)
-	if err != nil {
-		log.Fatalf("hostel: configure bed user: %v", err)
-	}
+	iso := selection.Files
 
 	// Facilities remain registered when unavailable; Start reports the reason.
 	amenities := amenity.NewManager(host)
@@ -149,7 +148,7 @@ func main() {
 	}
 
 	mgr, err := bed.NewManager(host, cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
-		bed.WithBedUser(bedUser),
+		bed.WithRuntimeSelection(selection),
 		bed.WithServices(ports, cfg.ServiceAdvertiseHost),
 	)
 	if err != nil {
@@ -165,7 +164,7 @@ func main() {
 		log.Printf("hostel: filtered reserved carrier environment from bed processes: keys=%v", filtered)
 	}
 
-	networks := network.NewConfigured(context.Background(), cfg.Bed.Network)
+	networks := network.NewConfigured(context.Background(), selection.Network)
 	networks.SetPortManager(ports)
 	mgr.SetNetworkManager(networks)
 	resources := resource.NewConfigured(cfg.Bed.Resource)
@@ -193,39 +192,13 @@ func main() {
 		mgr.SetCDPAdvertise(addr)
 	}
 
-	// Select one Executor backend before request admission. Auto is an honest
-	// portability fallback; explicitly requesting supervisor fails closed.
-	switch cfg.Bed.Executor.Backend {
-	case "local":
-		mgr.SetExecutorFactory(executor.NewLocalFactory(resources))
-	case "auto", "supervisor":
-		exe, executableErr := os.Executable()
-		var factory *executor.SupervisorFactory
-		var factoryErr error
-		if executableErr == nil {
-			factory, factoryErr = executor.NewSupervisorFactory(exe, resources)
-		}
-		probeCtx, cancelProbe := context.WithTimeout(context.Background(), 5*time.Second)
-		if factoryErr == nil && executableErr == nil {
-			factoryErr = factory.Probe(probeCtx)
-		}
-		cancelProbe()
-		if factoryErr != nil || executableErr != nil {
-			if factory != nil {
-				_ = factory.Close()
-			}
-			if cfg.Bed.Executor.Backend == "supervisor" {
-				log.Fatalf("hostel: supervisor executor unavailable: executable=%v probe=%v", executableErr, factoryErr)
-			}
-			log.Printf("hostel: supervisor executor unavailable, using local executor: executable=%v probe=%v", executableErr, factoryErr)
-			mgr.SetExecutorFactory(executor.NewLocalFactory(resources))
-		} else {
-			mgr.SetExecutorFactory(factory)
-			log.Printf("hostel: supervisor executor enabled")
-		}
-	default:
-		log.Fatalf("hostel: invalid executor backend %q", cfg.Bed.Executor.Backend)
+	executorCtx, cancelExecutor := context.WithTimeout(context.Background(), 5*time.Second)
+	factory, err := executor.ResolveFactory(executorCtx, selection.Executor, resources)
+	cancelExecutor()
+	if err != nil {
+		log.Fatalf("hostel: executor: %v", err)
 	}
+	mgr.SetExecutorFactory(factory)
 
 	if err := amenities.Start(context.Background()); err != nil {
 		log.Fatalf("hostel: start amenities: %v", err)

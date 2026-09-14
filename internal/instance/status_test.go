@@ -14,7 +14,7 @@ func TestObserverUsesInjectedHostSnapshot(t *testing.T) {
 	host.System.Runtime.KernelRelease = "injected-host"
 	facilities := amenity.NewManager(host)
 	root := t.TempDir()
-	beds, err := manager.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "dorm", root), facilities, 0, nil)
+	beds, err := manager.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "shared", root), facilities, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

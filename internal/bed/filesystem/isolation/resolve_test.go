@@ -47,10 +47,10 @@ func resolveMechs(req Level, candidates []Isolator) (Isolator, Level, Level) {
 }
 
 func TestResolveEffectiveLevel(t *testing.T) {
-	suite := fakeMech{"bwrap", Suite, false}
-	room := fakeMech{"landlock", Room, false}
+	suite := fakeMech{"bwrap", Private, false}
+	room := fakeMech{"landlock", Confined, false}
 	all := func(s, r bool) []Isolator {
-		return []Isolator{fakeMech{"bwrap", Suite, s}, fakeMech{"landlock", Room, r}, direct{}}
+		return []Isolator{fakeMech{"bwrap", Private, s}, fakeMech{"landlock", Confined, r}, direct{}}
 	}
 
 	cases := []struct {
@@ -62,17 +62,17 @@ func TestResolveEffectiveLevel(t *testing.T) {
 		wantMech    string
 	}{
 		// auto (=suite request) takes the ceiling.
-		{"auto full env", Suite, true, true, Suite, Suite, "bwrap"},
-		{"auto no userns", Suite, false, true, Room, Room, "landlock"},
-		{"auto nothing", Suite, false, false, Dorm, Dorm, "direct"},
+		{"auto full env", Private, true, true, Private, Private, "bwrap"},
+		{"auto no userns", Private, false, true, Confined, Confined, "landlock"},
+		{"auto nothing", Private, false, false, Shared, Shared, "direct"},
 		// deliberate downgrade is honored even when more is available.
-		{"request room, suite available", Room, true, true, Room, Suite, "landlock"},
-		{"request dorm always dorm", Dorm, true, true, Dorm, Suite, "direct"},
+		{"request room, suite available", Confined, true, true, Confined, Private, "landlock"},
+		{"request dorm always dorm", Shared, true, true, Shared, Private, "direct"},
 		// request exceeds ceiling → honest degrade to best achievable ≤ req.
-		{"request suite, only room", Suite, false, true, Room, Room, "landlock"},
+		{"request suite, only room", Private, false, true, Confined, Confined, "landlock"},
 		// request room but room's mechanism missing (suite present) → drop to
 		// best ≤ room that IS available = dorm; never silently give more.
-		{"request room, only suite", Room, true, false, Dorm, Suite, "direct"},
+		{"request room, only suite", Confined, true, false, Shared, Private, "direct"},
 	}
 	_ = suite
 	_ = room
@@ -89,7 +89,7 @@ func TestResolveEffectiveLevel(t *testing.T) {
 
 func TestParseRequestAndNewReports(t *testing.T) {
 	for in, want := range map[string]Level{
-		"dorm": Dorm, "room": Room, "suite": Suite, "auto": Suite, "": Suite, "bogus": Suite,
+		"shared": Shared, "confined": Confined, "private": Private, "auto": Private, "": Private, "bogus": Private,
 	} {
 		if got := parseRequest(in); got != want {
 			t.Errorf("parseRequest(%q) = %s, want %s", in, got, want)
@@ -103,14 +103,14 @@ func TestParseRequestAndNewReports(t *testing.T) {
 	if !ok {
 		t.Fatalf("New(auto) does not implement Report: %T", iso)
 	}
-	if r.Requested() != Suite {
-		t.Errorf("Requested() = %s, want %s (auto)", r.Requested(), Suite)
+	if r.Requested() != Private {
+		t.Errorf("Requested() = %s, want %s (auto)", r.Requested(), Private)
 	}
 	if r.Effective() != iso.Level() || r.Effective() != r.Ceiling() {
 		t.Errorf("auto must land on the ceiling: effective=%s level=%s ceiling=%s",
 			r.Effective(), iso.Level(), r.Ceiling())
 	}
-	wantMech := map[Level]string{Dorm: "direct", Room: "landlock", Suite: "bwrap"}[iso.Level()]
+	wantMech := map[Level]string{Shared: "direct", Confined: "landlock", Private: "bwrap"}[iso.Level()]
 	if iso.Name() != wantMech {
 		t.Errorf("level %s served by mechanism %s, want %s", iso.Level(), iso.Name(), wantMech)
 	}

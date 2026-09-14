@@ -19,17 +19,8 @@ type BedLifecycle interface {
 	Forget(context.Context, *Bed) error
 }
 
-type Component[R any] interface {
-	DaemonLifecycle
-	BedLifecycle
-	// Status returns Component Status: this domain's instance-wide snapshot,
-	// distinct from its per-Bed section in Bed.Status(). It performs no host
-	// probes or remote I/O; R remains the domain-owned report type.
-	Status() R
-}
-
 // Noop supplies only hooks a component does not participate in. A component
-// must still explicitly provide Status to satisfy Component.
+// must still explicitly provide Status and LevelStatus to satisfy Component.
 type Noop struct{}
 
 func (Noop) Recover(context.Context, *Bed) error { return nil }

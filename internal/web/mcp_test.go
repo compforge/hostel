@@ -33,7 +33,7 @@ func TestMCPBedConfigurationLifecycle(t *testing.T) {
 	registry := amenity.NewManager(hostfacts.Collect())
 	facility := amenity.NewMCP(mcpproxy.Options{})
 	registry.Register(facility)
-	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), registry, 0, nil)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), registry, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

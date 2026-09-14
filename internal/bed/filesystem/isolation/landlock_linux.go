@@ -51,12 +51,12 @@ func newLandlock(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, host
 	// established this fact, no need to re-syscall here).
 	if facts.LandlockABI < 1 {
 		report.Error = "Landlock ABI unavailable"
-		return unavailable{name: "landlock", lvl: Room}, report
+		return unavailable{name: "landlock", lvl: Confined}, report
 	}
 	self, err := os.Executable()
 	if err != nil {
 		report.Error = err.Error()
-		return unavailable{name: "landlock", lvl: Room}, report
+		return unavailable{name: "landlock", lvl: Confined}, report
 	}
 	report.ResolvedPath = self
 	// The workspace root may not exist yet at probe time (the bed manager
@@ -69,7 +69,7 @@ func newLandlock(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, host
 	report.ResolvedPath = self
 	if report.Failed() {
 		log.Printf("isolation: landlock ABI present but unusable (%s)", report.Error)
-		return unavailable{name: "landlock", lvl: Room}, report
+		return unavailable{name: "landlock", lvl: Confined}, report
 	}
 	return &landlock{self: self}, report
 }
@@ -121,7 +121,7 @@ func landlockSmoke(self, workspaceRoot string) hostfacts.ProbeReport {
 }
 
 func (l *landlock) Name() string                 { return "landlock" }
-func (l *landlock) Level() Level                 { return Room }
+func (l *landlock) Level() Level                 { return Confined }
 func (l *landlock) Available() bool              { return true } // only constructed when ABI≥1
 func (l *landlock) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
 func (l *landlock) WorkspaceMounted() bool       { return false }

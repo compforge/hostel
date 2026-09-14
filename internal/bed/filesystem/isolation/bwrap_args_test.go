@@ -132,7 +132,7 @@ func TestBuildBwrapArgsAddsConfiguredProjections(t *testing.T) {
 }
 
 func TestDirectUsesCarrierView(t *testing.T) {
-	iso := New(hostfacts.Collect(), "dorm", t.TempDir())
+	iso := New(hostfacts.Collect(), "shared", t.TempDir())
 	if iso.WorkspaceMounted() {
 		t.Fatal("direct must not report a workspace mount")
 	}

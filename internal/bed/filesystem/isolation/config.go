@@ -18,13 +18,16 @@ type Config struct {
 	UID                  feature.Policy
 	PRoot                feature.Policy
 	Pathshim             feature.Policy
+	// DedicatedIdentity is resolved by Privilege before filesystem selection.
+	DedicatedIdentity bool
+	// Excluded records failed startup combinations without rewriting user policy.
+	Excluded map[string]string
 }
 
 // Options preserves explicit Auto independently of omitted configuration.
 type Options struct {
 	ProjectedPaths       *string
 	DormReadFallbackRoot *string
-	Level                *string
 	Bwrap                *feature.Policy
 	Landlock             *feature.Policy
 	UID                  *feature.Policy
@@ -34,7 +37,7 @@ type Options struct {
 
 func (c Config) Validate() error {
 	switch c.Level {
-	case "", "auto", "dorm", "room", "suite":
+	case "", "auto", "shared", "confined", "private":
 	default:
 		return fmt.Errorf("invalid isolation level %q", c.Level)
 	}
@@ -56,11 +59,11 @@ func (c Config) Validate() error {
 	if c.PRoot == feature.Required && c.Pathshim == feature.Required {
 		return fmt.Errorf("filesystem: proot and pathshim are mutually exclusive")
 	}
-	if c.Bwrap == feature.Required && parseRequest(c.Level) < Suite {
-		return fmt.Errorf("filesystem: bwrap requires suite level")
+	if c.Bwrap == feature.Required && parseRequest(c.Level) < Private {
+		return fmt.Errorf("filesystem: bwrap requires private files")
 	}
-	if (c.Landlock == feature.Required || c.UID == feature.Required) && parseRequest(c.Level) < Room {
-		return fmt.Errorf("filesystem: landlock/uid require at least room level")
+	if (c.Landlock == feature.Required || c.UID == feature.Required) && parseRequest(c.Level) < Confined {
+		return fmt.Errorf("filesystem: landlock/uid require at least confined files")
 	}
 	if c.Bwrap == feature.Required && (c.PRoot == feature.Required || c.Pathshim == feature.Required) {
 		return fmt.Errorf("filesystem: bwrap mount view conflicts with required workspace helper")

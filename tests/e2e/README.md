@@ -32,7 +32,7 @@ backup integrity. The opt-in successful round trip below covers durable formats
 against a real S3-compatible service.
 
 By default, a host may honestly degrade an unavailable isolation request. A
-release runner can require levels to be realized instead:
+release runner can require complete room profiles to be realized instead (suite now includes dedicated identity and private network, not only bwrap):
 
 ```sh
 HOSTEL_E2E_REQUIRE_ISOLATION=dorm,room,suite make e2e
@@ -139,9 +139,9 @@ to reach the test-owned browser fixture.
 In a disposable Linux container with the required namespace, routing and nft
 permissions, set `HOSTEL_E2E_REQUIRE_NETWORK=1` and run `make e2e` in binary
 mode. `TestNetworkNamespaces` requires an enabled diagnostic verdict and checks
-the `local` / `supervisor` × `dorm` / `room` / `suite` matrix: separate Bed namespaces,
+the `local` / `supervisor` × `dorm` / `room` / `suite` matrix: shared Bed namespaces for dorm/room and separate namespaces for suite,
 command/session namespace consistency, zero capability sets, `no_new_privs`, and
-purge/recreate. Set `HOSTEL_E2E_REQUIRE_ISOLATION=dorm,room,suite` to reject file-level
+purge/recreate. Set `HOSTEL_E2E_REQUIRE_ISOLATION=dorm,room,suite` to reject profile
 degradation as well. Binary fixtures use a traversable workspace root so a selected
 Bed UID can access its own absolute paths.
 The runtime prerequisite is a complete successful probe, not just `NET_ADMIN`.
@@ -189,3 +189,8 @@ cover explicit S3 and zero-valued settings overriding environment defaults.
 Configuration restrictions exercise selection; they do not prove kernel permission
 rejection or failure halfway through allocation. Keep real restricted-container
 cases alongside these deterministic tests. See [configuration design](../../docs/configuration.md).
+
+Status schema 3 separates `healthz.isolation` (requested/effective room profile) from
+`/v1/status.components.filesystem` (shared/confined/private). Filesystem assertions
+must use the latter: a degraded room profile may retain a private file view.
+These cases require an explicit E2E run; compile-only validation is not execution evidence.

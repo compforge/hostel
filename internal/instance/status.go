@@ -33,12 +33,13 @@ type Status struct {
 }
 
 func (o Observer) Status() Status {
-	return Status{SchemaVersion: 2, Host: o.host, Status: o.Beds.Status(), Amenities: o.Amenities.Status(), Ports: o.Beds.PortStatus()}
+	return Status{SchemaVersion: 3, Host: o.host, Status: o.Beds.Status(), Amenities: o.Amenities.Status(), Ports: o.Beds.PortStatus()}
 }
 
 // BedStatus uses the same component/amenity organization at unit granularity.
 // Tenant observations are joined through bindings, not stored in bed.Status.
 type BedStatus struct {
+	Isolation  bed.RoomStatus    `json:"isolation"`
 	Lifecycle  manager.BedStatus `json:"lifecycle"`
 	Components struct {
 		Filesystem bed.FilesystemStatus `json:"filesystem"`
@@ -53,7 +54,7 @@ type BedStatus struct {
 }
 
 func (o Observer) BedStatus(b *bed.Bed, lifecycle manager.BedStatus) BedStatus {
-	report := BedStatus{Lifecycle: lifecycle, Amenities: make(map[string]amenity.BindingStatus)}
+	report := BedStatus{Lifecycle: lifecycle, Isolation: o.Beds.RoomStatus(), Amenities: make(map[string]amenity.BindingStatus)}
 	if b == nil {
 		return report
 	}

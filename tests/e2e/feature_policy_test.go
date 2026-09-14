@@ -64,7 +64,7 @@ func TestFeaturePoliciesOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	must2xx(t, "feature status", response)
-	if status.Components.Filesystem.Effective != "dorm" || status.Components.Network.Enabled || status.Components.Resource.Accounting.Available {
+	if status.Components.Filesystem.Effective != "shared" || status.Components.Network.Enabled || status.Components.Resource.Accounting.Available {
 		t.Fatalf("disabled features active: %+v", status)
 	}
 	for _, features := range []map[string]feature.Status{status.Components.Filesystem.Features, status.Components.Network.Features, status.Components.Resource.Accounting.Features} {
@@ -101,9 +101,9 @@ func TestFeatureRequiredStartupFailure(t *testing.T) {
 			if scenario == "missing-pathshim" {
 				options.Bed.Filesystem.Pathshim = value(feature.Required)
 			} else {
-				options.Bed.Filesystem.Level = value("room")
+				options.Bed.RoomType = value("room")
 				options.Bed.Filesystem.Bwrap = value(feature.Required)
-				expected = "bwrap requires suite"
+				expected = "bwrap requires private files"
 			}
 			raw, err := json.Marshal(options)
 			if err != nil {

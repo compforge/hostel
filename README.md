@@ -142,7 +142,7 @@ model as configured paths but is intentionally not repeated in
 `HOSTEL_PROJECTED_PATHS`. A deployment can add multiple business-neutral
 projections with
 `HOSTEL_PROJECTED_PATHS`, for example `/memory=/mnt/memory,/cache=/mnt/cache`.
-Under dorm/room, Hostel discovers `proot` and `pathshim` through `PATH`, then
+With shared/confined files, Hostel discovers `proot` and `pathshim` through `PATH`, then
 smoke-tests their complete projection sets. PRoot is preferred when ptrace and
 its own smoke pass; pathshim is next; otherwise commands use Carrier paths.
 These compatibility views do not change the isolation level. See
@@ -159,17 +159,24 @@ networking and resources. Hostel provides as much isolation as the environment
 supports and reports the actual boundaries. Shared infrastructure keeps the
 runtime lightweight; available mechanisms determine which boundaries are enforced.
 
-File isolation is graded by room type: `--isolation dorm|room|suite|auto`
-(`auto` selects the environment ceiling; a higher request degrades to that ceiling).
+Room types are instance-wide profiles: `--isolation dorm|room|suite|auto`.
+Each domain maps the requested profile to its own isolation grade, probes support,
+and selects a working mechanism. `auto` requests suite and permits degradation.
 
-- `dorm`: logical separation without an enforced cross-Bed file boundary.
-- `room`: Landlock or a separate UID restricts access to other Beds' data;
-  directory existence and shared system paths remain visible.
-- `suite`: bwrap provides a private mount view, hides sibling workspaces and
-  mounts the Bed's workspace at `/workspace`.
+- `dorm`: shared files, identity and Carrier network.
+- `room`: confined cross-Bed file access and dedicated Bed identities; shared network.
+- `suite`: private file views, dedicated Bed identities and private Bed networks.
 
-These grades describe file isolation. Network namespaces are probed independently
-and currently cover Bed commands and shells; shared Chromium/MCP egress still uses
+The effective profile is the highest fully satisfied profile, capped by the request.
+Downgrading that summary does not remove stronger working component features.
+Startup validates command, session and Service execution together, retries optional
+combinations only after cleanup, and fails if a required mechanism or cleanup cannot
+be satisfied. Live Bed environments never silently downgrade. Weak-isolation
+compatibility will improve as real application cases accumulate.
+
+Automatic shared-identity execution does not require switching users; actual child
+credentials and capability removal must still pass the startup probe.
+Network namespaces cover Bed commands, shells and Services; shared Chromium/MCP egress still uses
 the Carrier. Per-Bed CPU/memory accounting does not imply hard limits. PRoot and
 pathshim improve process path compatibility without adding a security boundary.
 
@@ -177,9 +184,10 @@ Health and capability responses report the selected mechanisms, scope and reason
 for unavailable capabilities. See [the isolation design](docs/isolation.md) for
 the full model and [the backlog](docs/backlog.md) for remaining gaps.
 
-Instance status (`GET /v1/status`, schema version 2) groups global domain reports
+Instance status (`GET /v1/status`, schema version 3) groups global domain reports
 under `components` and facility reports under `amenities`, alongside Bed inventory
-and capacity summaries. Bed details (`GET /v1/beds/:id`) use `status.lifecycle`,
+and capacity summaries. `isolation` reports the cross-domain profile; filesystem
+grades are `shared/confined/private` under `components.filesystem`. Bed details (`GET /v1/beds/:id`) use `status.lifecycle`,
 `status.components` and `status.amenities`; the latter contains the IDs and
 domain-specific status of tenants bound to that Bed. Status reads allocate no tenants.
 

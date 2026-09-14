@@ -12,6 +12,7 @@ import (
 )
 
 type BedConfig struct {
+	RoomType   string
 	Filesystem filesystem.Config
 	Network    network.Config
 	Resource   resource.Config
@@ -20,6 +21,7 @@ type BedConfig struct {
 	Store      store.Config
 }
 type BedOptions struct {
+	RoomType   *string
 	Filesystem filesystem.Options
 	Network    network.Options
 	Resource   resource.Options
@@ -59,6 +61,7 @@ type Options struct {
 }
 
 func (o Options) apply(c *Config) {
+	apply(&c.Bed.RoomType, o.Bed.RoomType)
 	apply(&c.ServiceAdvertiseHost, o.ServiceAdvertiseHost)
 	apply(&c.PortRangeStart, o.PortRangeStart)
 	apply(&c.PortRangeEnd, o.PortRangeEnd)
@@ -84,7 +87,6 @@ func (o Options) apply(c *Config) {
 	apply(&c.ChromiumIdleStop, o.ChromiumIdleStop)
 	apply(&c.ChromiumDebugPort, o.ChromiumDebugPort)
 	apply(&c.ShellPath, o.ShellPath)
-	apply(&c.Bed.Filesystem.Level, o.Bed.Filesystem.Level)
 	apply(&c.Bed.Filesystem.Bwrap, o.Bed.Filesystem.Bwrap)
 	apply(&c.Bed.Filesystem.Landlock, o.Bed.Filesystem.Landlock)
 	apply(&c.Bed.Filesystem.UID, o.Bed.Filesystem.UID)

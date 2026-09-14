@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package isolation confines a bed's processes. Data isolation is graded into
-// "hostel room types" (docs/isolation.md): the LEVEL is the north-facing
-// guarantee, the MECHANISM (direct/landlock/bwrap) is how it's realized on the
+// Package isolation confines a bed's processes. Filesystem LEVEL expresses a
+// domain guarantee (shared/confined/private), while the MECHANISM
+// (direct/uid/landlock/bwrap) is how it is realized on the
 // current host. A request expresses a wish; the effective level is capped by
 // what the environment can actually deliver:
 //
@@ -39,40 +39,40 @@ import (
 type Level int
 
 const (
-	// Dorm — bunk room: no barrier between beds (organizational split only).
-	Dorm Level = iota
-	// Room — private room, shared toilet: a bed can't ACCESS others' data
+	// Shared — bunk room: no barrier between beds (organizational split only).
+	Shared Level = iota
+	// Confined — private room, shared toilet: a bed can't ACCESS others' data
 	// (EACCES) but siblings stay visible and host paths (/tmp, /usr) are shared.
-	Room
-	// Suite — fully private: siblings invisible, private mount view, canonical
+	Confined
+	// Private — fully private: siblings invisible, private mount view, canonical
 	// /workspace. Process env ownership is isolation-independent (bed/env.go).
-	Suite
+	Private
 )
 
 func (l Level) String() string {
 	switch l {
-	case Room:
-		return "room"
-	case Suite:
-		return "suite"
+	case Confined:
+		return "confined"
+	case Private:
+		return "private"
 	default:
-		return "dorm"
+		return "shared"
 	}
 }
 
 // parseRequest maps a config value to a requested level. "auto" (and "") means
-// "as high as the environment allows" → Suite.
+// "as high as the environment allows" → Private.
 func parseRequest(s string) Level {
 	switch s {
-	case "room":
-		return Room
-	case "suite":
-		return Suite
-	default: // "auto", "dorm", unknown
-		if s == "dorm" {
-			return Dorm
+	case "confined":
+		return Confined
+	case "private":
+		return Private
+	default: // "auto", "shared", unknown
+		if s == "shared" {
+			return Shared
 		}
-		return Suite
+		return Private
 	}
 }
 
@@ -186,11 +186,6 @@ func (r *resolved) Diagnostics() DiagnosticsReport {
 	return DiagnosticsReport{Probes: probes, Features: features}
 }
 
-func (r *resolved) dedicatedBedUsers() bool {
-	provider, ok := r.boundary.(interface{ dedicatedBedUsers() bool })
-	return ok && provider.dedicatedBedUsers()
-}
-
 // Prepare forwards to the chosen mechanism when it needs data-dir preparation
 // (uid), else no-ops — so the bed manager can assert Preparer on the result
 // unconditionally, without knowing which mechanism won.
@@ -214,11 +209,11 @@ func (r *resolved) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	return wrapRuntimeCommand(r.boundary, r.workspace, cmd, fs, cwd)
 }
 
-// New is the default-policy constructor for valid room levels. Call Resolve
+// New is the default-policy constructor for valid file levels. Call Resolve
 // when accepting external configuration or requiring individual features.
 //
 // +spec=`effective isolation is the strongest available level not exceeding the request, and requested/effective/ceiling remain observable.`
-// +case:id=isolation_level_boundaries,desc=`Run the same sibling-path probe under dorm, room, and suite requests`,expect=`dorm shares, room denies, suite hides, and unavailable levels degrade honestly`
+// +case:id=isolation_level_boundaries,desc=`Run the same sibling-path probe under shared, confined, and private file requests`,expect=`shared permits, confined denies, private hides, and unavailable levels degrade honestly`
 func New(facts hostfacts.Snapshot, requested, workspaceRoot string, opts ...Option) Isolator {
 	iso, err := Resolve(facts, Config{Level: requested}, workspaceRoot, opts...)
 	if err != nil {
@@ -263,7 +258,11 @@ func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string, opts
 		case "landlock":
 			candidate, probe = newLandlock(facts, workspaceRoot)
 		case "uid":
-			candidate, probe = newUID(facts, workspaceRoot)
+			if config.DedicatedIdentity {
+				candidate, probe = newUID(facts, workspaceRoot)
+			} else {
+				candidate, probe = unavailable{name: "uid", lvl: Confined}, hostfacts.ProbeReport{Error: "dedicated Bed identity unavailable"}
+			}
 		}
 		probes[name] = probe
 		reports[name] = feature.Describe(policy, requirements(name), true, candidate.Available(), false, probe.Error)
@@ -324,11 +323,11 @@ type isoError struct{ msg string }
 func (e *isoError) Error() string { return e.msg }
 
 // direct runs the command straight on the host, only pinning its cwd to the
-// bed workspace. The dorm level: no enforced isolation. Always available.
+// bed workspace. The shared level: no enforced isolation. Always available.
 type direct struct{}
 
 func (direct) Name() string                 { return "direct" }
-func (direct) Level() Level                 { return Dorm }
+func (direct) Level() Level                 { return Shared }
 func (direct) Available() bool              { return true }
 func (direct) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
 func (direct) WorkspaceMounted() bool       { return false }
@@ -349,7 +348,7 @@ func commandCwd(fs *bedfs.FS, cwd string) string {
 func selectBoundary(config Config, candidates []Boundary) (Boundary, Level) {
 	req := parseRequest(config.Level)
 	policies := config.policies()
-	ceiling := Dorm
+	ceiling := Shared
 	var chosen Boundary = direct{}
 	var forced Boundary
 	for _, m := range candidates {
@@ -358,6 +357,10 @@ func selectBoundary(config Config, candidates []Boundary) (Boundary, Level) {
 		}
 		if m.Level() > ceiling {
 			ceiling = m.Level()
+		}
+		// A failed composition changes eligibility, not the standalone host fact.
+		if config.Excluded[m.Name()] != "" && policies[m.Name()] != feature.Required {
+			continue
 		}
 		if policies[m.Name()] == feature.Required {
 			forced = m

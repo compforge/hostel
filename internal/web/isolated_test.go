@@ -139,7 +139,7 @@ func TestIsolatedSessionRemainsActiveWhileEvicting(t *testing.T) {
 		started: make(chan struct{}, 1),
 		release: make(chan struct{}),
 	}
-	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, store.NewManagerWithStores(backend))
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, store.NewManagerWithStores(backend))
 	if err != nil {
 		t.Fatal(err)
 	}

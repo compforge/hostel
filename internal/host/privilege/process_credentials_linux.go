@@ -18,6 +18,7 @@ package privilege
 
 import (
 	"fmt"
+	"golang.org/x/sys/unix"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -53,11 +54,15 @@ func WrapCredentials(cmd *exec.Cmd, uid, gid int) error {
 		return fmt.Errorf("privilege: credential helper: %w", err)
 	}
 	args := []string{path}
-	// Dropping the bounding set requires CAP_SETPCAP. A root daemon has it and
-	// removes that ceiling as defense in depth. An ordinary daemon cannot do so;
+	// Dropping the bounding set requires CAP_SETPCAP, not merely UID 0. When
+	// available, remove that ceiling as defense in depth; otherwise
 	// clearing all active sets plus no_new_privs still prevents the child from
 	// acquiring capabilities through a later exec.
-	if os.Geteuid() == 0 {
+	var caps [2]unix.CapUserData
+	if err := unix.Capget(&unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}, &caps[0]); err != nil {
+		return fmt.Errorf("privilege: read child capability prerequisites: %w", err)
+	}
+	if caps[0].Effective&(1<<unix.CAP_SETPCAP) != 0 {
 		args = append(args, "--bounding-set=-all")
 	}
 	args = append(args, "--inh-caps=-all", "--ambient-caps=-all", "--no-new-privs")

@@ -16,7 +16,7 @@ import (
 
 func newIdentityTestManager(t *testing.T, root string) *Manager {
 	t.Helper()
-	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "dorm", root), nil, 0, nil)
+	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

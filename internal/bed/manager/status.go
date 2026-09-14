@@ -30,6 +30,8 @@ import (
 // Status aggregates Bed inventory and domain-owned Component Status. Amenity
 // facilities are peers and are composed separately by the Hostel instance.
 type Status struct {
+	Isolation    model.RoomStatus     `json:"isolation"`
+	Combinations []CombinationAttempt `json:"combinations,omitempty"`
 	InventoryStatus
 	LocalCleanups []LocalCleanupReport `json:"local_cleanups"`
 	Environment   EnvironmentReport    `json:"environment"`
@@ -67,7 +69,8 @@ func (m *Manager) Status() Status {
 	m.diagnosticsMu.RLock()
 	environment := m.environment
 	m.diagnosticsMu.RUnlock()
-	report := Status{InventoryStatus: m.InventoryStatus(), LocalCleanups: m.localCleanupReports(), Environment: environment}
+	report := Status{InventoryStatus: m.InventoryStatus(), LocalCleanups: m.localCleanupReports(), Environment: environment,
+		Isolation: m.RoomStatus(), Combinations: append([]CombinationAttempt(nil), m.combinationAttempts...)}
 	report.Components.Filesystem = m.files.Status()
 	report.Components.Privilege = m.privileges.Status()
 	report.Components.Network = m.network.Status()
@@ -75,6 +78,20 @@ func (m *Manager) Status() Status {
 	report.Components.Store = m.store.Status()
 	report.Components.Resource = m.resourceManager.Status()
 	return report
+}
+
+func (m *Manager) RoomStatus() model.RoomStatus {
+	requested := m.roomType
+	if requested == "" {
+		requested = m.iso.Level().Room()
+	}
+	identity := privilege.Shared
+	if m.identitySelection != nil {
+		identity = m.identitySelection.Effective
+	}
+	return model.SummarizeRoom(requested, map[string]model.Level{
+		"filesystem": m.iso.Level(), "privilege": identity, "network": m.network.Status().Effective,
+	})
 }
 
 func (m *Manager) startEnvironmentProbe(started time.Time) {

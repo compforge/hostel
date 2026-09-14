@@ -25,7 +25,7 @@ import (
 // process root because it shares the carrier mount namespace.
 //
 // +spec=`Reads prefer the BedFS path. When that path is absent, an absolute client path may be retried below the explicitly configured fallback root; relative paths never fall back.`
-// +why=`Dorm commands can successfully write a literal absolute path in the shared process namespace, while structured file paths still map into bed_home. Opt-in read-only recovery preserves those artifacts without weakening mutation confinement.`
+// +why=`Shared commands can successfully write a literal absolute path in the shared process namespace, while structured file paths still map into bed_home. Opt-in read-only recovery preserves those artifacts without weakening mutation confinement.`
 type Reader struct {
 	primary      *FS
 	fallbackRoot string

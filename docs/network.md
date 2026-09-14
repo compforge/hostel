@@ -11,7 +11,8 @@
 Bed 的每次命令和常驻 shell 使用相同 netns，Executor 替换不改变该网络身份。
 当前覆盖 `bed_processes`：共享 Chromium/MCP 等 amenity 的出站仍走 carrier 网络。
 
-网络能力自动启用，没有默认要求部署提权的开关。网络候选探测失败不影响服务启动；普通 Bed
+Network 定义 shared/private 两级：dorm/room 预期 shared，suite/auto 预期 private。它按实际探测与配置选择，
+不从文件 backend 推导；shared 满足到 room 的网络要求，private 满足 suite。没有默认要求部署提权的开关。网络候选探测失败不影响服务启动；普通 Bed
 继续共享 carrier 网络。探测成功后，单个 Bed 创建网络失败会使该次初始化失败，不能在
 同一实例中静默改成共享网络。运行中权限撤销也不会自动放开已隔离 Bed。
 
@@ -25,7 +26,7 @@ Bed 初始化完成数据准备后获取具体 `Attachment`，保存到 resident
 `manager.Environment`，准备完成后才发布 Ready。命令和 shell 共用这个组合入口：
 网络进入发生在最终降权之前；Network Manager 只负责进入所分配的 netns，完整的身份切换、
 文件视图与用户程序启动顺序由 [权限模型](privilege.md#特权操作顺序) 统一定义。
-实例在 HTTP 启动前还会实测选中的完整命令与 shell 组合；组合失败明确阻止启动。
+实例在 HTTP 启动前还会实测选中的完整 command/session/Service 组合；自动候选可在完整清理后有限回退，required 或清理失败则阻止启动。
 
 回收先停止 Bed 的命令和 shell、释放 amenity 与资源组，再删除网络。关闭失败的
 Attachment 保留清理 owner，但立即失去执行资格；同 ID Acquire 必须先清理残留才能
@@ -49,9 +50,9 @@ Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspac
   veth 访问的地址（默认 `:8872`），不是仅监听 carrier loopback。
 - 这些边界不等于安全容器：Hostel 的可信/半可信代码模型不变。透明 MITM 和 Credential Vault 不在当前能力范围。
 
-`GET /v1/status` 和 `/healthz` 的 `network` 返回启用状态、backend、作用域、失败
-原因和启动 probe（attempted、stage、duration_ms、error）。`enabled=false` 是网络能力
-缺席，不是 Hostel 健康检查失败。`/v1/isolated` 的 share_net 如实反映该状态，显式请求
+`GET /v1/status.components.network` 和 `/healthz.network` 返回支持等级、预期/生效等级、启用状态、backend、作用域、失败
+原因和启动 probe（attempted、stage、duration_ms、error）。`enabled=false` 表示未采用 private 网络，可能是预期 shared、
+策略关闭或能力缺席，不是 Hostel 健康检查失败。探测成功但未选用时仍保留 Supported 的 private。`/v1/isolated` 的 share_net 如实反映该状态，显式请求
 与实例能力冲突会报不支持。
 
 共享 Chromium 的 BrowserContext 不是 OS 网络边界。待办是在创建 Context 时设置各 Bed

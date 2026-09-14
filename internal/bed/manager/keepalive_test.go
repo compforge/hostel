@@ -104,7 +104,7 @@ func TestKeepaliveRenewDoesNotDirtyDurableBed(t *testing.T) {
 	root := t.TempDir()
 	fs := newFakeStore()
 	host := hostfacts.Collect()
-	m, err := NewManager(host, root, "default", "/bin/bash", isolation.New(host, "dorm", root), nil, 1, store.NewManagerWithStores(fs))
+	m, err := NewManager(host, root, "default", "/bin/bash", isolation.New(host, "shared", root), nil, 1, store.NewManagerWithStores(fs))
 	if err != nil {
 		t.Fatal(err)
 	}

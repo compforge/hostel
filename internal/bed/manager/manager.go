@@ -42,46 +42,49 @@ import (
 
 // Manager owns the set of beds and their lifecycle. Safe for concurrent use.
 type Manager struct {
-	ports           *hostnetwork.PortManager
-	services        *service.Manager
-	serviceStatusMu sync.Mutex
-	serviceHolds    map[string]*serviceHold
-	hostFacts       hostfacts.Snapshot
-	startMu         sync.Mutex
-	closeMu         *semaphore.Weighted
-	started         bool
-	startErr        error
-	components      []daemonComponent
-	runMu           sync.Mutex
-	runCancel       context.CancelFunc
-	runDone         chan struct{}
-	closed          bool
-	cleanupCtx      context.Context
-	cleanupCancel   context.CancelFunc
-	owners          model.Owners
-	files           *filesystem.Manager
-	executorManager *executor.Manager
-	resourceManager *resource.Manager
-	root            string
-	defaultBed      string
-	iso             isolation.Isolator
-	bedUser         privilege.BedUser
-	privileges      *privilege.Manager
-	diagnosticsMu   sync.RWMutex
-	environment     EnvironmentReport
-	shellPath       string
-	amenities       *amenity.Manager   // nil-safe; releases bound Tenants on Bed teardown
-	executions      *ExecutionRegistry // one-shot executions, daemon-global ids
-	executorFactory executor.Factory   // creates each managedBed's replaceable process realm
-	resources       resource.Tracker   // per-bed cgroup accounting; noop when unavailable
-	admission       resource.Admitter  // cached carrier-pressure verdict; never performs request-path I/O
-	maxBeds         int                // cap on occupied tenant beds; 0 = unlimited
-	maxPinnedBeds   int                // pinned-count pressure reference; 0 = pressure disabled
-	pressurePercent int                // shared occupied/pinned high-watermark percentage
-	pinnedBeds      atomic.Int64       // tenant beds running work or holding data not yet durable
-	network         *network.Manager
-	store           *store.Manager // daemon-wide persistence component
-	processEnv      processEnv     // explicit carrier software env; never daemon-wide inheritance
+	ports               *hostnetwork.PortManager
+	services            *service.Manager
+	serviceStatusMu     sync.Mutex
+	serviceHolds        map[string]*serviceHold
+	hostFacts           hostfacts.Snapshot
+	startMu             sync.Mutex
+	closeMu             *semaphore.Weighted
+	started             bool
+	startErr            error
+	components          []daemonComponent
+	runMu               sync.Mutex
+	runCancel           context.CancelFunc
+	runDone             chan struct{}
+	closed              bool
+	cleanupCtx          context.Context
+	cleanupCancel       context.CancelFunc
+	owners              model.Owners
+	files               *filesystem.Manager
+	executorManager     *executor.Manager
+	resourceManager     *resource.Manager
+	root                string
+	defaultBed          string
+	iso                 isolation.Isolator
+	bedUser             privilege.BedUser
+	roomType            model.RoomType
+	identitySelection   *privilege.Selection
+	combinationAttempts []CombinationAttempt
+	privileges          *privilege.Manager
+	diagnosticsMu       sync.RWMutex
+	environment         EnvironmentReport
+	shellPath           string
+	amenities           *amenity.Manager   // nil-safe; releases bound Tenants on Bed teardown
+	executions          *ExecutionRegistry // one-shot executions, daemon-global ids
+	executorFactory     executor.Factory   // creates each managedBed's replaceable process realm
+	resources           resource.Tracker   // per-bed cgroup accounting; noop when unavailable
+	admission           resource.Admitter  // cached carrier-pressure verdict; never performs request-path I/O
+	maxBeds             int                // cap on occupied tenant beds; 0 = unlimited
+	maxPinnedBeds       int                // pinned-count pressure reference; 0 = pressure disabled
+	pressurePercent     int                // shared occupied/pinned high-watermark percentage
+	pinnedBeds          atomic.Int64       // tenant beds running work or holding data not yet durable
+	network             *network.Manager
+	store               *store.Manager // daemon-wide persistence component
+	processEnv          processEnv     // explicit carrier software env; never daemon-wide inheritance
 	// bedIdleTTL is set once at startup. Accepted operations extend their bed
 	// through timeout+idleTTL so the idle reaper cannot kill in-flight work.
 	bedIdleTTL time.Duration
@@ -192,9 +195,16 @@ func NewManager(host hostfacts.Snapshot, root, defaultBed, shellPath string, iso
 	m.network.SetStatusWriter(m.owners.Network)
 	m.store.SetStatusWriter(m.owners.Store)
 	var err error
-	m.privileges, err = privilege.NewManager(isolation.DescribeBedUser(m.iso, m.bedUser), m.bedUser, host.EffectiveCaps, m.owners.Privilege, m.files.Files)
+	policy := privilege.BedUserReport{Strategy: "fixed", UID: m.bedUser.UID(), GID: m.bedUser.GID()}
+	if m.identitySelection != nil {
+		policy = m.identitySelection.Policy
+	}
+	m.privileges, err = privilege.NewManager(policy, m.bedUser, host.EffectiveCaps, m.owners.Privilege, m.files.Files)
 	if err != nil {
 		return nil, err
+	}
+	if m.identitySelection != nil {
+		m.privileges.SetSelection(*m.identitySelection)
 	}
 	return m, nil
 }
