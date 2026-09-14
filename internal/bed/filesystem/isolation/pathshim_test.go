@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
@@ -31,11 +32,11 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 	root := t.TempDir()
 	probe := fakePathshim(t, "bind-view", 0)
 	t.Setenv("PATH", filepath.Dir(probe))
-	projection, err := bedfs.NewPathProjection("/memory", "/mnt/memory")
+	source, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	iso := New(hostfacts.Collect(), "shared", root, WithPathProjections([]bedfs.PathProjection{projection}))
+	iso := New(hostfacts.Collect(), "shared", root)
 	report := iso.(Report).WorkspaceView()
 	if report.Mode != "pathshim" || !report.Available {
 		t.Fatalf("workspace view = %+v", report)
@@ -54,11 +55,12 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer fs.Close()
-	if err := iso.(Preparer).Prepare(fs); err != nil {
+	if err := fs.SetPathMappings([]model.PathMapping{{HostPath: source, BedPath: "/mnt/memory"}}); err != nil {
 		t.Fatal(err)
 	}
-	if fi, err := os.Stat(filepath.Join(home, "memory")); err != nil || !fi.IsDir() {
-		t.Fatalf("projection source was not prepared: %v, %v", fi, err)
+
+	if err := iso.(Preparer).Prepare(fs); err != nil {
+		t.Fatal(err)
 	}
 	cmd := exec.Command("/bin/sh", "-c", "pwd")
 	if err := iso.Wrap(cmd, fs, filepath.Join(workspace, "sub")); err != nil {
@@ -67,7 +69,7 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 	wantPrefix := []string{
 		probe, "--quiet",
 		"--bind", workspace + ":/workspace",
-		"--bind", filepath.Join(home, "memory") + ":/mnt/memory",
+		"--bind", source + ":/mnt/memory",
 		"--cwd", "/workspace/sub", "--",
 	}
 	if len(cmd.Args) < len(wantPrefix) || !slices.Equal(cmd.Args[:len(wantPrefix)], wantPrefix) {

@@ -17,13 +17,12 @@
 package isolation
 
 import (
-	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 // Non-Linux cannot provide a bwrap boundary. The domain resolver may choose
 // direct, but that fallback must not be reported as bwrap being available.
-func newBwrap(facts hostfacts.Snapshot, _ string, _ []bedfs.PathProjection) (Isolator, hostfacts.ProbeReport) {
+func newBwrap(facts hostfacts.Snapshot, _ string) (Isolator, hostfacts.ProbeReport) {
 	return unavailable{name: "bwrap", lvl: Private}, hostfacts.ProbeReport{
 		ConfiguredPath: "bwrap",
 		ResolvedPath:   facts.BwrapPath,

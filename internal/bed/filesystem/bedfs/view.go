@@ -32,33 +32,16 @@ type View struct {
 	fs             *FS
 	homeMount      string
 	workspaceMount string
-	projections    []resolvedProjection
-}
-
-type resolvedProjection struct {
-	hostRoot    string
-	processRoot string
 }
 
 // HostView is used when an Executor shares the carrier mount namespace.
 func HostView(fs *FS) View { return View{fs: fs} }
 
-// WorkspaceView projects only the bed workspace onto its stable process path.
-// Paths elsewhere in bed_home keep their carrier spelling. It is used by
-// best-effort process views such as pathshim, which intentionally emulate only
-// the /workspace bind and do not claim a complete guest root.
+// WorkspaceView gives the workspace its stable process path and honors the
+// BedFS mappings. Other paths in the default root keep their carrier spelling;
+// user-space helpers do not claim a complete guest root.
 func WorkspaceView(fs *FS) View {
 	return View{fs: fs, workspaceMount: WorkspacePath}
-}
-
-// ProjectedView adds caller-configured named roots to the stable workspace
-// view. It does not imply a private root or a stronger isolation level.
-func ProjectedView(fs *FS, projections []PathProjection) View {
-	return View{
-		fs:             fs,
-		workspaceMount: WorkspacePath,
-		projections:    resolveViewProjections(fs, projections),
-	}
 }
 
 // MountedView is used when the Executor has a private mount namespace. The
@@ -66,17 +49,6 @@ func ProjectedView(fs *FS, projections []PathProjection) View {
 // the workspace keeps its stable public /workspace path.
 func MountedView(fs *FS, homeMount, workspaceMount string) View {
 	return View{fs: fs, homeMount: path.Clean(homeMount), workspaceMount: path.Clean(workspaceMount)}
-}
-
-// MountedProjectedView combines a complete private BedFS root with the stable
-// workspace and configured named-root projections.
-func MountedProjectedView(fs *FS, homeMount string, projections []PathProjection) View {
-	return View{
-		fs:             fs,
-		homeMount:      path.Clean(homeMount),
-		workspaceMount: WorkspacePath,
-		projections:    resolveViewProjections(fs, projections),
-	}
 }
 
 // Path maps a confined carrier path into this Executor view.
@@ -95,26 +67,10 @@ func (v View) Path(host string) (string, error) {
 			return joinProcessPath(v.workspaceMount, workspaceRel), nil
 		}
 	}
-	for _, projection := range v.projections {
-		if rel, ok := relativeTo(projection.hostRoot, host); ok {
-			return joinProcessPath(projection.processRoot, rel), nil
-		}
-	}
 	if v.homeMount == "" {
 		return filepath.Clean(host), nil
 	}
 	return joinProcessPath(v.homeMount, homeRel), nil
-}
-
-func resolveViewProjections(fs *FS, projections []PathProjection) []resolvedProjection {
-	resolved := make([]resolvedProjection, 0, len(projections))
-	for _, projection := range projections {
-		resolved = append(resolved, resolvedProjection{
-			hostRoot:    projection.CarrierPath(fs.Home()),
-			processRoot: projection.ProcessPath,
-		})
-	}
-	return resolved
 }
 
 // Home returns the process-visible bed_home root.

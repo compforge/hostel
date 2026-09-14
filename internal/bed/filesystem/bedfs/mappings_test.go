@@ -56,7 +56,7 @@ func TestPathMappingsDefaultRootAndExternalData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := ProjectedView(fs, nil).Path(host); err != nil || got != "/mnt/project/moved.txt" {
+	if got, err := WorkspaceView(fs).Path(host); err != nil || got != "/mnt/project/moved.txt" {
 		t.Fatalf("view=%q,%v", got, err)
 	}
 	entries, err := fs.List("/", 4)

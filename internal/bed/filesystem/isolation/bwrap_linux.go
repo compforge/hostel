@@ -33,10 +33,9 @@ import (
 // /workspace, host user data and mounted secrets masked. Process environment
 // ownership is enforced before this boundary by bed's process-env builder.
 type bwrap struct {
-	path        string   // bwrap binary (probed at boot)
-	root        string   // parent dir of all bed workspaces (masked in-sandbox)
-	maskPaths   []string // existing sensitive host paths to mask (computed once)
-	projections []bedfs.PathProjection
+	path      string   // bwrap binary (probed at boot)
+	root      string   // parent dir of all bed workspaces (masked in-sandbox)
+	maskPaths []string // existing sensitive host paths to mask (computed once)
 }
 
 // newBwrap probes bubblewrap at boot: binary present AND the FULL mount shape
@@ -46,7 +45,7 @@ type bwrap struct {
 // while every exec failed). On failure it falls back to direct so the daemon
 // still boots and /healthz reports the truth.
 // Probe pattern borrowed from OpenSandbox execd, extended to the real argv.
-func newBwrap(facts hostfacts.Snapshot, workspaceRoot string, projections []bedfs.PathProjection) (Isolator, hostfacts.ProbeReport) {
+func newBwrap(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfacts.ProbeReport) {
 	path := facts.BwrapPath
 	report := hostfacts.ProbeReport{
 		ConfiguredPath: "bwrap",
@@ -73,7 +72,7 @@ func newBwrap(facts hostfacts.Snapshot, workspaceRoot string, projections []bedf
 	}
 
 	masks := resolveMaskPaths(defaultMaskCandidates)
-	report = bwrapSmoke(path, workspaceRoot, masks, projections)
+	report = bwrapSmoke(path, workspaceRoot, masks)
 	report.ConfiguredPath = "bwrap"
 	report.ResolvedPath = path
 	report.Exists = true
@@ -92,10 +91,9 @@ func newBwrap(facts hostfacts.Snapshot, workspaceRoot string, projections []bedf
 		return unavailable{name: "bwrap", lvl: Private}, report
 	}
 	return &bwrap{
-		path:        path,
-		root:        workspaceRoot,
-		maskPaths:   masks,
-		projections: append([]bedfs.PathProjection(nil), projections...),
+		path:      path,
+		root:      workspaceRoot,
+		maskPaths: masks,
 	}, report
 }
 
@@ -128,10 +126,9 @@ func resolveMaskPaths(candidates []string) []string {
 	return masks
 }
 
-// bwrapSmoke runs `true` under the exact argv shape used for real commands —
-// namespaces, masking, and the /workspace bind all get exercised, so whatever
-// passes here works for beds too.
-func bwrapSmoke(path, workspaceRoot string, masks []string, projections []bedfs.PathProjection) hostfacts.ProbeReport {
+// bwrapSmoke exercises the startup baseline: namespaces, masking and the
+// workspace bind. Additional mappings come from each BedFS when Wrap is called.
+func bwrapSmoke(path, workspaceRoot string, masks []string) hostfacts.ProbeReport {
 	probeHome, err := os.MkdirTemp(workspaceRoot, ".probe-*")
 	if err != nil {
 		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: temp bed_home: %v", err)}
@@ -141,13 +138,7 @@ func bwrapSmoke(path, workspaceRoot string, masks []string, projections []bedfs.
 	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
 		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: workspace: %v", err)}
 	}
-	for _, projection := range projections {
-		if err := os.MkdirAll(projection.CarrierPath(probeHome), 0o755); err != nil {
-			return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: projection source: %v", err)}
-		}
-	}
-
-	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, projections, bedfs.WorkspacePath, masks, nil)
+	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, bedfs.WorkspacePath, masks, nil)
 	cmd := exec.Command(path, append(argv, "true")...)
 	report := hostfacts.RunExecProbe(cmd)
 	if report.Error != "" {
@@ -161,7 +152,7 @@ func (b *bwrap) Level() Level           { return Private }
 func (b *bwrap) Available() bool        { return true } // only constructed when probe passed
 func (b *bwrap) WorkspaceMounted() bool { return true }
 func (b *bwrap) View(fs *bedfs.FS) bedfs.View {
-	return bedfs.MountedProjectedView(fs, bwrapBedHomeMountPoint, b.projections)
+	return bedfs.MountedView(fs, bwrapBedHomeMountPoint, bedfs.WorkspacePath)
 }
 
 func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
@@ -171,7 +162,7 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err != nil {
 		return err
 	}
-	argv := buildBwrapArgs(b.root, fs.Home(), fs.Workspace(), b.projections, processCwd, b.maskPaths, fs.PathMappings())
+	argv := buildBwrapArgs(b.root, fs.Home(), fs.Workspace(), processCwd, b.maskPaths, fs.PathMappings())
 	userArgs := cmd.Args
 	cmd.Args = make([]string, 0, len(argv)+len(userArgs)+1)
 	cmd.Args = append(cmd.Args, b.path)

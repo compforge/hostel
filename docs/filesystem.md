@@ -103,7 +103,7 @@ Bed 创建请求示例：
 }
 ```
 
-`HostPath` 是 daemon 可见的已有目录，例如 Pod 级 PVC 挂载点；Hostel 不创建、接管属主或删除它。调用方负责授权来源目录、挂载和访问权限。额外映射在文件 API、command/session/Service 的结构化路径与执行视图中指向同一份数据；映射本身不声明自动持久化。
+`HostPath` 是 daemon 可见的已有目录，例如 Pod 级 PVC 挂载点；Hostel 不创建、接管属主或删除它。调用方负责授权来源目录、挂载和访问权限。额外映射在文件 API、command/session/Service 的结构化路径与执行视图中指向同一份数据；映射本身不声明自动持久化。执行后端只读取当前 BedFS 的映射，不再持有独立的 projection 声明或配置 Option。
 
 额外 `BedPath` 必须绝对、非根，不能与其他映射、内置 `/workspace`、内核目录或内部挂载点重叠。`HostPath` 不得覆盖 Hostel 工作区或彼此重叠。映射目标不能遮蔽已有 BedFS 数据，也不能与 SyncPaths 重叠。默认根由 Hostel 建立，不在 Spec 中重复提交。
 

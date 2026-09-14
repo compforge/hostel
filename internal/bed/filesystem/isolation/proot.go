@@ -30,14 +30,13 @@ import (
 )
 
 type prootView struct {
-	path        string
-	projections []bedfs.PathProjection
+	path string
 }
 
 func (p *prootView) Mode() string  { return "proot" }
 func (p *prootView) Mounted() bool { return false }
 func (p *prootView) View(fs *bedfs.FS) bedfs.View {
-	return bedfs.ProjectedView(fs, p.projections)
+	return bedfs.WorkspaceView(fs)
 }
 
 func (p *prootView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
@@ -45,25 +44,24 @@ func (p *prootView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err != nil {
 		return err
 	}
-	hostfs.PRoot{Path: p.path}.Wrap(cmd, processMappings(fs, p.projections), guestCwd)
+	hostfs.PRoot{Path: p.path}.Wrap(cmd, processMappings(fs), guestCwd)
 	return nil
 }
 
-func newProotView(base Boundary, workspaceRoot string, projections []bedfs.PathProjection, discovery hostfacts.ProbeReport) (workspaceBackend, WorkspaceViewReport, hostfacts.ProbeReport) {
-	probe := hostfacts.WithExecutionProbe(discovery, probeProot(base, workspaceRoot, discovery.ResolvedPath, projections))
+func newProotView(base Boundary, workspaceRoot string, discovery hostfacts.ProbeReport) (workspaceBackend, WorkspaceViewReport, hostfacts.ProbeReport) {
+	probe := hostfacts.WithExecutionProbe(discovery, probeProot(base, workspaceRoot, discovery.ResolvedPath))
 	if probe.Error != "" {
 		log.Printf("isolation: proot process view unavailable (%s)", probe.Error)
 		return nil, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: probe.Error}, probe
 	}
-	log.Printf("isolation: proot process view probe succeeded path=%s projections=%d", discovery.ResolvedPath, len(projections))
+	log.Printf("isolation: proot process view probe succeeded path=%s", discovery.ResolvedPath)
 	workspace := &prootView{
-		path:        discovery.ResolvedPath,
-		projections: append([]bedfs.PathProjection(nil), projections...),
+		path: discovery.ResolvedPath,
 	}
 	return workspace, WorkspaceViewReport{Mode: workspace.Mode(), Available: true}, probe
 }
 
-func probeProot(base Boundary, workspaceRoot, executable string, projections []bedfs.PathProjection) hostfacts.ProbeReport {
+func probeProot(base Boundary, workspaceRoot, executable string) hostfacts.ProbeReport {
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		return hostfacts.ProbeReport{Error: "create workspace root: " + err.Error()}
 	}
@@ -84,15 +82,6 @@ func probeProot(base Boundary, workspaceRoot, executable string, projections []b
 		return hostfacts.ProbeReport{Error: err.Error()}
 	}
 	defer fs.Close()
-	for _, projection := range projections {
-		hostPath, err := fs.Resolve(projection.BedPath)
-		if err != nil {
-			return hostfacts.ProbeReport{Error: "resolve probe projection: " + err.Error()}
-		}
-		if err := fs.EnsureDir(hostPath); err != nil {
-			return hostfacts.ProbeReport{Error: "create probe projection: " + err.Error()}
-		}
-	}
 	if preparer, ok := base.(Preparer); ok {
 		if err := preparer.Prepare(fs); err != nil {
 			return hostfacts.ProbeReport{Error: "prepare probe bed: " + err.Error()}
@@ -102,7 +91,7 @@ func probeProot(base Boundary, workspaceRoot, executable string, projections []b
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", "cat /workspace/.hostel-proot-probe; printf '\n'; pwd")
-	hostfs.PRoot{Path: executable}.Wrap(cmd, processMappings(fs, projections), bedfs.WorkspacePath)
+	hostfs.PRoot{Path: executable}.Wrap(cmd, processMappings(fs), bedfs.WorkspacePath)
 	if err := base.Wrap(cmd, fs, probeWorkspace); err != nil {
 		return hostfacts.ProbeReport{Error: "wrap probe: " + err.Error()}
 	}
