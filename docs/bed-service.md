@@ -71,7 +71,10 @@ services:
     restart: on-failure
     http:
       ready_path: /healthz
-      token_env: SERVICE_ADMIN_TOKEN
+      authentication:
+        scheme: bearer
+        token_source: generated
+        token_env: SERVICE_ADMIN_TOKEN
 ```
 
 创建准入校验实例名唯一、argv 与监督参数合法、凭据只使用文件引用，并确认 HTTP 发布
@@ -260,6 +263,12 @@ Hostel 核心不包含具体业务服务代码。Carrier 镜像只负责提供�
 同 Bed 内的 Service 与用户程序仍处于同一信任边界，独立 env 不提供针对同 UID 进程
 读取或 `/proc` 访问的保密保证；需要更强凭据隔离时应单独设计权限或凭据代理能力。
 
+HTTP 能力与认证独立：省略 Authentication 时，Hostel 不生成凭据，探活不携带认证头，
+access 仅返回地址与运行实例等信息。声明 Bearer 认证时，token 可以由 Hostel 每次执行
+生成，也可以来自该服务显式配置的环境来源；源文件在每次启动时读取。运行期间探活与
+access 使用启动时的同一份凭据，避免文件轮换导致客户端与服务使用不同 token。
+认证校验由服务程序负责；Hostel 的端口发布和 TCP 转发不代替程序实施认证。
+
 Service 只继承 Carrier 通用环境和 Hostel 注入的 Bed 上下文，再叠加自身解析后的环境；
 普通执行的 `Bed.Spec.Env` 不传给 Service。共用 Bed Environment 表达目录、身份和隔离
 视图一致，不代表共用所有进程环境变量。普通命令与会话的环境契约见 [kernel.md](kernel.md#执行与进程归属)。
@@ -292,7 +301,9 @@ workspace 快照不携带本地进程身份、endpoint 或部署凭据。
   "max_restarts":5,
   "startup_seconds":30,
   "stop_seconds":5,
-  "http":{"ready_path":"/ready","token_env":"SERVICE_TOKEN"}
+  "http":{"ready_path":"/ready","authentication":{
+    "scheme":"bearer","token_source":"generated","token_env":"SERVICE_TOKEN"
+  }}
 }]}
 ```
 
@@ -312,9 +323,29 @@ Executor 丢失也在该预算内恢复服务，与应用自然退出的重启�
 启动超时默认 30 秒（1–120），停止宽限默认 5 秒（1–30）。
 明确端口冲突换端口最多尝试三次，不把任意应用失败归类为端口冲突。
 
-HTTP 服务必须声明 `token_env`。每次运行注入新 token；程序必须校验
-`Authorization: Bearer <token>`，就绪检查也使用此凭据。不跟随重定向，
-单请求两秒超时，最多 16 个并发 HTTP 探测。
+HTTP 服务声明 `ready_path`，`authentication` 可省略或为 null。配置认证时，
+`scheme` 必须为 `bearer`，同时明确 `token_source` 和 `token_env`：
+
+- `generated`：每次执行生成新 token 并注入指定环境变量，不允许与 `env` / `env_files` 同名项冲突。
+- `environment`：读取该服务 `env` / `env_files` 解析后的指定变量，不覆盖原值。凭据使用
+  `env_files` 引用，避免明文进入持久化声明；来源缺失或读取为空时启动失败。
+
+例如使用部署提供的凭据：
+
+```yaml
+env_files:
+  SERVICE_TOKEN: /run/hostel/service-secrets/example/SERVICE_TOKEN
+http:
+  ready_path: /ready
+  authentication:
+    scheme: bearer
+    token_source: environment
+    token_env: SERVICE_TOKEN
+```
+
+有认证时，程序校验 `Authorization: Bearer <token>`，就绪检查也使用此凭据；无认证时
+探活不附加该 header，access 不返回 token。探活不跟随重定向，单请求两秒超时，
+最多 16 个并发 HTTP 探测。
 非 HTTP worker 不声明 `http`，仅以进程存活就绪。
 
 统一 TCP 端口管理覆盖 Hostel HTTP、托管 Chromium、Bed 网络的 TCP DNS/连通性
@@ -330,7 +361,7 @@ Bed 回收不会释放它。UDP DNS 仍由网络组件实际绑定和释放，�
 | `GET /v1/beds/{bed}/services/{service}` | 状态、Execution/Executor ID 和非敏感 endpoint |
 | `GET /v1/beds/{bed}/services/{service}/logs?cursor=0` | 有界 Execution 日志及下一游标 |
 | `POST /v1/beds/{bed}/services/{service}/restart` | 异步重启单个服务，返回 202 |
-| `POST /v1/beds/{bed}/services/{service}/access` | 传 `{"hold_seconds":300}`，取得 endpoint、token、Execution ID 和限时 hold |
+| `POST /v1/beds/{bed}/services/{service}/access` | 传 `{"hold_seconds":300}`，取得 endpoint、可选 token、Execution ID 和限时 hold |
 | `DELETE /v1/beds/{bed}/service-holds/{hold}` | 提前释放 hold，幂等 |
 
 Bed 详情的 `status.components.services` 展示服务状态；`GET /v1/status` 的 `ports`

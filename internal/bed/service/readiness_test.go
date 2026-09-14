@@ -43,7 +43,7 @@ func httpTestBed(name string) *bed.Bed {
 	return bed.New(name, "", bed.Spec{Services: []bed.ServiceSpec{{
 		Name: "web", Command: []string{"server"}, Env: map[string]string{"LISTEN": "${LISTEN_ADDR}"},
 		Required: true, Restart: "never", StartupSeconds: 1, StopSeconds: 1,
-		HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", TokenEnv: "TOKEN"},
+		HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}},
 	}}})
 }
 

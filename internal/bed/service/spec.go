@@ -65,14 +65,11 @@ func Normalize(specs []bed.ServiceSpec) ([]bed.ServiceSpec, error) {
 			}
 		}
 		if s.HTTP != nil {
-			if !strings.HasPrefix(s.HTTP.ReadyPath, "/") || strings.HasPrefix(s.HTTP.ReadyPath, "//") || !validEnv(s.HTTP.TokenEnv) {
-				return nil, fmt.Errorf("HTTP service %s requires readiness path and per-execution token env", s.Name)
+			if !strings.HasPrefix(s.HTTP.ReadyPath, "/") || strings.HasPrefix(s.HTTP.ReadyPath, "//") {
+				return nil, fmt.Errorf("HTTP service %s requires readiness path", s.Name)
 			}
-			if _, ok := s.Env[s.HTTP.TokenEnv]; ok {
-				return nil, fmt.Errorf("service token cannot be caller-provided")
-			}
-			if _, ok := s.EnvFiles[s.HTTP.TokenEnv]; ok {
-				return nil, fmt.Errorf("service token cannot come from a credential file")
+			if err := validateAuthentication(*s); err != nil {
+				return nil, err
 			}
 		}
 		raw, _ := json.Marshal(s)
@@ -84,6 +81,31 @@ func Normalize(specs []bed.ServiceSpec) ([]bed.ServiceSpec, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+func validateAuthentication(s bed.ServiceSpec) error {
+	auth := s.HTTP.Authentication
+	if auth == nil {
+		return nil
+	}
+	if auth.Scheme != "bearer" || !validEnv(auth.TokenEnv) {
+		return fmt.Errorf("HTTP service %s requires bearer authentication and a valid token env", s.Name)
+	}
+	value, hasEnv := s.Env[auth.TokenEnv]
+	_, hasFile := s.EnvFiles[auth.TokenEnv]
+	switch auth.TokenSource {
+	case bed.TokenSourceGenerated:
+		if hasEnv || hasFile {
+			return fmt.Errorf("HTTP service %s generated token conflicts with configured env %s", s.Name, auth.TokenEnv)
+		}
+	case bed.TokenSourceEnvironment:
+		if !hasFile && value == "" {
+			return fmt.Errorf("HTTP service %s requires token env %s from Env or EnvFiles", s.Name, auth.TokenEnv)
+		}
+	default:
+		return fmt.Errorf("HTTP service %s requires an explicit supported token source", s.Name)
+	}
+	return nil
 }
 
 func validEnv(k string) bool {

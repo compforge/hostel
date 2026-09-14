@@ -50,7 +50,7 @@ type Status struct {
 type Access struct {
 	Endpoint    string `json:"endpoint"`
 	ExecutionID string `json:"execution_id"`
-	Token       string `json:"token"`
+	Token       string `json:"token,omitempty"`
 }
 type Manager struct {
 	bed.Noop

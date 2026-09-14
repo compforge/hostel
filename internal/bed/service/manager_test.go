@@ -169,7 +169,7 @@ func TestBedScopedHTTPServiceWithUnavailableInspection(t *testing.T) {
 	b := bed.New("scoped", "", bed.Spec{Services: []bed.ServiceSpec{{
 		Name: "worker", Command: []string{"worker"}, Env: map[string]string{"SERVICE_LISTEN": "${LISTEN_ADDR}"},
 		Required: true, MaxRestarts: 1, StartupSeconds: 2, StopSeconds: 1,
-		HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", TokenEnv: "SERVICE_TOKEN"},
+		HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "SERVICE_TOKEN"}},
 	}}})
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()

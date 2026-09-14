@@ -41,8 +41,7 @@ func TestNormalizeRejectsInvalidServiceSpecs(t *testing.T) {
 		{Name: "worker"},
 		{Name: "worker", Command: []string{"worker"}, Env: map[string]string{"HOSTEL_ADDR": "bad"}},
 		{Name: "worker", Command: []string{"worker"}, EnvFiles: map[string]string{"SECRET": "relative"}},
-		{Name: "worker", Command: []string{"worker"}, HTTP: &bed.ServiceHTTPSpec{ReadyPath: "ready", TokenEnv: "TOKEN"}},
-		{Name: "worker", Command: []string{"worker"}, Env: map[string]string{"TOKEN": "caller"}, HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", TokenEnv: "TOKEN"}},
+		{Name: "worker", Command: []string{"worker"}, HTTP: &bed.ServiceHTTPSpec{ReadyPath: "ready"}},
 	}
 	for _, spec := range tests {
 		if _, err := Normalize([]bed.ServiceSpec{spec}); err == nil {
@@ -51,5 +50,49 @@ func TestNormalizeRejectsInvalidServiceSpecs(t *testing.T) {
 	}
 	if _, err := Normalize([]bed.ServiceSpec{{Name: "worker", Command: []string{"one"}}, {Name: "worker", Command: []string{"two"}}}); err == nil {
 		t.Fatal("accepted duplicate service names")
+	}
+}
+
+func TestNormalizeAuthentication(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		auth  *bed.Authentication
+		env   map[string]string
+		files map[string]string
+		valid bool
+	}{
+		{name: "none", valid: true},
+		{name: "generated", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}, valid: true},
+		{name: "environment", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}, env: map[string]string{"TOKEN": "test-token"}, valid: true},
+		{name: "file", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}, files: map[string]string{"TOKEN": "/run/secrets/token"}, valid: true},
+		{name: "empty authentication", auth: &bed.Authentication{}},
+		{name: "unknown scheme", auth: &bed.Authentication{Scheme: "basic", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}},
+		{name: "missing source", auth: &bed.Authentication{Scheme: "bearer", TokenEnv: "TOKEN"}},
+		{name: "unknown source", auth: &bed.Authentication{Scheme: "bearer", TokenSource: "none", TokenEnv: "TOKEN"}},
+		{name: "missing env name", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated}},
+		{name: "reserved env", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "HOSTEL_TOKEN"}},
+		{name: "generated env conflict", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}, env: map[string]string{"TOKEN": ""}},
+		{name: "generated file conflict", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}, files: map[string]string{"TOKEN": "/run/secrets/token"}},
+		{name: "missing environment", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}},
+		{name: "empty environment", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}, env: map[string]string{"TOKEN": ""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := []bed.ServiceSpec{{Name: "web", Command: []string{"server"}, Env: tc.env, EnvFiles: tc.files, HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: tc.auth}}}
+			resolved, err := Normalize(input)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%t, err=%v", tc.valid, err)
+			}
+			if err != nil || tc.auth == nil {
+				return
+			}
+			cloned := bed.CloneServices(resolved)
+			cloned[0].HTTP.Authentication.TokenEnv = "OTHER_TOKEN"
+			if resolved[0].HTTP.Authentication.TokenEnv != "TOKEN" || input[0].HTTP.Authentication.TokenEnv != "TOKEN" {
+				t.Fatal("authentication aliases caller-owned storage")
+			}
+			if _, err := Normalize(cloned); err == nil {
+				t.Fatal("changed pinned authentication accepted")
+			}
+		})
 	}
 }

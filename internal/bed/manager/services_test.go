@@ -37,7 +37,11 @@ func TestServiceHelperProcess(t *testing.T) {
 	_ = os.WriteFile("service-started", []byte(os.Getenv("BED_ID")), 0600)
 	_ = os.WriteFile("service-credential", []byte(os.Getenv("SERVICE_FILE_VALUE")), 0600)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+os.Getenv("SERVICE_TOKEN") {
+		expected := ""
+		if token := os.Getenv("SERVICE_TOKEN"); token != "" {
+			expected = "Bearer " + token
+		}
+		if r.Header.Get("Authorization") != expected {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -82,7 +86,7 @@ func testServiceManager(t *testing.T) (*Manager, []model.ServiceSpec, *hostnetwo
 		MaxRestarts:    2,
 		StartupSeconds: 10,
 		StopSeconds:    1,
-		HTTP:           &model.ServiceHTTPSpec{ReadyPath: "/ready", TokenEnv: "SERVICE_TOKEN"},
+		HTTP:           &model.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: &model.Authentication{Scheme: "bearer", TokenSource: model.TokenSourceGenerated, TokenEnv: "SERVICE_TOKEN"}},
 	}
 	main, tools := serviceSpec, serviceSpec
 	main.Name, tools.Name = "main", "tools"
