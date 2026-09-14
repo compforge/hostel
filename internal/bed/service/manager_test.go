@@ -132,12 +132,15 @@ func TestExecutorLossRecoversDesiredServiceEvenWithNeverRestart(t *testing.T) {
 	t.Fatalf("service not recovered: %+v", m.Status(b))
 }
 
-func TestBedScopedHTTPServiceUsesNetworkScopeOwnership(t *testing.T) {
+func TestBedScopedHTTPServiceWithUnavailableInspection(t *testing.T) {
 	ports, err := hostnetwork.NewPortManager(25101, 25200)
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := NewManager(ports, "127.0.0.1", nil)
+	m.inspectListener = func(context.Context, int, string) (hostnetwork.ListenerInspection, error) {
+		return hostnetwork.ListenerInspection{State: hostnetwork.ListenerUnavailable, Method: "proc", Reason: "permission_denied"}, nil
+	}
 	t.Cleanup(func() {
 		if err := m.Close(context.Background()); err != nil {
 			t.Error(err)
@@ -174,10 +177,10 @@ func TestBedScopedHTTPServiceUsesNetworkScopeOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := m.Status(b)[0]
-	if status.Phase != "ready" || status.Restarts != 0 || status.Endpoint == "" {
+	if status.Phase != "ready" || status.Restarts != 0 || status.Endpoint == "" || status.Listener.State != hostnetwork.ListenerUnavailable {
 		t.Fatalf("scoped service status = %+v", status)
 	}
-	// The steady-state probe uses the same scope-aware ownership rule.
+	// Network scope is not reported as process ownership, including steady state.
 	time.Sleep(1100 * time.Millisecond)
 	current := m.Status(b)[0]
 	if current.Phase != "ready" || current.ExecutionID != status.ExecutionID {

@@ -100,7 +100,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 	if err := ctx.Err(); err != nil {
 		return false, outcome, err
 	}
-	m.update(g, r, func(s *Status) { s.Phase = "starting"; s.Endpoint = "" })
+	m.update(g, r, func(s *Status) { s.Phase = "starting"; s.Endpoint = ""; s.Listener = nil })
 	spec := r.spec
 	env := maps.Clone(spec.Env)
 	if env == nil {
@@ -176,35 +176,26 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 	m.update(g, r, func(s *Status) { s.ExecutionID = proc.ExecutionID(); s.ExecutorID = proc.ExecutorID(); s.Outcome = nil })
 	startup, cancel := context.WithTimeout(ctx, time.Duration(spec.StartupSeconds)*time.Second)
 	defer cancel()
+	checkReadiness := m.readinessCheck(g, r, proc, address, token)
 	for {
 		select {
 		case <-proc.Done():
-			return false, proc.Outcome(), startupExitError(startup, address)
+			return false, proc.Outcome(), fmt.Errorf("process exited before readiness")
 		default:
 		}
 		ready := spec.HTTP == nil
 		if spec.HTTP != nil {
-			owned, err := listenerOwnershipSatisfied(startup, scope, proc.PID(), allocation.Port())
+			ready, err = checkReadiness(startup)
 			if err != nil {
-				return false, outcome, fmt.Errorf("socket ownership verification failed")
-			}
-			if owned {
-				ready = probeHTTP(startup, address, spec.HTTP.ReadyPath, token)
-			}
-			if !owned {
-				conn, dialErr := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(startup, "tcp", address)
-				if dialErr == nil {
-					conn.Close()
-					// Recheck after dial: the service may have bound during the
-					// inspection window. Only a foreign listener means conflict.
-					owned, err = listenerOwnershipSatisfied(startup, scope, proc.PID(), allocation.Port())
-					if err == nil && !owned {
-						return false, outcome, errBindingConflict
-					}
-				}
+				return false, outcome, err
 			}
 		}
 		if ready {
+			select {
+			case <-proc.Done():
+				return false, proc.Outcome(), fmt.Errorf("process exited before readiness")
+			default:
+			}
 			break
 		}
 		timer := time.NewTimer(100 * time.Millisecond)
@@ -214,7 +205,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 			return false, outcome, fmt.Errorf("service readiness timeout")
 		case <-proc.Done():
 			timer.Stop()
-			return false, proc.Outcome(), startupExitError(startup, address)
+			return false, proc.Outcome(), fmt.Errorf("process exited before readiness")
 		case <-r.restart:
 			timer.Stop()
 			return true, outcome, nil
@@ -253,26 +244,16 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 			return false, proc.Outcome(), nil
 		case <-ticker.C:
 			if spec.HTTP != nil {
-				owned, err := listenerOwnershipSatisfied(ctx, scope, proc.PID(), allocation.Port())
-				if err != nil || !owned || !probeHTTP(ctx, address, spec.HTTP.ReadyPath, token) {
+				ready, err := checkReadiness(ctx)
+				if err != nil {
+					return false, outcome, err
+				}
+				if !ready {
 					return false, outcome, fmt.Errorf("service lost readiness")
 				}
 			}
 		}
 	}
-}
-
-// listenerOwnershipSatisfied selects the ownership proof provided by the Bed
-// network. A scoped address belongs to one dedicated Bed network namespace, so
-// a successful readiness probe cannot resolve to another Bed or the carrier.
-// Shared-network services retain the stricter process-group socket check.
-// This avoids requiring CAP_SYS_PTRACE merely to inspect a service after it has
-// dropped from the root daemon to the configured Bed user.
-func listenerOwnershipSatisfied(ctx context.Context, scope string, processGroup, port int) (bool, error) {
-	if scope != "" {
-		return true, nil
-	}
-	return hostnetwork.OwnsTCPListener(ctx, processGroup, port)
 }
 
 func probeHTTP(ctx context.Context, address, path, token string) bool {
@@ -293,15 +274,4 @@ func probeHTTP(ctx context.Context, address, path, token string) bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
-}
-
-func startupExitError(ctx context.Context, address string) error {
-	if address != "" {
-		conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(ctx, "tcp", address)
-		if err == nil {
-			conn.Close()
-			return errBindingConflict
-		}
-	}
-	return fmt.Errorf("process exited before readiness")
 }
