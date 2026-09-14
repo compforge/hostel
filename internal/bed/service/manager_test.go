@@ -3,26 +3,47 @@ package service
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
 type fakeRuntime struct {
 	mu        sync.Mutex
 	processes []*fakeProcess
 	fail      bool
+	scope     string
+	host      string
+	start     func(Launch) (Process, error)
 }
 
-func (f *fakeRuntime) Network() (string, string, error) { return "", "127.0.0.1", nil }
-func (f *fakeRuntime) Start(_ context.Context, _ Launch) (Process, error) {
+func (f *fakeRuntime) Network() (string, string, error) {
+	host := f.host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return f.scope, host, nil
+}
+func (f *fakeRuntime) Start(_ context.Context, launch Launch) (Process, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fail {
 		return nil, fmt.Errorf("test start failure")
+	}
+	if f.start != nil {
+		p, err := f.start(launch)
+		if err == nil {
+			if fake, ok := p.(*fakeProcess); ok {
+				f.processes = append(f.processes, fake)
+			}
+		}
+		return p, err
 	}
 	p := &fakeProcess{id: fmt.Sprint(len(f.processes) + 1), done: make(chan struct{})}
 	f.processes = append(f.processes, p)
@@ -35,6 +56,7 @@ type fakeProcess struct {
 	done    chan struct{}
 	outcome executor.ProcessOutcome
 	once    sync.Once
+	stop    func()
 }
 
 func (p *fakeProcess) PID() int              { return 1 }
@@ -50,6 +72,9 @@ func (p *fakeProcess) exit(outcome executor.ProcessOutcome) {
 	p.once.Do(func() { p.mu.Lock(); p.outcome = outcome; p.mu.Unlock(); close(p.done) })
 }
 func (p *fakeProcess) Stop(context.Context, time.Duration) error {
+	if p.stop != nil {
+		p.stop()
+	}
 	p.exit(executor.Exited(0))
 	return nil
 }
@@ -105,6 +130,59 @@ func TestExecutorLossRecoversDesiredServiceEvenWithNeverRestart(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("service not recovered: %+v", m.Status(b))
+}
+
+func TestBedScopedHTTPServiceUsesNetworkScopeOwnership(t *testing.T) {
+	ports, err := hostnetwork.NewPortManager(25101, 25200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(ports, "127.0.0.1", nil)
+	t.Cleanup(func() {
+		if err := m.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+		if err := ports.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	runtime := &fakeRuntime{scope: "bed-network", start: func(launch Launch) (Process, error) {
+		listener, err := net.Listen("tcp", launch.Env["SERVICE_LISTEN"])
+		if err != nil {
+			return nil, err
+		}
+		server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if request.Header.Get("Authorization") != "Bearer "+launch.Env["SERVICE_TOKEN"] {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		})}
+		go func() { _ = server.Serve(listener) }()
+		process := &fakeProcess{id: "scoped", done: make(chan struct{})}
+		process.stop = func() { _ = server.Close() }
+		return process, nil
+	}}
+	b := bed.New("scoped", "", bed.Spec{Services: []bed.ServiceSpec{{
+		Name: "worker", Command: []string{"worker"}, Env: map[string]string{"SERVICE_LISTEN": "${LISTEN_ADDR}"},
+		Required: true, MaxRestarts: 1, StartupSeconds: 2, StopSeconds: 1,
+		HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", TokenEnv: "SERVICE_TOKEN"},
+	}}})
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if err := m.PrepareBed(ctx, b, runtime); err != nil {
+		t.Fatal(err)
+	}
+	status := m.Status(b)[0]
+	if status.Phase != "ready" || status.Restarts != 0 || status.Endpoint == "" {
+		t.Fatalf("scoped service status = %+v", status)
+	}
+	// The steady-state probe uses the same scope-aware ownership rule.
+	time.Sleep(1100 * time.Millisecond)
+	current := m.Status(b)[0]
+	if current.Phase != "ready" || current.ExecutionID != status.ExecutionID {
+		t.Fatalf("scoped service lost readiness: before=%+v after=%+v", status, current)
+	}
 }
 
 func TestReleaseAndPrepareKeepsNewServiceGroup(t *testing.T) {

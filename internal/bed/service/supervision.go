@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"net"
 	"net/http"
@@ -53,6 +54,11 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 		}
 		if automatic && restarts < r.spec.MaxRestarts {
 			restarts++
+			failureReason := "process did not exit successfully"
+			if err != nil {
+				failureReason = err.Error()
+			}
+			log.Printf("hostel service restart scheduled: bed=%s id=%s service=%s restart=%d reason=%q outcome=%s exit_code=%d signal=%d", g.bed.Name, g.bed.ID, r.spec.Name, restarts, failureReason, outcome.Kind, outcome.ExitCode, outcome.Signal)
 			m.update(g, r, func(s *Status) {
 				s.Phase = "backoff"
 				s.Endpoint = ""
@@ -178,7 +184,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		}
 		ready := spec.HTTP == nil
 		if spec.HTTP != nil {
-			owned, err := hostnetwork.OwnsTCPListener(startup, proc.PID(), allocation.Port())
+			owned, err := listenerOwnershipSatisfied(startup, scope, proc.PID(), allocation.Port())
 			if err != nil {
 				return false, outcome, fmt.Errorf("socket ownership verification failed")
 			}
@@ -191,7 +197,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 					conn.Close()
 					// Recheck after dial: the service may have bound during the
 					// inspection window. Only a foreign listener means conflict.
-					owned, err = hostnetwork.OwnsTCPListener(startup, proc.PID(), allocation.Port())
+					owned, err = listenerOwnershipSatisfied(startup, scope, proc.PID(), allocation.Port())
 					if err == nil && !owned {
 						return false, outcome, errBindingConflict
 					}
@@ -247,13 +253,26 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 			return false, proc.Outcome(), nil
 		case <-ticker.C:
 			if spec.HTTP != nil {
-				owned, err := hostnetwork.OwnsTCPListener(ctx, proc.PID(), allocation.Port())
+				owned, err := listenerOwnershipSatisfied(ctx, scope, proc.PID(), allocation.Port())
 				if err != nil || !owned || !probeHTTP(ctx, address, spec.HTTP.ReadyPath, token) {
 					return false, outcome, fmt.Errorf("service lost readiness")
 				}
 			}
 		}
 	}
+}
+
+// listenerOwnershipSatisfied selects the ownership proof provided by the Bed
+// network. A scoped address belongs to one dedicated Bed network namespace, so
+// a successful readiness probe cannot resolve to another Bed or the carrier.
+// Shared-network services retain the stricter process-group socket check.
+// This avoids requiring CAP_SYS_PTRACE merely to inspect a service after it has
+// dropped from the root daemon to the configured Bed user.
+func listenerOwnershipSatisfied(ctx context.Context, scope string, processGroup, port int) (bool, error) {
+	if scope != "" {
+		return true, nil
+	}
+	return hostnetwork.OwnsTCPListener(ctx, processGroup, port)
 }
 
 func probeHTTP(ctx context.Context, address, path, token string) bool {

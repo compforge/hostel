@@ -179,10 +179,13 @@ Port Manager 管理经 Hostel 申请的端口，不拦截 Bed 用户程序自行
 处理这个窗口中的 bind 失败。程序支持继承监听 FD 时可以持续持有 listener 并交接；
 支持 `port=0` 时可从受控本地启动通道获取实际地址，无需向上层控制面注册回调。
 这两类交接方式尚未提供；当前 `ServiceSpec` 使用 `${PORT}` / `${LISTEN_ADDR}` 接收候选端口，
-通过 Linux `/proc` 或 macOS `lsof` 核对进程组的监听归属，再做 HTTP 就绪检查。
+Service Manager 根据进程的网络作用域核对监听归属，再做 HTTP 就绪检查。
 
-目标进程的绑定事实和探活必须关联本次运行实例；不能仅因候选端口返回 HTTP 200，
-就误把抢占端口的其他程序当作服务就绪。具体程序的启动集成必须提供可验证的绑定结果。
+目标进程的绑定事实和探活必须关联当前 Bed 的运行作用域。共享 Carrier 网络时，Hostel
+通过进程组核对 socket owner，不能仅因候选端口返回 HTTP 200 就把其他 Bed 或 Carrier
+进程当作服务就绪。独立 Bed netns 下，目标 `BedIP:port` 已限定到该 Bed，Hostel 以网络
+作用域和 HTTP readiness 共同确认服务；此时不要求 daemon 通过 `/proc/<pid>/fd` 跨用户
+读取进程文件描述符，也不要求额外授予 `CAP_SYS_PTRACE`。
 
 重启先撤销旧 endpoint，确认旧进程、连接及代理 listener 已按各自 owner 清理，再
 复用或更换端口。旧实例的延迟回收不能释放新实例的 allocation。Hostel 重启后重新
