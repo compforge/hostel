@@ -141,7 +141,7 @@ func TestStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode diagnostics: %v", err)
 	}
-	if body["schema_version"] != float64(3) {
+	if body["schema_version"] != float64(4) {
 		t.Fatalf("diagnostics schema_version = %v", body["schema_version"])
 	}
 	components, _ := body["components"].(map[string]any)
