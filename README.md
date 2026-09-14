@@ -7,8 +7,8 @@ sandboxes, called **beds**, on a laptop, VM, CI runner or in a container.
 Each bed provides a workspace for commands, shell sessions and managed services.
 
 Beds share a machine or container, reducing the need to provision a separate
-runtime for every task. Hostel manages execution and local resources; an upstream
-control plane owns instance placement, cross-instance routing and API authorization.
+runtime for every task. Hostel manages execution and local resources. In a cluster,
+an upstream control plane owns instance placement, cross-instance routing and API authorization.
 
 ## What you can do
 
