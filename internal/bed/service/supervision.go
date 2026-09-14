@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
@@ -120,6 +121,21 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 	var allocation *hostnetwork.PortAllocation
 	var scope, host, address, token string
 	var forward *hostnetwork.TCPForwarder
+	if spec.HTTP != nil && spec.HTTP.Authentication != nil {
+		auth := spec.HTTP.Authentication
+		switch auth.TokenSource {
+		case bed.TokenSourceGenerated:
+			token = randx.Hex(32)
+			env[auth.TokenEnv] = token
+		case bed.TokenSourceEnvironment:
+			// Resolve once per execution so probes and discovery match the process,
+			// even if the credential file changes while it is running.
+			token = env[auth.TokenEnv]
+			if token == "" {
+				return false, outcome, fmt.Errorf("service %s token env %s is empty", spec.Name, auth.TokenEnv)
+			}
+		}
+	}
 	if spec.HTTP != nil {
 		var err error
 		scope, host, err = g.runtime.Network()
@@ -132,8 +148,6 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		}
 		defer allocation.Release()
 		address = net.JoinHostPort(host, strconv.Itoa(allocation.Port()))
-		token = randx.Hex(32)
-		env[spec.HTTP.TokenEnv] = token
 	}
 	command := append([]string(nil), spec.Command...)
 	if allocation != nil {
@@ -142,7 +156,8 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 			command[i] = replace.Replace(v)
 		}
 		for k, v := range env {
-			if k != spec.HTTP.TokenEnv {
+			// Credentials are opaque and must not undergo address substitution.
+			if spec.HTTP.Authentication == nil || k != spec.HTTP.Authentication.TokenEnv {
 				env[k] = replace.Replace(v)
 			}
 		}
@@ -281,7 +296,9 @@ func probeHTTP(ctx context.Context, address, path, token string) readinessResult
 	if err != nil {
 		return readinessResult{Reason: "ReadinessProbeInvalid"}
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	resp, err := readinessClient.Do(req)
 	if err != nil {
 		return readinessResult{Reason: "ReadinessProbeFailed"}

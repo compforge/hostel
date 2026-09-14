@@ -24,9 +24,26 @@ type ServiceSpec struct {
 
 type ServiceHTTPSpec struct {
 	ReadyPath string `json:"ready_path"`
-	// TokenEnv receives a fresh credential for every service execution.
-	TokenEnv string `json:"token_env"`
+	// Authentication is optional; nil publishes HTTP without credentials.
+	Authentication *Authentication `json:"authentication,omitempty"`
 }
+
+// Authentication describes credentials used by both readiness and service access.
+// The service process itself is responsible for enforcing authentication.
+type Authentication struct {
+	Scheme      string      `json:"scheme"`
+	TokenSource TokenSource `json:"token_source"`
+	TokenEnv    string      `json:"token_env"`
+}
+
+type TokenSource string
+
+const (
+	// TokenSourceGenerated rotates the credential for every service execution.
+	TokenSourceGenerated TokenSource = "generated"
+	// TokenSourceEnvironment reads the service's resolved Env/EnvFiles value.
+	TokenSourceEnvironment TokenSource = "environment"
+)
 
 func CloneServices(in []ServiceSpec) []ServiceSpec {
 	out := make([]ServiceSpec, len(in))
@@ -36,6 +53,10 @@ func CloneServices(in []ServiceSpec) []ServiceSpec {
 		s.EnvFiles = maps.Clone(s.EnvFiles)
 		if s.HTTP != nil {
 			http := *s.HTTP
+			if http.Authentication != nil {
+				auth := *http.Authentication
+				http.Authentication = &auth
+			}
 			s.HTTP = &http
 		}
 		out[i] = s
