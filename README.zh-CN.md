@@ -2,8 +2,9 @@
 
 [English](README.md) | 简体中文
 
-**Hostel 是面向 AI Agent 的 sandbox runtime。** 一个 daemon 在笔记本、VM、CI runner
-或容器内管理多个 sandbox，每个称为一张 **bed**。每张 bed 提供工作区，用于运行命令、
+**Hostel 是面向 AI Agent 的 sandbox runtime。** Hostel / Bed 可以看作「猴版」的 kubelet / Pod：
+一个 daemon 在笔记本、VM、CI runner 或容器内管理多个 sandbox，每个称为一张 **bed**。
+每张 bed 提供工作区，用于运行命令、
 shell 会话和托管服务。
 
 多张 bed 共享机器或容器，减少为每个任务单独创建运行环境的需要。Hostel 负责执行和本地资源管理；
