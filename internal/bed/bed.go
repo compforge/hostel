@@ -19,6 +19,9 @@ func (id ID) String() string { return string(id) }
 
 // Bed is the shared identity seen by every domain manager. Resource handles
 // belong to those managers, not to this model.
+// Like a Kubernetes Pod, Bed has a Spec that declares desired configuration
+// (analogous to PodSpec) and a Status that reports what the domain managers
+// realize under the host's constraints.
 // +spec=`Spec is desired state; each Status section has exactly one domain writer.`
 type Bed struct {
 	ID     ID
