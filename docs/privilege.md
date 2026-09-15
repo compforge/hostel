@@ -50,23 +50,33 @@ Bed 初始化先恢复或创建 BedFS，再解析并准备 `BedUser`，随后获
 资源；全部完成后才发布 Ready。command、session 和 Service 统一通过 `manager.Environment` 组装执行环境：
 
 ```text
-daemon 准备 BedFS 与资源
-  → 进入 Bed netns（启用时）
-  → 切换到 BedUser，并清空 capability 集合、设置 no_new_privs
-  → 建立文件边界与进程视图
-  → 启动用户程序
+Bed Manager 协调各组件准备 BedFS、身份、namespace 与资源限制
+  → 准备完成后发布 Ready
+  → 执行入口进入已准备的环境
+  → 切换到 BedUser，清空 capability 集合、设置 no_new_privs
+  → 应用用户环境与 cwd，启动 command / session / Service
 ```
 
-这个顺序保证 netns 等需要管理权限的动作在最终降权前完成，同时让 bwrap、Landlock、PRoot 或
-pathshim 及用户程序运行在 Bed 身份下。任何已选机制执行失败都应终止本次初始化或执行，不能在运行
-途中静默放开边界。
+资源准备和降级决策属于 Bed Manager 及其协调的组件，不属于 Executor。Hostel 优先使用实际拥有的
+权限完成准备，权限不足才尝试无特权机制。最终 BedUser 的低权限不应反过来限制 daemon 的准备能力。
+
+rootful bwrap 在 Bed 初始化时准备 mount namespace，Filesystem 持有 namespace/root 句柄；准备
+进程退出后这些句柄仍保留视图。command、session 和 Service 只进入同一视图并最终降权，不重复创建
+挂载。释放顺序是先停止所有执行，再关闭句柄；Executor 替换不重建 mount namespace。
+
+受信任的进入程序使用静态 Hostel 二进制，不从 Bed rootfs 加载 helper 或动态库。用户环境作为不参与
+程序初始化的载荷传递，降权后才交给用户程序，防止 LD_PRELOAD、PATH 等影响特权准备。
+rootful 准备要求静态构建（`CGO_ENABLED=0`，正式镜像已使用）；还须通过真实准备和完整 Bed 执行探测。
+
+没有所需宿主权限时，bwrap 保留降权后使用 user namespace 的路径；Landlock、PRoot、pathshim
+仍在 Bed 身份下应用。任何已选机制执行失败都应终止本次初始化或执行，不能在运行途中静默放开边界。
 
 回收时 daemon 先撤销数据面并停止 Bed 的进程，再清理设施、资源、网络和本地目录。跨 UID 终止进程
 和修改目录需要的权限必须保留到清理完成；清理失败时资源 owner 与 UID 租约继续保留，供后续重试。
 
 ## 能力与部署条件
 
-Linux 下所有 Bed command/session/Service 都经过 `setpriv`，包括 BedUser 与 daemon 身份相同的情况，
+无特权文件准备路径下，Linux Bed command/session/Service 经过 `setpriv`，包括 BedUser 与 daemon 身份相同的情况，
 用于清空 inheritable / ambient capability 并设置 `no_new_privs`；实际具有 CAP_SETPCAP 时才要求清空 bounding set。
 启动探测还核对 permitted/effective 集合，不能仅凭 wrapper 参数声称清理成功。
 仅在身份不同时附加 UID/GID 切换和 supplementary groups 清理参数，因此非 root 自定义镜像也必须
@@ -97,12 +107,12 @@ daemon 与 BedUser 相同时，这组身份切换要求为空，子进程凭据�
 | shared 文件 / direct | Bed identity 前提满足，无额外文件机制要求 | 继承身份基线不要求身份切换权限 | 作为文件隔离最低档继续运行 |
 | confined 文件 / Landlock | 内核提供 Landlock LSM，允许所需 syscall | seccomp/LSM 允许操作，无额外 capability | 继续尝试 UID/DAC，最终可降至 shared 文件 |
 | confined 文件 / UID | 完整 Bed identity capability；允许 setgroups/setgid/setuid/chown，并预留 UID 段 | 配置身份切换 capability 和允许相关操作的 seccomp/LSM 策略 | 不选择 UID/DAC |
-| private 文件 / bwrap | bwrap 可执行，允许创建 user namespace 并在其中执行 mount 操作 | AppArmor 阻断时可使用合适的 `Localhost` profile 或 `Unconfined`；seccomp 也须允许操作 | 继续选择可用的较低文件等级 |
+| private 文件 / bwrap | 优先使用已有 SYS_ADMIN、SYS_CHROOT 和身份切换权限准备 mount namespace；否则要求无特权 user namespace | 两种路径均须允许实际 namespace/mount 操作，seccomp/LSM 可继续拒绝 | 完整探测后选择可用路径或较低文件等级 |
 | PRoot workspace view | PRoot 可执行，允许其跟踪 Bed 子进程，ptrace 与 PRoot smoke 成功 | 按实际阻断调整 seccomp/LSM；部分容器策略可通过声明 `CAP_SYS_PTRACE` 放行，但它不是通用必需条件 | 继续尝试 pathshim 或 Carrier view |
 | per-Bed netns | named netns 创建/进入、veth、route、nft 可用；`ip`、`nft`、`setpriv` 可执行且 IPv4 forwarding 已开启 | 当前 backend 需要 `CAP_SYS_ADMIN`、`CAP_NET_ADMIN`，seccomp/LSM 也须允许相关操作 | 启动探测失败时使用共享 Carrier 网络 |
 
-`CAP_NET_ADMIN` 单独不能完成当前 named netns backend；bwrap 通过 user namespace 完成
-mount 准备，不因文件视图本身要求宿主级 `CAP_SYS_ADMIN`；suite 的 private 网络另有 named netns 的权限要求。各机制的隔离语义分别见
+`CAP_NET_ADMIN` 单独不能完成当前 named netns backend；bwrap 可使用宿主已有权限或 user namespace
+完成 mount 准备，不统一要求部署授予宿主级 `CAP_SYS_ADMIN`；suite 的 private 网络另有 named netns 的权限要求。各机制的隔离语义分别见
 [isolation.md](isolation.md)、[filesystem.md](filesystem.md) 和 [network.md](network.md)。
 
 Kubernetes Pod Security Standards 只约束准入，不代表节点实际能力。当前 root daemon 加 Bed identity

@@ -98,11 +98,11 @@ func (r serviceRuntime) Start(ctx context.Context, launch service.Launch) (servi
 		return nil, err
 	}
 	cmd := exec.Command(launch.Command[0], launch.Command[1:]...)
-	if err := b.environment.Wrap(cmd, cwd); err != nil {
-		return nil, err
-	}
 	cmd.Env, err = m.buildBedEnv(b, launch.Env)
 	if err != nil {
+		return nil, err
+	}
+	if err := b.environment.Wrap(cmd, cwd); err != nil {
 		return nil, err
 	}
 	outR, outW, err := os.Pipe()

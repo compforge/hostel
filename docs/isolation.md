@@ -98,8 +98,9 @@ Resource 管资源记账与准入。各领域持有并清理自己的资源。
   同 ID 的重新初始化不得复用残缺资源，也不得被上一轮清理回收。
 
 `manager.Environment` 绑定一个 resident Bed 的文件视图、具体网络 allocation 和最终
-`BedUser`，命令、shell 和 Service 都通过它组装。Network 先使用 daemon 权限完成 netns entry，随后切换
-身份并最终降权，文件边界、路径 helper 和用户程序都在 Bed 身份下运行。BedUser 的选择、UID
+`BedUser`，命令、shell 和 Service 都通过它组装。Bed Manager 协调资源准备；rootful 文件视图在 Bed
+初始化时建立，执行时只进入已准备的网络和文件环境，再切换身份、清除 capability 并运行用户程序。
+无特权文件机制在 Bed 身份下应用；Executor 不负责选择、准备或降级资源。BedUser 的选择、UID
 租约、capability 要求与回收契约由 [privilege.md](privilege.md) 统一定义。Store、Network 和
 Executor 仍各自提供能力，Bed 协调其生命周期。共享 Chromium 位于 Bed 进程树之外，不从某个
 BedUser 派生运行身份。

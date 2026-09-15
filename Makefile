@@ -36,7 +36,7 @@ test: ## Run all tests with the race detector
 	go test $(TEST_TAGS) -race -count=1 $(TEST_PACKAGES)
 
 e2e: ## Run the single-machine runtime contract against a real hostel test build
-	go build -tags=e2e -ldflags "$(LDFLAGS)" -o bin/hostel-e2e ./cmd/hostel
+	CGO_ENABLED=0 go build -tags=e2e -ldflags "$(LDFLAGS)" -o bin/hostel-e2e ./cmd/hostel
 	HOSTEL_E2E_BINARY="$(CURDIR)/bin/hostel-e2e" \
 		HOSTEL_E2E_ENVIRONMENT_FILE="$(CURDIR)/tests/e2e/environments/$(E2E_ENVIRONMENT)/config.yaml" \
 		HOSTEL_E2E_RUNS_DIR="$(CURDIR)/runs" HOSTEL_E2E_REVISION="$(shell git describe --always --dirty --tags)" \

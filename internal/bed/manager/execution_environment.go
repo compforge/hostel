@@ -39,9 +39,10 @@ func (e *Environment) Close(ctx context.Context) error {
 	return e.network.Close(ctx)
 }
 
-// Wrap is the single command/session composition entry. Privileged preparation
-// stays outside the final drop; user code and workspace helpers stay inside.
-// +rule=`Network entry, file view and identity setup must finish before user code receives control; a selected environment never falls back on execution failure.`
+// Wrap is the single command/session/Service composition entry. The caller must
+// finalize cmd.Env first: privileged entry carries it as inert payload until
+// the workload credential transition. Never replace cmd.Env after this call.
+// +rule=`Bed Manager owns resource preparation; execution only enters the prepared environment and drops privilege before user code. A selected environment never falls back on execution failure.`
 func (e *Environment) Wrap(cmd *exec.Cmd, cwd string) error {
 	// Preserve exec.Cmd's normal startup contract before replacing cmd.Path
 	// with helpers such as setpriv or bwrap. Without this check a missing shell
@@ -51,6 +52,18 @@ func (e *Environment) Wrap(cmd *exec.Cmd, cwd string) error {
 		return fmt.Errorf("isolation: resolve command %q: %w", cmd.Path, err)
 	}
 	cmd.Path = path
+	if prepared, ok := e.files.(isolation.PreparedExecution); ok {
+		used, err := prepared.WrapPrepared(cmd, e.fs, cwd, e.user.UID(), e.user.GID())
+		if err != nil {
+			return err
+		}
+		if used {
+			if e.network != nil {
+				return e.network.Enter(cmd)
+			}
+			return nil
+		}
+	}
 	if err := e.files.Wrap(cmd, e.fs, cwd); err != nil {
 		return err
 	}

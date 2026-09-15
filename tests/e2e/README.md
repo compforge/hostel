@@ -77,6 +77,19 @@ make e2e E2E_ARGS='-run TestFilesystemPermissions -timeout 3m'
 
 ## Run native Bed root and Service cooperation
 
+To require rootful preparation, use a Linux host with the namespace and identity
+management capabilities, plus bwrap. `make e2e` builds the static Hostel helper:
+
+```sh
+HOSTEL_E2E_REQUIRE_ROOTFUL=1 make e2e E2E_ARGS='-run ^TestRootfulPreparedMount -timeout 2m'
+```
+
+This checks that separate commands, a session and a Service share one prepared
+mount namespace, run with non-root Bed identity, empty capability sets and
+`NoNewPrivs=1`, and receive the workload environment. Running it with the host's
+unprivileged user namespace switch disabled proves the rootful path without
+altering that switch. Missing required support fails rather than skips.
+
 `TestBedRootServiceCommandFiles` uses two live Bed Services with identical
 absolute paths under `/mnt`, `/tmp`, and a new root-level directory. The
 `file-api` and `executor` subcases each run three rounds with distinct per-Bed

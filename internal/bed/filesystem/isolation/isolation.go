@@ -25,6 +25,7 @@
 package isolation
 
 import (
+	"context"
 	"log"
 	"os/exec"
 	"slices"
@@ -108,6 +109,18 @@ type Isolator interface {
 	WorkdirMounted() bool
 }
 
+// PreparedExecution lets a boundary enter resources owned by Bed lifecycle and
+// apply final credentials after entry. Other mechanisms retain unprivileged setup.
+type PreparedExecution interface {
+	WrapPrepared(*exec.Cmd, *bedfs.FS, string, int, int) (bool, error)
+}
+
+type Releaser interface{ Release(*bedfs.FS) error }
+
+type ContextPreparer interface {
+	PrepareContext(context.Context, *bedfs.FS) error
+}
+
 // ProcessViewReport describes the selected process path view and mapping support.
 // It is separate from the isolation level: a user-space view
 // improves path compatibility but does not add a security boundary.
@@ -181,6 +194,13 @@ func (r *resolved) Diagnostics() DiagnosticsReport {
 // (uid), else no-ops — so the bed manager can assert Preparer on the result
 // unconditionally, without knowing which mechanism won.
 func (r *resolved) Prepare(fs *bedfs.FS) error {
+	return r.PrepareContext(context.Background(), fs)
+}
+
+func (r *resolved) PrepareContext(ctx context.Context, fs *bedfs.FS) error {
+	if p, ok := r.boundary.(ContextPreparer); ok {
+		return p.PrepareContext(ctx, fs)
+	}
 	if p, ok := r.boundary.(Preparer); ok {
 		return p.Prepare(fs)
 	}
@@ -189,6 +209,20 @@ func (r *resolved) Prepare(fs *bedfs.FS) error {
 
 func (r *resolved) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	return wrapRuntimeCommand(r.boundary, r.process, cmd, fs, cwd)
+}
+
+func (r *resolved) WrapPrepared(cmd *exec.Cmd, fs *bedfs.FS, cwd string, uid, gid int) (bool, error) {
+	if prepared, ok := r.boundary.(PreparedExecution); ok {
+		return prepared.WrapPrepared(cmd, fs, cwd, uid, gid)
+	}
+	return false, nil
+}
+
+func (r *resolved) Release(fs *bedfs.FS) error {
+	if owner, ok := r.boundary.(Releaser); ok {
+		return owner.Release(fs)
+	}
+	return nil
 }
 
 // New is the default-policy constructor for valid file levels. Call Resolve

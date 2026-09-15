@@ -55,6 +55,12 @@ Lifecycle 的更新权。读写都复制可变成员，不能通过返回的 map
 承载 operation/session、版本水位与清理重试等协调状态，通过 `Resident` 操作句柄供入口层使用；
 它引用共享 Bed，不另建一份领域 Spec/Status。调度 API 的 Status 是这些生命周期事实的投影。
 
+为 Bed 准备资源与限制是 Bed Manager 的职责：它协调各组件，优先利用 Hostel 已有的管理权限，
+不足时才选择经过验证的降级机制。工作负载的最终低权限身份不限制管理侧的准备能力。
+Executor 只负责在选定环境中运行 command、session 和 Service，不选择资源或决定降级。
+rootful 文件视图等可复用资源在 Bed 初始化时准备并由领域组件持有，Executor 替换不改变这些资源；
+执行入口只进入环境并在交出控制权前降权。具体顺序与信任边界见 [权限模型](privilege.md)。
+
 身份分为调用方的 `Bed.Name` 与本地的 `Bed.ID`。Name 是不解释业务含义的路由键，支持中文；
 请求头 `X-Hostel-Bed`、查询参数 `bed`、管理路径/请求体中已有的 `id` 和命令环境 `BED_ID`
 都沿用 Name 语义。Bed Manager 解析 Name，领域资源（UID、netns、Executor/cgroup）
