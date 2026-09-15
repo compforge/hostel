@@ -150,7 +150,7 @@ purging / failed / resident / dormant luggage）的当前事实，不承载 time
 作用域、资源记账、容量准入和设施状态分别披露。`isolator_ok`、Bed Ready 或 amenity
 running 都不能推导出完整隔离，语义由 [isolation.md](isolation.md) 统一定义。
 
-状态沿领域所有者汇总，Web 只序列化：
+状态沿领域所有者汇总，API handler 查询和组合，view 定义响应结构与纯转换：
 
 ```text
 Component → 全局 Status → Bed Manager ─────┐
@@ -163,7 +163,7 @@ Tenant 领域 Status → Bed/Tenant 绑定查询 ───┴→ Bed 详情组�
 
 **Component Status** 表示领域的实例级报告，是粒度约定，不另抽跨领域公共类型。
 各领域定义自己的具体 Status，通过组件的 `Status()` 提供，Bed Manager 聚合所属组件。
-Amenity Manager 聚合独立设施的状态；Hostel 实例层组合两个 Manager 与 Host 快照，并拥有对外 schema。
+Amenity Manager 聚合独立设施的状态；API handler 组合两个 Manager 与 Host 快照，API view 拥有对外 schema。
 `Component[S]` 将读取契约与 daemon、Bed 两层 Lifecycle 放在同一个组件协议下；
 Amenity Manager 只通过适配器参与 Bed 回收，其设施全局生命周期仍直属 daemon。
 
@@ -177,7 +177,9 @@ Bed 详情的 `status.lifecycle` 由 Bed Manager 提供；Tenant 状态由设施
 不复制进 Bed。Tenant Status 的字段跟随设施领域：浏览器就绪和 MCP 连接池不是同一种状态。
 接口不根据 Status 推导更强的隔离保证，也不执行生命周期 hook、探测或远端 I/O。状态读取只读取已发布的内存状态，不持有慢操作的协调锁；Tenant 存在不代表设施提供强制隔离。
 
-`GET /v1/status` 的 `schema_version` 为 `7`；Privilege 的 credential helper 诊断字段为 `helper`，不再报告外部 `setpriv`。Bed Service 的 `phase` 表达运行阶段，独立的 `ready` 表达当前可用性；readiness 变化不终止运行实例。`host.fact` 报告 runtime、process、security_modules、
+`GET /v1/status` 的 `schema_version` 为 `8`。工具选择报告位于 `components.filesystem.tools`、`components.network.tools` 和 `components.resource.accounting.tools`；每项包含 Policy、Requirements、探测结果、是否选中及原因。`requirements.tools` 是该工具依赖的外部程序列表，与组件的工具状态映射分别解释。
+
+Privilege 的 credential helper 诊断字段为 `helper`。Bed Service 的 `phase` 表达运行阶段，独立的 `ready` 表达当前可用性；readiness 变化不终止运行实例。`host.fact` 报告 runtime、process、security_modules、
 namespace_limits、kernel_features 与 ptrace 等启动事实；`host.status` 组合动态资源状态，
 其中 `ports` 是 Hostel 管理的端口分配，不是系统全部监听端口。状态读取复用已有事实与资源状态，不重新探测。
 `components.filesystem` 报告文件隔离和

@@ -31,7 +31,7 @@ import (
 	"slices"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 )
@@ -175,14 +175,14 @@ func (r *resolved) Diagnostics() DiagnosticsReport {
 	for name, probe := range r.diagnostics.Probes {
 		probes[name] = probe
 	}
-	features := make(map[string]feature.Status, len(r.diagnostics.Features))
-	for name, report := range r.diagnostics.Features {
+	tools := make(map[string]tool.Status, len(r.diagnostics.Tools))
+	for name, report := range r.diagnostics.Tools {
 		report.Requirements.Capabilities = slices.Clone(report.Requirements.Capabilities)
 		report.Requirements.Tools = slices.Clone(report.Requirements.Tools)
 		report.Requirements.Conditions = slices.Clone(report.Requirements.Conditions)
-		features[name] = report
+		tools[name] = report
 	}
-	return DiagnosticsReport{Probes: probes, Features: features}
+	return DiagnosticsReport{Probes: probes, Tools: tools}
 }
 
 func (r *resolved) Prepare(ctx context.Context, fs *bedfs.FS) error {
@@ -199,7 +199,7 @@ func (r *resolved) Release(ctx context.Context, fs *bedfs.FS) error {
 }
 
 // New is the default-policy constructor for valid file levels. Call Resolve
-// when accepting external configuration or requiring individual features.
+// when accepting external configuration or requiring individual tools.
 //
 // +spec=`effective isolation is the strongest available level not exceeding the request, and requested/effective/ceiling remain observable.`
 // +case:id=isolation_level_boundaries,desc=`Run the same sibling-path probe under shared, confined, and private file requests`,expect=`shared permits, confined denies, private hides, and unavailable levels degrade honestly`
@@ -211,9 +211,9 @@ func New(facts hostfacts.Snapshot, requested, bedsRoot string) Isolator {
 	return iso
 }
 
-// Resolve selects features once. Off excludes probes; Required constrains selection
+// Resolve selects tools once. Off excludes probes; Required constrains selection
 // rather than merely asserting availability. Runtime failures never reopen selection.
-// +spec=`Feature policies restrict selection without inventing host facts; every Required feature must be selected before readiness.`
+// +spec=`Tool policies restrict selection without inventing host facts; every Required tool must be selected before readiness.`
 func Resolve(facts hostfacts.Snapshot, config Config, bedsRoot string) (Isolator, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -221,17 +221,17 @@ func Resolve(facts hostfacts.Snapshot, config Config, bedsRoot string) (Isolator
 	req := parseRequest(config.Level)
 	policies := config.policies()
 	probes := map[string]hostfacts.ProbeReport{}
-	reports := map[string]feature.Status{}
+	reports := map[string]tool.Status{}
 	ptraceProbe := hostfacts.ProbeReport{}
-	if config.PRoot.Effective() != feature.Off {
+	if config.PRoot.Effective() != tool.Off {
 		ptraceProbe = hostfs.ProbePtrace()
 	}
 	probes["ptrace"] = ptraceProbe
 	candidates := []Boundary{}
 	for _, name := range []string{"bwrap", "landlock", "uid"} {
 		policy := policies[name]
-		if policy == feature.Off {
-			reports[name] = feature.Describe(policy, requirements(name), false, false, false, "")
+		if policy == tool.Off {
+			reports[name] = tool.Describe(policy, requirements(name), false, false, false, "")
 			probes[name] = hostfacts.ProbeReport{}
 			continue
 		}
@@ -250,7 +250,7 @@ func Resolve(facts hostfacts.Snapshot, config Config, bedsRoot string) (Isolator
 			}
 		}
 		probes[name] = probe
-		reports[name] = feature.Describe(policy, requirements(name), true, candidate.Available(), false, probe.Error)
+		reports[name] = tool.Describe(policy, requirements(name), true, candidate.Available(), false, probe.Error)
 		candidates = append(candidates, candidate)
 	}
 	chosen, ceiling := selectBoundary(config, candidates)
@@ -269,19 +269,19 @@ func Resolve(facts hostfacts.Snapshot, config Config, bedsRoot string) (Isolator
 		if name == "proot" && view.Mode != "mount" && !ptraceProbe.Succeeded() && reason == "" {
 			reason = rawProbeFailure(ptraceProbe)
 		}
-		reports[name] = feature.Describe(policies[name], requirements(name), probe.Attempted || reason != "", probe.Succeeded(), view.Mode == name, reason)
+		reports[name] = tool.Describe(policies[name], requirements(name), probe.Attempted || reason != "", probe.Succeeded(), view.Mode == name, reason)
 		if err := reports[name].CheckRequired("filesystem." + name); err != nil {
 			return nil, err
 		}
 	}
-	log.Printf("isolation: requested=%s effective=%s observed_ceiling=%s feature=%s process_view=%s", req, chosen.Level(), ceiling, chosen.Name(), view.Mode)
+	log.Printf("isolation: requested=%s effective=%s observed_ceiling=%s tool=%s process_view=%s", req, chosen.Level(), ceiling, chosen.Name(), view.Mode)
 	for name, report := range reports {
-		if report.Policy != feature.Auto {
-			log.Printf("filesystem: feature=%s policy=%s selected=%t reason=%s", name, report.Policy, report.Selected, report.Reason)
+		if report.Policy != tool.Auto {
+			log.Printf("filesystem: tool=%s policy=%s selected=%t reason=%s", name, report.Policy, report.Selected, report.Reason)
 		}
 	}
 	return &resolved{boundary: chosen, process: workspace, req: req, eff: chosen.Level(), ceil: ceiling, processView: view,
-		diagnostics: DiagnosticsReport{Probes: probes, Features: reports}}, nil
+		diagnostics: DiagnosticsReport{Probes: probes, Tools: reports}}, nil
 }
 
 // unavailable is a mechanism that probed as not usable on this host. It keeps
@@ -343,21 +343,21 @@ func selectBoundary(config Config, candidates []Boundary) (Boundary, Level) {
 	var chosen Boundary = direct{}
 	var forced Boundary
 	for _, m := range candidates {
-		if policies[m.Name()] == feature.Off || !m.Available() {
+		if policies[m.Name()] == tool.Off || !m.Available() {
 			continue
 		}
 		if m.Level() > ceiling {
 			ceiling = m.Level()
 		}
 		// A failed composition changes eligibility, not the standalone host fact.
-		if config.Excluded[m.Name()] != "" && policies[m.Name()] != feature.Required {
+		if config.Excluded[m.Name()] != "" && policies[m.Name()] != tool.Required {
 			continue
 		}
-		if policies[m.Name()] == feature.Required {
+		if policies[m.Name()] == tool.Required {
 			forced = m
 		}
 		// A required user-space view excludes bwrap's mutually exclusive mount view.
-		if m.Name() == "bwrap" && (config.PRoot == feature.Required || config.Pathshim == feature.Required) {
+		if m.Name() == "bwrap" && (config.PRoot == tool.Required || config.Pathshim == tool.Required) {
 			continue
 		}
 		if m.Level() <= req && m.Level() > chosen.Level() {

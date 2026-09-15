@@ -24,7 +24,7 @@ Hostel 是面向 AI Agent 的 sandbox runtime，在一个 Carrier（一台机器
 路径解析与有序候选读取补齐 API 体验；具体目标和当前实现见 [Filesystem](filesystem.md#api-体验与进程视图)。
 
 理想状态下 Bed 的文件、进程、网络和资源相互隔离。Hostel 根据实际 Facts 选择、组合
-Features，提供可达的 Level，并披露功能支持与隔离缺口。API 操作成功证明该任务完成，
+Tools，提供可达的 Level，并披露功能支持与隔离缺口。API 操作成功证明该任务完成，
 不等于完整 Container 隔离已建立；必需能力无法兑现或操作本身失败时仍须明确返回结果。
 
 Hostel 负责实例内 Bed 生命周期、执行、文件、持久化、可选网络和共享设施。上层调度系统
@@ -129,7 +129,7 @@ readiness：是否可服务，以及当前等待或失败原因
 Bed 与 Amenity 的 Manager 决定资源为谁使用、使用策略及生命周期；`internal/host` 提供通用
 宿主能力。底层资源经领域赋予身份与归属，再组合成 Bed 操作或设施能力。
 
-daemon 启动时采集一次 Host facts，作为 Bed Manager 和 Amenity Manager 的构造输入，并将同一份快照交给实例状态聚合器。组件读取事实用于前置判断，实际可用性仍由领域探测确认。
+daemon 启动时采集一次 Host facts，作为 Bed Manager 和 Amenity Manager 的构造输入。API handler 使用同一份快照组装实例状态；组件读取事实用于前置判断，实际可用性仍由领域探测确认。
 
 Host 按能力分包，不设置统一 HostManager，也不预设调用方是 Bed、Amenity 或其他组件：
 
@@ -142,7 +142,7 @@ Host 按能力分包，不设置统一 HostManager，也不预设调用方是 Be
 Host 不导入 Bed/Amenity 模型，不解释 `/workspace`、房型或 Tenant。BedFS 路径语义、
 房型与降级、BedUser/UID 租约、Bed → Executor 资源层次和准入仍由领域负责。
 PRoot/pathshim 提供路径视图，不因此成为安全边界。Host 返回真实结果和资源句柄，
-领域决定是否允许降级并发布 component status。实例聚合器将 Host 分为 `host.fact` 与
+领域决定是否允许降级并发布 component status。API 状态视图将 Host 分为 `host.fact` 与
 `host.status`：前者保留只读启动事实，后者组合资源管理者维护的动态状态（如端口分配）。
 查询只读快照，不临时探测；启动事实不保证机制当前可用。Host 不组装接口或业务 readiness。
 `host.status` 是宿主侧动态资源分配与回收现状的聚合入口，按实际需要纳入各资源管理者的记录，
@@ -177,7 +177,7 @@ Amenity 的全局启停直属 daemon；Bed Manager 通过薄生命周期适配�
 资源分配、机制选择与降级仍由 Bed Manager 及领域组件完成。
 
 每个 Bed hook 接收同一个 `*bed.Bed`，资源按具体 allocation 归属。组件还提供类型化
-`Status() S`，由 Bed Manager 聚合，Web 只序列化，报告契约见 [observability.md](observability.md)。
+`Status() S`，由 Bed Manager 聚合，API handler 组合领域报告与设施状态，view 只定义响应结构及纯转换。报告契约见 [observability.md](observability.md)。
 
 | Hook | Bed Manager 驱动时机与完成条件 |
 |---|---|
@@ -285,7 +285,7 @@ local backend 由 daemon 直接派生并管理进程组，不承诺清理已脱�
 
 Execution 区分进程退出、信号终结和丢失，并独立记录 timeout/cancel/teardown 等终止原因。
 Executor 丢失终结其所属 Execution，不能把传输 EOF 当成正常退出。协议和观测见
-[observability.md](observability.md)，实现锚点在 `internal/bed/executor`、`internal/supervisor`
+[observability.md](observability.md)，实现锚点在 `internal/bed/executor`、`internal/bed/executor/supervisor`
 与 `internal/bed/manager/execution.go`。
 
 ### 数据同步与空闲回收
@@ -356,7 +356,8 @@ netns，其出站与故障边界必须单独说明。设施协议不得裸透传
 ## 六、模块边界与深入阅读
 
 
-`cmd/hostel` 组装配置与组件；`web` 负责 HTTP 路由、协议适配和结果投影；Bed、BedFS、
+`cmd/hostel` 组装配置与组件；`api` 组装 HTTP server、中间件与路由，`api/handler` 负责请求适配、状态查询与响应组装，
+`api/view` 只承载响应结构与纯转换，不持有 Manager 或主动查询。Bed、BedFS、
 Executor、Store 与 Network 保持领域职责，不依赖 HTTP 类型；通用宿主机制归 `internal/host`。
 跨机制顺序由领域执行与生命周期入口协调，不能让 Web handler 拼接内部细节。
 

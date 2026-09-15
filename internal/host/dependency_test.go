@@ -29,7 +29,7 @@ func TestHostDoesNotImportDomains(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			for _, domain := range []string{"bed", "amenity", "instance", "web"} {
+			for _, domain := range []string{"bed", "amenity", "api"} {
 				prefix := "github.com/qiankunli/hostel/internal/" + domain
 				if dep == prefix || strings.HasPrefix(dep, prefix+"/") {
 					t.Errorf("%s imports domain %s", path, dep)

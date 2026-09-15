@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bed/executor"
-	"github.com/qiankunli/hostel/internal/supervisor"
+	"github.com/qiankunli/hostel/internal/bed/executor/supervisor"
 )
 
 // TestMain lets this test binary double as the __supervisor re-exec target (the

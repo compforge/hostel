@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
@@ -97,18 +97,18 @@ func resolveProcessViewWithConfig(base Boundary, bedsRoot string, ptraceProbe ho
 
 	pathshimDiscovery := hostfacts.ProbeReport{Error: "disabled_by_config"}
 	prootDiscovery := hostfacts.ProbeReport{Error: "disabled_by_config"}
-	if config.Pathshim.Effective() != feature.Off {
+	if config.Pathshim.Effective() != tool.Off {
 		pathshimDiscovery = hostfacts.DiscoverExecutable(pathshimCommand)
 	}
-	if config.PRoot.Effective() != feature.Off {
+	if config.PRoot.Effective() != tool.Off {
 		prootDiscovery = hostfacts.DiscoverExecutable(prootCommand)
 	}
 	probes["pathshim"] = pathshimDiscovery
 	probes["proot"] = prootDiscovery
-	if config.Pathshim.Effective() == feature.Off {
+	if config.Pathshim.Effective() == tool.Off {
 		probes["pathshim"] = hostfacts.ProbeReport{}
 	}
-	if config.PRoot.Effective() == feature.Off {
+	if config.PRoot.Effective() == tool.Off {
 		probes["proot"] = hostfacts.ProbeReport{}
 	}
 
@@ -147,15 +147,15 @@ func resolveProcessViewWithConfig(base Boundary, bedsRoot string, ptraceProbe ho
 		}
 	}
 
-	if reason := config.Excluded["proot"]; reason != "" && config.PRoot != feature.Required {
+	if reason := config.Excluded["proot"]; reason != "" && config.PRoot != tool.Required {
 		prootCandidate = nil
 		reasons = append(reasons, "proot combination: "+reason)
 	}
-	if reason := config.Excluded["pathshim"]; reason != "" && config.Pathshim != feature.Required {
+	if reason := config.Excluded["pathshim"]; reason != "" && config.Pathshim != tool.Required {
 		pathshimCandidate = nil
 		reasons = append(reasons, "pathshim combination: "+reason)
 	}
-	if prootCandidate != nil && config.Pathshim != feature.Required {
+	if prootCandidate != nil && config.Pathshim != tool.Required {
 		log.Printf("isolation: process view selected mode=proot")
 		return prootCandidate, prootReport
 	}

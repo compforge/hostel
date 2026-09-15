@@ -13,7 +13,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/resource"
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
@@ -21,9 +21,9 @@ import (
 func baselineRuntimeConfig() RuntimeConfig {
 	return RuntimeConfig{
 		Room:       bed.Suite,
-		Filesystem: isolation.Config{Bwrap: feature.Off, Landlock: feature.Off, UID: feature.Off, PRoot: feature.Off, Pathshim: feature.Off},
-		Network:    network.Config{NetNS: feature.Off},
-		Resource:   resource.Config{Cgroup: feature.Off},
+		Filesystem: isolation.Config{Bwrap: tool.Off, Landlock: tool.Off, UID: tool.Off, PRoot: tool.Off, Pathshim: tool.Off},
+		Network:    network.Config{NetNS: tool.Off},
+		Resource:   resource.Config{Cgroup: tool.Off},
 		Executor:   executor.Config{Backend: "local"},
 	}
 }
@@ -50,14 +50,14 @@ func TestRuntimeBaselineExercisesCompositionAndCleansScratch(t *testing.T) {
 func TestRuntimeFallbackOnlyAfterCleanOptionalFailure(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		policy    feature.Policy
+		policy    tool.Policy
 		fatal     bool
 		calls     int
 		wantError bool
 	}{
-		{"optional retries", feature.Auto, false, 2, false},
-		{"required retained", feature.Required, false, 1, true},
-		{"cleanup stops retries", feature.Auto, true, 1, true},
+		{"optional retries", tool.Auto, false, 2, false},
+		{"required retained", tool.Required, false, 1, true},
+		{"cleanup stops retries", tool.Auto, true, 1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := baselineRuntimeConfig()
@@ -84,7 +84,7 @@ func TestRuntimeFallbackOnlyAfterCleanOptionalFailure(t *testing.T) {
 			if tc.fatal && !errors.Is(err, cleanupErr) {
 				t.Fatalf("lost cleanup error: %v", err)
 			}
-			if err == nil && (result.Network.Level != network.Shared || result.Network.NetNS != feature.Auto || result.Attempts[0].Error == "") {
+			if err == nil && (result.Network.Level != network.Shared || result.Network.NetNS != tool.Auto || result.Attempts[0].Error == "") {
 				t.Fatalf("fallback hid policy or attempt: %+v", result)
 			}
 		})

@@ -249,7 +249,7 @@ Configuration restrictions exercise selection; they do not prove kernel permissi
 rejection or failure halfway through allocation. Keep real restricted-container
 cases alongside these deterministic tests. See [configuration design](../../docs/configuration.md).
 
-Status schema 7 groups boot-time host facts under `host.fact` and managed port
+Status schema 8 reports component tool selection under `tools`, groups boot-time host facts under `host.fact` and managed port
 allocations under `host.status.ports`. It separates `healthz.isolation` (requested/effective room profile) from
 `/v1/status.components.filesystem` (shared/confined/private). Filesystem assertions
 must use the latter: a degraded room profile may retain a private file view.

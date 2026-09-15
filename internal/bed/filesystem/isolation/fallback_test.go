@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 func TestCombinationFallbackExhaustsCandidatesWithoutChangingPolicies(t *testing.T) {
@@ -45,20 +45,20 @@ func TestCombinationFallbackExhaustsCandidatesWithoutChangingPolicies(t *testing
 }
 
 func TestCombinationFallbackPreservesRequiredMembersAndInput(t *testing.T) {
-	cfg := Config{Landlock: feature.Required, Excluded: map[string]string{"bwrap": "previous failure"}}
+	cfg := Config{Landlock: tool.Required, Excluded: map[string]string{"bwrap": "previous failure"}}
 	selected := &resolved{boundary: fakeMech{"landlock", Confined, true}, processView: ProcessViewReport{Mode: "proot"}}
 	next, ok := NextCombination(cfg, selected, "bad combination")
-	if !ok || next.Excluded["proot"] == "" || cfg.Excluded["proot"] != "" || next.Landlock != feature.Required {
+	if !ok || next.Excluded["proot"] == "" || cfg.Excluded["proot"] != "" || next.Landlock != tool.Required {
 		t.Fatalf("fallback changed its input or required boundary: before=%+v after=%+v", cfg, next)
 	}
 	selected.processView.Mode = "carrier"
 	if _, ok := NextCombination(next, selected, "still failing"); ok {
 		t.Fatal("dropped required boundary")
 	}
-	cfg = Config{PRoot: feature.Required}
+	cfg = Config{PRoot: tool.Required}
 	selected.processView.Mode = "proot"
 	next, ok = NextCombination(cfg, selected, "bad combination")
-	if !ok || next.Excluded["landlock"] == "" || next.Excluded["proot"] != "" || next.PRoot != feature.Required {
+	if !ok || next.Excluded["landlock"] == "" || next.Excluded["proot"] != "" || next.PRoot != tool.Required {
 		t.Fatal("required helper was not retained across boundary fallback")
 	}
 }

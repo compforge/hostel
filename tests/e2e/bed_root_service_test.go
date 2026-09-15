@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 // A Service is a supervised execution in the same Bed filesystem as commands.
@@ -33,13 +33,13 @@ func TestBedRootServiceCommandFiles(t *testing.T) {
 					if _, err := exec.LookPath("bwrap"); err != nil {
 						t.Skip("bwrap not installed")
 					}
-					options.Bed.Filesystem.Bwrap = value(feature.Required)
+					options.Bed.Filesystem.Bwrap = value(tool.Required)
 					room = "suite"
 				} else {
 					if _, err := exec.LookPath("proot"); err != nil && os.Getenv(prootEnv) == "" {
 						t.Skip("PRoot not installed; set HOSTEL_E2E_PROOT to require it")
 					}
-					options.Bed.Filesystem.PRoot = value(feature.Required)
+					options.Bed.Filesystem.PRoot = value(tool.Required)
 				}
 				c := startTarget(t, targetOptions{isolation: room, executor: backend, config: &options}).client
 				var health struct {

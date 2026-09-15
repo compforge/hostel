@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 func TestServiceExecutableUsesBedView(t *testing.T) {
@@ -44,12 +44,12 @@ func TestServiceExecutableUsesBedView(t *testing.T) {
 					if _, err := exec.LookPath("bwrap"); err != nil {
 						t.Skip("bwrap unavailable")
 					}
-					options.Bed.Filesystem.Bwrap, room = value(feature.Required), "suite"
+					options.Bed.Filesystem.Bwrap, room = value(tool.Required), "suite"
 				} else {
 					if _, err := exec.LookPath("proot"); err != nil && os.Getenv(prootEnv) == "" {
 						t.Skip("PRoot unavailable")
 					}
-					options.Bed.Filesystem.PRoot = value(feature.Required)
+					options.Bed.Filesystem.PRoot = value(tool.Required)
 				}
 				c := startTarget(t, targetOptions{isolation: room, executor: backend, config: &options}).client
 				var services []map[string]any

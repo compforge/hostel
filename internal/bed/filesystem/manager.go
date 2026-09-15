@@ -12,7 +12,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 )
@@ -106,7 +106,7 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 }
 
 type Status struct {
-	Features    map[string]feature.Status        `json:"features"`
+	Tools       map[string]tool.Status           `json:"tools"`
 	Requested   string                           `json:"requested"`
 	Effective   string                           `json:"effective"`
 	Ceiling     string                           `json:"ceiling"`
@@ -134,7 +134,7 @@ func (m *Manager) Status() Status {
 		view.Mechanism = report.Mechanism()
 		view.ProcessView = report.ProcessView()
 		view.Probes = details.Probes
-		view.Features = details.Features
+		view.Tools = details.Tools
 	}
 	for _, level := range m.LevelStatus().Supported {
 		view.Supported = append(view.Supported, level.(isolation.Level).String())
@@ -145,9 +145,9 @@ func (m *Manager) Status() Status {
 func (m *Manager) LevelStatus() bed.LevelStatus {
 	confined, private := m.isolator.Level() == isolation.Confined, m.isolator.Level() == isolation.Private
 	if report, ok := m.isolator.(isolation.Report); ok {
-		features := report.Diagnostics().Features
-		confined = confined || features["landlock"].Probe == "available" || features["uid"].Probe == "available"
-		private = private || features["bwrap"].Probe == "available"
+		tools := report.Diagnostics().Tools
+		confined = confined || tools["landlock"].Probe == "available" || tools["uid"].Probe == "available"
+		private = private || tools["bwrap"].Probe == "available"
 	}
 	levels := []bed.Level{isolation.Shared}
 	if confined {

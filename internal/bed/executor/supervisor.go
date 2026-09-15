@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	"github.com/qiankunli/hostel/internal/bed/executor/supervisor"
 	"github.com/qiankunli/hostel/internal/bed/resource"
-	"github.com/qiankunli/hostel/internal/supervisor"
 )
 
 type SupervisorFactory struct {

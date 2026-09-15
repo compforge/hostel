@@ -31,8 +31,10 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/amenity"
+	"github.com/qiankunli/hostel/internal/api"
 	bedmodel "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
+	"github.com/qiankunli/hostel/internal/bed/executor/supervisor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/bed/network"
@@ -42,9 +44,7 @@ import (
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
-	"github.com/qiankunli/hostel/internal/supervisor"
 	"github.com/qiankunli/hostel/internal/tracing"
-	"github.com/qiankunli/hostel/internal/web"
 	"github.com/qiankunli/hostel/pkg/mcpproxy"
 )
 
@@ -250,10 +250,10 @@ func main() {
 	workerDone := make(chan error, 1)
 	go func() { workerDone <- mgr.Run(ctx) }()
 
-	srv := &http.Server{Addr: cfg.Addr, Handler: web.NewServer(
+	srv := &http.Server{Addr: cfg.Addr, Handler: api.NewServer(
 		mgr,
-		web.WithTracing(cfg.EnableTracing),
-		web.WithDormReadFallbackRoot(cfg.Bed.Filesystem.DormReadFallbackRoot),
+		api.WithTracing(cfg.EnableTracing),
+		api.WithDormReadFallbackRoot(cfg.Bed.Filesystem.DormReadFallbackRoot),
 	).Handler()}
 	serverDone := make(chan error, 1)
 	go func() {

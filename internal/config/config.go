@@ -25,7 +25,7 @@ import (
 
 	"github.com/qiankunli/go-stdx/osx"
 	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 // Config is the hostel runtime configuration. hostel is a generic sandbox
@@ -183,7 +183,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 	}
 	c.Bed.Filesystem = c.Bed.Filesystem.ForRoom(room)
 	c.Bed.Network = c.Bed.Network.ForRoom(room)
-	for _, p := range []*feature.Policy{&c.Bed.Filesystem.Bwrap, &c.Bed.Filesystem.Landlock, &c.Bed.Filesystem.UID, &c.Bed.Filesystem.PRoot, &c.Bed.Filesystem.Pathshim, &c.Bed.Network.NetNS, &c.Bed.Resource.Cgroup} {
+	for _, p := range []*tool.Policy{&c.Bed.Filesystem.Bwrap, &c.Bed.Filesystem.Landlock, &c.Bed.Filesystem.UID, &c.Bed.Filesystem.PRoot, &c.Bed.Filesystem.Pathshim, &c.Bed.Network.NetNS, &c.Bed.Resource.Cgroup} {
 		*p = p.Effective()
 	}
 	// Low defaults to 80% of high so a bare --luggage-high-bytes works; a low

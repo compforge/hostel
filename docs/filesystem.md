@@ -75,7 +75,7 @@ Reader 根据所选文件视图的映射支持选择读取策略；这与独占 
 |---|---|
 | 目标／声明 | Bed 自己的 rootfs，以及需要接入的 HostPath、BedPath 和只读要求 |
 | Fact | Carrier 实际具备的内核能力、权限、工具与目录访问条件 |
-| Feature | 根据事实和配置采用的机制，如 bwrap、PRoot、pathshim、Landlock 或 UID/DAC |
+| Tool | 根据事实和配置采用的机制，如 bwrap、PRoot、pathshim、Landlock 或 UID/DAC |
 | Level 与实际状态 | 经组合验证后提供的隔离保证，以及路径视图、映射和只读要求的支持情况 |
 
 路径视图的完整性与隔离强度分别报告：PRoot/pathshim 可以改善路径兼容性，但不提高安全
@@ -269,6 +269,6 @@ rootful mount 在此时完成；降级到 PRoot/pathshim 或无特权 bwrap 时�
 - Shell owns its Executor View：session run 的结构化 cwd 由 Shell 投影并更新持久 cwd；
 - Store consumes Bed SyncPaths：快照始终包含 `meta.json`，并包含 `Bed.Spec.SyncPaths` 选择的默认映射子树（默认 `/workspace`）；
 - isolation realizes View：不拥有数据命名和持久化规则；
-- web 只选择与房型、部署配置匹配的 BedFS 读取策略：不能自行拼 carrier 路径或 mount point。
+- API handler 只选择与房型、部署配置匹配的 BedFS 读取策略：不能自行拼 carrier 路径或 mount point。
 
 daemon 文件 API 先做客户端路径规范化，再以选中映射的目录句柄执行 descriptor-relative 文件操作。路径中的 symlink 只允许解析到该根之内；逃出根目录或与并发 symlink 替换竞态的操作会失败。这条安全边界属于 BedFS，不散落到各 handler。

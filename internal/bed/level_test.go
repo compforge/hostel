@@ -12,7 +12,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/resource"
 	"github.com/qiankunli/hostel/internal/bed/store"
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
@@ -55,14 +55,14 @@ func TestLevelStatusDoesNotExposeSelection(t *testing.T) {
 
 func TestBaselineIsNotAnUngradedComponent(t *testing.T) {
 	iso, err := isolation.Resolve(hostfacts.Snapshot{}, isolation.Config{
-		Level: "shared", Bwrap: feature.Off, Landlock: feature.Off,
-		UID: feature.Off, PRoot: feature.Off, Pathshim: feature.Off,
+		Level: "shared", Bwrap: tool.Off, Landlock: tool.Off,
+		UID: tool.Off, PRoot: tool.Off, Pathshim: tool.Off,
 	}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	files := filesystem.NewManager(iso, bed.StatusWriter[bed.FilesystemStatus]{})
-	net := network.NewConfigured(t.Context(), network.Config{NetNS: feature.Off})
+	net := network.NewConfigured(t.Context(), network.Config{NetNS: tool.Off})
 	for name, status := range map[string]bed.LevelStatus{
 		"filesystem": files.LevelStatus(),
 		"privilege":  new(privilege.Manager).LevelStatus(),
