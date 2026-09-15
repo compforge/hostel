@@ -3,6 +3,7 @@ package privilege
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,36 +48,36 @@ type Selection struct {
 }
 
 // Resolve owns identity selection independently of the filesystem mechanism.
-// Explicit users are requirements; automatic identity can fall back to the
-// daemon identity only after verifying actual child credentials and file access.
+// Configured users are preferences. An unavailable identity can fall back to
+// the daemon identity only after verifying actual child credentials and file access.
 func Resolve(ctx context.Context, facts hostfacts.Snapshot, cfg Config, room bed.RoomType, root string) (Selection, error) {
 	s := Selection{Expected: ExpectedLevel(room), Effective: Shared}
 	user := CurrentBedUser()
-	if cfg.Explicit {
+	if cfg.Configured {
 		var err error
 		user, err = NewBedUser(cfg.UID, cfg.GID)
 		if err != nil {
 			return s, err
 		}
 	}
-	if cfg.Explicit && (user.UID() != facts.EUID || user.GID() != facts.EGID) {
-		if runtime.GOOS != "linux" || len(MissingBedIdentityCapabilities(facts.EffectiveCaps)) != 0 {
-			return s, fmt.Errorf("privilege: explicit Bed user %d:%d cannot be managed with current capabilities", user.UID(), user.GID())
-		}
-	}
+	canManageIdentity := runtime.GOOS == "linux" && len(MissingBedIdentityCapabilities(facts.EffectiveCaps)) == 0
 	// Keep the existing non-root fixed identity when it can be fully managed.
-	if !cfg.Explicit && facts.EUID == 0 && len(MissingBedIdentityCapabilities(facts.EffectiveCaps)) == 0 {
+	if !cfg.Configured && facts.EUID == 0 && canManageIdentity {
 		user, _ = NewBedUser(1000, 1000)
 	}
-	s.User, s.Policy = user, BedUserReport{Strategy: "fixed", UID: user.UID(), GID: user.GID()}
+	if user != CurrentBedUser() && !canManageIdentity {
+		s.Reason = fmt.Sprintf("preferred Bed user %d:%d unavailable: identity management prerequisites missing; using daemon identity %d:%d", user.UID(), user.GID(), facts.EUID, facts.EGID)
+		user = CurrentBedUser()
+	}
 	base, cleanupErr := probeIdentity(ctx, root, user)
 	if cleanupErr != nil {
 		return s, cleanupErr
 	}
 	if !base.Succeeded() {
-		if cfg.Explicit || user == CurrentBedUser() {
+		if user == CurrentBedUser() {
 			return s, fmt.Errorf("privilege: shared identity probe: %s", base.Error)
 		}
+		s.Reason = fmt.Sprintf("preferred Bed user %d:%d unavailable: %s; using daemon identity %d:%d", user.UID(), user.GID(), base.Error, facts.EUID, facts.EGID)
 		user = CurrentBedUser()
 		base, cleanupErr = probeIdentity(ctx, root, user)
 		if cleanupErr != nil {
@@ -85,11 +86,16 @@ func Resolve(ctx context.Context, facts hostfacts.Snapshot, cfg Config, room bed
 		if !base.Succeeded() {
 			return s, fmt.Errorf("privilege: inherited identity probe: %s", base.Error)
 		}
-		s.User, s.Policy = user, BedUserReport{Strategy: "fixed", UID: user.UID(), GID: user.GID()}
+	}
+	s.User, s.Policy = user, BedUserReport{Strategy: "fixed", UID: user.UID(), GID: user.GID()}
+	if s.Reason != "" {
+		log.Printf("hostel privilege: %s", s.Reason)
 	}
 	s.Supported, s.Probe = []Level{Shared}, base
-	if runtime.GOOS != "linux" || len(MissingBedIdentityCapabilities(facts.EffectiveCaps)) != 0 {
-		s.Reason = "dedicated identity management unavailable"
+	if !canManageIdentity {
+		if s.Reason == "" {
+			s.Reason = "dedicated identity management unavailable"
+		}
 		return s, nil
 	}
 	dedicated, _ := NewBedUser(UIDMin, UIDMin)
@@ -98,14 +104,18 @@ func Resolve(ctx context.Context, facts hostfacts.Snapshot, cfg Config, room bed
 		return s, cleanupErr
 	}
 	if !s.Probe.Succeeded() {
-		s.Reason = s.Probe.Error
+		if s.Reason == "" {
+			s.Reason = s.Probe.Error
+		}
 		return s, nil
 	}
 	s.Supported = append(s.Supported, Dedicated)
 	// Probe support independently of the profile and fixed-user preference.
 	// Those inputs constrain selection, not what the host demonstrated.
-	if cfg.Explicit {
-		s.Reason = "explicit fixed Bed user"
+	if cfg.Configured {
+		if s.Reason == "" {
+			s.Reason = "preferred fixed Bed user"
+		}
 		return s, nil
 	}
 	if s.Expected == Shared {

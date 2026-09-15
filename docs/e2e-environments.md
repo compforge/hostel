@@ -101,9 +101,11 @@ ptrace-denied 需要节点事先把 deny-ptrace.json 放到 kubelet 的
 默认允许，不能视为生产安全基线。ptrace-allowed 同时移除 seccomp 过滤并添加
 SYS_PTRACE；两组都检查真实 ptrace handshake，而不由 capability 名称推断结果。
 
-镜像内的进程配置也属于实验条件。drop-all 保留镜像的 Bed UID/GID 配置；
+镜像内的进程配置也属于实验条件。drop-all 保留镜像建议的 Bed UID/GID；
 drop-all-inherit-user 保持同一 securityContext，在启动测试 runner 时移除镜像内的
-`HOSTEL_BED_UID/GID`，验证自动用户选择。两者分别留证，不能用后者覆盖前者的失败。
+`HOSTEL_BED_UID/GID`，作为未配置建议值的对照。两者分别留证，历史失败仍保留。
+`TestPreferredBedUser` 在 local/supervisor 两种 Executor 下核对实际 UID/GID、降级原因、
+command/session 的 capability 与 no_new_privs，以及 File API 的读写归属；可加入 `--test-filter` 运行。
 
 AppArmor 的实际约束测试必须使用编译并启用 AppArmor 的节点。显式请求 AppArmor
 而被节点拒绝是可保留的环境错误证据，不等于已验证 AppArmor 约束下的 Hostel。

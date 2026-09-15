@@ -20,15 +20,16 @@ credentials 和 UID 租约；`privilege.Manager` 统一拥有分配器与权限�
 ## Daemon 与 BedUser
 
 官方镜像默认以 root 启动 daemon，使它能跨 Bed 准备目录、切换进程身份并回收不同 UID 的进程。
-显式配置的 `BedUser` 拒绝 UID/GID 0。自动模式不以身份切换为启动前提：缺少跨 UID 管理能力时可沿用 daemon
+配置的建议 `BedUser` 拒绝 UID/GID 0。身份切换不是启动前提：建议身份缺少跨 UID 管理能力或探测失败时，可沿用 daemon
 身份；继承 UID 0 时必须实际证明子进程的 active 与 bounding capability 集合均为空、`NoNewPrivs=1`。
 因此 root + drop ALL 有可工作的弱基线路径，但不能保证任意部分 capability 组合都可用。
 Hostel 不尝试获取缺失权限，也不把 UID 0 等同于具备某个 capability。
 
 每个 resident Bed 在初始化时解析一个 `BedUser`，目录属主和 command/session 的最终身份共用同一个值：
 
-- **shared / fixed**：所有 Bed 共用身份。自动模式在具备完整跨 UID 管理能力时优先使用 `1000:1000`，
-  否则或探测失败时尝试继承 daemon 身份。显式 `HOSTEL_BED_UID`、`HOSTEL_BED_GID` 是固定身份要求，不能静默替换。
+- **shared / fixed**：所有 Bed 共用身份。`HOSTEL_BED_UID/GID`、`--bed-uid/gid` 与 Go 配置提供建议值；可用时优先采用，
+  不可用时尝试经过完整权限与文件访问探测的 daemon 身份。未配置建议值时，root daemon 具备完整跨 UID 管理能力便优先使用 `1000:1000`。
+  降级原因与实际 UID/GID 通过 privilege 状态和启动日志披露；非法建议值、继承身份验证失败或探测清理失败仍终止启动。
 - **dedicated / per_bed**：room/suite 期望每个 Bed 独立的高位 UID/GID，不依赖采用的是 bwrap、Landlock 还是 UID/DAC。
   支持性由 Privilege 独立探测；Filesystem 的 UID/DAC 只有在已选 dedicated 身份时才可采用。相同 Bed ID 从稳定槽位开始，冲突时
   在预留范围内寻找空闲值，不能因散列碰撞让两个 Bed 共享身份。
