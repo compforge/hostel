@@ -11,6 +11,11 @@ Beds share a machine or container, reducing the need to provision a separate
 runtime for every task. Hostel manages execution and local resources. In a cluster,
 an upstream control plane owns instance placement, cross-instance routing and API authorization.
 
+Bed Spec expresses what a bed needs; Hostel makes a best effort to start it
+with the host's available capabilities. An explicit requirement that cannot be
+fulfilled causes startup to fail. Optional isolation can remain unavailable,
+and Hostel reports what it actually provides.
+
 ## What you can do
 
 - Run commands with streamed output, cancellation and structured exit results;
