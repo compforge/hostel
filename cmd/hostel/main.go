@@ -57,7 +57,7 @@ func main() {
 	// this child applies the Bed file boundary before exec-ing the command.
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
-		case hostfs.CaptureArg, hostfs.EnterArg:
+		case hostfs.CaptureArg, hostfs.BedInitMountArg:
 			if err := hostfs.RunMountHelper(os.Args[1:]); err != nil {
 				fmt.Fprintf(os.Stderr, "hostel mount helper: %v\n", err)
 				os.Exit(1)

@@ -84,6 +84,9 @@ func parseRequest(s string) Level {
 // Environment, which composes this boundary with the resolved BedUser and
 // network attachment.
 type Boundary interface {
+	Lifecycle
+	// PrivilegedEntry means resource entry must precede the final credential drop.
+	PrivilegedEntry() bool
 	// Name is the mechanism: direct | uid | landlock | bwrap.
 	Name() string
 	// Level is the guarantee this mechanism delivers.
@@ -106,20 +109,22 @@ type Boundary interface {
 type Isolator interface {
 	Boundary
 	View(*bedfs.FS) bedfs.ProcessView
-	WorkdirMounted() bool
+	MountsRoot() bool
 }
 
-// PreparedExecution lets a boundary enter resources owned by Bed lifecycle and
-// apply final credentials after entry. Other mechanisms retain unprivileged setup.
-type PreparedExecution interface {
-	WrapPrepared(*exec.Cmd, *bedfs.FS, string, int, int) (bool, error)
+// Lifecycle is mandatory for every mechanism. Partial preparation retains its
+// cleanup owner; release is retryable and never reselects a weaker mechanism.
+type Lifecycle interface {
+	Prepare(context.Context, *bedfs.FS) error
+	Release(context.Context, *bedfs.FS) error
 }
 
-type Releaser interface{ Release(*bedfs.FS) error }
+// Stateless supplies lifecycle hooks for mechanisms with no retained resources.
+type Stateless struct{}
 
-type ContextPreparer interface {
-	PrepareContext(context.Context, *bedfs.FS) error
-}
+func (Stateless) Prepare(context.Context, *bedfs.FS) error { return nil }
+func (Stateless) Release(context.Context, *bedfs.FS) error { return nil }
+func (Stateless) PrivilegedEntry() bool                    { return false }
 
 // ProcessViewReport describes the selected process path view and mapping support.
 // It is separate from the isolation level: a user-space view
@@ -144,16 +149,6 @@ type Report interface {
 	Diagnostics() DiagnosticsReport
 }
 
-// Preparer is an optional Boundary capability: a mechanism that must prepare a
-// bed's data dir before its commands run. uid isolation tightens directory
-// traversal here; BedUser owns the common ownership handoff. Mount- and
-// LSM-based mechanisms need no mechanism-specific on-disk prep. The bed manager
-// calls Prepare after (re)creating the data dir. The resolved result always
-// satisfies Preparer (no-op when the chosen mechanism isn't one).
-type Preparer interface {
-	Prepare(fs *bedfs.FS) error
-}
-
 // resolved composes independently selected security and process view backends and
 // retains their boot-time resolution facts.
 type resolved struct {
@@ -169,7 +164,7 @@ func (r *resolved) Level() Level                        { return r.boundary.Leve
 func (r *resolved) AllowsMappings() bool                { return r.boundary.AllowsMappings() }
 func (r *resolved) Available() bool                     { return r.boundary.Available() }
 func (r *resolved) View(fs *bedfs.FS) bedfs.ProcessView { return r.process.View(fs) }
-func (r *resolved) WorkdirMounted() bool                { return r.process.Mounted() }
+func (r *resolved) MountsRoot() bool                    { return r.process.Mounted() }
 func (r *resolved) Requested() Level                    { return r.req }
 func (r *resolved) Effective() Level                    { return r.eff }
 func (r *resolved) Ceiling() Level                      { return r.ceil }
@@ -190,39 +185,17 @@ func (r *resolved) Diagnostics() DiagnosticsReport {
 	return DiagnosticsReport{Probes: probes, Features: features}
 }
 
-// Prepare forwards to the chosen mechanism when it needs data-dir preparation
-// (uid), else no-ops — so the bed manager can assert Preparer on the result
-// unconditionally, without knowing which mechanism won.
-func (r *resolved) Prepare(fs *bedfs.FS) error {
-	return r.PrepareContext(context.Background(), fs)
+func (r *resolved) Prepare(ctx context.Context, fs *bedfs.FS) error {
+	return r.boundary.Prepare(ctx, fs)
 }
-
-func (r *resolved) PrepareContext(ctx context.Context, fs *bedfs.FS) error {
-	if p, ok := r.boundary.(ContextPreparer); ok {
-		return p.PrepareContext(ctx, fs)
-	}
-	if p, ok := r.boundary.(Preparer); ok {
-		return p.Prepare(fs)
-	}
-	return nil
-}
+func (r *resolved) PrivilegedEntry() bool { return r.boundary.PrivilegedEntry() }
 
 func (r *resolved) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	return wrapRuntimeCommand(r.boundary, r.process, cmd, fs, cwd)
 }
 
-func (r *resolved) WrapPrepared(cmd *exec.Cmd, fs *bedfs.FS, cwd string, uid, gid int) (bool, error) {
-	if prepared, ok := r.boundary.(PreparedExecution); ok {
-		return prepared.WrapPrepared(cmd, fs, cwd, uid, gid)
-	}
-	return false, nil
-}
-
-func (r *resolved) Release(fs *bedfs.FS) error {
-	if owner, ok := r.boundary.(Releaser); ok {
-		return owner.Release(fs)
-	}
-	return nil
+func (r *resolved) Release(ctx context.Context, fs *bedfs.FS) error {
+	return r.boundary.Release(ctx, fs)
 }
 
 // New is the default-policy constructor for valid file levels. Call Resolve
@@ -319,12 +292,16 @@ type unavailable struct {
 	lvl  Level
 }
 
+func (unavailable) Prepare(context.Context, *bedfs.FS) error { return errUnavailable }
+func (unavailable) Release(context.Context, *bedfs.FS) error { return nil }
+func (unavailable) PrivilegedEntry() bool                    { return false }
+
 func (u unavailable) Name() string                        { return u.name }
 func (u unavailable) Level() Level                        { return u.lvl }
 func (u unavailable) AllowsMappings() bool                { return false }
 func (u unavailable) Available() bool                     { return false }
 func (u unavailable) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
-func (u unavailable) WorkdirMounted() bool                { return false }
+func (u unavailable) MountsRoot() bool                    { return false }
 func (u unavailable) Wrap(*exec.Cmd, *bedfs.FS, string) error {
 	return errUnavailable
 }
@@ -337,14 +314,14 @@ func (e *isoError) Error() string { return e.msg }
 
 // direct runs the command straight on the host, only pinning its cwd to the
 // bed workspace. The shared level: no enforced isolation. Always available.
-type direct struct{}
+type direct struct{ Stateless }
 
 func (direct) Name() string                        { return "direct" }
 func (direct) Level() Level                        { return Shared }
 func (direct) AllowsMappings() bool                { return true }
 func (direct) Available() bool                     { return true }
 func (direct) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
-func (direct) WorkdirMounted() bool                { return false }
+func (direct) MountsRoot() bool                    { return false }
 func (direct) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	cmd.Dir = commandCwd(fs, cwd)
 	return nil

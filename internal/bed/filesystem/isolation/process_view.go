@@ -66,7 +66,7 @@ func (mountedView) Wrap(*exec.Cmd, *bedfs.FS, string) error {
 
 type viewMounter interface {
 	View(*bedfs.FS) bedfs.ProcessView
-	WorkdirMounted() bool
+	MountsRoot() bool
 }
 
 // wrapRuntimeCommand fixes composition order in one place: first project the
@@ -112,7 +112,7 @@ func resolveProcessViewWithConfig(base Boundary, bedsRoot string, ptraceProbe ho
 		probes["proot"] = hostfacts.ProbeReport{}
 	}
 
-	if mounter, ok := base.(viewMounter); ok && mounter.WorkdirMounted() {
+	if mounter, ok := base.(viewMounter); ok && mounter.MountsRoot() {
 		workspace := mountedView{view: mounter.View}
 		return workspace, ProcessViewReport{Mode: workspace.Mode(), Available: true}
 	}

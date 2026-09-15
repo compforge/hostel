@@ -49,10 +49,10 @@ type Identity struct {
 	GID int `json:"gid"`
 }
 
-// SetprivReport records whether the credential-switching helper was resolved.
+// CredentialHelperReport records whether the credential-switching helper was resolved.
 // It is captured once during Manager construction; diagnostics reads do not
 // repeat PATH discovery.
-type SetprivReport struct {
+type CredentialHelperReport struct {
 	Required  bool   `json:"required"`
 	Available bool   `json:"available"`
 	Path      string `json:"path,omitempty"`
@@ -69,13 +69,13 @@ type Requirements struct {
 
 // Status is the cached, operator-facing privilege configuration and verdict.
 type Status struct {
-	Selection              Selection     `json:"selection"`
-	ReservedUsers          int           `json:"reserved_users"`
-	PreconditionsSatisfied bool          `json:"preconditions_satisfied"`
-	Daemon                 Identity      `json:"daemon"`
-	BedUser                BedUserReport `json:"bed_user"`
-	Setpriv                SetprivReport `json:"setpriv"`
-	Requirements           Requirements  `json:"requirements"`
+	Selection              Selection              `json:"selection"`
+	ReservedUsers          int                    `json:"reserved_users"`
+	PreconditionsSatisfied bool                   `json:"preconditions_satisfied"`
+	Daemon                 Identity               `json:"daemon"`
+	BedUser                BedUserReport          `json:"bed_user"`
+	Helper                 CredentialHelperReport `json:"helper"`
+	Requirements           Requirements           `json:"requirements"`
 }
 
 // CapabilityRequirement identifies one Linux capability in CapEff.
@@ -122,12 +122,12 @@ func NewReport(bedUser BedUserReport, effectiveCaps uint64) Status {
 		Daemon:  Identity{UID: os.Geteuid(), GID: os.Getegid()},
 		BedUser: bedUser,
 	}
-	report.Setpriv.Required = runtime.GOOS == "linux"
+	report.Helper.Required = runtime.GOOS == "linux"
 	if path, err := hostprivilege.ProcessCredentialHelper(); err != nil {
-		report.Setpriv.Error = err.Error()
+		report.Helper.Error = err.Error()
 	} else {
-		report.Setpriv.Available = true
-		report.Setpriv.Path = path
+		report.Helper.Available = true
+		report.Helper.Path = path
 	}
 
 	needsSwitch := bedUser.Strategy == "per_bed" || bedUser.UID != report.Daemon.UID || bedUser.GID != report.Daemon.GID
@@ -140,7 +140,7 @@ func NewReport(bedUser BedUserReport, effectiveCaps uint64) Status {
 	sort.Strings(report.Requirements.Capabilities)
 	sort.Strings(report.Requirements.MissingCapabilities)
 	report.Requirements.Satisfied = len(report.Requirements.MissingCapabilities) == 0
-	report.PreconditionsSatisfied = report.Requirements.Satisfied && (!report.Setpriv.Required || report.Setpriv.Available)
+	report.PreconditionsSatisfied = report.Requirements.Satisfied && (!report.Helper.Required || report.Helper.Available)
 	return report
 }
 

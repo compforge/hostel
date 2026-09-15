@@ -35,11 +35,9 @@ func canPrepareRootful(facts hostfacts.Snapshot) bool {
 	return true
 }
 
-func (b *bwrap) Prepare(fs *bedfs.FS) error {
-	return b.PrepareContext(context.Background(), fs)
-}
+func (b *bwrap) PrivilegedEntry() bool { return b.rootful != nil }
 
-func (b *bwrap) PrepareContext(ctx context.Context, fs *bedfs.FS) error {
+func (b *bwrap) Prepare(ctx context.Context, fs *bedfs.FS) error {
 	if b.rootful == nil {
 		return nil
 	}
@@ -57,6 +55,8 @@ func (b *bwrap) PrepareContext(ctx context.Context, fs *bedfs.FS) error {
 		}
 	}
 	args := b.args(fs.Rootfs(), fs.Workdir(), bedfs.DefaultWorkdir, fs.PathMappings())
+	args = append(args[:len(args)-1], runtimeFileArgs(fs)...)
+	args = append(args, "--")
 	view, err := hostfs.PrepareMountNamespace(ctx, b.path, b.rootful.helper, args)
 	if err != nil {
 		return err
@@ -68,7 +68,7 @@ func (b *bwrap) PrepareContext(ctx context.Context, fs *bedfs.FS) error {
 	return nil
 }
 
-func (b *bwrap) Release(fs *bedfs.FS) error {
+func (b *bwrap) Release(_ context.Context, fs *bedfs.FS) error {
 	if b.rootful == nil {
 		return nil
 	}
@@ -85,25 +85,17 @@ func (b *bwrap) Release(fs *bedfs.FS) error {
 	return nil
 }
 
-// WrapPrepared uses resources prepared by Bed Manager. False means this
-// boundary uses the unprivileged path, not that execution may retry or degrade.
-func (b *bwrap) WrapPrepared(cmd *exec.Cmd, fs *bedfs.FS, cwd string, uid, gid int) (bool, error) {
-	if b.rootful == nil {
-		return false, nil
-	}
+// enterPrepared only enters the retained view; identity belongs to the common
+// execution plan, not the filesystem mechanism.
+func (b *bwrap) enterPrepared(cmd *exec.Cmd, fs *bedfs.FS) error {
 	b.rootful.mu.Lock()
 	view := b.rootful.views[fs]
 	b.rootful.mu.Unlock()
 	if view == nil {
-		return true, fmt.Errorf("rootful filesystem: Bed mount namespace was not prepared")
+		return fmt.Errorf("rootful filesystem: Bed mount namespace was not prepared")
 	}
-	processCwd, err := b.View(fs).Path(commandCwd(fs, cwd))
-	if err != nil {
-		return true, err
-	}
-	cmd.Path = rootExecutable(fs, cmd.Path, b.View(fs).MappingSupport())
-	view.Wrap(cmd, uid, gid, processCwd)
-	return true, nil
+	view.Wrap(cmd)
+	return nil
 }
 
 func (b *bwrap) rootfulSmoke() hostfacts.ProbeReport {
@@ -120,11 +112,11 @@ func (b *bwrap) rootfulSmoke() hostfacts.ProbeReport {
 	if err := os.MkdirAll(fs.Workdir(), 0755); err != nil {
 		return hostfacts.ProbeReport{Error: err.Error()}
 	}
-	if err := b.Prepare(fs); err != nil {
+	if err := b.Prepare(context.Background(), fs); err != nil {
 		return hostfacts.ProbeReport{Error: err.Error()}
 	}
 	cmd := exec.Command("/bin/sh", "-c", "mkdir -p /mnt/probe && printf root-view > /mnt/probe/file")
-	_, err = b.WrapPrepared(cmd, fs, "", os.Geteuid(), os.Getegid())
+	err = BindBedInit(b, fs, os.Geteuid(), os.Getegid())(cmd, "")
 	var report hostfacts.ProbeReport
 	if err == nil {
 		report = hostfacts.RunExecProbe(cmd)
@@ -137,7 +129,7 @@ func (b *bwrap) rootfulSmoke() hostfacts.ProbeReport {
 			report.Error = fmt.Sprintf("native root write did not reach BedFS: %v", readErr)
 		}
 	}
-	if err := b.Release(fs); err != nil {
+	if err := b.Release(context.Background(), fs); err != nil {
 		report.Error = fmt.Sprintf("rootful probe cleanup: %v", err)
 	}
 	return report

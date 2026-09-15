@@ -11,7 +11,6 @@ import (
 
 	"github.com/qiankunli/hostel/internal/bed"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
-	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 )
 
 func TestSharedIdentityBaselineNeedsNoSwitchingCapabilities(t *testing.T) {
@@ -61,7 +60,7 @@ func TestPreferredIdentityProbeFailureFallsBack(t *testing.T) {
 		if len(MissingBedIdentityCapabilities(facts.EffectiveCaps)) != 0 {
 			t.Skip("requires identity-management capabilities to construct the child condition")
 		}
-		helper, err := hostprivilege.ProcessCredentialHelper()
+		helper, err := exec.LookPath("setpriv")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
+	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 )
 
 // runtimePaths are shared execution dependencies, not Bed data. In particular,
@@ -46,7 +47,8 @@ func rootProcessMappings(fs *bedfs.FS, support bedfs.MappingSupport) []hostfs.Ma
 	for _, p := range append(existingRuntimePaths(), "/dev", "/proc") {
 		mappings = append(mappings, hostfs.Mapping{Source: p, Target: p})
 	}
-	return append(mappings, processMappings(fs, support)...)
+	mappings = append(mappings, processMappings(fs, support)...)
+	return append(mappings, hostfs.Mapping{Source: hostprocess.Executable(), Target: hostprocess.BedInitPath})
 }
 
 // Project Bed-local executables just like cwd. Never bind an arbitrary carrier

@@ -13,7 +13,6 @@ import (
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
-	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 )
 
 func TestPreferredIdentityRejectsUnsafeInheritedCredentials(t *testing.T) {
@@ -28,7 +27,7 @@ func TestPreferredIdentityRejectsUnsafeInheritedCredentials(t *testing.T) {
 	if os.Geteuid() != 0 || len(MissingBedIdentityCapabilities(hostfacts.Collect().EffectiveCaps)) != 0 {
 		t.Skip("requires root with identity-management capabilities to construct the child condition")
 	}
-	helper, err := hostprivilege.ProcessCredentialHelper()
+	helper, err := exec.LookPath("setpriv")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,9 +43,6 @@ func TestPreferredIdentityRejectsUnsafeInheritedCredentials(t *testing.T) {
 func TestBedUserWrapDropsRootIdentityAndCapabilities(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to switch to a foreign uid")
-	}
-	if _, err := hostprivilege.ProcessCredentialHelper(); err != nil {
-		t.Skip("setpriv is not installed")
 	}
 	user, _ := NewBedUser(65534, 65534)
 	cmd := exec.Command("/bin/sh", "-c", "id -u; id -g; awk '/^CapEff:/ {print $2} /^CapBnd:/ {print $2} /^NoNewPrivs:/ {print $2}' /proc/self/status")

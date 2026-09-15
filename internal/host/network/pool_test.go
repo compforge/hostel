@@ -40,6 +40,7 @@ type fakeEndpoint struct {
 
 func (e *fakeEndpoint) Wrap(cmd *exec.Cmd) { cmd.Args = append([]string{"network"}, cmd.Args...) }
 func (e *fakeEndpoint) Gateway() string    { return "198.18.0.1" }
+func (*fakeEndpoint) ResolverPath() string { return "" }
 func (e *fakeEndpoint) Close(context.Context) error {
 	if e.closeStarted != nil {
 		e.closeOnce.Do(func() { close(e.closeStarted) })

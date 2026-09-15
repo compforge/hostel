@@ -29,11 +29,8 @@ func TestRootfulRequiresActualHostCapabilities(t *testing.T) {
 
 func TestRootfulExecutionNeverPreparesOrFallsBack(t *testing.T) {
 	b := &bwrap{rootful: &rootfulMounts{}}
-	used, err := b.WrapPrepared(exec.Command("/bin/true"), nil, "", 1000, 1000)
-	if !used || err == nil {
+	err := b.Wrap(exec.Command("/bin/true"), nil, "")
+	if err == nil {
 		t.Fatal("execution without prepared resources must fail closed")
-	}
-	if err := b.Wrap(exec.Command("/bin/true"), nil, ""); err == nil {
-		t.Fatal("rootful execution bypassed credential transition")
 	}
 }

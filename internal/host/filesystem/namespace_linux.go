@@ -11,18 +11,16 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
-	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 	"golang.org/x/sys/unix"
 )
 
 const (
-	CaptureArg        = "__mount_capture"
-	EnterArg          = "__mount_enter"
-	workloadEnvPrefix = "HOSTEL_WORKLOAD_ENV_"
+	CaptureArg      = "__mount_capture"
+	BedInitMountArg = "__bedinit_mount"
 )
 
 // MountNamespace owns a prepared mount view and root, not an Executor process.
@@ -146,27 +144,16 @@ func (n *MountNamespace) Close() error {
 
 // Wrap enters already-prepared resources. Descriptor paths are owned by the
 // daemon and stay live until Bed Manager has drained all executions and Services.
-func (n *MountNamespace) Wrap(cmd *exec.Cmd, uid, gid int, cwd string) {
+func (n *MountNamespace) Wrap(cmd *exec.Cmd) {
 	var namespaces []string
 	for _, file := range []*os.File{n.mount, n.uts, n.ipc} {
 		namespaces = append(namespaces, fmt.Sprintf("/proc/%d/fd/%d", os.Getpid(), file.Fd()))
 	}
-	args := []string{n.helper, EnterArg,
+	args := []string{n.helper, BedInitMountArg,
 		strings.Join(namespaces, ","),
-		fmt.Sprintf("/proc/%d/fd/%d", os.Getpid(), n.root.Fd()),
-		strconv.Itoa(uid), strconv.Itoa(gid), cwd, "--", cmd.Path}
+		fmt.Sprintf("/proc/%d/fd/%d", os.Getpid(), n.root.Fd()), "--", cmd.Path}
 	cmd.Args = append(args, cmd.Args[1:]...)
 	cmd.Path, cmd.Dir = n.helper, "/"
-	// Encode entries individually to avoid one large environment value. In
-	// particular LD_PRELOAD, GODEBUG and PATH must not affect trusted helpers.
-	userEnv := cmd.Env
-	if userEnv == nil {
-		userEnv = os.Environ()
-	}
-	cmd.Env = []string{"PATH=/usr/bin:/bin"}
-	for index, entry := range userEnv {
-		cmd.Env = append(cmd.Env, workloadEnvPrefix+strconv.Itoa(index)+"="+entry)
-	}
 }
 
 // RunMountHelper dispatches only trusted internal re-exec operations.
@@ -182,25 +169,17 @@ func RunMountHelper(args []string) error {
 		_, err := io.Copy(io.Discard, wait)
 		return err
 	}
-	if len(args) < 8 || args[0] != EnterArg || args[6] != "--" {
+	if len(args) < 5 || args[0] != BedInitMountArg || args[3] != "--" {
 		return fmt.Errorf("invalid mount helper arguments")
 	}
-	uid, err := strconv.Atoi(args[3])
+	// The next trusted entry must be opened in the host view. A Bed can rename
+	// directories in its data root; a read-only executable bind alone does not
+	// make its pathname safe for privileged execution.
+	next, err := os.Open(args[4])
 	if err != nil {
 		return err
 	}
-	gid, err := strconv.Atoi(args[4])
-	if err != nil {
-		return err
-	}
-	var env []string
-	for index := 0; ; index++ {
-		value, ok := os.LookupEnv(workloadEnvPrefix + strconv.Itoa(index))
-		if !ok {
-			break
-		}
-		env = append(env, value)
-	}
+	defer next.Close()
 	// Open all handles in the host view; never look up a privileged helper or
 	// library through caller-controlled rootfs paths. setns affects this thread.
 	paths := strings.Split(args[1], ",")
@@ -244,5 +223,5 @@ func RunMountHelper(args []string) error {
 		_ = handle.Close()
 	}
 	root.Close()
-	return hostprivilege.ExecRestricted(uid, gid, args[5], args[7:], env)
+	return syscall.Exec(fmt.Sprintf("/proc/self/fd/%d", next.Fd()), args[4:], os.Environ())
 }

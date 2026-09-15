@@ -91,11 +91,10 @@ func probeProot(base Boundary, bedsRoot, executable string) hostfacts.ProbeRepor
 		return hostfacts.ProbeReport{Error: err.Error()}
 	}
 	defer fs.Close()
-	if preparer, ok := base.(Preparer); ok {
-		if err := preparer.Prepare(fs); err != nil {
-			return hostfacts.ProbeReport{Error: "prepare probe bed: " + err.Error()}
-		}
+	if err := base.Prepare(context.Background(), fs); err != nil {
+		return hostfacts.ProbeReport{Error: "prepare probe bed: " + err.Error()}
 	}
+	defer base.Release(context.Background(), fs)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

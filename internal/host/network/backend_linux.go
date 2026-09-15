@@ -17,16 +17,17 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 )
 
 type linuxBackend struct {
-	ports            *PortManager
-	mu               sync.Mutex
-	ip, nft, setpriv string
-	prefix           string
-	resolvers        []string
-	resolverOptions  string
-	endpoints        map[string]*linuxEndpoint
+	ports           *PortManager
+	mu              sync.Mutex
+	ip, nft         string
+	prefix          string
+	resolvers       []string
+	resolverOptions string
+	endpoints       map[string]*linuxEndpoint
 }
 
 type linuxEndpoint struct {
@@ -63,7 +64,7 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 	for _, tool := range []struct {
 		name string
 		path *string
-	}{{"ip", &b.ip}, {"nft", &b.nft}, {"setpriv", &b.setpriv}} {
+	}{{"ip", &b.ip}, {"nft", &b.nft}} {
 		*tool.path, err = exec.LookPath(tool.name)
 		if err != nil {
 			probe.Error = err.Error()
@@ -88,10 +89,13 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 	if err == nil {
 		probe.Stage = "execution"
 		// Exercise the SAME namespace entry and capability drop as wrapped commands.
-		cmd := exec.Command(b.setpriv, "--bounding-set=-all", "--inh-caps=-all", "--ambient-caps=-all", "--no-new-privs", "--", "/bin/sh", "-c", "readlink /proc/self/ns/net; cat /proc/self/status")
-		ep.Wrap(cmd)
-		out, e := run(ctx, "", cmd.Path, cmd.Args[1:]...)
-		err = e
+		cmd := exec.CommandContext(ctx, "/bin/sh", "-c", "readlink /proc/self/ns/net; cat /proc/self/status")
+		err = hostprivilege.WrapCredentials(cmd, os.Geteuid(), os.Getegid())
+		var out []byte
+		if err == nil {
+			ep.Wrap(cmd)
+			out, err = cmd.CombinedOutput()
+		}
 		if err == nil {
 			own, _ := os.Readlink("/proc/self/ns/net")
 			if strings.HasPrefix(string(out), own+"\n") || !strings.Contains(string(out), "CapEff:\t0000000000000000") {
@@ -255,6 +259,9 @@ func (e *linuxEndpoint) Wrap(cmd *exec.Cmd) {
 	cmd.Path = e.owner.ip
 }
 func (e *linuxEndpoint) Gateway() string { return e.gateway.String() }
+func (e *linuxEndpoint) ResolverPath() string {
+	return filepath.Join("/etc/netns", e.name, "resolv.conf")
+}
 
 func (e *linuxEndpoint) Address() string { return e.address.String() }
 

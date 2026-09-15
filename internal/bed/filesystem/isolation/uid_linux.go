@@ -17,6 +17,7 @@
 package isolation
 
 import (
+	"context"
 	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 
 	"fmt"
@@ -42,16 +43,16 @@ import (
 // "private room, shared toilet" tier. The daemon needs the Bed identity
 // capabilities owned by package privilege, but no special kernel, so this fills
 // the room slot where Landlock is absent (old/custom kernels).
-type uidIso struct{}
+type uidIso struct{ Stateless }
 
 func newUID(facts hostfacts.Snapshot, bedsRoot string) (Isolator, hostfacts.ProbeReport) {
 	helper, helperErr := hostprivilege.ProcessCredentialHelper()
 	if helperErr != nil {
-		discovery := hostfacts.ProbeReport{ConfiguredPath: "setpriv", Error: "find binary: " + helperErr.Error()}
+		discovery := hostfacts.ProbeReport{ConfiguredPath: "hostel credential entry", Error: "find binary: " + helperErr.Error()}
 		return unavailable{name: "uid", lvl: Confined}, discovery
 	}
 	discovery := hostfacts.DiscoverExecutable(helper)
-	discovery.ConfiguredPath = "setpriv"
+	discovery.ConfiguredPath = "hostel credential entry"
 	// Missing caps isn't an error — many environments simply don't grant them;
 	// the resolver falls through to the next mechanism and logs honestly.
 	if miss := missingUIDCaps(facts); miss != "" {
@@ -143,7 +144,7 @@ func (u *uidIso) Name() string                        { return "uid" }
 func (u *uidIso) Level() Level                        { return Confined }
 func (u *uidIso) Available() bool                     { return true } // only constructed when the smoke passed
 func (u *uidIso) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
-func (u *uidIso) WorkdirMounted() bool                { return false }
+func (u *uidIso) MountsRoot() bool                    { return false }
 
 func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	cmd.Dir = commandCwd(fs, cwd)
@@ -153,7 +154,7 @@ func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 // Prepare tightens bed_home before BedUser hands the restored tree to this
 // Bed's dedicated uid. Ownership is centralized in BedUser so every isolation
 // mechanism follows the same file/process identity invariant.
-func (u *uidIso) Prepare(fs *bedfs.FS) error {
+func (u *uidIso) Prepare(_ context.Context, fs *bedfs.FS) error {
 	return os.Chmod(fs.Rootfs(), 0o700)
 }
 

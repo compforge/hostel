@@ -371,7 +371,7 @@ func processView(iso isolation.Isolator) isolation.ProcessViewReport {
 		return report.ProcessView()
 	}
 	mode := "carrier"
-	if iso.WorkdirMounted() {
+	if iso.MountsRoot() {
 		mode = "mount"
 	}
 	return isolation.ProcessViewReport{Mode: mode, Available: true}

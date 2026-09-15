@@ -135,6 +135,7 @@ func TestInitializationRollsBackNetworkBeforeCompletion(t *testing.T) {
 
 func (n *initializationNetwork) Enter(*exec.Cmd) error { return nil }
 func (n *initializationNetwork) Gateway() string       { return "" }
+func (*initializationNetwork) ResolverPath() string    { return "" }
 
 func TestEvictionFencesSameIDUntilDirectoryCleanup(t *testing.T) {
 	m := newTestManager(t)
@@ -203,6 +204,7 @@ func (n *policyInitializationNetwork) Acquire(context.Context, string) (network.
 }
 func (n *policyInitializationNetwork) Enter(*exec.Cmd) error { return nil }
 func (n *policyInitializationNetwork) Gateway() string       { return "" }
+func (*policyInitializationNetwork) ResolverPath() string    { return "" }
 func (n *policyInitializationNetwork) NetworkPolicy(ctx context.Context, _ string, _ network.PolicyMutation) (network.PolicyStatus, error) {
 	n.applied.Add(1)
 	if n.entered != nil {

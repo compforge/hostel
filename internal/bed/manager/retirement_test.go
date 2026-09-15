@@ -145,3 +145,4 @@ func TestRetirementResumesAtFailedComponent(t *testing.T) {
 
 func (*retryReleaseNetwork) Enter(*exec.Cmd) error { return nil }
 func (*retryReleaseNetwork) Gateway() string       { return "" }
+func (*retryReleaseNetwork) ResolverPath() string  { return "" }

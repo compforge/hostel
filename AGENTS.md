@@ -29,6 +29,7 @@
 - **bed service**：Bed 定义中的可选托管服务，与用户命令共用 Bed Environment/Executor；创建者提交通用完整 `ServiceSpec`，Carrier 镜像提供程序与依赖，Hostel 不依赖具体业务服务。端口通过 daemon 级 Port Manager 统一申请，见 `docs/bed-service.md`。
 - **executor**：某个 bed 当前的、可替换的进程承载域。bed 持久存在，executor 丢失或关闭后可用新 id 重建；Linux 默认使用 supervisor backend，非 Linux / 显式 local 使用 daemon 直接派生。
 - **execution**：一次命令运行。每次有独立 id，且记录其所属 bed id 与 executor id。
+- **bedinit**：每次进程启动前的可信初始化路径，按 Bed Manager 绑定的方案进入环境、降权并 exec 用户程序；不是 Bed 生命周期初始化或常驻进程，详见 `docs/kernel.md`。
 
 **进程模型**（进程归属树；详见 `docs/kernel.md`〈进程树〉）：
 

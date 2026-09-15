@@ -18,7 +18,7 @@ Network 定义 shared/private 两级：dorm/room 预期 shared，suite/auto 预�
 
 ## 主流程
 
-启动时检查 Linux、`ip`/`nft`/`setpriv`、现有 IPv4 forwarding 和 DNS，然后创建临时
+启动时检查 Linux、`ip`/`nft`、现有 IPv4 forwarding 和 DNS，然后创建临时
 netns、veth、路由、nft 表与 DNS 转发入口，执行真实的 namespace 进入和能力丢弃，清理
 后缓存 verdict。诊断请求不会重新运行探测。
 
@@ -28,7 +28,12 @@ Bed 初始化完成数据准备后获取具体 `Attachment`，保存到 resident
 文件视图与用户程序启动顺序由 [权限模型](privilege.md#特权操作顺序) 统一定义。
 实例在 HTTP 启动前还会实测选中的完整 command/session/Service 组合；自动候选可在完整清理后有限回退，required 或清理失败则阻止启动。
 
-回收先停止 Bed 的命令和 shell、释放 amenity 与资源组，再删除网络。关闭失败的
+网络分配提供 Bed resolver 文件，Bed Manager 在组装 mount 视图前交给 Filesystem，
+只读挂到 `/etc/resolv.conf`。这样进入已准备的 mount namespace 不会丢失 `ip netns exec`
+临时挂入的 resolver。该文件属于网络 allocation，不是用户 PathMapping；显式映射与其
+目标冲突时拒绝准备，不静默覆盖。PRoot/Carrier 视图沿用外层 netns 的 resolver。
+
+回收先停止 Bed 的命令和 shell、释放 amenity、资源组与文件视图，再删除网络。关闭失败的
 Attachment 保留清理 owner，但立即失去执行资格；同 ID Acquire 必须先清理残留才能
 分配新网络，旧句柄不能删除新分配。Bed Manager 同时保留待清理身份，阻止重建，并允许
 Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspace，不随 Store 恢复。

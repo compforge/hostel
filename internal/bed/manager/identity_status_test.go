@@ -142,6 +142,7 @@ func (n *deadlineNetwork) Acquire(context.Context, string) (network.Attachment, 
 func (*deadlineNetwork) Close(context.Context) error { return nil }
 func (*deadlineAttachment) Enter(*exec.Cmd) error    { return nil }
 func (*deadlineAttachment) Gateway() string          { return "" }
+func (*deadlineAttachment) ResolverPath() string     { return "" }
 func (a *deadlineAttachment) Close(ctx context.Context) error {
 	n := a.owner
 	n.mu.Lock()

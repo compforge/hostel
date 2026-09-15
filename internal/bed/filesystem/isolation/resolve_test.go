@@ -33,7 +33,7 @@ func (m fakeMech) Name() string                            { return m.name }
 func (m fakeMech) Level() Level                            { return m.lvl }
 func (m fakeMech) Available() bool                         { return m.avail }
 func (m fakeMech) View(fs *bedfs.FS) bedfs.ProcessView     { return bedfs.HostView(fs) }
-func (m fakeMech) WorkdirMounted() bool                    { return false }
+func (m fakeMech) MountsRoot() bool                        { return false }
 func (m fakeMech) Wrap(*exec.Cmd, *bedfs.FS, string) error { return nil }
 
 // resolveMechs adapts test candidates to the production selector.
