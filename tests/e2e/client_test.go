@@ -39,7 +39,7 @@ type healthView struct {
 		UIDMin   int    `json:"uid_min"`
 		UIDMax   int    `json:"uid_max"`
 	} `json:"bed_user"`
-	WorkspaceView struct {
+	ProcessView struct {
 		Mode      string `json:"mode"`
 		Available bool   `json:"available"`
 		Reason    string `json:"reason"`

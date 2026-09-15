@@ -139,11 +139,11 @@ func uidSmoke(workspaceRoot string) hostfacts.ProbeReport {
 	return report
 }
 
-func (u *uidIso) Name() string                 { return "uid" }
-func (u *uidIso) Level() Level                 { return Confined }
-func (u *uidIso) Available() bool              { return true } // only constructed when the smoke passed
-func (u *uidIso) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
-func (u *uidIso) WorkspaceMounted() bool       { return false }
+func (u *uidIso) Name() string                        { return "uid" }
+func (u *uidIso) Level() Level                        { return Confined }
+func (u *uidIso) Available() bool                     { return true } // only constructed when the smoke passed
+func (u *uidIso) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
+func (u *uidIso) WorkdirMounted() bool                { return false }
 
 func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	cmd.Dir = commandCwd(fs, cwd)
@@ -154,7 +154,7 @@ func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 // Bed's dedicated uid. Ownership is centralized in BedUser so every isolation
 // mechanism follows the same file/process identity invariant.
 func (u *uidIso) Prepare(fs *bedfs.FS) error {
-	return os.Chmod(fs.Home(), 0o700)
+	return os.Chmod(fs.Rootfs(), 0o700)
 }
 
 func prepareUIDDir(dir string, uid int) error {
@@ -172,3 +172,5 @@ func prepareUIDDir(dir string, uid int) error {
 	}
 	return user.Prepare(filesystem)
 }
+
+func (u *uidIso) AllowsMappings() bool { return true }

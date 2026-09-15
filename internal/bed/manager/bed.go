@@ -239,12 +239,12 @@ func (b *managedBed) Inflight() int {
 // BedFS returns the filesystem owned by this Bed.
 func (b *managedBed) BedFS() *bedfs.FS { return b.filesystem }
 
-// Home is the carrier path of bed_home. It is derived from BedFS rather than
+// Rootfs is the carrier path of bed_home. It is derived from BedFS rather than
 // reconstructed from the workspace-root path convention.
-func (b *managedBed) Home() string { return b.filesystem.Home() }
+func (b *managedBed) Rootfs() string { return b.filesystem.Rootfs() }
 
-// Workspace is the carrier path of the Bed's default workspace.
-func (b *managedBed) Workspace() string { return b.filesystem.Workspace() }
+// Workdir is the carrier path of the Bed's default workspace.
+func (b *managedBed) Workdir() string { return b.filesystem.Workdir() }
 
 // RecordCommand adds one finished run (foreground, session or background) to
 // the bed's usage counters. Failed runs count too — they are load all the same.

@@ -85,7 +85,7 @@ func testCommandInput(t *testing.T, m *Manager, backend string) {
 				t.Fatalf("input delivery replaced child result: %+v", result)
 			}
 			if tc.file {
-				data, err := os.ReadFile(filepath.Join(b.Workspace(), "result"))
+				data, err := os.ReadFile(filepath.Join(b.Workdir(), "result"))
 				if err != nil || string(data) != tc.input {
 					t.Fatalf("saved input: bytes=%d want=%d err=%v", len(data), len(tc.input), err)
 				}

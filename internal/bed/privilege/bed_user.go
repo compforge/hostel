@@ -168,7 +168,7 @@ func (u BedUser) GID() int { return u.gid }
 // handed back to that user as well.
 func (u BedUser) Prepare(fs *bedfs.FS) error {
 	if u.uid != os.Geteuid() || u.gid != os.Getegid() {
-		if err := hostprivilege.ChownTree(fs.Home(), u.uid, u.gid); err != nil {
+		if err := hostprivilege.ChownTree(fs.Rootfs(), u.uid, u.gid); err != nil {
 			return fmt.Errorf("prepare bed user %d:%d: %w", u.uid, u.gid, err)
 		}
 	}

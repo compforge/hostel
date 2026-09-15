@@ -16,9 +16,9 @@
 // rooted at bed_home: it defines the client namespace, carrier placement and
 // Executor views independently of any particular isolation mechanism.
 //
-// Path contract: the client's "/" is bed_home. Absolute paths are rebased
-// below it, /workspace names a real subdirectory, and relative paths are
-// workspace-relative. A Bed never sees carrier paths through the API.
+// Rootfs owns the Bed-local data root; PathMappings connect declared external
+// data. Workdir is the default directory and relative API path base. These
+// data addresses are independent of the process view and its isolation level.
 package bedfs
 
 import (
@@ -71,7 +71,7 @@ type Permission struct {
 // FS is one bed's filesystem. It is created with the Bed and survives
 // Executor replacement; all daemon file operations are confined to it.
 //
-// +spec=`File and directory APIs preserve client path spelling while every read and mutation remains confined to one bed_home.`
+// +spec=`File and directory APIs preserve client path spelling while each operation stays within the Bed data root or a declared mapping source.`
 // +case:id=filesystem_api_contract,desc=`Create, inspect, replace, chmod, move, search, slice-read, and delete a workspace tree`,expect=`all operations round-trip through the public client path without escaping the BedFS`
 type FS struct {
 	mappings []mappedRoot
@@ -129,9 +129,9 @@ func (o *FS) Close() error {
 }
 
 func (o *FS) relative(full string) (string, error) {
-	rel, err := filepath.Rel(o.Home(), full)
+	rel, err := filepath.Rel(o.Rootfs(), full)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("bedfs: carrier path %q is outside bed_home %q", full, o.Home())
+		return "", fmt.Errorf("bedfs: carrier path %q is outside bed_home %q", full, o.Rootfs())
 	}
 	return rel, nil
 }
@@ -179,7 +179,7 @@ func (o *FS) mkdirAllOwned(dir string) error {
 	if o.uid < 0 {
 		return nil
 	}
-	for d := dir; strings.HasPrefix(d, o.Home()); d = filepath.Dir(d) {
+	for d := dir; strings.HasPrefix(d, o.Rootfs()); d = filepath.Dir(d) {
 		rel, err := o.relative(d)
 		if err != nil {
 			break
@@ -203,7 +203,7 @@ func (o *FS) mkdirAllOwned(dir string) error {
 // handover keeps it usable under the uid isolation tier.
 func (o *FS) EnsureDir(dir string) error {
 	for _, m := range o.mappings {
-		if _, ok := relativeTo(m.fs.Home(), dir); ok {
+		if _, ok := relativeTo(m.fs.Rootfs(), dir); ok {
 			return m.fs.EnsureDir(dir)
 		}
 	}
@@ -233,11 +233,12 @@ func (o *FS) Resolve(p string) (string, error) {
 	return o.paths.FromClient(p)
 }
 
-// Home is the carrier path of bed_home, which is the client's "/".
-func (o *FS) Home() string { return o.paths.Home() }
+// Rootfs returns the Carrier data root backing this Bed's logical /.
+// It does not claim that the process root has been replaced.
+func (o *FS) Rootfs() string { return o.paths.Rootfs() }
 
-// Workspace is the carrier path of the Bed's default workspace.
-func (o *FS) Workspace() string { return o.paths.WorkspaceHost() }
+// Workdir returns the default working directory in Carrier coordinates.
+func (o *FS) Workdir() string { return o.paths.WorkdirHost() }
 
 func (o *FS) virtual(full string) string { return o.paths.ToClient(full) }
 

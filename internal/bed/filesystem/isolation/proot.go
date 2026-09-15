@@ -30,13 +30,17 @@ import (
 )
 
 type prootView struct {
-	path string
+	path            string
+	mappingsBlocked bool
 }
 
+func (p *prootView) MappingSupport() bedfs.MappingSupport {
+	return bedfs.MappingSupport{ReadWrite: !p.mappingsBlocked}
+}
 func (p *prootView) Mode() string  { return "proot" }
 func (p *prootView) Mounted() bool { return false }
-func (p *prootView) View(fs *bedfs.FS) bedfs.View {
-	return bedfs.WorkspaceView(fs)
+func (p *prootView) View(fs *bedfs.FS) bedfs.ProcessView {
+	return bedfs.RedirectedView(fs, p.MappingSupport())
 }
 
 func (p *prootView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
@@ -44,21 +48,22 @@ func (p *prootView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err != nil {
 		return err
 	}
-	hostfs.PRoot{Path: p.path}.Wrap(cmd, processMappings(fs), guestCwd)
+	hostfs.PRoot{Path: p.path}.Wrap(cmd, processMappings(fs, p.MappingSupport()), guestCwd)
 	return nil
 }
 
-func newProotView(base Boundary, workspaceRoot string, discovery hostfacts.ProbeReport) (workspaceBackend, WorkspaceViewReport, hostfacts.ProbeReport) {
+func newProotView(base Boundary, workspaceRoot string, discovery hostfacts.ProbeReport) (processViewBackend, ProcessViewReport, hostfacts.ProbeReport) {
 	probe := hostfacts.WithExecutionProbe(discovery, probeProot(base, workspaceRoot, discovery.ResolvedPath))
 	if probe.Error != "" {
 		log.Printf("isolation: proot process view unavailable (%s)", probe.Error)
-		return nil, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: probe.Error}, probe
+		return nil, ProcessViewReport{Mode: "carrier", Available: false, Reason: probe.Error}, probe
 	}
 	log.Printf("isolation: proot process view probe succeeded path=%s", discovery.ResolvedPath)
 	workspace := &prootView{
-		path: discovery.ResolvedPath,
+		path:            discovery.ResolvedPath,
+		mappingsBlocked: !base.AllowsMappings(),
 	}
-	return workspace, WorkspaceViewReport{Mode: workspace.Mode(), Available: true}, probe
+	return workspace, ProcessViewReport{Mode: workspace.Mode(), Available: true}, probe
 }
 
 func probeProot(base Boundary, workspaceRoot, executable string) hostfacts.ProbeReport {
@@ -91,7 +96,7 @@ func probeProot(base Boundary, workspaceRoot, executable string) hostfacts.Probe
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", "cat /workspace/.hostel-proot-probe; printf '\n'; pwd")
-	hostfs.PRoot{Path: executable}.Wrap(cmd, processMappings(fs), bedfs.WorkspacePath)
+	hostfs.PRoot{Path: executable}.Wrap(cmd, processMappings(fs, bedfs.MappingSupport{ReadWrite: base.AllowsMappings()}), bedfs.DefaultWorkdir)
 	if err := base.Wrap(cmd, fs, probeWorkspace); err != nil {
 		return hostfacts.ProbeReport{Error: "wrap probe: " + err.Error()}
 	}
@@ -114,4 +119,4 @@ func probeProot(base Boundary, workspaceRoot, executable string) hostfacts.Probe
 	return report
 }
 
-var _ workspaceBackend = (*prootView)(nil)
+var _ processViewBackend = (*prootView)(nil)

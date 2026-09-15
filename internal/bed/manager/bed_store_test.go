@@ -70,7 +70,7 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 	if b.Spec().Sync != "noop" {
 		t.Fatalf("noop bed sync=%s", b.Spec().Sync)
 	}
-	if err := os.WriteFile(filepath.Join(b.Workspace(), "marker.txt"), []byte("local only"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(b.Workdir(), "marker.txt"), []byte("local only"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	finish, err := m.BeginOperation(b, OpFile, 0)
@@ -88,7 +88,7 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(normal.Workspace(), "marker.txt"), []byte("durable"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(normal.Workdir(), "marker.txt"), []byte("durable"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	finish, err = m.BeginOperation(normal, OpFile, 0)
@@ -119,14 +119,14 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 	if resumed.Spec().Sync != "noop" {
 		t.Fatal("recreate ignored explicit store")
 	}
-	if _, err := os.Stat(filepath.Join(resumed.Workspace(), "marker.txt")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(resumed.Workdir(), "marker.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("noop restored contents: %v", err)
 	}
 	durable, err := m.Ensure(ctx, normal.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(durable.Workspace(), "restored.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(durable.Workdir(), "restored.txt")); err != nil {
 		t.Fatalf("default bed did not restore: %v", err)
 	}
 	if err := m.Purge(ctx, b.Name); err != nil {
@@ -276,7 +276,7 @@ func TestDurableBedSyncsWithNoopInstanceDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(b.Workspace(), "marker.txt"), []byte("sync"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(b.Workdir(), "marker.txt"), []byte("sync"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	finish, err := m.BeginOperation(b, OpFile, 0)

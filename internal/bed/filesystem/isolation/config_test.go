@@ -79,7 +79,7 @@ func TestRequiredPathshimOverridesAvailablePRoot(t *testing.T) {
 	t.Setenv("PATH", filepath.Dir(proot)+string(os.PathListSeparator)+filepath.Dir(pathshim))
 	zero := 0
 	probes := map[string]hostfacts.ProbeReport{}
-	_, report := resolveWorkspaceViewWithConfig(direct{}, t.TempDir(), hostfacts.ProbeReport{Attempted: true, ExitCode: &zero}, probes, Config{Pathshim: feature.Required})
+	_, report := resolveProcessViewWithConfig(direct{}, t.TempDir(), hostfacts.ProbeReport{Attempted: true, ExitCode: &zero}, probes, Config{Pathshim: feature.Required})
 	if !probes["proot"].Succeeded() || !probes["pathshim"].Succeeded() {
 		t.Fatal("fixture did not supply two available views")
 	}

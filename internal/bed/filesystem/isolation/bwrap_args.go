@@ -80,7 +80,7 @@ func buildBwrapArgs(workspaceRoot, bedHome, workspace string, cwd string, maskPa
 		hostfs.Mount{Kind: hostfs.Directory, Target: "/tmp/.hostel"},
 		hostfs.Mount{Kind: hostfs.Directory, Target: bwrapBedHomeMountPoint},
 		hostfs.Mount{Kind: hostfs.Bind, Source: bedHome, Target: bwrapBedHomeMountPoint},
-		hostfs.Mount{Kind: hostfs.Bind, Source: workspace, Target: bedfs.WorkspacePath},
+		hostfs.Mount{Kind: hostfs.Bind, Source: workspace, Target: bedfs.DefaultWorkdir},
 	)
 	for _, m := range mappings {
 		kind := hostfs.Bind

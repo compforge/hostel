@@ -120,11 +120,11 @@ func landlockSmoke(self, workspaceRoot string) hostfacts.ProbeReport {
 	return report
 }
 
-func (l *landlock) Name() string                 { return "landlock" }
-func (l *landlock) Level() Level                 { return Confined }
-func (l *landlock) Available() bool              { return true } // only constructed when ABI≥1
-func (l *landlock) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
-func (l *landlock) WorkspaceMounted() bool       { return false }
+func (l *landlock) Name() string                        { return "landlock" }
+func (l *landlock) Level() Level                        { return Confined }
+func (l *landlock) Available() bool                     { return true } // only constructed when ABI≥1
+func (l *landlock) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
+func (l *landlock) WorkdirMounted() bool                { return false }
 
 func (l *landlock) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	// Prefix `hostel __confine <bed_home> --` before the user command,
@@ -132,7 +132,7 @@ func (l *landlock) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	// (not the workspace subdir): client paths like /tmp/x rebase below bed_home
 	// and must stay writable. cmd.Dir gives the shell its starting cwd — the
 	// workspace subdir (real host path, since there's no /workspace remount).
-	prefix := []string{l.self, ConfineArg, fs.Home(), "--"}
+	prefix := []string{l.self, ConfineArg, fs.Rootfs(), "--"}
 	userArgs := cmd.Args
 	cmd.Args = make([]string, 0, len(prefix)+len(userArgs))
 	cmd.Args = append(cmd.Args, prefix...)
@@ -171,3 +171,5 @@ func landlockRWDirs(dataDir string) []string {
 func applyLandlock(dataDir string) error {
 	return hostfs.RestrictPaths(landlockRODirs, landlockRWDirs(dataDir))
 }
+
+func (l *landlock) AllowsMappings() bool { return false }

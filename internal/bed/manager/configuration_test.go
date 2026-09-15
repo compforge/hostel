@@ -44,7 +44,7 @@ func TestConfigurationLifecycleAndProcessConsumers(t *testing.T) {
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		data, err := os.ReadFile(filepath.Join(b.Workspace(), "service-config"))
+		data, err := os.ReadFile(filepath.Join(b.Workdir(), "service-config"))
 		if err == nil && string(data) == "service-private" {
 			break
 		}

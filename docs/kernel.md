@@ -3,8 +3,18 @@
 ## 一、定位与目标
 
 Hostel 是面向 AI Agent 的 sandbox runtime，在一个 Carrier（一台机器或一个容器）内，
-用一份重运行环境低成本承载多个 Bed。理想状态下 Bed 的文件、进程、网络和资源相互隔离；
-Hostel 根据环境能力尽量兑现，并如实披露实际边界。当前面向可信或半可信代码。
+用一份重运行环境低成本承载多个 Bed。Hostel / Bed 可类比轻量、尽力实现的 Docker / Container：
+面向受限的 Host/Pod，从 API 视角提供尽可能接近 Container 的文件、工作目录与执行体验。
+当前面向可信或半可信代码。
+
+**API 的任务可用性与底层隔离保证分别成立。** 用户通过 Bed API 使用文件和运行程序，
+不应仅因环境缺少某项容器机制就失去整个执行单元。例如 cgroup 不可用时，命令仍可执行，
+只是不能依赖未兑现的资源记账或限制。文件映射未能在进程视图中建立时，领域可以通过
+路径解析与有序候选读取补齐 API 体验；具体目标和当前实现见 [Filesystem](filesystem.md#api-体验与进程视图)。
+
+理想状态下 Bed 的文件、进程、网络和资源相互隔离。Hostel 根据实际 Facts 选择、组合
+Features，提供可达的 Level，并披露功能支持与隔离缺口。API 操作成功证明该任务完成，
+不等于完整 Container 隔离已建立；必需能力无法兑现或操作本身失败时仍须明确返回结果。
 
 Hostel 负责实例内 Bed 生命周期、执行、文件、持久化、可选网络和共享设施。上层调度系统
 负责实例选择、跨实例路由、单写者归属与信任分档。资源与文件 API 以 OpenSandbox execd
@@ -15,7 +25,7 @@ Hostel 负责实例内 Bed 生命周期、执行、文件、持久化、可选�
 | 对象 | 身份与职责 |
 |---|---|
 | Bed | 调用方以 Name 路由、本地以 ID 归属的 sandbox 单元，持有文件数据、配置与生命周期 |
-| BedFS | Bed 的文件系统数据域，拥有 bed_home、workspace 和三类路径空间 |
+| BedFS | Bed 的文件系统数据域，拥有 Rootfs、Workdir、PathMappings 和三类路径空间 |
 | Executor | Bed 当前可替换的进程承载域，一个 resident Bed 同时至多有一个 |
 | Execution | 一次命令运行，记录所属 Bed、Executor、输出与结构化终态 |
 | Amenity | Carrier 共享的设施，按 Bed 分配状态并管理设施本身的生命周期 |

@@ -25,7 +25,7 @@ func TestCombinationFallbackExhaustsCandidatesWithoutChangingPolicies(t *testing
 			view = "pathshim"
 		}
 		attempts = append(attempts, boundary.Name()+"/"+view)
-		selected := &resolved{boundary: boundary, workspaceView: WorkspaceViewReport{Mode: view}}
+		selected := &resolved{boundary: boundary, processView: ProcessViewReport{Mode: view}}
 		next, ok := NextCombination(cfg, selected, "combined command failed")
 		if !ok {
 			break
@@ -46,17 +46,17 @@ func TestCombinationFallbackExhaustsCandidatesWithoutChangingPolicies(t *testing
 
 func TestCombinationFallbackPreservesRequiredMembersAndInput(t *testing.T) {
 	cfg := Config{Landlock: feature.Required, Excluded: map[string]string{"bwrap": "previous failure"}}
-	selected := &resolved{boundary: fakeMech{"landlock", Confined, true}, workspaceView: WorkspaceViewReport{Mode: "proot"}}
+	selected := &resolved{boundary: fakeMech{"landlock", Confined, true}, processView: ProcessViewReport{Mode: "proot"}}
 	next, ok := NextCombination(cfg, selected, "bad combination")
 	if !ok || next.Excluded["proot"] == "" || cfg.Excluded["proot"] != "" || next.Landlock != feature.Required {
 		t.Fatalf("fallback changed its input or required boundary: before=%+v after=%+v", cfg, next)
 	}
-	selected.workspaceView.Mode = "carrier"
+	selected.processView.Mode = "carrier"
 	if _, ok := NextCombination(next, selected, "still failing"); ok {
 		t.Fatal("dropped required boundary")
 	}
 	cfg = Config{PRoot: feature.Required}
-	selected.workspaceView.Mode = "proot"
+	selected.processView.Mode = "proot"
 	next, ok = NextCombination(cfg, selected, "bad combination")
 	if !ok || next.Excluded["landlock"] == "" || next.Excluded["proot"] != "" || next.PRoot != feature.Required {
 		t.Fatal("required helper was not retained across boundary fallback")

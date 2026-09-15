@@ -62,8 +62,8 @@ func newBwrap(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfac
 	// the canonical /workspace must exist on the HOST. Create it if we can
 	// (in a pod hostel usually runs as root); if we can't, the full-shape
 	// smoke below fails and we honestly degrade.
-	if err := os.MkdirAll(bedfs.WorkspacePath, 0o755); err != nil {
-		log.Printf("isolation: cannot ensure mount point %s on host: %v", bedfs.WorkspacePath, err)
+	if err := os.MkdirAll(bedfs.DefaultWorkdir, 0o755); err != nil {
+		log.Printf("isolation: cannot ensure mount point %s on host: %v", bedfs.DefaultWorkdir, err)
 	}
 	// The workspace root may not exist yet at probe time (the bed manager
 	// creates it later); the smoke test masks it, so it must exist now.
@@ -138,7 +138,7 @@ func bwrapSmoke(path, workspaceRoot string, masks []string) hostfacts.ProbeRepor
 	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
 		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: workspace: %v", err)}
 	}
-	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, bedfs.WorkspacePath, masks, nil)
+	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, bedfs.DefaultWorkdir, masks, nil)
 	cmd := exec.Command(path, append(argv, "true")...)
 	report := hostfacts.RunExecProbe(cmd)
 	if report.Error != "" {
@@ -147,12 +147,12 @@ func bwrapSmoke(path, workspaceRoot string, masks []string) hostfacts.ProbeRepor
 	return report
 }
 
-func (b *bwrap) Name() string           { return "bwrap" }
-func (b *bwrap) Level() Level           { return Private }
-func (b *bwrap) Available() bool        { return true } // only constructed when probe passed
-func (b *bwrap) WorkspaceMounted() bool { return true }
-func (b *bwrap) View(fs *bedfs.FS) bedfs.View {
-	return bedfs.MountedView(fs, bwrapBedHomeMountPoint, bedfs.WorkspacePath)
+func (b *bwrap) Name() string         { return "bwrap" }
+func (b *bwrap) Level() Level         { return Private }
+func (b *bwrap) Available() bool      { return true } // only constructed when probe passed
+func (b *bwrap) WorkdirMounted() bool { return true }
+func (b *bwrap) View(fs *bedfs.FS) bedfs.ProcessView {
+	return bedfs.MountedView(fs, bwrapBedHomeMountPoint, bedfs.DefaultWorkdir)
 }
 
 func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
@@ -162,7 +162,7 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err != nil {
 		return err
 	}
-	argv := buildBwrapArgs(b.root, fs.Home(), fs.Workspace(), processCwd, b.maskPaths, fs.PathMappings())
+	argv := buildBwrapArgs(b.root, fs.Rootfs(), fs.Workdir(), processCwd, b.maskPaths, fs.PathMappings())
 	userArgs := cmd.Args
 	cmd.Args = make([]string, 0, len(argv)+len(userArgs)+1)
 	cmd.Args = append(cmd.Args, b.path)
@@ -171,6 +171,8 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	cmd.Path = b.path
 	// The outer bwrap process still needs a carrier-visible cwd. The actual
 	// command cwd is applied by bwrap after the mount view exists.
-	cmd.Dir = fs.Workspace()
+	cmd.Dir = fs.Workdir()
 	return nil
 }
+
+func (b *bwrap) AllowsMappings() bool { return true }

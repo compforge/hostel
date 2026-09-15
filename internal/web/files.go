@@ -31,7 +31,7 @@ func (s *Server) fileReader(ops *bedfs.FS) *bedfs.Reader {
 	if s.mgr.Isolator().Level() == isolation.Shared {
 		fallbackRoot = s.dormReadFallbackRoot
 	}
-	return bedfs.NewReader(ops, fallbackRoot)
+	return bedfs.NewReader(s.mgr.Isolator().View(ops), fallbackRoot)
 }
 
 // GET /files/info?path=...(&path=...) → map[path]FileInfo

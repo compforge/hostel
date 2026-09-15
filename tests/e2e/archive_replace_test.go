@@ -27,8 +27,8 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 			target := startTarget(t, options)
 			c := target.client
 			health := requireSupportedArchiveReplaceView(t, c, requested)
-			if forcePathshim && health.WorkspaceView.Mode != "pathshim" {
-				t.Fatalf("requested real pathshim coverage but selected %+v", health.WorkspaceView)
+			if forcePathshim && health.ProcessView.Mode != "pathshim" {
+				t.Fatalf("requested real pathshim coverage but selected %+v", health.ProcessView)
 			}
 
 			probe, response := c.command(t, "", map[string]any{
@@ -40,7 +40,7 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 				t.Skipf("target for %s does not provide unzip", requested)
 			}
 
-			t.Logf("requested=%s effective=%s workspace_view=%s", requested, health.Isolation.Effective, health.WorkspaceView.Mode)
+			t.Logf("requested=%s effective=%s workspace_view=%s", requested, health.Isolation.Effective, health.ProcessView.Mode)
 			type bedCase struct {
 				id       string
 				expected string
@@ -123,10 +123,10 @@ func TestDormPathshimFailureUsesProotWithoutEscapingBedFS(t *testing.T) {
 	if err != nil || result.Status != http.StatusOK {
 		t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
 	}
-	if health.Isolation.Effective != "dorm" || health.WorkspaceView.Mode != "proot" || !health.WorkspaceView.Available {
-		t.Fatalf("fault injection did not activate dorm PRoot fallback: isolation=%+v workspace_view=%+v", health.Isolation, health.WorkspaceView)
+	if health.Isolation.Effective != "dorm" || health.ProcessView.Mode != "proot" || !health.ProcessView.Available {
+		t.Fatalf("fault injection did not activate dorm PRoot fallback: isolation=%+v workspace_view=%+v", health.Isolation, health.ProcessView)
 	}
-	t.Logf("fault active: workspace_view=%s available=%t", health.WorkspaceView.Mode, health.WorkspaceView.Available)
+	t.Logf("fault active: workspace_view=%s available=%t", health.ProcessView.Mode, health.ProcessView.Available)
 
 	type bedCase struct {
 		id       string
@@ -225,11 +225,11 @@ func requireSupportedArchiveReplaceView(t *testing.T, c *apiClient, requested st
 	}
 
 	if requested == "suite" {
-		if health.WorkspaceView.Mode != "mount" || !health.WorkspaceView.Available {
-			t.Fatalf("%s isolation is effective, but workspace implementation = %+v, want available mount", requested, health.WorkspaceView)
+		if health.ProcessView.Mode != "mount" || !health.ProcessView.Available {
+			t.Fatalf("%s isolation is effective, but workspace implementation = %+v, want available mount", requested, health.ProcessView)
 		}
-	} else if (health.WorkspaceView.Mode != "pathshim" && health.WorkspaceView.Mode != "proot") || !health.WorkspaceView.Available {
-		t.Fatalf("%s isolation is effective, but workspace implementation = %+v, want an available user-space view", requested, health.WorkspaceView)
+	} else if (health.ProcessView.Mode != "pathshim" && health.ProcessView.Mode != "proot") || !health.ProcessView.Available {
+		t.Fatalf("%s isolation is effective, but workspace implementation = %+v, want an available user-space view", requested, health.ProcessView)
 	}
 	return health
 }

@@ -192,7 +192,7 @@ func TestTransferHistoryRollsWithoutBlockingAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer fs.Close()
-	if err := os.MkdirAll(filepath.Join(fs.Home(), "workspace/empty"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(fs.Rootfs(), "workspace/empty"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
@@ -249,7 +249,7 @@ func TestTransferFailureLogsStageAndRelativePath(t *testing.T) {
 	if err := fs.Write("/workspace/source/nested/file", []byte("payload"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("file", filepath.Join(fs.Home(), "workspace/source/nested/link")); err != nil {
+	if err := os.Symlink("file", filepath.Join(fs.Rootfs(), "workspace/source/nested/link")); err != nil {
 		t.Fatal(err)
 	}
 	remote := &transferMemory{objects: map[string]string{"private-prefix/out/nested/file": "existing"}}
@@ -278,7 +278,7 @@ func TestTransferFailureLogsStageAndRelativePath(t *testing.T) {
 		if entry["stage"] != tc.stage || entry["relative_path"] != tc.relative || entry["bed"] != "bed" || entry["transfer_id"] != "transfer" || entry["error"] != storesync.Failure(err) {
 			t.Fatalf("log: %s", output.String())
 		}
-		if strings.Contains(output.String(), fs.Home()) || strings.Contains(output.String(), "private-prefix") {
+		if strings.Contains(output.String(), fs.Rootfs()) || strings.Contains(output.String(), "private-prefix") {
 			t.Fatalf("log exposed carrier location: %s", output.String())
 		}
 	}

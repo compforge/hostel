@@ -36,9 +36,9 @@ type LifecycleStatus struct {
 	UpdatedAt   time.Time      `json:"updated_at"`
 }
 type FilesystemStatus struct {
-	Home      string `json:"-"`
-	Workspace string `json:"-"`
-	Prepared  bool   `json:"prepared"`
+	Rootfs   string `json:"-"`
+	Workdir  string `json:"-"`
+	Prepared bool   `json:"prepared"`
 }
 type PrivilegeStatus struct {
 	UID      uint32 `json:"uid"`

@@ -16,7 +16,7 @@ func NextCombination(current Config, selected Isolator, reason string) (Config, 
 	if current.Excluded == nil {
 		current.Excluded = make(map[string]string)
 	}
-	switch report.WorkspaceView().Mode {
+	switch report.ProcessView().Mode {
 	case "proot":
 		if current.PRoot.Effective() == feature.Auto {
 			current.Excluded["proot"] = reason

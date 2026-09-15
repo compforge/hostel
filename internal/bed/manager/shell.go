@@ -84,8 +84,8 @@ type Shell struct {
 
 	proc  executor.Process
 	stdin io.WriteCloser
-	lines chan string // every output line; closed on EOF/exit
-	view  bedfs.View  // projects confined carrier paths into this shell's process view
+	lines chan string       // every output line; closed on EOF/exit
+	view  bedfs.ProcessView // projects confined carrier paths into this shell's process view
 
 	runMu sync.Mutex // serializes Run; held while waiting for output
 	mu    sync.Mutex // guards dead only; held briefly

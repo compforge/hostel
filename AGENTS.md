@@ -4,7 +4,7 @@
 
 **面向 AI agent 的 sandbox runtime**：在一台机器 / 一个容器内管理多个隔离执行单元（**bed**）。资源与文件 API 以 OpenSandbox 为设计基线，执行协议由 hostel 自己拥有。形态上 daemon 组装 **Web Server、Bed Manager、Amenity Manager**；Bed Manager 以唯一 Bed 模型组合驱动各领域 Manager。可单机跑（laptop/VM/CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
 
-Hostel 在一个 Carrier 内维护 Bed 的声明、工作负载和生命周期，按实际能力组合运行环境，并报告任务可用性与隔离保证；弱隔离环境下的功能兼容性与隔离能力随真实 case 的积累持续完善。
+**产品背景**：Hostel / Bed 可类比轻量、尽力实现的 Docker / Container：在受限的 Host/Pod 上，从 API 视角提供尽可能接近 Container 的使用体验。文件与执行等 API 优先完成用户任务，底层缺少某项机制（如 cgroup）不应自动使整个 Bed 不可用；领域可通过路径解析、候选读取等方式补齐体验，并分别报告功能可用性与实际隔离保证。产品取舍见 [核心架构](docs/kernel.md#一定位与目标)，文件路径的具体语义见 [Filesystem](docs/filesystem.md)。
 
 - **做**：bed 生命周期、exec / file、共享多租服务（Chromium/Jupyter/MCP…）管理。
 - **不做**（留给上层调度系统）：实例调度、跨实例路由、计费配额。
@@ -19,10 +19,10 @@ Hostel 在一个 Carrier 内维护 Bed 的声明、工作负载和生命周期�
 - **bed id**：Hostel 生成的本地身份；本地数据保留期间跨重启恢复，Forget 后同名创建换 ID。领域资源以 ID 归属，远端快照以 Name/快照引用定位。
 - **workspace-root**：所有 bed 目录的**父目录**，**可配、不写死**（`--workspace-root` / `HOSTEL_WORKSPACE_ROOT`，默认 `/workspace`）；**daemon 启动时创建一次**。
 - **bed 目录**：`{workspace-root}/{bed name}`，含 `meta.json`（可移植身份）+ `data/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面首次请求通过 `Ensure` 加入同一初始化并等待，详见 `docs/kernel.md`。
-- **BedFS**：Bed 持有的文件系统数据域；统一拥有 bed_home、workspace、客户端/宿主/Executor 三个路径空间与文件操作。Executor 替换不改变 BedFS 身份，详见 `docs/filesystem.md`。
-- **bed_home（data 目录）**：BedFS 的宿主根 `{bed 目录}/data`——**客户端视角的 `/`**，任意客户端绝对路径单射 rebase 到它下面、回显对称；bed 只见它，但它不整体持久化。
-- **bed workspace**：`bed_home/workspace` 真实子目录（非别名）——OpenSandbox 契约的 `/workspace`（`bedfs.WorkspacePath`）、相对路径的基准、默认 cwd、suite 下的真实挂载点，也是 `Bed.Spec.SyncPaths` 默认唯一持久化的数据子树。
-- **PathMapping**：BedFS 默认 `/ → bed_home`，Bed 可声明额外 `HostPath → BedPath` 映射以访问 Carrier 已有数据；命中额外映射优先。`SyncPaths` 仅声明 Store 自动同步的默认映射子树，外部映射的耐久性由其存储方负责，详见 `docs/filesystem.md`。
+- **BedFS**：Bed 持有的文件系统数据域；统一拥有 Rootfs、Workdir、PathMappings、三个路径空间与文件操作。Executor 替换不改变 BedFS 身份，详见 `docs/filesystem.md`。
+- **bed_home（data 目录）**：BedFS 的宿主根 `{bed 目录}/data`——**Bed 自身数据根**；未命中外部映射的客户端路径解析到它下面，回显保持 Bed 路径。它不整体持久化，也不表示进程已有独立的 `/`。
+- **Workdir**：Bed 默认工作目录，当前为 `/workspace`（`bedfs.DefaultWorkdir`），也是 API 相对路径的解析基准；具体进程的 cwd 可以覆盖。Rootfs、Workdir 与 PathMappings 的关系见 `docs/filesystem.md`。
+- **PathMapping**：Bed 声明的 `HostPath → BedPath` 共享数据接入；文件 API 与进程映射的兑现程度分别报告。`SyncPaths` 独立声明 Store 自动同步范围，详见 `docs/filesystem.md`。
 - **房型（dorm / room / suite）**：Bed 跨领域隔离保证的对外统称，不是 Filesystem 的等级或 backend；各 domain 将自己的 Level 映射为房型要求（见 `docs/isolation.md`）。
 - **luggage**：非正常生命周期状态，只表达异常退出或旧版 Hostel 遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
 - **amenity**：bed 外由 hostel 统一管理、按 bed 分配状态的共享设施（Chromium / Jupyter / MCP 连接池）。
@@ -44,10 +44,10 @@ tini (pid1)                       pod 级收尸兜底
 ```
 `Hostel → Bed → Executor → Execution` 是领域层次；supervisor / local 只是 Executor backend。
 
-**路径模型**（客户端 `/` = `bed_home`，映射单射、回显对称；调用方以 `capabilities.workspace_mount` 探测挂载语义）：
+**路径模型**（Rootfs、Workdir 与 PathMappings 归属 Bed；进程视图与 API 补偿分别兑现，详见 `docs/filesystem.md`）：
 
 ```
-客户端任意路径：/workspace/x → data/workspace/x；/tmp/x → data/tmp/x；相对路径 = workspace 相对
+未命中 PathMappings 的客户端路径：/workspace/x → data/workspace/x；/tmp/x → data/tmp/x；相对路径 = Workdir 相对
    │  BedFS.Resolve：单射 rebase（回显为其逆映射）
    ▼
 <workspace-root>/                 宿主侧，所有 bed 父目录；可配 HOSTEL_WORKSPACE_ROOT，默认 /workspace，daemon 启动建
@@ -55,10 +55,10 @@ tini (pid1)                       pod 级收尸兜底
    ├─ meta.json                   可移植身份
    └─ data/                       bed_home（客户端的 /）；不整体进快照
       ├─ workspace/               OpenSandbox workspace；默认唯一持久化数据子树
-      └─ <other>/                 运行期数据；可按配置投影，不进 Store 快照
+      └─ <other>/                 Bed 自身数据；是否同步由 SyncPaths 声明
 
 Executor View：
-  private files          → 整个 bed_home 内部挂载 + workspace 和配置项的规范投影
+  private files          → bed_home 内部挂载 + Workdir 和 PathMappings
   shared/confined files  → 独立探测 PRoot/pathshim，按 PRoot → pathshim → Carrier 选择进程视图
 ```
 

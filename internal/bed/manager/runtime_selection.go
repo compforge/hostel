@@ -36,12 +36,12 @@ type RuntimeSelection struct {
 	Attempts []CombinationAttempt
 }
 type CombinationAttempt struct {
-	Filesystem    string          `json:"filesystem"`
-	WorkspaceView string          `json:"workspace_view"`
-	Network       string          `json:"network"`
-	Identity      privilege.Level `json:"identity"`
-	Executor      string          `json:"executor"`
-	Error         string          `json:"error,omitempty"`
+	Filesystem  string          `json:"filesystem"`
+	ProcessView string          `json:"workspace_view"`
+	Network     string          `json:"network"`
+	Identity    privilege.Level `json:"identity"`
+	Executor    string          `json:"executor"`
+	Error       string          `json:"error,omitempty"`
 }
 
 func WithRuntimeSelection(s RuntimeSelection) ManagerOption {
@@ -111,7 +111,7 @@ func resolveRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell st
 			}
 			return selection, nil
 		}
-		log.Printf("hostel: runtime combination rejected filesystem=%s view=%s network=%s reason=%q", attempt.Filesystem, attempt.WorkspaceView, attempt.Network, attempt.Error)
+		log.Printf("hostel: runtime combination rejected filesystem=%s view=%s network=%s reason=%q", attempt.Filesystem, attempt.ProcessView, attempt.Network, attempt.Error)
 		if next, ok := isolation.NextCombination(files, iso, attempt.Error); ok {
 			files = next
 			continue
@@ -136,7 +136,7 @@ func probeRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell stri
 	attempt.Filesystem = selection.Files.Name()
 	attempt.Identity = selection.Identity.Effective
 	if report, ok := selection.Files.(isolation.Report); ok {
-		attempt.WorkspaceView = report.WorkspaceView().Mode
+		attempt.ProcessView = report.ProcessView().Mode
 	}
 	scratch, err := os.MkdirTemp(root, ".runtime-probe-")
 	if err != nil {
