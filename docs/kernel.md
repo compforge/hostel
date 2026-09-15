@@ -3,8 +3,18 @@
 ## 一、定位与目标
 
 Hostel 是面向 AI Agent 的 sandbox runtime，在一个 Carrier（一台机器或一个容器）内，
-用一份重运行环境低成本承载多个 Bed。理想状态下 Bed 的文件、进程、网络和资源相互隔离；
-Hostel 根据环境能力尽量兑现，并如实披露实际边界。当前面向可信或半可信代码。
+用一份重运行环境低成本承载多个 Bed。Hostel / Bed 可类比轻量、尽力实现的 Docker / Container：
+面向受限的 Host/Pod，从 API 视角提供尽可能接近 Container 的文件、工作目录与执行体验。
+当前面向可信或半可信代码。
+
+**API 的任务可用性与底层隔离保证分别成立。** 用户通过 Bed API 使用文件和运行程序，
+不应仅因环境缺少某项容器机制就失去整个执行单元。例如 cgroup 不可用时，命令仍可执行，
+只是不能依赖未兑现的资源记账或限制。文件映射未能在进程视图中建立时，领域可以通过
+路径解析与有序候选读取补齐 API 体验；具体目标和当前实现见 [Filesystem](filesystem.md#api-体验与进程视图)。
+
+理想状态下 Bed 的文件、进程、网络和资源相互隔离。Hostel 根据实际 Facts 选择、组合
+Features，提供可达的 Level，并披露功能支持与隔离缺口。API 操作成功证明该任务完成，
+不等于完整 Container 隔离已建立；必需能力无法兑现或操作本身失败时仍须明确返回结果。
 
 Hostel 负责实例内 Bed 生命周期、执行、文件、持久化、可选网络和共享设施。上层调度系统
 负责实例选择、跨实例路由、单写者归属与信任分档。资源与文件 API 以 OpenSandbox execd
@@ -15,7 +25,7 @@ Hostel 负责实例内 Bed 生命周期、执行、文件、持久化、可选�
 | 对象 | 身份与职责 |
 |---|---|
 | Bed | 调用方以 Name 路由、本地以 ID 归属的 sandbox 单元，持有文件数据、配置与生命周期 |
-| BedFS | Bed 的文件系统数据域，拥有 bed_home、workspace 和三类路径空间 |
+| BedFS | Bed 的文件系统数据域，拥有 Rootfs、Workdir、PathMappings 和三类路径空间 |
 | Executor | Bed 当前可替换的进程承载域，一个 resident Bed 同时至多有一个 |
 | Execution | 一次命令运行，记录所属 Bed、Executor、输出与结构化终态 |
 | Amenity | Carrier 共享的设施，按 Bed 分配状态并管理设施本身的生命周期 |
@@ -51,7 +61,7 @@ Lifecycle 的更新权。读写都复制可变成员，不能通过返回的 map
 使用 Hostel 生成的本地 ID；Amenity Manager 用本地 ID 绑定设施内的 Tenant ID。远端快照仍按 Name / 快照引用定位。
 
 一个本地生命周期只有一个共享 `*bed.Bed`，从 Recover 到 Forget 都使用它；初始化重试和
-Executor 重建只替换领域资源，不新建 Bed。ID 保存在 `{workspace-root}/.identities/{name}.local`，
+Executor 重建只替换领域资源，不新建 Bed。ID 保存在 `{beds-root}/.identities/{name}.local`，
 重启时与本地目录一起恢复；该记录位于可替换 BedFS 树之外，不进入远端快照。正常 evict/purge
 在运行资源和所有本地目录清理成功后执行 Forget、删除记录；同名再次创建产生新 ID。
 资源分配的 generation/租约由对应 Manager 持有，清理按原 allocation 执行。
@@ -218,7 +228,7 @@ Bed Manager 是保活与回收决策的唯一 owner。共享 Bed 的 Lifecycle S
 续期不是 operation，不改变 active、pinned 或 Store 同步事实。一个 idle、非 pinned
 的 Bed 仍可处于保留期，继续占用 resident/occupied 容量，使 Carrier 保持 retained。
 期限只约束自动回收，不阻止显式删除或 daemon shutdown，也不保证 Service 不会故障重启。
-保活基准属于本次驻留，不进入 workspace 快照；daemon 重启后由上层重新确认运行态与保留期限。
+保活基准属于本次驻留，不进入 Bed 快照；daemon 重启后由上层重新确认运行态与保留期限。
 
 ### 执行与进程归属
 
@@ -232,7 +242,7 @@ Bed Service 共用隔离和目录视图，但只叠加自己的环境，不隐�
 
 环境声明在本地 Bed 生命周期内固定，重复创建必须一致，原生 Ensure 只加入已有声明。
 它随 daemon 私有的本地身份记录保存，Executor 替换和保留目录的重启不会丢失；不进入
-workspace 快照或状态响应，也不记录环境值到日志。Forget 后或跨实例重建由调用方重新
+Bed 快照或状态响应，也不记录环境值到日志。Forget 后或跨实例重建由调用方重新
 声明，不能从用户可替换的文件数据恢复执行配置。独立 env 仅控制继承，不增加同 Bed
 进程间的安全隔离。
 
@@ -312,7 +322,7 @@ Hostel。Hostel 没有 drain 接口，也不因空闲自行退出；它通过 `i
 
 BedFS 负责逻辑数据根及路径投影；Store 管理自动持久化，也提供无业务含义的 [Bed ↔ S3 文件传输](transfers.md)。
 自动持久化负责数据在生命周期之外能否恢复。当前默认只
-持久化 workspace 子树和 Bed 元数据。正常 evict 删除本地工作副本，durable 策略可从快照
+持久化 SyncPaths 声明的子树和 Bed 元数据。正常 evict 删除本地工作副本，durable 策略可从快照
 恢复，noop 不保留数据。配置归属与恢复契约见 [store.md](store.md)。
 
 Amenity 是独立设施。Tenant 是 Hostel 为服务 Bed 定义的设施使用单元，具体资源实现由设施隐藏。Chromium 使用 BrowserContext，

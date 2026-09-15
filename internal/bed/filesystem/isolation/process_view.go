@@ -30,61 +30,68 @@ const (
 	prootCommand    = "proot"
 )
 
-// workspaceBackend owns only the process-visible BedFS projection. Security
+// processViewBackend owns only the process-visible BedFS projection. Security
 // boundaries are composed outside it by wrapRuntimeCommand.
-type workspaceBackend interface {
+type processViewBackend interface {
 	Mode() string
-	View(*bedfs.FS) bedfs.View
+	View(*bedfs.FS) bedfs.ProcessView
 	Mounted() bool
+	MappingSupport() bedfs.MappingSupport
 	Wrap(*exec.Cmd, *bedfs.FS, string) error
 }
 
-type carrierWorkspace struct{}
+type carrierView struct{}
 
-func (carrierWorkspace) Mode() string                 { return "carrier" }
-func (carrierWorkspace) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
-func (carrierWorkspace) Mounted() bool                { return false }
-func (carrierWorkspace) Wrap(*exec.Cmd, *bedfs.FS, string) error {
+func (carrierView) Mode() string                         { return "carrier" }
+func (carrierView) View(fs *bedfs.FS) bedfs.ProcessView  { return bedfs.HostView(fs) }
+func (carrierView) MappingSupport() bedfs.MappingSupport { return bedfs.MappingSupport{} }
+func (carrierView) Mounted() bool                        { return false }
+func (carrierView) Wrap(*exec.Cmd, *bedfs.FS, string) error {
 	return nil
 }
 
-type mountedWorkspace struct {
-	view func(*bedfs.FS) bedfs.View
+type mountedView struct {
+	view func(*bedfs.FS) bedfs.ProcessView
 }
 
-func (mountedWorkspace) Mode() string                   { return "mount" }
-func (m mountedWorkspace) View(fs *bedfs.FS) bedfs.View { return m.view(fs) }
-func (mountedWorkspace) Mounted() bool                  { return true }
-func (mountedWorkspace) Wrap(*exec.Cmd, *bedfs.FS, string) error {
+func (mountedView) Mode() string                          { return "mount" }
+func (m mountedView) View(fs *bedfs.FS) bedfs.ProcessView { return m.view(fs) }
+func (mountedView) MappingSupport() bedfs.MappingSupport {
+	return bedfs.MappingSupport{ReadWrite: true, ReadOnly: true}
+}
+func (mountedView) Mounted() bool { return true }
+func (mountedView) Wrap(*exec.Cmd, *bedfs.FS, string) error {
 	return nil
 }
 
-type workspaceMounter interface {
-	View(*bedfs.FS) bedfs.View
-	WorkspaceMounted() bool
+type viewMounter interface {
+	View(*bedfs.FS) bedfs.ProcessView
+	WorkdirMounted() bool
 }
 
 // wrapRuntimeCommand fixes composition order in one place: first project the
-// user command into its workspace view, then put that whole command inside the
+// user command into its process view, then put that whole command inside the
 // selected security boundary.
-func wrapRuntimeCommand(boundary Boundary, workspace workspaceBackend, cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
+func wrapRuntimeCommand(boundary Boundary, workspace processViewBackend, cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err := workspace.Wrap(cmd, fs, cwd); err != nil {
 		return err
 	}
 	return boundary.Wrap(cmd, fs, cwd)
 }
 
-// resolveWorkspaceView discovers the conventional helper names through PATH,
+// resolveProcessView discovers the conventional helper names through PATH,
 // probes every candidate whose runtime prerequisite is satisfied, and applies
 // priority only after support is known. Helper packaging is therefore an image
 // concern rather than Hostel configuration.
 //
 // +spec=`For shared/confined files, Hostel discovers pathshim and PRoot through PATH, probes every candidate whose prerequisites are satisfied, then resolves the process view in PRoot → pathshim → carrier order without changing the selected isolation level.`
-// +case:id=workspace_view_fallback,desc=`Vary helper discovery, ptrace, pathshim, and PRoot probe outcomes independently`,expect=`Diagnostics preserve discovery facts; PRoot wins when usable, pathshim is next, and carrier is the final fallback`
-func resolveWorkspaceView(base Boundary, workspaceRoot string, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport) (workspaceBackend, WorkspaceViewReport) {
-	return resolveWorkspaceViewWithConfig(base, workspaceRoot, ptraceProbe, probes, Config{})
+// +case:id=process_view_fallback,desc=`Vary helper discovery, ptrace, pathshim, and PRoot probe outcomes independently`,expect=`Diagnostics preserve discovery facts; PRoot wins when usable, pathshim is next, and carrier is the final fallback`
+func resolveProcessView(base Boundary, bedsRoot string, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport) (processViewBackend, ProcessViewReport) {
+	return resolveProcessViewWithConfig(base, bedsRoot, ptraceProbe, probes, Config{})
 }
-func resolveWorkspaceViewWithConfig(base Boundary, workspaceRoot string, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport, config Config) (workspaceBackend, WorkspaceViewReport) {
+func resolveProcessViewWithConfig(base Boundary, bedsRoot string, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport, config Config) (selected processViewBackend, report ProcessViewReport) {
+	defer func() { report.PathMappings = selected.MappingSupport() }()
+
 	pathshimDiscovery := hostfacts.ProbeReport{Error: "disabled_by_config"}
 	prootDiscovery := hostfacts.ProbeReport{Error: "disabled_by_config"}
 	if config.Pathshim.Effective() != feature.Off {
@@ -102,17 +109,17 @@ func resolveWorkspaceViewWithConfig(base Boundary, workspaceRoot string, ptraceP
 		probes["proot"] = hostfacts.ProbeReport{}
 	}
 
-	if mounter, ok := base.(workspaceMounter); ok && mounter.WorkspaceMounted() {
-		workspace := mountedWorkspace{view: mounter.View}
-		return workspace, WorkspaceViewReport{Mode: workspace.Mode(), Available: true}
+	if mounter, ok := base.(viewMounter); ok && mounter.WorkdirMounted() {
+		workspace := mountedView{view: mounter.View}
+		return workspace, ProcessViewReport{Mode: workspace.Mode(), Available: true}
 	}
 
 	reasons := make([]string, 0, 3)
-	var pathshimCandidate, prootCandidate workspaceBackend
-	var pathshimReport, prootReport WorkspaceViewReport
+	var pathshimCandidate, prootCandidate processViewBackend
+	var pathshimReport, prootReport ProcessViewReport
 
 	if pathshimDiscovery.Error == "" {
-		candidate, report, probe := newPathshimView(base, workspaceRoot, pathshimDiscovery)
+		candidate, report, probe := newPathshimView(base, bedsRoot, pathshimDiscovery)
 		probes["pathshim"] = probe
 		if report.Available {
 			pathshimCandidate, pathshimReport = candidate, report
@@ -128,7 +135,7 @@ func resolveWorkspaceViewWithConfig(base Boundary, workspaceRoot string, ptraceP
 	} else if !ptraceProbe.Succeeded() {
 		reasons = append(reasons, "ptrace: "+rawProbeFailure(ptraceProbe))
 	} else {
-		candidate, report, probe := newProotView(base, workspaceRoot, prootDiscovery)
+		candidate, report, probe := newProotView(base, bedsRoot, prootDiscovery)
 		probes["proot"] = probe
 		if report.Available {
 			prootCandidate, prootReport = candidate, report
@@ -146,18 +153,18 @@ func resolveWorkspaceViewWithConfig(base Boundary, workspaceRoot string, ptraceP
 		reasons = append(reasons, "pathshim combination: "+reason)
 	}
 	if prootCandidate != nil && config.Pathshim != feature.Required {
-		log.Printf("isolation: workspace view selected mode=proot")
+		log.Printf("isolation: process view selected mode=proot")
 		return prootCandidate, prootReport
 	}
 	if pathshimCandidate != nil {
-		log.Printf("isolation: workspace view selected mode=pathshim")
+		log.Printf("isolation: process view selected mode=pathshim")
 		return pathshimCandidate, pathshimReport
 	}
 
 	reason := strings.Join(reasons, "; ")
-	log.Printf("isolation: workspace view helpers unavailable (%s); using carrier paths", reason)
-	workspace := carrierWorkspace{}
-	return workspace, WorkspaceViewReport{Mode: workspace.Mode(), Available: false, Reason: reason}
+	log.Printf("isolation: process view helpers unavailable (%s); using carrier paths", reason)
+	workspace := carrierView{}
+	return workspace, ProcessViewReport{Mode: workspace.Mode(), Available: false, Reason: reason}
 }
 
 func rawProbeFailure(probe hostfacts.ProbeReport) string {

@@ -49,7 +49,7 @@ func TestFailedRetirementKeepsIdentityAndDataUntilRetry(t *testing.T) {
 	if _, err := m.amenities.Acquire(t.Context(), b.ID, facility.Name()); err != nil {
 		t.Fatal(err)
 	}
-	file := filepath.Join(b.Workspace(), "data")
+	file := filepath.Join(b.Workdir(), "data")
 	if err := os.WriteFile(file, []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}

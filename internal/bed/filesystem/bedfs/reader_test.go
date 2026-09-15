@@ -36,7 +36,7 @@ func TestReaderAbsoluteFallbackAndPrimaryPrecedence(t *testing.T) {
 	if err := os.WriteFile(carrierFile, []byte("carrier\nsecond\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	reader := NewReader(primary, string(os.PathSeparator))
+	reader := NewReader(HostView(primary), string(os.PathSeparator))
 
 	data, err := reader.Read(carrierFile)
 	if err != nil || string(data) != "carrier\nsecond\n" {
@@ -84,7 +84,7 @@ func TestReaderDoesNotFallbackRelativePaths(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fallbackRoot, name), []byte("carrier"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewReader(primary, fallbackRoot).Read(name); !os.IsNotExist(err) {
+	if _, err := NewReader(HostView(primary), fallbackRoot).Read(name); !os.IsNotExist(err) {
 		t.Fatalf("relative path unexpectedly fell back: %v", err)
 	}
 }

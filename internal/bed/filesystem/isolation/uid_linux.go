@@ -44,7 +44,7 @@ import (
 // the room slot where Landlock is absent (old/custom kernels).
 type uidIso struct{}
 
-func newUID(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfacts.ProbeReport) {
+func newUID(facts hostfacts.Snapshot, bedsRoot string) (Isolator, hostfacts.ProbeReport) {
 	helper, helperErr := hostprivilege.ProcessCredentialHelper()
 	if helperErr != nil {
 		discovery := hostfacts.ProbeReport{ConfiguredPath: "setpriv", Error: "find binary: " + helperErr.Error()}
@@ -58,12 +58,12 @@ func newUID(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfacts
 		discovery.Error = "missing capabilities: " + miss
 		return unavailable{name: "uid", lvl: Confined}, discovery
 	}
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
-		log.Printf("isolation: cannot create workspace root %s: %v", workspaceRoot, err)
+	if err := os.MkdirAll(bedsRoot, 0o755); err != nil {
+		log.Printf("isolation: cannot create workspace root %s: %v", bedsRoot, err)
 	}
 	// Caps present ≠ enforcement works. Prove the whole chain once — chown →
 	// setuid → no_new_privs → EACCES on a sibling — exactly as production runs.
-	report := hostfacts.WithExecutionProbe(discovery, uidSmoke(workspaceRoot))
+	report := hostfacts.WithExecutionProbe(discovery, uidSmoke(bedsRoot))
 	if report.Failed() {
 		log.Printf("isolation: uid isolation caps present but unusable (%s)", report.Error)
 		return unavailable{name: "uid", lvl: Confined}, report
@@ -82,8 +82,8 @@ func missingUIDCaps(facts hostfacts.Snapshot) string {
 // and check it can write its own dir but gets EACCES on the sibling's
 // secret. Catches a silently-broken setuid (e.g. no CAP_SETUID) that the cap
 // bits alone wouldn't — same honesty contract as landlockSmoke.
-func uidSmoke(workspaceRoot string) hostfacts.ProbeReport {
-	base, err := os.MkdirTemp(workspaceRoot, ".uidprobe-*")
+func uidSmoke(bedsRoot string) hostfacts.ProbeReport {
+	base, err := os.MkdirTemp(bedsRoot, ".uidprobe-*")
 	if err != nil {
 		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: temp dir: %v", err)}
 	}
@@ -139,11 +139,11 @@ func uidSmoke(workspaceRoot string) hostfacts.ProbeReport {
 	return report
 }
 
-func (u *uidIso) Name() string                 { return "uid" }
-func (u *uidIso) Level() Level                 { return Confined }
-func (u *uidIso) Available() bool              { return true } // only constructed when the smoke passed
-func (u *uidIso) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
-func (u *uidIso) WorkspaceMounted() bool       { return false }
+func (u *uidIso) Name() string                        { return "uid" }
+func (u *uidIso) Level() Level                        { return Confined }
+func (u *uidIso) Available() bool                     { return true } // only constructed when the smoke passed
+func (u *uidIso) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
+func (u *uidIso) WorkdirMounted() bool                { return false }
 
 func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	cmd.Dir = commandCwd(fs, cwd)
@@ -154,7 +154,7 @@ func (u *uidIso) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 // Bed's dedicated uid. Ownership is centralized in BedUser so every isolation
 // mechanism follows the same file/process identity invariant.
 func (u *uidIso) Prepare(fs *bedfs.FS) error {
-	return os.Chmod(fs.Home(), 0o700)
+	return os.Chmod(fs.Rootfs(), 0o700)
 }
 
 func prepareUIDDir(dir string, uid int) error {
@@ -172,3 +172,5 @@ func prepareUIDDir(dir string, uid int) error {
 	}
 	return user.Prepare(filesystem)
 }
+
+func (u *uidIso) AllowsMappings() bool { return true }

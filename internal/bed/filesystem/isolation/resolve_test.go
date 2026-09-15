@@ -32,8 +32,8 @@ type fakeMech struct {
 func (m fakeMech) Name() string                            { return m.name }
 func (m fakeMech) Level() Level                            { return m.lvl }
 func (m fakeMech) Available() bool                         { return m.avail }
-func (m fakeMech) View(fs *bedfs.FS) bedfs.View            { return bedfs.HostView(fs) }
-func (m fakeMech) WorkspaceMounted() bool                  { return false }
+func (m fakeMech) View(fs *bedfs.FS) bedfs.ProcessView     { return bedfs.HostView(fs) }
+func (m fakeMech) WorkdirMounted() bool                    { return false }
 func (m fakeMech) Wrap(*exec.Cmd, *bedfs.FS, string) error { return nil }
 
 // resolveMechs adapts test candidates to the production selector.
@@ -115,3 +115,5 @@ func TestParseRequestAndNewReports(t *testing.T) {
 		t.Errorf("level %s served by mechanism %s, want %s", iso.Level(), iso.Name(), wantMech)
 	}
 }
+
+func (m fakeMech) AllowsMappings() bool { return true }

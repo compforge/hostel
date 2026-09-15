@@ -152,11 +152,11 @@ func TestBedServicesShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
 	if a.Endpoint == other.Endpoint || a.Token == other.Token || a.ExecutionID == other.ExecutionID {
 		t.Fatal("service instances share runtime identity")
 	}
-	data, err := os.ReadFile(filepath.Join(b.Workspace(), "service-started"))
+	data, err := os.ReadFile(filepath.Join(b.Workdir(), "service-started"))
 	if err != nil || string(data) != b.Name {
 		t.Fatalf("service did not use Bed environment: %q %v", data, err)
 	}
-	data, err = os.ReadFile(filepath.Join(b.Workspace(), "service-credential"))
+	data, err = os.ReadFile(filepath.Join(b.Workdir(), "service-credential"))
 	if err != nil || string(data) != "from-file" {
 		t.Fatalf("service did not resolve credential file: %q %v", data, err)
 	}
@@ -184,7 +184,7 @@ func TestBedServicesShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
 	if err := m.services.Stop(t.Context(), b.Bed); err != nil {
 		t.Fatal(err)
 	}
-	data, err = os.ReadFile(filepath.Join(b.Workspace(), "service-stopped"))
+	data, err = os.ReadFile(filepath.Join(b.Workdir(), "service-stopped"))
 	if err != nil || string(data) != "graceful" {
 		t.Fatalf("TERM not honored: %q %v", data, err)
 	}

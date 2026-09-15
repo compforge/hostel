@@ -242,14 +242,14 @@ kubectl exec "${POD}" \
   --container "${CONTAINER}" \
   -- curl --fail --silent --show-error \
   http://127.0.0.1:8872/v1/status | \
-  jq '{ptrace: .probes.ptrace, proot: .probes.proot, workspace_view}'
+  jq '{ptrace: .probes.ptrace, proot: .probes.proot, process_view}'
 ```
 
 The image contract is visible when `proot` reports `exists: true`,
 `executable: true`, and a non-empty `resolved_path`. Ptrace is usable when its
 probe has `attempted: true`, `exit_code: 0`, and an empty `error`. Below suite,
 a usable PRoot view additionally reports the same successful execution facts
-for `proot` and `workspace_view={"mode":"proot","available":true}`. If suite
+for `proot` and `process_view={"mode":"proot","available":true}`. If suite
 is already selected, PRoot remains discovered but is not smoke-tested, so
 `attempted: false` is expected.
 

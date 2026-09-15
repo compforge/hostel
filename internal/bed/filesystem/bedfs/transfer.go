@@ -135,7 +135,7 @@ func (o *FS) WriteTransferFile(ctx context.Context, destination string, body io.
 	if err := errors.Join(copyErr, closeErr, ctx.Err()); err != nil {
 		return 0, err
 	}
-	o.chownNew(filepath.Join(o.Home(), temp))
+	o.chownNew(filepath.Join(o.Rootfs(), temp))
 	if overwrite {
 		err = o.root.Rename(temp, rel)
 	} else {

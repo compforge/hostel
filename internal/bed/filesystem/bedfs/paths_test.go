@@ -50,10 +50,10 @@ func TestPathsFromClient(t *testing.T) {
 func TestViewPath(t *testing.T) {
 	root := t.TempDir()
 	fs := newTestFS(t, root)
-	workspace := fs.Workspace()
+	workspace := fs.Workdir()
 
 	t.Run("private mount", func(t *testing.T) {
-		view := MountedView(fs, "/tmp/.hostel/bed", WorkspacePath)
+		view := MountedView(fs, "/tmp/.hostel/bed", DefaultWorkdir)
 		cases := []struct{ host, want string }{
 			{root, "/tmp/.hostel/bed"},
 			{filepath.Join(root, "tmp", "x"), "/tmp/.hostel/bed/tmp/x"},
@@ -81,7 +81,7 @@ func TestViewPath(t *testing.T) {
 	})
 
 	t.Run("workspace only view", func(t *testing.T) {
-		view := WorkspaceView(fs)
+		view := RedirectedView(fs, MappingSupport{ReadWrite: true})
 		cases := []struct{ host, want string }{
 			{root, root},
 			{filepath.Join(root, "tmp", "x"), filepath.Join(root, "tmp", "x")},

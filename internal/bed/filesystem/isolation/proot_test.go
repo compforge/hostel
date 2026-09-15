@@ -34,7 +34,7 @@ func TestWorkspaceViewProbesSupportedHelpersBeforeApplyingPriority(t *testing.T)
 	probes := map[string]hostfacts.ProbeReport{}
 	exitCode := 0
 
-	workspace, report := resolveWorkspaceView(
+	workspace, report := resolveProcessView(
 		direct{}, root,
 		hostfacts.ProbeReport{Attempted: true, ExitCode: &exitCode},
 		probes,
@@ -63,7 +63,7 @@ func TestWorkspaceViewUsesPathshimWhenPtraceFails(t *testing.T) {
 	t.Setenv("PATH", filepath.Dir(proot)+string(os.PathListSeparator)+filepath.Dir(pathshim))
 	probes := map[string]hostfacts.ProbeReport{}
 
-	workspace, report := resolveWorkspaceView(
+	workspace, report := resolveProcessView(
 		direct{}, root,
 		hostfacts.ProbeReport{Attempted: true, Error: "ptrace TRACEME: operation not permitted"},
 		probes,
@@ -83,7 +83,7 @@ func TestWorkspaceViewUsesPathshimWhenPtraceFails(t *testing.T) {
 func TestWorkspaceViewReportsMissingHelpers(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	probes := map[string]hostfacts.ProbeReport{}
-	_, report := resolveWorkspaceView(
+	_, report := resolveProcessView(
 		direct{}, t.TempDir(),
 		hostfacts.ProbeReport{Attempted: true, Error: "ptrace denied"},
 		probes,
@@ -107,7 +107,7 @@ func TestWorkspaceViewReportsPresentNonExecutableHelper(t *testing.T) {
 	t.Setenv("PATH", dir)
 	probes := map[string]hostfacts.ProbeReport{}
 	exitCode := 0
-	_, _ = resolveWorkspaceView(
+	_, _ = resolveProcessView(
 		direct{}, t.TempDir(),
 		hostfacts.ProbeReport{Attempted: true, ExitCode: &exitCode},
 		probes,
@@ -129,17 +129,17 @@ func TestProotWrapsWorkspaceAndBedMappings(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := &resolved{
-		boundary:  prefixRoom{},
-		workspace: &prootView{path: "/usr/bin/proot"},
+		boundary: prefixRoom{},
+		process:  &prootView{path: "/usr/bin/proot"},
 	}
 	cmd := exec.Command("/bin/sh", "-c", "true")
-	if err := runtime.Wrap(cmd, fs, filepath.Join(fs.Workspace(), "sub")); err != nil {
+	if err := runtime.Wrap(cmd, fs, filepath.Join(fs.Workdir(), "sub")); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
 		"/usr/bin/room-helper", "--",
 		"/usr/bin/proot", "-v", "-1",
-		"-b", fs.Workspace() + ":/workspace!",
+		"-b", fs.Workdir() + ":/workspace!",
 		"-b", source + ":/mnt/memory!",
 		"-w", "/workspace/sub",
 	}
@@ -154,7 +154,7 @@ func TestWorkspaceViewFallsBackToCarrierWhenBothHelpersFail(t *testing.T) {
 	t.Setenv("PATH", filepath.Dir(proot)+string(os.PathListSeparator)+filepath.Dir(pathshim))
 	probes := map[string]hostfacts.ProbeReport{}
 	exitCode := 0
-	_, report := resolveWorkspaceView(
+	_, report := resolveProcessView(
 		direct{}, t.TempDir(),
 		hostfacts.ProbeReport{Attempted: true, ExitCode: &exitCode},
 		probes,
@@ -183,5 +183,5 @@ func fakeNamedHelper(t *testing.T, name, script string) string {
 	return path
 }
 
-var _ workspaceBackend = (*prootView)(nil)
+var _ processViewBackend = (*prootView)(nil)
 var _ Isolator = (*resolved)(nil)

@@ -144,7 +144,7 @@ func TestEvictionFencesSameIDUntilDirectoryCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(b.Workspace(), "old"), []byte("old"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(b.Workdir(), "old"), []byte("old"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
@@ -175,7 +175,7 @@ func TestEvictionFencesSameIDUntilDirectoryCleanup(t *testing.T) {
 	if next == b {
 		t.Fatal("reused retired Bed")
 	}
-	if _, err := os.Stat(filepath.Join(next.Workspace(), "old")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(next.Workdir(), "old")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stale file survived: %v", err)
 	}
 	if err := m.rollback(next); err != nil {

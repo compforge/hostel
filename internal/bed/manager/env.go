@@ -108,7 +108,7 @@ func (m *Manager) buildBedEnv(b *managedBed, overlays ...map[string]string) ([]s
 		env[name] = value
 	}
 
-	home := b.environment.View().Workspace()
+	home := b.environment.View().Workdir()
 	env["BED_ID"] = b.Name
 	env["HOME"] = home
 	env["TMPDIR"] = "/tmp"

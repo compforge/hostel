@@ -16,6 +16,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -26,13 +27,9 @@ import (
 	"github.com/qiankunli/go-stdx/shellx"
 	"github.com/qiankunli/go-stdx/uuid"
 
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
-
-type isolatedWorkspaceSpec struct {
-	Path string `json:"path"`
-	Mode string `json:"mode,omitempty"`
-}
 
 type isolatedEnvPassthroughSpec struct {
 	Mode string   `json:"mode,omitempty"`
@@ -47,7 +44,7 @@ type isolatedBindMount struct {
 
 type isolatedCreateRequest struct {
 	Profile            string                     `json:"profile"`
-	Workspace          isolatedWorkspaceSpec      `json:"workspace"`
+	Workdir            string                     `json:"workdir,omitempty"`
 	ExtraWritable      []string                   `json:"extra_writable,omitempty"`
 	Binds              []isolatedBindMount        `json:"binds,omitempty"`
 	ShareNet           *bool                      `json:"share_net,omitempty"`
@@ -70,13 +67,13 @@ type isolatedRunRequest struct {
 }
 
 type isolatedSessionState struct {
-	Status               string                 `json:"status"`
-	CreatedAt            time.Time              `json:"created_at"`
-	LastRunAt            time.Time              `json:"last_run_at"`
-	IdleRemainingSeconds *int                   `json:"idle_remaining_seconds,omitempty"`
-	Profile              string                 `json:"profile,omitempty"`
-	Workspace            *isolatedWorkspaceSpec `json:"workspace,omitempty"`
-	ShareNet             *bool                  `json:"share_net,omitempty"`
+	Status               string    `json:"status"`
+	CreatedAt            time.Time `json:"created_at"`
+	LastRunAt            time.Time `json:"last_run_at"`
+	IdleRemainingSeconds *int      `json:"idle_remaining_seconds,omitempty"`
+	Profile              string    `json:"profile,omitempty"`
+	Workdir              string    `json:"workdir"`
+	ShareNet             *bool     `json:"share_net,omitempty"`
 }
 
 type isolatedSessionSummary struct {
@@ -122,7 +119,11 @@ func (s *Server) isolatedCreate(c *gin.Context) {
 		return
 	}
 	var req isolatedCreateRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	// Creation options are a contract: do not silently accept removed workspace
+	// access modes or other requirements that this adapter cannot enforce.
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		badRequest(c, err.Error())
 		return
 	}
@@ -166,21 +167,8 @@ func validateIsolatedCreate(c *gin.Context, req isolatedCreateRequest, shareNet 
 		badRequest(c, fmt.Sprintf("invalid profile %q", req.Profile))
 		return false
 	}
-	if req.Workspace.Path == "" {
-		badRequest(c, "workspace.path is required")
-		return false
-	}
-	if req.Workspace.Path != "/workspace" {
-		respondError(c, http.StatusBadRequest, ErrNotSupported, "only the bed-owned /workspace is supported")
-		return false
-	}
-	switch req.Workspace.Mode {
-	case "", "rw":
-	case "overlay", "ro":
-		respondError(c, http.StatusBadRequest, ErrNotSupported, "only workspace mode rw is supported")
-		return false
-	default:
-		badRequest(c, fmt.Sprintf("invalid workspace mode %q", req.Workspace.Mode))
+	if req.Workdir != "" && req.Workdir != bedfs.DefaultWorkdir {
+		respondError(c, http.StatusBadRequest, ErrNotSupported, "only workdir /workspace is supported")
 		return false
 	}
 	if len(req.ExtraWritable) > 0 || len(req.Binds) > 0 {
@@ -255,7 +243,7 @@ func isolatedState(b *bed.Resident, shareNet bool) isolatedSessionState {
 		LastRunAt:            st.LastActiveAt,
 		IdleRemainingSeconds: remaining,
 		Profile:              "balanced",
-		Workspace:            &isolatedWorkspaceSpec{Path: "/workspace", Mode: "rw"},
+		Workdir:              bedfs.DefaultWorkdir,
 		ShareNet:             &shareNet,
 	}
 }
@@ -368,7 +356,7 @@ func (s *Server) isolatedCapabilities(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"available":         iso.Available(),
 		"isolator":          iso.Name(),
-		"message":           "Hostel bed adapter: balanced profile with an rw /workspace",
+		"message":           "Hostel bed adapter: balanced profile with workdir /workspace",
 		"network":           s.mgr.NetworkReport(),
 		"setpriv_available": s.mgr.PrivilegeReport().Setpriv.Available,
 		"userns_available":  false,

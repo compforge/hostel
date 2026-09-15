@@ -45,7 +45,7 @@ type HostStatus struct {
 
 func (o Observer) Status() Status {
 	return Status{
-		SchemaVersion: 5,
+		SchemaVersion: 6,
 		Host:          Host{Fact: o.host, Status: HostStatus{Ports: o.Beds.PortStatus()}},
 		Status:        o.Beds.Status(), Amenities: o.Amenities.Status(),
 	}

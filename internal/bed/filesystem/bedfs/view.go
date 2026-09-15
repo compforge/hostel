@@ -22,49 +22,55 @@ import (
 	"strings"
 )
 
-// WorkspacePath is the stable client and Executor path of the Bed workspace.
-const WorkspacePath = "/workspace"
+// DefaultWorkdir is the default Bed working directory and relative API path base.
+const DefaultWorkdir = "/workspace"
 
-// View projects one BedFS from carrier paths into an Executor's filesystem
+// ProcessView projects one BedFS from carrier paths into an Executor's filesystem
 // namespace. Isolation mechanisms choose the projection; BedFS owns its path
 // semantics so command cwd and file APIs cannot drift apart.
-type View struct {
-	fs             *FS
-	homeMount      string
-	workspaceMount string
+type ProcessView struct {
+	fs           *FS
+	mappings     MappingSupport
+	homeMount    string
+	workdirMount string
 }
 
 // HostView is used when an Executor shares the carrier mount namespace.
-func HostView(fs *FS) View { return View{fs: fs} }
+func HostView(fs *FS) ProcessView { return ProcessView{fs: fs} }
 
-// WorkspaceView gives the workspace its stable process path and honors the
+// RedirectedView gives the workdir its stable process path and honors the
 // BedFS mappings. Other paths in the default root keep their carrier spelling;
 // user-space helpers do not claim a complete guest root.
-func WorkspaceView(fs *FS) View {
-	return View{fs: fs, workspaceMount: WorkspacePath}
+func RedirectedView(fs *FS, support MappingSupport) ProcessView {
+	return ProcessView{fs: fs, workdirMount: DefaultWorkdir, mappings: support}
 }
 
 // MountedView is used when the Executor has a private mount namespace. The
 // whole bed_home has an internal mount for complete BedFS reachability, while
 // the workspace keeps its stable public /workspace path.
-func MountedView(fs *FS, homeMount, workspaceMount string) View {
-	return View{fs: fs, homeMount: path.Clean(homeMount), workspaceMount: path.Clean(workspaceMount)}
+func MountedView(fs *FS, homeMount, workdirMount string) ProcessView {
+	return ProcessView{fs: fs, mappings: MappingSupport{ReadWrite: true, ReadOnly: true}, homeMount: path.Clean(homeMount), workdirMount: path.Clean(workdirMount)}
 }
 
 // Path maps a confined carrier path into this Executor view.
-func (v View) Path(host string) (string, error) {
+func (v ProcessView) Path(host string) (string, error) {
 	for _, mapping := range v.fs.PathMappings() {
 		if rel, ok := relativeTo(mapping.HostPath, host); ok {
-			return joinProcessPath(mapping.BedPath, rel), nil
+			if v.mappings.Supports(mapping.ReadOnly) {
+				return joinProcessPath(mapping.BedPath, rel), nil
+			}
+			// The API still owns this mapping even when the process view cannot
+			// redirect it. Structured cwd can use the source's carrier spelling.
+			return filepath.Clean(host), nil
 		}
 	}
-	homeRel, ok := relativeTo(v.fs.Home(), host)
+	homeRel, ok := relativeTo(v.fs.Rootfs(), host)
 	if !ok {
-		return "", fmt.Errorf("bedfs: carrier path %q is outside bed_home %q", host, v.fs.Home())
+		return "", fmt.Errorf("bedfs: carrier path %q is outside bed_home %q", host, v.fs.Rootfs())
 	}
-	if workspaceRel, inWorkspace := relativeTo(v.fs.Workspace(), host); inWorkspace {
-		if v.workspaceMount != "" {
-			return joinProcessPath(v.workspaceMount, workspaceRel), nil
+	if workspaceRel, inWorkspace := relativeTo(v.fs.Workdir(), host); inWorkspace {
+		if v.workdirMount != "" {
+			return joinProcessPath(v.workdirMount, workspaceRel), nil
 		}
 	}
 	if v.homeMount == "" {
@@ -73,15 +79,15 @@ func (v View) Path(host string) (string, error) {
 	return joinProcessPath(v.homeMount, homeRel), nil
 }
 
-// Home returns the process-visible bed_home root.
-func (v View) Home() string {
-	home, _ := v.Path(v.fs.Home())
+// Rootfs returns the process-visible bed_home root.
+func (v ProcessView) Rootfs() string {
+	home, _ := v.Path(v.fs.Rootfs())
 	return home
 }
 
-// Workspace returns the process-visible default workspace.
-func (v View) Workspace() string {
-	workspace, _ := v.Path(v.fs.Workspace())
+// Workdir returns the process-visible default workspace.
+func (v ProcessView) Workdir() string {
+	workspace, _ := v.Path(v.fs.Workdir())
 	return workspace
 }
 
@@ -99,3 +105,20 @@ func joinProcessPath(root, rel string) string {
 	}
 	return path.Join(root, filepath.ToSlash(rel))
 }
+
+// MappingSupport describes process-path behavior, independently of isolation Level.
+// ReadOnly means the process mapping can enforce the declaration; API mutations
+// enforce ReadOnly regardless of this support.
+type MappingSupport struct {
+	ReadWrite bool `json:"read_write"`
+	ReadOnly  bool `json:"read_only"`
+}
+
+func (s MappingSupport) Supports(readOnly bool) bool {
+	if readOnly {
+		return s.ReadOnly
+	}
+	return s.ReadWrite
+}
+
+func (v ProcessView) MappingSupport() MappingSupport { return v.mappings }

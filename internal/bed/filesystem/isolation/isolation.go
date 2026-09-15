@@ -90,6 +90,8 @@ type Boundary interface {
 	// Available reports whether the mechanism actually works on this host
 	// (probed at construction). direct is always available.
 	Available() bool
+	// AllowsMappings reports whether external data can enter this boundary.
+	AllowsMappings() bool
 	// Wrap prepares cmd to run confined to fs. A mechanism reported Available
 	// must NOT silently degrade here — failing to build the sandbox is an error.
 	// cwd is a carrier BedFS path. An empty value means the bed workspace.
@@ -102,17 +104,18 @@ type Boundary interface {
 // Environment: one security Boundary plus one process-visible BedFS view.
 type Isolator interface {
 	Boundary
-	View(*bedfs.FS) bedfs.View
-	WorkspaceMounted() bool
+	View(*bedfs.FS) bedfs.ProcessView
+	WorkdirMounted() bool
 }
 
-// WorkspaceViewReport describes what a command sees at the canonical
-// /workspace path. It is separate from the isolation level: a user-space view
+// ProcessViewReport describes the selected process path view and mapping support.
+// It is separate from the isolation level: a user-space view
 // improves path compatibility but does not add a security boundary.
-type WorkspaceViewReport struct {
-	Mode      string `json:"mode"`
-	Available bool   `json:"available"`
-	Reason    string `json:"reason,omitempty"`
+type ProcessViewReport struct {
+	Mode         string               `json:"mode"`
+	Available    bool                 `json:"available"`
+	Reason       string               `json:"reason,omitempty"`
+	PathMappings bedfs.MappingSupport `json:"path_mappings"`
 }
 
 // Report is the boot-time resolution, exposed for capabilities/healthz: the
@@ -122,7 +125,7 @@ type Report interface {
 	Effective() Level
 	Ceiling() Level
 	Mechanism() string
-	WorkspaceView() WorkspaceViewReport
+	ProcessView() ProcessViewReport
 	Diagnostics() DiagnosticsReport
 }
 
@@ -136,26 +139,27 @@ type Preparer interface {
 	Prepare(fs *bedfs.FS) error
 }
 
-// resolved composes independently selected security and workspace backends and
+// resolved composes independently selected security and process view backends and
 // retains their boot-time resolution facts.
 type resolved struct {
 	boundary       Boundary
-	workspace      workspaceBackend
+	process        processViewBackend
 	req, eff, ceil Level
-	workspaceView  WorkspaceViewReport
+	processView    ProcessViewReport
 	diagnostics    DiagnosticsReport
 }
 
-func (r *resolved) Name() string                       { return r.boundary.Name() }
-func (r *resolved) Level() Level                       { return r.boundary.Level() }
-func (r *resolved) Available() bool                    { return r.boundary.Available() }
-func (r *resolved) View(fs *bedfs.FS) bedfs.View       { return r.workspace.View(fs) }
-func (r *resolved) WorkspaceMounted() bool             { return r.workspace.Mounted() }
-func (r *resolved) Requested() Level                   { return r.req }
-func (r *resolved) Effective() Level                   { return r.eff }
-func (r *resolved) Ceiling() Level                     { return r.ceil }
-func (r *resolved) Mechanism() string                  { return r.boundary.Name() }
-func (r *resolved) WorkspaceView() WorkspaceViewReport { return r.workspaceView }
+func (r *resolved) Name() string                        { return r.boundary.Name() }
+func (r *resolved) Level() Level                        { return r.boundary.Level() }
+func (r *resolved) AllowsMappings() bool                { return r.boundary.AllowsMappings() }
+func (r *resolved) Available() bool                     { return r.boundary.Available() }
+func (r *resolved) View(fs *bedfs.FS) bedfs.ProcessView { return r.process.View(fs) }
+func (r *resolved) WorkdirMounted() bool                { return r.process.Mounted() }
+func (r *resolved) Requested() Level                    { return r.req }
+func (r *resolved) Effective() Level                    { return r.eff }
+func (r *resolved) Ceiling() Level                      { return r.ceil }
+func (r *resolved) Mechanism() string                   { return r.boundary.Name() }
+func (r *resolved) ProcessView() ProcessViewReport      { return r.processView }
 func (r *resolved) Diagnostics() DiagnosticsReport {
 	probes := make(map[string]hostfacts.ProbeReport, len(r.diagnostics.Probes))
 	for name, probe := range r.diagnostics.Probes {
@@ -182,7 +186,7 @@ func (r *resolved) Prepare(fs *bedfs.FS) error {
 }
 
 func (r *resolved) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
-	return wrapRuntimeCommand(r.boundary, r.workspace, cmd, fs, cwd)
+	return wrapRuntimeCommand(r.boundary, r.process, cmd, fs, cwd)
 }
 
 // New is the default-policy constructor for valid file levels. Call Resolve
@@ -190,8 +194,8 @@ func (r *resolved) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 //
 // +spec=`effective isolation is the strongest available level not exceeding the request, and requested/effective/ceiling remain observable.`
 // +case:id=isolation_level_boundaries,desc=`Run the same sibling-path probe under shared, confined, and private file requests`,expect=`shared permits, confined denies, private hides, and unavailable levels degrade honestly`
-func New(facts hostfacts.Snapshot, requested, workspaceRoot string) Isolator {
-	iso, err := Resolve(facts, Config{Level: requested}, workspaceRoot)
+func New(facts hostfacts.Snapshot, requested, bedsRoot string) Isolator {
+	iso, err := Resolve(facts, Config{Level: requested}, bedsRoot)
 	if err != nil {
 		panic(err) // Invalid programmer-supplied level; external config uses Resolve.
 	}
@@ -201,7 +205,7 @@ func New(facts hostfacts.Snapshot, requested, workspaceRoot string) Isolator {
 // Resolve selects features once. Off excludes probes; Required constrains selection
 // rather than merely asserting availability. Runtime failures never reopen selection.
 // +spec=`Feature policies restrict selection without inventing host facts; every Required feature must be selected before readiness.`
-func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string) (Isolator, error) {
+func Resolve(facts hostfacts.Snapshot, config Config, bedsRoot string) (Isolator, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -226,12 +230,12 @@ func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string) (Iso
 		var probe hostfacts.ProbeReport
 		switch name {
 		case "bwrap":
-			candidate, probe = newBwrap(facts, workspaceRoot)
+			candidate, probe = newBwrap(facts, bedsRoot)
 		case "landlock":
-			candidate, probe = newLandlock(facts, workspaceRoot)
+			candidate, probe = newLandlock(facts, bedsRoot)
 		case "uid":
 			if config.DedicatedIdentity {
-				candidate, probe = newUID(facts, workspaceRoot)
+				candidate, probe = newUID(facts, bedsRoot)
 			} else {
 				candidate, probe = unavailable{name: "uid", lvl: Confined}, hostfacts.ProbeReport{Error: "dedicated Bed identity unavailable"}
 			}
@@ -249,7 +253,7 @@ func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string) (Iso
 			return nil, err
 		}
 	}
-	workspace, view := resolveWorkspaceViewWithConfig(chosen, workspaceRoot, ptraceProbe, probes, config)
+	workspace, view := resolveProcessViewWithConfig(chosen, bedsRoot, ptraceProbe, probes, config)
 	for _, name := range []string{"proot", "pathshim"} {
 		probe := probes[name]
 		reason := probe.Error
@@ -261,13 +265,13 @@ func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string) (Iso
 			return nil, err
 		}
 	}
-	log.Printf("isolation: requested=%s effective=%s observed_ceiling=%s feature=%s workspace_view=%s", req, chosen.Level(), ceiling, chosen.Name(), view.Mode)
+	log.Printf("isolation: requested=%s effective=%s observed_ceiling=%s feature=%s process_view=%s", req, chosen.Level(), ceiling, chosen.Name(), view.Mode)
 	for name, report := range reports {
 		if report.Policy != feature.Auto {
 			log.Printf("filesystem: feature=%s policy=%s selected=%t reason=%s", name, report.Policy, report.Selected, report.Reason)
 		}
 	}
-	return &resolved{boundary: chosen, workspace: workspace, req: req, eff: chosen.Level(), ceil: ceiling, workspaceView: view,
+	return &resolved{boundary: chosen, process: workspace, req: req, eff: chosen.Level(), ceil: ceiling, processView: view,
 		diagnostics: DiagnosticsReport{Probes: probes, Features: reports}}, nil
 }
 
@@ -279,11 +283,12 @@ type unavailable struct {
 	lvl  Level
 }
 
-func (u unavailable) Name() string                 { return u.name }
-func (u unavailable) Level() Level                 { return u.lvl }
-func (u unavailable) Available() bool              { return false }
-func (u unavailable) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
-func (u unavailable) WorkspaceMounted() bool       { return false }
+func (u unavailable) Name() string                        { return u.name }
+func (u unavailable) Level() Level                        { return u.lvl }
+func (u unavailable) AllowsMappings() bool                { return false }
+func (u unavailable) Available() bool                     { return false }
+func (u unavailable) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
+func (u unavailable) WorkdirMounted() bool                { return false }
 func (u unavailable) Wrap(*exec.Cmd, *bedfs.FS, string) error {
 	return errUnavailable
 }
@@ -298,11 +303,12 @@ func (e *isoError) Error() string { return e.msg }
 // bed workspace. The shared level: no enforced isolation. Always available.
 type direct struct{}
 
-func (direct) Name() string                 { return "direct" }
-func (direct) Level() Level                 { return Shared }
-func (direct) Available() bool              { return true }
-func (direct) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
-func (direct) WorkspaceMounted() bool       { return false }
+func (direct) Name() string                        { return "direct" }
+func (direct) Level() Level                        { return Shared }
+func (direct) AllowsMappings() bool                { return true }
+func (direct) Available() bool                     { return true }
+func (direct) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
+func (direct) WorkdirMounted() bool                { return false }
 func (direct) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	cmd.Dir = commandCwd(fs, cwd)
 	return nil
@@ -310,7 +316,7 @@ func (direct) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 
 func commandCwd(fs *bedfs.FS, cwd string) string {
 	if cwd == "" {
-		return fs.Workspace()
+		return fs.Workdir()
 	}
 	return cwd
 }

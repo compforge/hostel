@@ -24,6 +24,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/go-stdx/randx"
 	model "github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/instance"
 
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
@@ -37,7 +38,7 @@ type bedView struct {
 	Status       bed.BedStatus `json:"status"`
 	DataSynced   bool          `json:"data_synced"`
 	Pinned       bool          `json:"pinned"`
-	Workspace    string        `json:"workspace,omitempty"`
+	Workdir      string        `json:"workdir"`
 	CreatedAt    time.Time     `json:"created_at,omitzero"`
 	LastActiveAt time.Time     `json:"last_active_at,omitzero"`
 	KeepaliveAt  time.Time     `json:"keepalive_at,omitzero"`
@@ -55,7 +56,7 @@ func (s *Server) viewFromStatus(b *bed.Resident, status bed.ResidentStatus) bedV
 		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
 		Pinned:       status.Pinned,
-		Workspace:    b.Workspace(),
+		Workdir:      bedfs.DefaultWorkdir,
 		CreatedAt:    b.Spec().CreatedAt,
 		LastActiveAt: status.LastActiveAt,
 		KeepaliveAt:  status.KeepaliveAt,
@@ -64,7 +65,7 @@ func (s *Server) viewFromStatus(b *bed.Resident, status bed.ResidentStatus) bedV
 }
 
 func initializationView(status bed.InitializationStatus) bedView {
-	return bedView{ID: status.ID, Sync: string(status.Sync), Status: status.BedStatus}
+	return bedView{ID: status.ID, Sync: string(status.Sync), Workdir: bedfs.DefaultWorkdir, Status: status.BedStatus}
 }
 
 type lifecycleStageView struct {
@@ -309,13 +310,9 @@ func (s *Server) capabilities(c *gin.Context) {
 		amenities[name] = state
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"isolator":    iso.Name(),
-		"isolator_ok": iso.Available(),
-		// True when the bed workspace is mounted at the canonical /workspace
-		// inside the sandbox (bwrap): shell paths == file-API paths. False
-		// under direct, where /workspace is only the file-API virtual prefix.
-		"workspace_mount":                iso.WorkspaceMounted(),
-		"workspace_view":                 workspaceView(iso),
+		"isolator":                       iso.Name(),
+		"isolator_ok":                    iso.Available(),
+		"process_view":                   processView(iso),
 		"executor_backend":               s.mgr.ExecutorBackend(),
 		"max_beds":                       s.mgr.MaxBeds(),
 		"max_pinned_beds":                s.mgr.MaxPinnedBeds(),

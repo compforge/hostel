@@ -304,8 +304,7 @@ func (s *Server) healthz(c *gin.Context) {
 		"network":                        s.mgr.NetworkReport(),
 		"isolator":                       iso.Name(),
 		"isolator_ok":                    iso.Available(),
-		"workspace_mount":                iso.WorkspaceMounted(),
-		"workspace_view":                 workspaceView(iso),
+		"process_view":                   processView(iso),
 		"bed_user":                       s.mgr.BedUserReport(),
 		"executor_backend":               s.mgr.ExecutorBackend(),
 		"occupied_beds":                  s.mgr.OccupiedBedCount(),
@@ -367,13 +366,13 @@ func resourceAdmissionView(report resource.AdmissionReport) gin.H {
 	return view
 }
 
-func workspaceView(iso isolation.Isolator) isolation.WorkspaceViewReport {
+func processView(iso isolation.Isolator) isolation.ProcessViewReport {
 	if report, ok := iso.(isolation.Report); ok {
-		return report.WorkspaceView()
+		return report.ProcessView()
 	}
 	mode := "carrier"
-	if iso.WorkspaceMounted() {
+	if iso.WorkdirMounted() {
 		mode = "mount"
 	}
-	return isolation.WorkspaceViewReport{Mode: mode, Available: true}
+	return isolation.ProcessViewReport{Mode: mode, Available: true}
 }

@@ -37,12 +37,12 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	iso := New(hostfacts.Collect(), "shared", root)
-	report := iso.(Report).WorkspaceView()
+	report := iso.(Report).ProcessView()
 	if report.Mode != "pathshim" || !report.Available {
 		t.Fatalf("workspace view = %+v", report)
 	}
-	if iso.Name() != "direct" || iso.Level() != Shared || iso.WorkspaceMounted() {
-		t.Fatalf("pathshim changed isolation facts: %s/%s mount=%v", iso.Name(), iso.Level(), iso.WorkspaceMounted())
+	if iso.Name() != "direct" || iso.Level() != Shared || iso.WorkdirMounted() {
+		t.Fatalf("pathshim changed isolation facts: %s/%s mount=%v", iso.Name(), iso.Level(), iso.WorkdirMounted())
 	}
 
 	home := filepath.Join(root, "bed", "data")
@@ -85,11 +85,11 @@ func TestPathshimProbeFailureFallsBackToCarrierView(t *testing.T) {
 	probe := fakePathshim(t, "passthrough", 1)
 	t.Setenv("PATH", filepath.Dir(probe))
 	iso := New(hostfacts.Collect(), "shared", root)
-	report := iso.(Report).WorkspaceView()
+	report := iso.(Report).ProcessView()
 	if report.Mode != "carrier" || report.Available || !strings.Contains(report.Reason, "passthrough") {
 		t.Fatalf("workspace view = %+v", report)
 	}
-	if iso.View(newTestFS(t, root)).Workspace() == bedfs.WorkspacePath {
+	if iso.View(newTestFS(t, root)).Workdir() == bedfs.DefaultWorkdir {
 		t.Fatal("failed probe must not advertise /workspace")
 	}
 }
@@ -97,7 +97,7 @@ func TestPathshimProbeFailureFallsBackToCarrierView(t *testing.T) {
 func TestPathshimRunsInsideSelectedRoomMechanism(t *testing.T) {
 	root := t.TempDir()
 	fs := newTestFS(t, root)
-	runtime := &resolved{boundary: prefixRoom{}, workspace: &pathshimView{path: "/usr/bin/pathshim"}}
+	runtime := &resolved{boundary: prefixRoom{}, process: &pathshimView{path: "/usr/bin/pathshim"}}
 	cmd := exec.Command("/bin/sh", "-c", "true")
 	if err := runtime.Wrap(cmd, fs, ""); err != nil {
 		t.Fatal(err)
@@ -110,11 +110,11 @@ func TestPathshimRunsInsideSelectedRoomMechanism(t *testing.T) {
 
 type prefixRoom struct{}
 
-func (prefixRoom) Name() string                 { return "landlock" }
-func (prefixRoom) Level() Level                 { return Confined }
-func (prefixRoom) Available() bool              { return true }
-func (prefixRoom) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
-func (prefixRoom) WorkspaceMounted() bool       { return false }
+func (prefixRoom) Name() string                        { return "landlock" }
+func (prefixRoom) Level() Level                        { return Confined }
+func (prefixRoom) Available() bool                     { return true }
+func (prefixRoom) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
+func (prefixRoom) WorkdirMounted() bool                { return false }
 func (prefixRoom) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	cmd.Args = append([]string{"/usr/bin/room-helper", "--"}, cmd.Args...)
 	cmd.Path = "/usr/bin/room-helper"
@@ -157,3 +157,5 @@ func newTestFS(t *testing.T, root string) *bedfs.FS {
 	t.Cleanup(func() { _ = fs.Close() })
 	return fs
 }
+
+func (prefixRoom) AllowsMappings() bool { return true }

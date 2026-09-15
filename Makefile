@@ -2,7 +2,7 @@
 
 BIN       := bin/hostel
 ADDR      := :8872
-WS_ROOT   := ./.workspace
+BEDS_ROOT := ./.workspace
 IMAGE     := hostel:dev
 VERSION   := $(shell cat VERSION)
 LDFLAGS   := -X main.version=$(VERSION)
@@ -59,10 +59,10 @@ check: tidy lint build test ## Pre-commit gate: tidy + lint + build + race tests
 	@echo "check passed"
 
 run: build ## Run locally with no isolation (dev, any platform)
-	$(BIN) --isolation dorm --workspace-root $(WS_ROOT) --addr $(ADDR)
+	$(BIN) --isolation dorm --beds-root $(BEDS_ROOT) --addr $(ADDR)
 
 run-bwrap: build ## Run at suite level = bwrap (Linux with bubblewrap installed)
-	$(BIN) --isolation suite --workspace-root $(WS_ROOT) --addr $(ADDR)
+	$(BIN) --isolation suite --beds-root $(BEDS_ROOT) --addr $(ADDR)
 
 linux: ## Cross-compile static Linux binaries (amd64 + arm64) into bin/
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/hostel-linux-amd64 ./cmd/hostel
@@ -71,7 +71,7 @@ linux: ## Cross-compile static Linux binaries (amd64 + arm64) into bin/
 smoke: build ## Boot on a scratch port and curl the core endpoints end to end
 	@set -e; \
 	tmp=$$(mktemp -d); \
-	$(BIN) --isolation dorm --workspace-root $$tmp/ws --addr :44799 & pid=$$!; \
+	$(BIN) --isolation dorm --beds-root $$tmp/ws --addr :44799 & pid=$$!; \
 	trap "kill $$pid 2>/dev/null; rm -rf $$tmp" EXIT; \
 	sleep 1; \
 	curl -sf localhost:44799/ping >/dev/null; \

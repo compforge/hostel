@@ -31,7 +31,6 @@ type httpResult struct {
 type healthView struct {
 	OK              bool   `json:"ok"`
 	ExecutorBackend string `json:"executor_backend"`
-	WorkspaceMount  bool   `json:"workspace_mount"`
 	BedUser         struct {
 		Strategy string `json:"strategy"`
 		UID      int    `json:"uid"`
@@ -39,11 +38,11 @@ type healthView struct {
 		UIDMin   int    `json:"uid_min"`
 		UIDMax   int    `json:"uid_max"`
 	} `json:"bed_user"`
-	WorkspaceView struct {
+	ProcessView struct {
 		Mode      string `json:"mode"`
 		Available bool   `json:"available"`
 		Reason    string `json:"reason"`
-	} `json:"workspace_view"`
+	} `json:"process_view"`
 	MaxBeds   int `json:"max_beds"`
 	Isolation struct {
 		Requested string `json:"requested"`
@@ -88,16 +87,16 @@ type bedLifecycleView struct {
 	Readiness readinessView `json:"readiness"`
 }
 type bedView struct {
-	Sync      string           `json:"sync"`
-	ID        string           `json:"id"`
-	Workspace string           `json:"workspace"`
-	Status    bedLifecycleView `json:"status"`
+	Sync    string           `json:"sync"`
+	ID      string           `json:"id"`
+	Workdir string           `json:"workdir"`
+	Status  bedLifecycleView `json:"status"`
 }
 type bedDetailView struct {
-	Sync      string `json:"sync"`
-	ID        string `json:"id"`
-	Workspace string `json:"workspace"`
-	Status    struct {
+	Sync    string `json:"sync"`
+	ID      string `json:"id"`
+	Workdir string `json:"workdir"`
+	Status  struct {
 		Lifecycle bedLifecycleView `json:"lifecycle"`
 	} `json:"status"`
 }
@@ -311,8 +310,8 @@ func (c *apiClient) waitBed(t *testing.T, id string, predicate func(bedView) boo
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		result, err := c.json(ctx, "GET", "/v1/beds/"+url.PathEscape(id), "", nil, &last)
 		cancel()
-		if err == nil && result.Status == http.StatusOK && predicate(bedView{Sync: last.Sync, ID: last.ID, Workspace: last.Workspace, Status: last.Status.Lifecycle}) {
-			return bedView{Sync: last.Sync, ID: last.ID, Workspace: last.Workspace, Status: last.Status.Lifecycle}
+		if err == nil && result.Status == http.StatusOK && predicate(bedView{Sync: last.Sync, ID: last.ID, Workdir: last.Workdir, Status: last.Status.Lifecycle}) {
+			return bedView{Sync: last.Sync, ID: last.ID, Workdir: last.Workdir, Status: last.Status.Lifecycle}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

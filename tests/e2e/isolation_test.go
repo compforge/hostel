@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,17 +34,17 @@ func TestIsolationLevels(t *testing.T) {
 			if required[requested] && health.Isolation.Effective != requested {
 				t.Fatalf("required isolation %s degraded to %s (files=%+v)", requested, health.Isolation.Effective, files)
 			}
-			if health.WorkspaceMount != (files.Effective == "private") {
-				t.Fatalf("workspace_mount=%v for effective isolation %s", health.WorkspaceMount, health.Isolation.Effective)
+			if (health.ProcessView.Mode == "mount") != (files.Effective == "private") {
+				t.Fatalf("process_view=%s for effective isolation %s", health.ProcessView.Mode, health.Isolation.Effective)
 			}
 			t.Logf("requested=%s effective=%s files=%+v", requested, health.Isolation.Effective, files)
 			helperRequired := strings.TrimSpace(os.Getenv(pathshimEnv)) != "" || strings.TrimSpace(os.Getenv(prootEnv)) != ""
 			if helperRequired && files.Effective != "private" &&
-				((health.WorkspaceView.Mode != "pathshim" && health.WorkspaceView.Mode != "proot") || !health.WorkspaceView.Available) {
-				t.Fatalf("required workspace view unavailable: %+v", health.WorkspaceView)
+				((health.ProcessView.Mode != "pathshim" && health.ProcessView.Mode != "proot") || !health.ProcessView.Available) {
+				t.Fatalf("required workspace view unavailable: %+v", health.ProcessView)
 			}
-			if (health.WorkspaceView.Mode == "pathshim" || health.WorkspaceView.Mode == "proot") && !health.WorkspaceView.Available {
-				t.Fatalf("selected workspace view reported unavailable: %+v", health.WorkspaceView)
+			if (health.ProcessView.Mode == "pathshim" || health.ProcessView.Mode == "proot") && !health.ProcessView.Available {
+				t.Fatalf("selected workspace view reported unavailable: %+v", health.ProcessView)
 			}
 
 			write, response := c.command(t, "isolation-a", map[string]any{
@@ -52,13 +53,13 @@ func TestIsolationLevels(t *testing.T) {
 			})
 			must2xx(t, "write isolation probe", response)
 			assertCommandExit(t, write, 0)
-			bedA := c.waitBed(t, "isolation-a", func(b bedView) bool {
-				return b.Status.Phase == "resident" && b.Status.Readiness.Ready && b.Workspace != ""
-			}, "ready with workspace")
+			c.waitBed(t, "isolation-a", func(b bedView) bool {
+				return b.Status.Phase == "resident" && b.Status.Readiness.Ready && b.Workdir == "/workspace"
+			}, "ready with Bed workdir")
 
 			read, response := c.command(t, "isolation-b", map[string]any{
 				"command": "cat \"$TARGET\"",
-				"envs":    map[string]string{"TARGET": bedA.Workspace + "/secret.txt"},
+				"envs":    map[string]string{"TARGET": filepath.Join(target.bedsRoot, "isolation-a", "data", "workspace", "secret.txt")},
 				"timeout": 30_000,
 			})
 			must2xx(t, "cross-bed isolation probe", response)
@@ -80,11 +81,11 @@ func TestIsolationLevels(t *testing.T) {
 			pwd, response := c.command(t, "isolation-a", map[string]any{"command": "pwd", "timeout": 30_000})
 			must2xx(t, "workspace path probe", response)
 			assertCommandExit(t, pwd, 0)
-			if health.WorkspaceView.Mode == "mount" || health.WorkspaceView.Mode == "pathshim" || health.WorkspaceView.Mode == "proot" {
+			if health.ProcessView.Mode == "mount" || health.ProcessView.Mode == "pathshim" || health.ProcessView.Mode == "proot" {
 				if strings.TrimSpace(pwd.Stdout) != "/workspace" {
-					t.Fatalf("%s workspace cwd=%q, want /workspace", health.WorkspaceView.Mode, strings.TrimSpace(pwd.Stdout))
+					t.Fatalf("%s workspace cwd=%q, want /workspace", health.ProcessView.Mode, strings.TrimSpace(pwd.Stdout))
 				}
-				assertCanonicalWorkspaceView(t, c, health.WorkspaceView.Mode)
+				assertCanonicalWorkspaceView(t, c, health.ProcessView.Mode)
 			}
 		})
 	}
@@ -142,8 +143,8 @@ func TestHelperProbeFailureKeepsCommandAPIAvailable(t *testing.T) {
 	if err != nil || result.Status != http.StatusOK {
 		t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
 	}
-	if health.WorkspaceView.Mode != "carrier" || health.WorkspaceView.Available || health.WorkspaceView.Reason == "" {
-		t.Fatalf("fallback workspace view = %+v", health.WorkspaceView)
+	if health.ProcessView.Mode != "carrier" || health.ProcessView.Available || health.ProcessView.Reason == "" {
+		t.Fatalf("fallback workspace view = %+v", health.ProcessView)
 	}
 	run, response := c.command(t, "fallback-bed", map[string]any{"command": "printf available", "timeout": 30_000})
 	must2xx(t, "fallback command", response)
@@ -172,8 +173,8 @@ func TestPathshimProbeFailureFallsBackToProot(t *testing.T) {
 	if err != nil || result.Status != http.StatusOK {
 		t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
 	}
-	if health.WorkspaceView.Mode != "proot" || !health.WorkspaceView.Available {
-		t.Fatalf("proot fallback workspace view = %+v", health.WorkspaceView)
+	if health.ProcessView.Mode != "proot" || !health.ProcessView.Available {
+		t.Fatalf("proot fallback workspace view = %+v", health.ProcessView)
 	}
 	var diagnostics struct {
 		Components struct {

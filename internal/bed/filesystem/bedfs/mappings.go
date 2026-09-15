@@ -1,9 +1,7 @@
 package bedfs
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -23,7 +21,7 @@ func (o *FS) SetPathMappings(mappings []model.PathMapping) error {
 	if err != nil {
 		return err
 	}
-	carrierRoot, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(o.Home())))
+	carrierRoot, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(o.Rootfs())))
 	if err != nil {
 		return err
 	}
@@ -49,33 +47,10 @@ func (o *FS) SetPathMappings(mappings []model.PathMapping) error {
 		child.paths.prefix, child.readOnly = m.BedPath, m.ReadOnly
 		m.HostPath = source
 		o.mappings = append(o.mappings, mappedRoot{m, child})
-		// Empty placeholders make parent listings discover the declared paths. They
-		// contain no external data and must never shadow an existing BedFS tree.
+		// Local data can survive an unredirected process view. Preserve it on
+		// reopen; realized mappings hide it and API fallback can still read it.
 		target, err := o.paths.FromClient(m.BedPath)
 		if err != nil {
-			return err
-		}
-		rel, err := o.relative(target)
-		if err != nil {
-			return err
-		}
-		if info, err := o.root.Lstat(rel); err == nil {
-			if !info.IsDir() {
-				return fmt.Errorf("bedfs: mapping target already contains data")
-			}
-			f, err := o.root.Open(rel)
-			if err != nil {
-				return err
-			}
-			entries, err := f.ReadDir(1)
-			f.Close()
-			if len(entries) > 0 {
-				return fmt.Errorf("bedfs: mapping target already contains data")
-			}
-			if err != nil && !errors.Is(err, io.EOF) {
-				return err
-			}
-		} else if !os.IsNotExist(err) {
 			return err
 		}
 		if err := o.mkdirAllOwned(target); err != nil {
@@ -95,7 +70,7 @@ func (o *FS) PathMappings() []model.PathMapping {
 
 func clientPath(p string) string {
 	if !path.IsAbs(p) {
-		return path.Join(WorkspacePath, p)
+		return path.Join(DefaultWorkdir, p)
 	}
 	return path.Clean(p)
 }

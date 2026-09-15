@@ -37,7 +37,7 @@ func TestPathMappingsDefaultRootAndExternalData(t *testing.T) {
 	if err := fs.Write("/tmp/private", []byte("private"), 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(fs.Home(), "tmp/private")); err != nil {
+	if _, err := os.Stat(filepath.Join(fs.Rootfs(), "tmp/private")); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := fs.Read("/mnt/project/input.txt"); err != nil || string(got) != "input" {
@@ -56,7 +56,7 @@ func TestPathMappingsDefaultRootAndExternalData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := WorkspaceView(fs).Path(host); err != nil || got != "/mnt/project/moved.txt" {
+	if got, err := RedirectedView(fs, MappingSupport{ReadWrite: true}).Path(host); err != nil || got != "/mnt/project/moved.txt" {
 		t.Fatalf("view=%q,%v", got, err)
 	}
 	entries, err := fs.List("/", 4)
@@ -85,7 +85,7 @@ func TestPathMappingsDefaultRootAndExternalData(t *testing.T) {
 	if err := fs.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.RemoveAll(filepath.Dir(fs.Home())); err != nil {
+	if err := os.RemoveAll(filepath.Dir(fs.Rootfs())); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := os.ReadFile(filepath.Join(external, "input.txt")); err != nil || string(got) != "input" {
@@ -127,7 +127,7 @@ func TestReadOnlyMappingAndTransfer(t *testing.T) {
 	if err := fs.EnsureDir(filepath.Join(cwd, "missing")); err == nil {
 		t.Fatal("created read-only cwd")
 	}
-	if err := os.Symlink(fs.Home(), filepath.Join(external, "escape")); err != nil {
+	if err := os.Symlink(fs.Rootfs(), filepath.Join(external, "escape")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fs.Read("/mnt/project/escape/workspace/file"); err == nil {
@@ -140,7 +140,7 @@ func TestReadOnlyMappingAndTransfer(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fallback, "mnt/project/missing"), []byte("leak"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewReader(fs, fallback).Read("/mnt/project/missing"); !os.IsNotExist(err) {
+	if _, err := NewReader(HostView(fs), fallback).Read("/mnt/project/missing"); !os.IsNotExist(err) {
 		t.Fatalf("mapping fell back: %v", err)
 	}
 }

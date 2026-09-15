@@ -119,7 +119,7 @@ func (s *Server) browserCDP(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	if err := br.ServeCDP(sess.Context(), conn, b.Workspace(), token, sess.Touch); err != nil {
+	if err := br.ServeCDP(sess.Context(), conn, b.Workdir(), token, sess.Touch); err != nil {
 		log.Printf("hostel: cdp proxy for bed=%s ended: %v", bedID, err)
 	}
 }
@@ -141,7 +141,7 @@ func (s *Server) browserGoto(c *gin.Context) {
 		badRequest(c, "missing 'url'")
 		return
 	}
-	title, loc, err := br.Goto(c.Request.Context(), b.Workspace(), req.URL)
+	title, loc, err := br.Goto(c.Request.Context(), b.Workdir(), req.URL)
 	if err != nil {
 		runtimeError(c, err.Error())
 		return
@@ -163,7 +163,7 @@ func (s *Server) browserScreenshot(c *gin.Context) {
 		Path string `json:"path,omitempty"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	saved, err := br.Screenshot(c.Request.Context(), b.Workspace(), req.Path)
+	saved, err := br.Screenshot(c.Request.Context(), b.Workdir(), req.Path)
 	if err != nil {
 		runtimeError(c, err.Error())
 		return
@@ -178,7 +178,7 @@ func (s *Server) browserText(c *gin.Context) {
 		return
 	}
 	defer finishOperation()
-	text, err := br.Text(c.Request.Context(), b.Workspace())
+	text, err := br.Text(c.Request.Context(), b.Workdir())
 	if err != nil {
 		runtimeError(c, err.Error())
 		return
@@ -214,7 +214,7 @@ func (s *Server) browserClick(c *gin.Context) {
 		badRequest(c, "missing 'selector'")
 		return
 	}
-	if err := br.Click(c.Request.Context(), b.Workspace(), req.Selector); err != nil {
+	if err := br.Click(c.Request.Context(), b.Workdir(), req.Selector); err != nil {
 		runtimeError(c, err.Error())
 		return
 	}
@@ -237,7 +237,7 @@ func (s *Server) browserType(c *gin.Context) {
 		badRequest(c, "missing 'selector'")
 		return
 	}
-	if err := br.Type(c.Request.Context(), b.Workspace(), req.Selector, req.Text, req.Clear); err != nil {
+	if err := br.Type(c.Request.Context(), b.Workdir(), req.Selector, req.Text, req.Clear); err != nil {
 		runtimeError(c, err.Error())
 		return
 	}
@@ -258,7 +258,7 @@ func (s *Server) browserPress(c *gin.Context) {
 		badRequest(c, "missing 'key'")
 		return
 	}
-	if err := br.Press(c.Request.Context(), b.Workspace(), req.Key); err != nil {
+	if err := br.Press(c.Request.Context(), b.Workdir(), req.Key); err != nil {
 		runtimeError(c, err.Error())
 		return
 	}
@@ -277,7 +277,7 @@ func (s *Server) browserScroll(c *gin.Context) {
 		DY int `json:"dy,omitempty"`
 	}
 	_ = c.ShouldBindJSON(&req)
-	if err := br.Scroll(c.Request.Context(), b.Workspace(), req.DX, req.DY); err != nil {
+	if err := br.Scroll(c.Request.Context(), b.Workdir(), req.DX, req.DY); err != nil {
 		runtimeError(c, err.Error())
 		return
 	}
@@ -298,7 +298,7 @@ func (s *Server) browserWait(c *gin.Context) {
 		badRequest(c, "missing 'selector'")
 		return
 	}
-	if err := br.Wait(c.Request.Context(), b.Workspace(), req.Selector); err != nil {
+	if err := br.Wait(c.Request.Context(), b.Workdir(), req.Selector); err != nil {
 		runtimeError(c, err.Error())
 		return
 	}

@@ -176,11 +176,11 @@ ENV PYTHONUSERBASE=/usr/local \
     UV_TOOL_DIR=/usr/local/share/uv/tools \
     UV_TOOL_BIN_DIR=/usr/local/bin \
     PATH=/usr/local/bin:${PATH} \
-    HOSTEL_WORKSPACE_ROOT=/workspace \
+    HOSTEL_BEDS_ROOT=/workspace \
     HOSTEL_ISOLATION=suite \
     HOSTEL_CHROMIUM_PATH=/usr/bin/chromium
 # No VOLUME: it would bake the default path in at build time and silently
-# stop applying when HOSTEL_WORKSPACE_ROOT is overridden. To keep beds across
+# stop applying when HOSTEL_BEDS_ROOT is overridden. To keep beds across
 # container restarts without an object store, mount a volume at the workspace
 # root yourself (-v beds:/workspace); with S3 configured the local workspace is
 # just a disposable working copy.

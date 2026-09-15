@@ -14,11 +14,11 @@ import (
 
 type testFileBoundary struct{}
 
-func (testFileBoundary) Name() string                 { return "test-file" }
-func (testFileBoundary) Level() isolation.Level       { return isolation.Shared }
-func (testFileBoundary) Available() bool              { return true }
-func (testFileBoundary) View(fs *bedfs.FS) bedfs.View { return bedfs.HostView(fs) }
-func (testFileBoundary) WorkspaceMounted() bool       { return false }
+func (testFileBoundary) Name() string                        { return "test-file" }
+func (testFileBoundary) Level() isolation.Level              { return isolation.Shared }
+func (testFileBoundary) Available() bool                     { return true }
+func (testFileBoundary) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
+func (testFileBoundary) WorkdirMounted() bool                { return false }
 func (testFileBoundary) Wrap(cmd *exec.Cmd, _ *bedfs.FS, _ string) error {
 	cmd.Args = append([]string{"file-helper", "--", cmd.Path}, cmd.Args[1:]...)
 	cmd.Path = "/file-helper"
@@ -49,3 +49,5 @@ func TestEnvironmentDropsUserOutsideFileBoundary(t *testing.T) {
 		t.Fatalf("wrapped args = %q", cmd.Args)
 	}
 }
+
+func (testFileBoundary) AllowsMappings() bool { return true }

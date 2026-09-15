@@ -261,7 +261,7 @@ noop 只是 `Persist/Restore/Stat/Delete` 的空实现，不改变 lifecycle：B
 ### bed 目录分层（配套）
 
 ```
-{workspace-root}/{bedID}/        ← Store 遍历根；所有策略在 evict 后删除
+{beds-root}/{bedID}/        ← Store 遍历根；所有策略在 evict 后删除
   meta.json   # hostel 私有：created_at、last_persisted_at、generation、last_active_at（将来：manifest、lease）
   *.local     # 本机私有元数据，不进快照
   data/       # bed_home：不整体进快照

@@ -24,7 +24,7 @@ func bindEnvironment(files isolation.Isolator, fs *bedfs.FS, net network.Attachm
 	return &Environment{files: files, fs: fs, network: net, user: user}
 }
 
-func (e *Environment) View() bedfs.View           { return e.files.View(e.fs) }
+func (e *Environment) View() bedfs.ProcessView    { return e.files.View(e.fs) }
 func (e *Environment) BedUser() privilege.BedUser { return e.user }
 func (e *Environment) Gateway() string {
 	if e.network == nil {

@@ -34,7 +34,7 @@ func TestCloseJoinsBackgroundBeforeReleasingBeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	marker := filepath.Join(b.Workspace(), "keep")
+	marker := filepath.Join(b.Workdir(), "keep")
 	if err := os.WriteFile(marker, []byte("data"), 0600); err != nil {
 		t.Fatal(err)
 	}

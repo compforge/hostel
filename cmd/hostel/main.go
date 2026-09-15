@@ -112,7 +112,7 @@ func main() {
 	host := hostfacts.Collect()
 	room, _ := bedmodel.ParseRoomType(cfg.Bed.RoomType) // Config.Load validates the public profile.
 	selectionCtx, cancelSelection := context.WithTimeout(context.Background(), 60*time.Second)
-	selection, err := bed.ResolveRuntime(selectionCtx, host, cfg.WorkspaceRoot, cfg.ShellPath, bed.RuntimeConfig{
+	selection, err := bed.ResolveRuntime(selectionCtx, host, cfg.BedsRoot, cfg.ShellPath, bed.RuntimeConfig{
 		Room: room, Filesystem: cfg.Bed.Filesystem, Privilege: cfg.Bed.Privilege,
 		Network: cfg.Bed.Network, Resource: cfg.Bed.Resource, Executor: cfg.Bed.Executor,
 	}, ports)
@@ -142,7 +142,7 @@ func main() {
 		log.Fatalf("hostel: init store: %v", err)
 	}
 
-	mgr, err := bed.NewManager(host, cfg.WorkspaceRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
+	mgr, err := bed.NewManager(host, cfg.BedsRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
 		bed.WithRuntimeSelection(selection),
 		bed.WithServices(ports, cfg.ServiceAdvertiseHost),
 		bed.WithConfiguration(cfg.Bed.Configuration),
@@ -250,8 +250,8 @@ func main() {
 	).Handler()}
 	serverDone := make(chan error, 1)
 	go func() {
-		log.Printf("hostel: listening on %s (isolation=%s, workspace-root=%s, default-bed=%s)",
-			cfg.Addr, iso.Name(), cfg.WorkspaceRoot, cfg.DefaultBed)
+		log.Printf("hostel: listening on %s (isolation=%s, beds-root=%s, default-bed=%s)",
+			cfg.Addr, iso.Name(), cfg.BedsRoot, cfg.DefaultBed)
 		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverDone <- err
 		}

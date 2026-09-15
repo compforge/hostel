@@ -30,13 +30,17 @@ import (
 )
 
 type pathshimView struct {
-	path string
+	path            string
+	mappingsBlocked bool
 }
 
+func (p *pathshimView) MappingSupport() bedfs.MappingSupport {
+	return bedfs.MappingSupport{ReadWrite: !p.mappingsBlocked}
+}
 func (p *pathshimView) Mode() string  { return "pathshim" }
 func (p *pathshimView) Mounted() bool { return false }
-func (p *pathshimView) View(fs *bedfs.FS) bedfs.View {
-	return bedfs.WorkspaceView(fs)
+func (p *pathshimView) View(fs *bedfs.FS) bedfs.ProcessView {
+	return bedfs.RedirectedView(fs, p.MappingSupport())
 }
 
 func (p *pathshimView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
@@ -44,30 +48,31 @@ func (p *pathshimView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err != nil {
 		return err
 	}
-	hostfs.Pathshim{Path: p.path}.Wrap(cmd, processMappings(fs), guestCwd)
+	hostfs.Pathshim{Path: p.path}.Wrap(cmd, processMappings(fs, p.MappingSupport()), guestCwd)
 	return nil
 }
 
-// +spec=`A pathshim process view applies the workspace and Bed path mappings atomically without changing isolation level or mount capability.`
-// +case:id=pathshim_process_view,desc=`Probe and run one command through the selected dorm or room mechanism`,expect=`Every configured path maps to its BedFS source, command semantics survive, and probe failure falls back to carrier paths`
-func newPathshimView(base Boundary, workspaceRoot string, discovery hostfacts.ProbeReport) (workspaceBackend, WorkspaceViewReport, hostfacts.ProbeReport) {
-	probe := hostfacts.WithExecutionProbe(discovery, probePathshim(base, workspaceRoot, discovery.ResolvedPath))
+// +spec=`A pathshim process view applies the workdir and process-supported Bed path mappings atomically without changing isolation level or mount capability.`
+// +case:id=pathshim_process_view,desc=`Probe and run one command through the selected dorm or room mechanism`,expect=`Every process-supported mapping reaches its declared source, command semantics survive, and probe failure falls back to carrier paths`
+func newPathshimView(base Boundary, bedsRoot string, discovery hostfacts.ProbeReport) (processViewBackend, ProcessViewReport, hostfacts.ProbeReport) {
+	probe := hostfacts.WithExecutionProbe(discovery, probePathshim(base, bedsRoot, discovery.ResolvedPath))
 	reason := probe.Error
 	if reason != "" {
 		log.Printf("isolation: pathshim process view unavailable (%s)", reason)
-		return nil, WorkspaceViewReport{Mode: "carrier", Available: false, Reason: reason}, probe
+		return nil, ProcessViewReport{Mode: "carrier", Available: false, Reason: reason}, probe
 	}
 	log.Printf("isolation: pathshim process view probe succeeded path=%s", discovery.ResolvedPath)
 	return &pathshimView{
-		path: discovery.ResolvedPath,
-	}, WorkspaceViewReport{Mode: "pathshim", Available: true}, probe
+		path:            discovery.ResolvedPath,
+		mappingsBlocked: !base.AllowsMappings(),
+	}, ProcessViewReport{Mode: "pathshim", Available: true}, probe
 }
 
-func probePathshim(base Boundary, workspaceRoot, executable string) hostfacts.ProbeReport {
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+func probePathshim(base Boundary, bedsRoot, executable string) hostfacts.ProbeReport {
+	if err := os.MkdirAll(bedsRoot, 0o755); err != nil {
 		return hostfacts.ProbeReport{Error: "create workspace root: " + err.Error()}
 	}
-	probeHome, err := os.MkdirTemp(workspaceRoot, ".pathshim-probe-*")
+	probeHome, err := os.MkdirTemp(bedsRoot, ".pathshim-probe-*")
 	if err != nil {
 		return hostfacts.ProbeReport{Error: "create probe bed: " + err.Error()}
 	}
@@ -88,7 +93,7 @@ func probePathshim(base Boundary, workspaceRoot, executable string) hostfacts.Pr
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := (hostfs.Pathshim{Path: executable}).ProbeCommand(ctx, processMappings(fs))
+	cmd := (hostfs.Pathshim{Path: executable}).ProbeCommand(ctx, processMappings(fs, bedfs.MappingSupport{ReadWrite: base.AllowsMappings()}))
 	if err := base.Wrap(cmd, fs, probeWorkspace); err != nil {
 		return hostfacts.ProbeReport{Error: "wrap probe: " + err.Error()}
 	}
