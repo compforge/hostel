@@ -23,13 +23,8 @@ import (
 // This file has no build tag: the argv builder is pure string assembly so its
 // tests run on every platform (the exec-ing side lives in bwrap_linux.go).
 
-// bwrapBedHomeMountPoint is the mechanism-private projection of bed_home.
-// It lives under bwrap's private /tmp because the carrier root is read-only;
-// callers never need to know it and use BedFS client paths instead.
-const bwrapBedHomeMountPoint = "/tmp/.hostel/bed"
-
-// carrierSoftwareRoot is shared by every bed in the carrier. The host root is
-// otherwise read-only under suite, so this path must be re-bound read-write for
+// carrierSoftwareRoot is shared by every bed in the carrier. Runtime overlays
+// are otherwise read-only under private files, so it is re-bound read-write for
 // installs made by one command to remain available to later commands and beds.
 // The carrier image owns its permissions and package-manager environment.
 const carrierSoftwareRoot = "/usr/local"
@@ -48,38 +43,37 @@ const carrierSoftwareRoot = "/usr/local"
 //     depth, not part of the data-isolation (path) contract, so we drop it and
 //     bind the host /proc read-only instead. (uts/ipc unshares are cheap and
 //     don't touch mounts.)
-//  2. --ro-bind / /            — RO host root: toolchains stay usable
-//  3. --bind /usr/local /usr/local — carrier-wide shared software, writable
-//  4. --dev /dev, --ro-bind /proc /proc, --tmpfs /tmp — fresh dev/tmp; /proc
-//     is bound (not --proc) so no procfs remount is needed under masked /proc
-//  5. Masking: --tmpfs over bedsRoot (sibling beds cease to exist),
-//     and over each maskPath (host user data / mounted secrets)
-//  6. Create the private BedFS mount point under /tmp, then bind bed_home
-//     there. This gives every structured BedFS path an Executor-visible name.
-//  7. Bind workspace and Bed path mappings to their stable process
-//     paths (must come AFTER the bedsRoot mask).
-//  8. --chdir <process cwd>, --die-with-parent, --
+//  2. Bind bed_home to /: command, session and Service data share BedFS paths.
+//  3. Overlay existing carrier runtime directories read-only; /usr/local
+//     remains the carrier-wide writable software installation directory.
+//  4. Fresh /dev and existing read-only /proc (no procfs remount under K8s).
+//  5. Mask sensitive paths only if a runtime overlay re-exposed them.
+//  6. Bind workspace and explicit mappings after masks.
+//  7. --chdir <process cwd>, --die-with-parent, --
 //
 // maskPaths are host paths that exist. Environment ownership lives in bed's
 // process-env builder, so isolation mechanisms never inherit or filter it.
-func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths []string, mappings []model.PathMapping) []string {
-	// Bed policy owns this mount order: mask siblings and credentials before
-	// exposing the selected data roots. The host mechanism only encodes the plan.
+// +why=`A private internal data mount only fixes structured API paths; native processes issue literal absolute paths. The Bed data root must be the default process root, with explicit runtime overlays instead of an inherited carrier root.`
+func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths []string, mappings []model.PathMapping, runtimeRoots ...string) []string {
 	mounts := []hostfs.Mount{
-		{Kind: hostfs.ReadOnlyBind, Source: "/", Target: "/"},
-		{Kind: hostfs.Bind, Source: carrierSoftwareRoot, Target: carrierSoftwareRoot},
-		{Kind: hostfs.Dev, Target: "/dev"},
-		{Kind: hostfs.ReadOnlyBind, Source: "/proc", Target: "/proc"},
-		{Kind: hostfs.Tmpfs, Target: "/tmp"},
-		{Kind: hostfs.Tmpfs, Target: bedsRoot},
+		{Kind: hostfs.Bind, Source: bedHome, Target: "/"},
 	}
-	for _, p := range maskPaths {
-		mounts = append(mounts, hostfs.Mount{Kind: hostfs.Tmpfs, Target: p})
+	for _, p := range runtimeRoots {
+		mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: p, Target: p})
+	}
+	if inRuntime(carrierSoftwareRoot, runtimeRoots) {
+		mounts = append(mounts, hostfs.Mount{Kind: hostfs.Bind, Source: carrierSoftwareRoot, Target: carrierSoftwareRoot})
 	}
 	mounts = append(mounts,
-		hostfs.Mount{Kind: hostfs.Directory, Target: "/tmp/.hostel"},
-		hostfs.Mount{Kind: hostfs.Directory, Target: bwrapBedHomeMountPoint},
-		hostfs.Mount{Kind: hostfs.Bind, Source: bedHome, Target: bwrapBedHomeMountPoint},
+		hostfs.Mount{Kind: hostfs.Dev, Target: "/dev"},
+		hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: "/proc", Target: "/proc"},
+	)
+	for _, p := range append([]string{bedsRoot}, maskPaths...) {
+		if inRuntime(p, runtimeRoots) {
+			mounts = append(mounts, hostfs.Mount{Kind: hostfs.Tmpfs, Target: p})
+		}
+	}
+	mounts = append(mounts,
 		hostfs.Mount{Kind: hostfs.Bind, Source: workspace, Target: bedfs.DefaultWorkdir},
 	)
 	for _, m := range mappings {

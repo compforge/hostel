@@ -32,10 +32,13 @@ func appendPathshimBinds(args []string, mappings []Mapping) []string {
 	return args
 }
 
-type PRoot struct{ Path string }
+type PRoot struct{ Path, Root string }
 
 func (p PRoot) Wrap(cmd *exec.Cmd, mappings []Mapping, cwd string) {
 	args := []string{p.Path, "-v", "-1"}
+	if p.Root != "" {
+		args = append(args, "-r", p.Root)
+	}
 	for _, m := range mappings {
 		// The suffix preserves the requested target instead of resolving its symlink.
 		args = append(args, "-b", m.Source+":"+m.Target+"!")

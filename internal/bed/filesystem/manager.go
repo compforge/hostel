@@ -45,6 +45,11 @@ func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
 	if err := fs.SetPathMappings(b.Spec().PathMappings); err != nil {
 		return err
 	}
+	// Temporary files are Bed data too: separate executions and Services must
+	// share this directory, not receive an unrelated per-process tmpfs.
+	if err := fs.EnsureDir(filepath.Join(home, "tmp")); err != nil {
+		return err
+	}
 	// API mapping ownership survives an unavailable process-path mechanism.
 	// Report the gap once at preparation; do not reject otherwise usable Beds.
 	support := m.isolator.View(fs).MappingSupport()

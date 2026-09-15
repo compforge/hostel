@@ -40,6 +40,7 @@ type healthView struct {
 	} `json:"bed_user"`
 	ProcessView struct {
 		Mode      string `json:"mode"`
+		Rootfs    bool   `json:"rootfs"`
 		Available bool   `json:"available"`
 		Reason    string `json:"reason"`
 	} `json:"process_view"`

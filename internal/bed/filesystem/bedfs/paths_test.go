@@ -53,10 +53,10 @@ func TestViewPath(t *testing.T) {
 	workspace := fs.Workdir()
 
 	t.Run("private mount", func(t *testing.T) {
-		view := MountedView(fs, "/tmp/.hostel/bed", DefaultWorkdir)
+		view := RootedView(fs, MappingSupport{ReadWrite: true, ReadOnly: true})
 		cases := []struct{ host, want string }{
-			{root, "/tmp/.hostel/bed"},
-			{filepath.Join(root, "tmp", "x"), "/tmp/.hostel/bed/tmp/x"},
+			{root, "/"},
+			{filepath.Join(root, "tmp", "x"), "/tmp/x"},
 			{workspace, "/workspace"},
 			{filepath.Join(workspace, "sub"), "/workspace/sub"},
 		}

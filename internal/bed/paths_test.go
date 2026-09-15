@@ -38,3 +38,11 @@ func TestPathDeclarationValidationAndCloning(t *testing.T) {
 		t.Fatal("spec aliases caller state")
 	}
 }
+
+func TestTemporaryDataMappingHasNoInternalMountReservation(t *testing.T) {
+	for _, target := range []string{"/tmp", "/tmp/.hostel"} {
+		if _, _, err := NormalizePaths([]PathMapping{{HostPath: "/volume", BedPath: target}}, nil); err != nil {
+			t.Fatalf("mapping ordinary Bed data %s: %v", target, err)
+		}
+	}
+}

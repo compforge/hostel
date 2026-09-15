@@ -43,7 +43,7 @@ func NormalizePaths(mappings []PathMapping, syncPaths []string) ([]PathMapping, 
 		if !filepath.IsAbs(m.HostPath) || m.HostPath == "/" || !path.IsAbs(m.BedPath) || m.BedPath == "/" {
 			return fail("mapping paths must be absolute and non-root")
 		}
-		for _, reserved := range []string{"/workspace", "/dev", "/proc", "/sys", "/tmp/.hostel"} {
+		for _, reserved := range []string{"/workspace", "/dev", "/proc", "/sys"} {
 			if PathsOverlap(m.BedPath, reserved) {
 				return fail("mapping overlaps reserved path " + reserved)
 			}

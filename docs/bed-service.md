@@ -397,6 +397,11 @@ Hostel 入口鉴权，不能将开放的控制面误当作多租户授权边界�
 
 ## 五、实现范围与验证边界
 
+Executor 承载普通临时命令，也承载 Service 的常驻命令；Service 额外拥有监督与就绪策略，
+不拥有另一份文件根。两类执行共用 Bed Environment/BedFS，cwd 只选择起始目录。
+原生绝对路径的兑现程度以 Filesystem 的 `process_view.rootfs` 为准，不能仅凭共享了
+工作目录就断言所有路径一致，见 [Filesystem](filesystem.md#rootfs)。
+
 `internal/bed/service.Manager` 作为 Bed 领域组件接入既有生命周期。它通过
 消费侧接口使用执行能力，不反向依赖 `bed/manager`；后者负责 Environment、Executor
 与 Service 的组合。Executor 补齐受控优雅停止能力，保留统一 Execution 退出事实。

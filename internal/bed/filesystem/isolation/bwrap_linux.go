@@ -28,9 +28,8 @@ import (
 )
 
 // bwrap confines each command under bubblewrap. Mount view per
-// docs/isolation.md: RO host root with shared software rw at /usr/local,
-// sibling beds masked out of existence, own workspace rw at the canonical
-// /workspace, host user data and mounted secrets masked. Process environment
+// docs/filesystem.md: Bed data at / with shared runtime overlays, writable
+// carrier software at /usr/local, and no inherited carrier data root. Environment
 // ownership is enforced before this boundary by bed's process-env builder.
 type bwrap struct {
 	path      string   // bwrap binary (probed at boot)
@@ -40,7 +39,7 @@ type bwrap struct {
 
 // newBwrap probes bubblewrap at boot: binary present AND the FULL mount shape
 // we will actually use starts (binary-present-but-broken — unprivileged userns
-// disabled, or no /workspace mount point on the RO host root — must not count
+// disabled, or the native data root isn't writable — must not count
 // as isolated; a partial probe once let healthz report process_view.mode=mount
 // while every exec failed). On failure it falls back to direct so the daemon
 // still boots and /healthz reports the truth.
@@ -58,13 +57,6 @@ func newBwrap(facts hostfacts.Snapshot, bedsRoot string) (Isolator, hostfacts.Pr
 		return unavailable{name: "bwrap", lvl: Private}, report
 	}
 
-	// bwrap cannot mkdir the mount point inside the read-only root bind, so
-	// the canonical /workspace must exist on the HOST. Create it if we can
-	// (in a pod hostel usually runs as root); if we can't, the full-shape
-	// smoke below fails and we honestly degrade.
-	if err := os.MkdirAll(bedfs.DefaultWorkdir, 0o755); err != nil {
-		log.Printf("isolation: cannot ensure mount point %s on host: %v", bedfs.DefaultWorkdir, err)
-	}
 	// The workspace root may not exist yet at probe time (the bed manager
 	// creates it later); the smoke test masks it, so it must exist now.
 	if err := os.MkdirAll(bedsRoot, 0o755); err != nil {
@@ -126,8 +118,8 @@ func resolveMaskPaths(candidates []string) []string {
 	return masks
 }
 
-// bwrapSmoke exercises the startup baseline: namespaces, masking and the
-// workspace bind. Additional mappings come from each BedFS when Wrap is called.
+// bwrapSmoke proves native absolute writes reach the same data root as the file
+// API. Additional mappings come from each BedFS when Wrap is called.
 func bwrapSmoke(path, bedsRoot string, masks []string) hostfacts.ProbeReport {
 	probeHome, err := os.MkdirTemp(bedsRoot, ".probe-*")
 	if err != nil {
@@ -138,9 +130,15 @@ func bwrapSmoke(path, bedsRoot string, masks []string) hostfacts.ProbeReport {
 	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
 		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: workspace: %v", err)}
 	}
-	argv := buildBwrapArgs(bedsRoot, probeHome, probeWorkspace, bedfs.DefaultWorkdir, masks, nil)
-	cmd := exec.Command(path, append(argv, "true")...)
+	argv := buildBwrapArgs(bedsRoot, probeHome, probeWorkspace, bedfs.DefaultWorkdir, masks, nil, existingRuntimePaths()...)
+	cmd := exec.Command(path, append(argv, "/bin/sh", "-c", "mkdir -p /mnt/probe && printf root-view > /mnt/probe/file")...)
 	report := hostfacts.RunExecProbe(cmd)
+	if report.Succeeded() {
+		data, err := os.ReadFile(filepath.Join(probeHome, "mnt/probe/file"))
+		if err != nil || string(data) != "root-view" {
+			report.Error = fmt.Sprintf("native root write did not reach BedFS: %v", err)
+		}
+	}
 	if report.Error != "" {
 		report.Error = "smoke test: " + report.Error
 	}
@@ -152,7 +150,7 @@ func (b *bwrap) Level() Level         { return Private }
 func (b *bwrap) Available() bool      { return true } // only constructed when probe passed
 func (b *bwrap) WorkdirMounted() bool { return true }
 func (b *bwrap) View(fs *bedfs.FS) bedfs.ProcessView {
-	return bedfs.MountedView(fs, bwrapBedHomeMountPoint, bedfs.DefaultWorkdir)
+	return bedfs.RootedView(fs, bedfs.MappingSupport{ReadWrite: true, ReadOnly: true})
 }
 
 func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
@@ -162,8 +160,9 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err != nil {
 		return err
 	}
-	argv := buildBwrapArgs(b.root, fs.Rootfs(), fs.Workdir(), processCwd, b.maskPaths, fs.PathMappings())
-	userArgs := cmd.Args
+	executable := rootExecutable(fs, cmd.Path, b.View(fs).MappingSupport())
+	argv := buildBwrapArgs(b.root, fs.Rootfs(), fs.Workdir(), processCwd, b.maskPaths, fs.PathMappings(), existingRuntimePaths()...)
+	userArgs := append([]string{executable}, cmd.Args[1:]...)
 	cmd.Args = make([]string, 0, len(argv)+len(userArgs)+1)
 	cmd.Args = append(cmd.Args, b.path)
 	cmd.Args = append(cmd.Args, argv...)

@@ -18,6 +18,7 @@ import (
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -40,7 +41,7 @@ func (p *prootView) MappingSupport() bedfs.MappingSupport {
 func (p *prootView) Mode() string  { return "proot" }
 func (p *prootView) Mounted() bool { return false }
 func (p *prootView) View(fs *bedfs.FS) bedfs.ProcessView {
-	return bedfs.RedirectedView(fs, p.MappingSupport())
+	return bedfs.RootedView(fs, p.MappingSupport())
 }
 
 func (p *prootView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
@@ -48,7 +49,10 @@ func (p *prootView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err != nil {
 		return err
 	}
-	hostfs.PRoot{Path: p.path}.Wrap(cmd, processMappings(fs, p.MappingSupport()), guestCwd)
+	mappings := rootProcessMappings(fs, p.MappingSupport())
+	executable := rootExecutable(fs, cmd.Path, p.MappingSupport())
+	cmd.Args = append([]string{executable}, cmd.Args[1:]...)
+	hostfs.PRoot{Path: p.path, Root: fs.Rootfs()}.Wrap(cmd, mappings, guestCwd)
 	return nil
 }
 
@@ -95,8 +99,8 @@ func probeProot(base Boundary, bedsRoot, executable string) hostfacts.ProbeRepor
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", "cat /workspace/.hostel-proot-probe; printf '\n'; pwd")
-	hostfs.PRoot{Path: executable}.Wrap(cmd, processMappings(fs, bedfs.MappingSupport{ReadWrite: base.AllowsMappings()}), bedfs.DefaultWorkdir)
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", "mkdir -p /mnt/probe && printf root-view > /mnt/probe/file && cat /workspace/.hostel-proot-probe; printf '\n'; pwd")
+	hostfs.PRoot{Path: executable, Root: fs.Rootfs()}.Wrap(cmd, rootProcessMappings(fs, bedfs.MappingSupport{ReadWrite: base.AllowsMappings()}), bedfs.DefaultWorkdir)
 	if err := base.Wrap(cmd, fs, probeWorkspace); err != nil {
 		return hostfacts.ProbeReport{Error: "wrap probe: " + err.Error()}
 	}
@@ -115,6 +119,9 @@ func probeProot(base Boundary, bedsRoot, executable string) hostfacts.ProbeRepor
 	}
 	if strings.TrimSpace(report.Stdout) != "proot-view\n/workspace" {
 		report.Error = "unexpected probe output: " + strings.TrimSpace(report.Stdout)
+	}
+	if data, err := os.ReadFile(filepath.Join(probeHome, "mnt/probe/file")); err != nil || string(data) != "root-view" {
+		report.Error = fmt.Sprintf("native root write did not reach BedFS: %v", err)
 	}
 	return report
 }

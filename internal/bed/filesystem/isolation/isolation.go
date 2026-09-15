@@ -112,6 +112,8 @@ type Isolator interface {
 // It is separate from the isolation level: a user-space view
 // improves path compatibility but does not add a security boundary.
 type ProcessViewReport struct {
+	// Rootfs means native absolute data paths use the Bed root, with runtime overlays.
+	Rootfs       bool                 `json:"rootfs"`
 	Mode         string               `json:"mode"`
 	Available    bool                 `json:"available"`
 	Reason       string               `json:"reason,omitempty"`
