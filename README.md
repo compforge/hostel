@@ -4,7 +4,8 @@ English | [简体中文](README.zh-CN.md)
 
 **Hostel is a sandbox runtime for AI agents.** Think of Hostel / Bed as a lightweight
 take on kubelet / Pod: one daemon manages multiple sandboxes, called **beds**,
-on a laptop, VM, CI runner or in a container.
+on a laptop, VM, CI runner or in a container, making a best effort to meet each
+bed's needs within the host's capabilities.
 Each bed provides a workspace for commands, shell sessions and managed services.
 
 Beds share a machine or container, reducing the need to provision a separate
