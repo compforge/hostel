@@ -3,6 +3,7 @@
 package filesystem
 
 import (
+	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 	"os"
 	"os/exec"
 	"strings"
@@ -19,12 +20,13 @@ func TestMountEntryDefersWorkloadEnvironment(t *testing.T) {
 	cmd := exec.Command("/bin/sh", "-c", "echo ok")
 	cmd.Env = []string{"LD_PRELOAD=/mnt/plugin.so", "GODEBUG=inittrace=1", "PATH=/mnt/tools", "TOKEN=private"}
 	want := append([]string(nil), cmd.Env...)
-	ns.Wrap(cmd, 1001, 1002, "/mnt/work")
+	hostprocess.WrapBedInit(cmd, hostprocess.BedInitPath, "/mnt/work")
+	ns.Wrap(cmd)
 	if cmd.Path != "/trusted/hostel" || cmd.Dir != "/" {
 		t.Fatalf("unsafe bootstrap: %+v", cmd)
 	}
 	for _, entry := range cmd.Env {
-		if !strings.HasPrefix(entry, workloadEnvPrefix) && entry != "PATH=/usr/bin:/bin" {
+		if !strings.HasPrefix(entry, "HOSTEL_WORKLOAD_ENV_") && entry != "PATH=/usr/bin:/bin" {
 			t.Fatalf("workload env exposed to helper: %q", entry)
 		}
 	}
@@ -34,7 +36,7 @@ func TestMountEntryDefersWorkloadEnvironment(t *testing.T) {
 			t.Fatalf("entry changed: got %q want %q", got, entry)
 		}
 	}
-	if cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != "/mnt/work" {
-		t.Fatalf("credentials/cwd=%v", cmd.Args)
+	if cmd.Args[4] != "--" || cmd.Args[5] != hostprocess.BedInitPath {
+		t.Fatalf("namespace entry must preserve the sealed workload: %v", cmd.Args)
 	}
 }

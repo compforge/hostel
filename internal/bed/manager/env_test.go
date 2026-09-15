@@ -52,14 +52,14 @@ func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	cmd, err := m.buildCommand(b, "true", "", map[string]string{
+	workloadEnv, err := m.buildExecutionEnv(b, map[string]string{
 		"PATH":            "/request/bin",
 		"REQUEST_API_KEY": "explicit-secret",
 	})
 	if err != nil {
 		t.Fatalf("buildCommand: %v", err)
 	}
-	env := envMap(cmd.Env)
+	env := envMap(workloadEnv)
 	for name, want := range map[string]string{
 		"BED_ID":                "alice",
 		"HOME":                  b.Workdir(),
@@ -78,8 +78,8 @@ func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 			t.Errorf("daemon variable %s leaked into bed env", name)
 		}
 	}
-	if !slices.IsSorted(cmd.Env) {
-		t.Fatalf("environment is not deterministic: %v", cmd.Env)
+	if !slices.IsSorted(workloadEnv) {
+		t.Fatalf("environment is not deterministic: %v", workloadEnv)
 	}
 }
 

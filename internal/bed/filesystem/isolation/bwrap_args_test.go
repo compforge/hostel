@@ -124,7 +124,7 @@ func TestBuildBwrapArgsAddsBedMappingsAfterWorkspace(t *testing.T) {
 
 func TestDirectUsesCarrierView(t *testing.T) {
 	iso := New(hostfacts.Collect(), "shared", t.TempDir())
-	if iso.WorkdirMounted() {
+	if iso.MountsRoot() {
 		t.Fatal("direct must not report a workspace mount")
 	}
 	if iso.Name() != "direct" || !iso.Available() {

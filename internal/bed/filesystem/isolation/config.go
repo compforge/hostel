@@ -73,7 +73,7 @@ func (c Config) policies() map[string]feature.Policy {
 func requirements(name string) feature.Requirements {
 	switch name {
 	case "bwrap":
-		return feature.Requirements{Tools: []string{"bwrap"}, Conditions: []string{"Linux user/mount namespaces permitted", "bwrap execution probe"}}
+		return feature.Requirements{Tools: []string{"bwrap"}, Conditions: []string{"rootful mount authority or unprivileged user namespace", "bwrap execution probe"}}
 	case "landlock":
 		return feature.Requirements{Conditions: []string{"Linux Landlock ABI", "Landlock confinement probe"}}
 	case "uid":
@@ -81,7 +81,7 @@ func requirements(name string) feature.Requirements {
 		for _, requirement := range privilege.RequiredBedIdentityCapabilities() {
 			names = append(names, requirement.Name)
 		}
-		return feature.Requirements{Capabilities: names, Tools: []string{"setpriv"}, Conditions: []string{"UID isolation probe"}}
+		return feature.Requirements{Capabilities: names, Conditions: []string{"Hostel credential entry", "UID isolation probe"}}
 	case "proot":
 		return feature.Requirements{Tools: []string{"proot"}, Conditions: []string{"ptrace permitted", "PRoot execution probe"}}
 	default:

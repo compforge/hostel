@@ -170,15 +170,21 @@ Amenity 的全局启停直属 daemon；Bed Manager 通过薄生命周期适配�
 
 ### 组件参与生命周期
 
+`bedinit` 是 command、session 和 Service 每次启动进程时共用的可信初始化路径：
+按 Bed Manager 绑定的执行方案进入环境、切换身份及权限、应用 env/cwd，最后 `exec`
+用户程序。它使用 Hostel 自身二进制的内部入口，不是用户镜像的 ENTRYPOINT，
+也不是 Bed 生命周期的 Prepare hook、常驻服务或 PID 1。Executor 只负责启动和监督；
+资源分配、机制选择与降级仍由 Bed Manager 及领域组件完成。
+
 每个 Bed hook 接收同一个 `*bed.Bed`，资源按具体 allocation 归属。组件还提供类型化
 `Status() S`，由 Bed Manager 聚合，Web 只序列化，报告契约见 [observability.md](observability.md)。
 
 | Hook | Bed Manager 驱动时机与完成条件 |
 |---|---|
 | Recover | 启动准入前恢复已有本地身份；Privilege 根据目录 owner 保留 UID |
-| Prepare | 初始化时按 Store、Filesystem、Privilege、Network（含初始策略）、Resource、Executor、Amenity 顺序准备；全部成功后才发布 Ready |
+| Prepare | 初始化时先准备 Store、Filesystem 数据、Privilege、Network（含初始策略），再组装文件视图和 Environment，准备 Resource、Configuration、Executor、Amenity、Service；全部成功后才发布 Ready |
 | Stop | 已停止数据面准入后终止 Transfer 与 Executor，阻止继续使用资源 |
-| Release | Stop 成功后释放设施切片、Executor、资源组、网络、BedFS 和 Store 任务状态；不释放 UID |
+| Release | Stop 成功后释放 Service、设施切片、Executor、资源组、Configuration、BedFS、网络和 Store 任务状态；文件视图先于其引用的网络配置释放，不释放 UID |
 | Forget | 运行资源和本地 Bed / `.gc-*` 目录全部清理后，由 Privilege 释放身份 |
 
 Stop / Release 保存每个参与者的完成进度，失败重试从未完成的 hook 继续；已成功的 hook 不重复执行。

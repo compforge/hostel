@@ -23,7 +23,7 @@ import (
 )
 
 func ProcessCredentialHelper() (string, error) {
-	return "", fmt.Errorf("privilege: setpriv is unsupported on this platform")
+	return "", fmt.Errorf("privilege: credential switching is unsupported on this platform")
 }
 
 func WrapCredentials(_ *exec.Cmd, uid, gid int) error {
@@ -32,5 +32,7 @@ func WrapCredentials(_ *exec.Cmd, uid, gid int) error {
 	}
 	return nil
 }
+
+func WrapBedInit(_ *exec.Cmd, _ string, _, _ int) {}
 
 func ChownTree(string, int, int) error { return nil }

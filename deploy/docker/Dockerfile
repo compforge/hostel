@@ -19,8 +19,8 @@
 ARG BUILDPLATFORM
 ARG TARGETOS
 ARG TARGETARCH
-ARG BWRAP_VERSION=0.11.2
-ARG BWRAP_SHA256=69abc30005d2186baf7737feacd8da35633b93cf5af38838ecff17c5f8e924f6
+ARG BWRAP_VERSION=0.12.0
+ARG BWRAP_SHA256=9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314
 ARG PATHSHIM_REV=8bcc34ef0aeda6514acc3fd8c4563522745b2e7c
 ARG PROOT_VERSION=5.1.107.92
 ARG PROOT_REV=7266fb3e8516535682f5a9c8f3a7e70f6506eddb
@@ -93,6 +93,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config xz-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/bubblewrap
+# Leave assume_kernel unset to retain syscall fallbacks for older kernels (4.19).
 RUN curl -fsSL -o bubblewrap.tar.xz \
         "https://github.com/containers/bubblewrap/releases/download/v${BWRAP_VERSION}/bubblewrap-${BWRAP_VERSION}.tar.xz" \
     && echo "${BWRAP_SHA256} *bubblewrap.tar.xz" | sha256sum -c - \
@@ -101,7 +102,6 @@ RUN curl -fsSL -o bubblewrap.tar.xz \
         -Dbash_completion=disabled \
         -Dman=disabled \
         -Dselinux=disabled \
-        -Dsupport_setuid=false \
         -Dtests=false \
         -Dzsh_completion=disabled \
     && meson compile -C _build \

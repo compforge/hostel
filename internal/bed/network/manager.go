@@ -148,7 +148,7 @@ func (m *Manager) describe(s Status) Status {
 	if s.Enabled {
 		s.Effective = Private
 	}
-	requirements := feature.Requirements{Capabilities: []string{"CAP_NET_ADMIN", "CAP_SYS_ADMIN"}, Tools: []string{"ip", "nft", "setpriv"}, Conditions: []string{"Linux", "IPv4 forwarding", "DNS resolvers", "namespace entry and connectivity probe"}}
+	requirements := feature.Requirements{Capabilities: []string{"CAP_NET_ADMIN", "CAP_SYS_ADMIN"}, Tools: []string{"ip", "nft"}, Conditions: []string{"Linux", "IPv4 forwarding", "DNS resolvers", "namespace entry and connectivity probe"}}
 	s.Features = map[string]feature.Status{"netns": feature.Describe(policy, requirements, s.Probe.Stage != "", available, s.Enabled, s.Reason)}
 	return s
 }

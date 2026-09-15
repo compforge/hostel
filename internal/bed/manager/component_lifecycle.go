@@ -23,8 +23,8 @@ func (m *Manager) bindRuntimeLifecycle(b *managedBed) {
 		model.Participant{Name: "executor", Lifecycle: m.executorManager},
 		model.Participant{Name: "resource", Lifecycle: m.resourceManager},
 		model.Participant{Name: "configuration", Lifecycle: m.configurations},
-		model.Participant{Name: "network", Lifecycle: m.network},
 		model.Participant{Name: "filesystem", Lifecycle: m.files},
+		model.Participant{Name: "network", Lifecycle: m.network},
 		model.Participant{Name: "store", Lifecycle: m.store},
 	)
 }

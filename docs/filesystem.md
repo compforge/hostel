@@ -88,7 +88,7 @@ Reader 根据所选文件视图的映射支持选择读取策略；这与独占 
 数据模型、进程视图和访问屏障在同一领域内协作；跨领域的网络进入、身份切换与执行组合
 由 Bed Manager 协调。能力不足时可以选择可用档位，已选机制执行失败则明确报错。
 
-`BedFS` 是 Bed 持有的数据域，不是一次请求里的路径工具。Bed 创建时建立一个 BedFS；Executor 丢失、替换或重建时，BedFS 的身份与数据不变，只重新生成进程视图。
+`BedFS` 是 Bed 持有的数据域，不是一次请求里的路径工具。Bed 创建时建立一个 BedFS；Executor 丢失、替换或重建时，BedFS 的身份、数据和已准备的 mount 视图不变。
 
 BedFS 统一拥有以下语义：
 
@@ -230,7 +230,7 @@ Carrier 上不在系统运行依赖目录内的工具，应通过显式 PathMapp
 不能为了让任意可执行文件可见，自动挂回它的 Carrier 父目录，否则会绕过跨 Bed 数据边界。
 
 rootful 准备阶段保留 `/proc` 作为运行时目录，不接受覆盖它的 PathMapping；拒绝而非静默改写声明。
-准备过程只执行经文件描述符固定的静态 Hostel helper。工作负载进入已准备的 namespace 后，
+准备过程只执行经文件描述符固定的静态 Hostel helper。`bedinit` 进入已准备的 namespace 后，
 先降权再解析用户 cwd 和执行用户程序，不通过 Bed 文件系统查找特权程序。
 
 `process_view.rootfs=true` 表示原生数据路径使用 Bed 根（bwrap/PRoot）；它不表示 PID、网络
@@ -252,6 +252,17 @@ shared 文件视图与 carrier 共享 mount namespace，命令中的字面绝对
 这是一条默认关闭的只读候选策略，不是第二套路径映射或写入语义。上传、替换、改权限、移动和删除始终只操作 BedFS；confined/private 文件也不启用回退。配置的 root 会暴露给 file API 读取，因此共享 carrier 不得开启，也不得把它理解为隔离保证。
 
 ## 六、生命周期与边界
+
+Bed Manager 统一驱动组件的 `bed.BedLifecycle`；文件机制统一实现
+`isolation.Lifecycle`：`Prepare(ctx, fs)` 准备资源，`Release(ctx, fs)` 释放同一份资源。
+无资源机制也显式实现该契约，不再用可选接口决定是否准备。部分准备失败仍保留清理 owner；
+释放失败可重试，不能丢弃句柄或切换到另一机制掩盖失败。
+
+初始化先准备数据和身份，再分配网络及其 resolver，最后组装文件视图并绑定 Environment。
+rootful mount 在此时完成；降级到 PRoot/pathshim 或无特权 bwrap 时，同样由 Bed Manager
+选定并绑定 `bedinit` 的执行方案，只是具体 helper 必须随进程启动。Executor 不探测、不分配、不决定降级，
+只按 Environment 启动和监督 command、session、Service。回收先停止进程，再释放文件视图，
+最后删除它引用的网络配置。
 
 - Bed owns BedFS：`bed_home`、Workdir、generation 与快照身份随 Bed 存续；
 - Executor owns process realm：只持有 BedFS View，可丢失和替换；

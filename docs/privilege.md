@@ -76,11 +76,15 @@ rootful 准备要求静态构建（`CGO_ENABLED=0`，正式镜像已使用）；
 
 ## 能力与部署条件
 
-无特权文件准备路径下，Linux Bed command/session/Service 经过 `setpriv`，包括 BedUser 与 daemon 身份相同的情况，
-用于清空 inheritable / ambient capability 并设置 `no_new_privs`；实际具有 CAP_SETPCAP 时才要求清空 bounding set。
-启动探测还核对 permitted/effective 集合，不能仅凭 wrapper 参数声称清理成功。
-仅在身份不同时附加 UID/GID 切换和 supplementary groups 清理参数，因此非 root 自定义镜像也必须
-提供 `setpriv`。
+所有 Linux Bed command/session/Service 使用 `bedinit` 的身份初始化步骤，不再依赖外部
+`setpriv`。即使 BedUser 与 daemon 相同，也清空进程 capability 并设置 `no_new_privs`；有
+CAP_SETPCAP 时清空 bounding set，没有时仅允许非 root 身份保留 ceiling，或 root 的 ceiling
+已经为空。有 CAP_SETGID 时清除 supplementary groups。启动探测核对实际身份和 capability，
+不能仅凭 wrapper 参数声称降权成功。
+
+用户环境在整个 `bedinit` 链上作为不生效的载荷传递；最终执行步骤在边界及降权完成后
+才恢复环境、切换 cwd、按 Bed 内 PATH 查找程序。rootful 先进入准备好的 namespace 再降权；
+无特权机制先降权再进入视图。两条路径均不让用户环境参与特权 helper 的初始化。
 
 当 Bed 身份与 daemon 不同时，Hostel 还需要以下 Linux capability 完成目录交接、身份切换、
 进程监督和最终 capability 清理：
@@ -109,7 +113,7 @@ daemon 与 BedUser 相同时，这组身份切换要求为空，子进程凭据�
 | confined 文件 / UID | 完整 Bed identity capability；允许 setgroups/setgid/setuid/chown，并预留 UID 段 | 配置身份切换 capability 和允许相关操作的 seccomp/LSM 策略 | 不选择 UID/DAC |
 | private 文件 / bwrap | 优先使用已有 SYS_ADMIN、SYS_CHROOT 和身份切换权限准备 mount namespace；否则要求无特权 user namespace | 两种路径均须允许实际 namespace/mount 操作，seccomp/LSM 可继续拒绝 | 完整探测后选择可用路径或较低文件等级 |
 | PRoot workspace view | PRoot 可执行，允许其跟踪 Bed 子进程，ptrace 与 PRoot smoke 成功 | 按实际阻断调整 seccomp/LSM；部分容器策略可通过声明 `CAP_SYS_PTRACE` 放行，但它不是通用必需条件 | 继续尝试 pathshim 或 Carrier view |
-| per-Bed netns | named netns 创建/进入、veth、route、nft 可用；`ip`、`nft`、`setpriv` 可执行且 IPv4 forwarding 已开启 | 当前 backend 需要 `CAP_SYS_ADMIN`、`CAP_NET_ADMIN`，seccomp/LSM 也须允许相关操作 | 启动探测失败时使用共享 Carrier 网络 |
+| per-Bed netns | named netns 创建/进入、veth、route、nft 可用；`ip`、`nft` 可执行且 IPv4 forwarding 已开启 | 当前 backend 需要 `CAP_SYS_ADMIN`、`CAP_NET_ADMIN`，seccomp/LSM 也须允许相关操作 | 启动探测失败时使用共享 Carrier 网络 |
 
 `CAP_NET_ADMIN` 单独不能完成当前 named netns backend；bwrap 可使用宿主已有权限或 user namespace
 完成 mount 准备，不统一要求部署授予宿主级 `CAP_SYS_ADMIN`；suite 的 private 网络另有 named netns 的权限要求。各机制的隔离语义分别见
@@ -149,7 +153,7 @@ capability 清理和 `NoNewPrivs` 的完整组合。自动候选可在完整清�
 
 `GET /v1/status` 中与权限相关的事实分属三个 owner：
 
-- `components.privilege`：daemon 身份、Bed user 策略、支持等级、选择结果、`setpriv` 解析结果、身份切换所需与缺失的 capability；
+- `components.privilege`：daemon 身份、Bed user 策略、支持等级、选择结果、内置 credential helper、身份切换所需与缺失的 capability；
   `preconditions_satisfied` 只表示这些静态前提满足。
 - `host` 与 `components.filesystem.probes`：capability/seccomp/LSM、namespace、内核功能、ptrace 及
   各文件机制的启动探测。

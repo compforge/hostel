@@ -41,8 +41,8 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 	if report.Mode != "pathshim" || !report.Available {
 		t.Fatalf("workspace view = %+v", report)
 	}
-	if iso.Name() != "direct" || iso.Level() != Shared || iso.WorkdirMounted() {
-		t.Fatalf("pathshim changed isolation facts: %s/%s mount=%v", iso.Name(), iso.Level(), iso.WorkdirMounted())
+	if iso.Name() != "direct" || iso.Level() != Shared || iso.MountsRoot() {
+		t.Fatalf("pathshim changed isolation facts: %s/%s mount=%v", iso.Name(), iso.Level(), iso.MountsRoot())
 	}
 
 	home := filepath.Join(root, "bed", "data")
@@ -59,7 +59,7 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := iso.(Preparer).Prepare(fs); err != nil {
+	if err := iso.Prepare(t.Context(), fs); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("/bin/sh", "-c", "pwd")
@@ -108,13 +108,13 @@ func TestPathshimRunsInsideSelectedRoomMechanism(t *testing.T) {
 	}
 }
 
-type prefixRoom struct{}
+type prefixRoom struct{ Stateless }
 
 func (prefixRoom) Name() string                        { return "landlock" }
 func (prefixRoom) Level() Level                        { return Confined }
 func (prefixRoom) Available() bool                     { return true }
 func (prefixRoom) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
-func (prefixRoom) WorkdirMounted() bool                { return false }
+func (prefixRoom) MountsRoot() bool                    { return false }
 func (prefixRoom) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	cmd.Args = append([]string{"/usr/bin/room-helper", "--"}, cmd.Args...)
 	cmd.Path = "/usr/bin/room-helper"

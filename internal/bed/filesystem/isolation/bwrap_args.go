@@ -18,6 +18,7 @@ import (
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
+	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 )
 
 // This file has no build tag: the argv builder is pure string assembly so its
@@ -90,8 +91,19 @@ func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths [
 		}
 		mounts = append(mounts, hostfs.Mount{Kind: kind, Source: m.HostPath, Target: m.BedPath})
 	}
+	// The final trusted re-exec restores workload configuration only after
+	// resource entry and credential drop. Its image is never Bed-controlled.
+	mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: hostprocess.Executable(), Target: hostprocess.BedInitPath})
 	argv := (hostfs.Bubblewrap{UserNamespace: true, UTSNamespace: true, IPCNamespace: true, Mounts: mounts, Cwd: cwd, DieWithParent: true}).Args()
 	return argv
+}
+
+func systemFileArgs(fs *bedfs.FS) []string {
+	var args []string
+	for _, file := range fs.SystemFiles() {
+		args = append(args, "--ro-bind", file.Source, file.Target)
+	}
+	return args
 }
 
 // defaultMaskCandidates are host paths masked when they exist: host user data

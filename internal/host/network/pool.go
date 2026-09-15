@@ -28,6 +28,7 @@ type Probe struct {
 
 type endpoint interface {
 	Wrap(*exec.Cmd)
+	ResolverPath() string
 	Gateway() string
 	Close(context.Context) error
 }
@@ -97,6 +98,8 @@ func (m *Pool) Status() Status {
 // Enter wraps namespace entry; the caller owns final process credentials.
 type Attachment interface {
 	Enter(*exec.Cmd) error
+	// ResolverPath is the allocation-owned resolver file for a prepared root view.
+	ResolverPath() string
 	Gateway() string
 	Close(context.Context) error
 }
@@ -208,6 +211,15 @@ func (a *attachment) Gateway() string {
 		return ""
 	}
 	return a.endpoint.Gateway()
+}
+
+func (a *attachment) ResolverPath() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.active || !a.current() {
+		return ""
+	}
+	return a.endpoint.ResolverPath()
 }
 
 // Address is the namespace-side IP reachable from the carrier; it is not the

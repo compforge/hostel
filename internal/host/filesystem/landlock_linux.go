@@ -11,7 +11,7 @@ import (
 // RestrictPaths restricts the calling process using the available Landlock ABI.
 // Nonexistent paths are ignored. Callers must probe their complete allowance
 // set to establish enforcement before relying on this best-effort mechanism.
-func RestrictPaths(readOnly, readWrite []string) error {
+func RestrictPaths(readOnly, readWrite, executableFiles []string) error {
 	existing := func(paths []string) []string {
 		var out []string
 		for _, p := range paths {
@@ -21,5 +21,5 @@ func RestrictPaths(readOnly, readWrite []string) error {
 		}
 		return out
 	}
-	return ll.V9.BestEffort().RestrictPaths(ll.RODirs(existing(readOnly)...), ll.RWDirs(existing(readWrite)...))
+	return ll.V9.BestEffort().RestrictPaths(ll.RODirs(existing(readOnly)...), ll.RWDirs(existing(readWrite)...), ll.ROFiles(executableFiles...))
 }

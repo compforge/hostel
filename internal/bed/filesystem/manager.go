@@ -3,6 +3,7 @@ package filesystem
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"github.com/qiankunli/hostel/internal/feature"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 )
 
 type Manager struct {
@@ -58,28 +60,40 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 			log.Printf("filesystem: bed=%s path=%s mapping available through API; process mapping unavailable read_only=%t", b.ID.String(), mapping.BedPath, mapping.ReadOnly)
 		}
 	}
-	if p, ok := m.isolator.(isolation.ContextPreparer); ok {
-		if err := p.PrepareContext(ctx, fs); err != nil {
-			return err
-		}
-	} else if p, ok := m.isolator.(isolation.Preparer); ok {
-		if err := p.Prepare(fs); err != nil {
-			return err
+	m.status.Set(b, bed.FilesystemStatus{Rootfs: fs.Rootfs(), Workdir: fs.Workdir()})
+	return nil
+}
+
+// PrepareView runs after cooperating components have prepared their files.
+// Bed Manager owns this ordering; the resulting view stays fixed until Release.
+func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Mapping) error {
+	fs := m.Files(b)
+	if b.Status().Filesystem.Prepared {
+		return nil
+	}
+	// Component-owned files must not silently mask an explicit caller mapping.
+	for _, file := range files {
+		for _, mapping := range fs.PathMappings() {
+			if bed.PathsOverlap(file.Target, mapping.BedPath) {
+				return fmt.Errorf("%w: mapping %s overlaps system file %s", bed.ErrInvalidPaths, mapping.BedPath, file.Target)
+			}
 		}
 	}
-	m.status.Set(b, bed.FilesystemStatus{Rootfs: fs.Rootfs(), Workdir: fs.Workdir(), Prepared: true})
+	fs.SetSystemFiles(files)
+	if err := m.isolator.Prepare(ctx, fs); err != nil {
+		return err
+	}
+	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Prepared = true })
 	return nil
 }
 func (m *Manager) Files(b *bed.Bed) *bedfs.FS { m.mu.Lock(); defer m.mu.Unlock(); return m.files[b] }
-func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
+func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 	fs := m.Files(b)
 	if fs == nil {
 		return nil
 	}
-	if owner, ok := m.isolator.(isolation.Releaser); ok {
-		if err := owner.Release(fs); err != nil {
-			return err
-		}
+	if err := m.isolator.Release(ctx, fs); err != nil {
+		return err
 	}
 	if err := fs.Close(); err != nil {
 		return err
@@ -109,7 +123,7 @@ func (m *Manager) Status() Status {
 		ProcessView: isolation.ProcessViewReport{Mode: "carrier", Available: true},
 		Probes:      map[string]hostfacts.ProbeReport{},
 	}
-	if m.isolator.WorkdirMounted() {
+	if m.isolator.MountsRoot() {
 		view.ProcessView.Mode = "mount"
 	}
 	if report, ok := m.isolator.(isolation.Report); ok {

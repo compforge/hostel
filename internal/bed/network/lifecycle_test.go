@@ -22,6 +22,7 @@ func (p *orderedPolicies) Status() Status                                      {
 func (p *orderedPolicies) Acquire(context.Context, string) (Attachment, error) { return p, nil }
 func (*orderedPolicies) Enter(*exec.Cmd) error                                 { return nil }
 func (*orderedPolicies) Gateway() string                                       { return "" }
+func (*orderedPolicies) ResolverPath() string                                  { return "" }
 func (*orderedPolicies) Close(context.Context) error                           { return nil }
 func (p *orderedPolicies) NetworkPolicy(_ context.Context, _ string, m PolicyMutation) (PolicyStatus, error) {
 	if p.calls.Add(1) == 1 {

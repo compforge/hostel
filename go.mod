@@ -11,7 +11,7 @@ require (
 	github.com/compforge/quality-harness/sdks/go v0.0.0-20260915033150-2969dd5a1c30
 	github.com/folbricht/desync v1.0.3
 	github.com/gin-gonic/gin v1.10.1
-	github.com/landlock-lsm/go-landlock v0.9.0
+	github.com/landlock-lsm/go-landlock v0.10.1
 	github.com/mark3labs/mcp-go v0.44.0
 	github.com/shirou/gopsutil v3.21.11+incompatible
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.61.0

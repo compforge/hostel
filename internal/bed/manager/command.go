@@ -30,6 +30,10 @@ import (
 //
 // +rule=`Treat command as opaque bash source; apply cwd through the process view and never rewrite caller text.`
 func (m *Manager) buildCommand(b *managedBed, command, cwd string, envs map[string]string) (*exec.Cmd, error) {
+	// The interpreter is daemon configuration, unlike Service workload argv.
+	if _, err := exec.LookPath(m.shellPath); err != nil {
+		return nil, err
+	}
 	m.touchBed(b)
 	cmd := exec.Command(m.shellPath, shellCommandArgs(m.shellPath, command)...)
 	env, err := m.buildExecutionEnv(b, envs)

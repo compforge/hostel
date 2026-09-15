@@ -112,7 +112,7 @@ func TestUIDPrepareRefreshesBedFSOwner(t *testing.T) {
 	}
 	defer fs.Close()
 	iso := &uidIso{}
-	if err := iso.Prepare(fs); err != nil {
+	if err := iso.Prepare(t.Context(), fs); err != nil {
 		t.Fatal(err)
 	}
 	user, err := privilege.NewBedUser(privilege.UIDMin+42, privilege.UIDMin+42)

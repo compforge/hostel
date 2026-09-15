@@ -354,13 +354,13 @@ func (s *Server) isolatedCommit(c *gin.Context) {
 func (s *Server) isolatedCapabilities(c *gin.Context) {
 	iso := s.mgr.Isolator()
 	c.JSON(http.StatusOK, gin.H{
-		"available":         iso.Available(),
-		"isolator":          iso.Name(),
-		"message":           "Hostel bed adapter: balanced profile with workdir /workspace",
-		"network":           s.mgr.NetworkReport(),
-		"setpriv_available": s.mgr.PrivilegeReport().Setpriv.Available,
-		"userns_available":  false,
-		"commit_supported":  false,
-		"diff_supported":    false,
+		"available":                   iso.Available(),
+		"isolator":                    iso.Name(),
+		"message":                     "Hostel bed adapter: balanced profile with workdir /workspace",
+		"network":                     s.mgr.NetworkReport(),
+		"credential_helper_available": s.mgr.PrivilegeReport().Helper.Available,
+		"userns_available":            false,
+		"commit_supported":            false,
+		"diff_supported":              false,
 	})
 }

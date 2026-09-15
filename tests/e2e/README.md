@@ -77,6 +77,12 @@ make e2e E2E_ARGS='-run TestFilesystemPermissions -timeout 3m'
 
 ## Run native Bed root and Service cooperation
 
+`TestServiceExecutableUsesBedView` covers mount/PRoot × local/supervisor.
+It starts Services by absolute path, relative path and a bare name found only
+through the Service's PATH, then verifies their files through a Bed command.
+Tools are required for each selected mechanism; unavailable tools are reported
+as skips, not isolation proof.
+
 To require rootful preparation, use a Linux host with the namespace and identity
 management capabilities, plus bwrap. `make e2e` builds the static Hostel helper:
 
@@ -174,6 +180,7 @@ than becoming a skip.
 | `HOSTEL_E2E_PATHSHIM` | pathshim binary used to verify the dorm/room `/workspace` process view. |
 | `HOSTEL_E2E_REQUIRE_S3=1` | Require the successful mixed-Store round trip against the configured S3 endpoint; the fixture owns a fresh bucket. |
 | `HOSTEL_E2E_REQUIRE_NETWORK=1` | Require real netns and IP/CIDR policy traffic checks in a disposable Linux binary runner. |
+| `HOSTEL_E2E_REQUIRE_ROOTFUL=1` | Require prepared rootful mount/identity checks; combine with NETWORK for the resolver regression. |
 | `HOSTEL_E2E_PROOT` | PRoot binary used to verify the ptrace-based `/workspace` fallback. |
 
 The binary and image variables are mutually exclusive. Image mode is intended
@@ -212,6 +219,12 @@ These traffic assertions cover new IPv4 TCP connections. DNS/domain rules,
 TTL expiry, existing established flows and injected nft transaction failures are
 not covered by this E2E case; component tests cover parts of those behaviors.
 
+`TestRootfulNetworkResolver` requires both rootful and network profiles. It checks
+that command and Service see the same Bed gateway resolver and can resolve
+`example.com`. Unlike the local policy traffic case, this requires working
+upstream DNS and `getent` in the runner. Missing prerequisites fail the requested
+profile; the test never installs tools or changes host forwarding settings.
+
 ## Internal component configuration
 
 `make e2e` builds `bin/hostel-e2e` with the `e2e` build tag. The fixture can pass
@@ -236,7 +249,7 @@ Configuration restrictions exercise selection; they do not prove kernel permissi
 rejection or failure halfway through allocation. Keep real restricted-container
 cases alongside these deterministic tests. See [configuration design](../../docs/configuration.md).
 
-Status schema 5 groups boot-time host facts under `host.fact` and managed port
+Status schema 7 groups boot-time host facts under `host.fact` and managed port
 allocations under `host.status.ports`. It separates `healthz.isolation` (requested/effective room profile) from
 `/v1/status.components.filesystem` (shared/confined/private). Filesystem assertions
 must use the latter: a degraded room profile may retain a private file view.

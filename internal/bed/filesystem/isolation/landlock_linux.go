@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
+	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
@@ -41,6 +42,7 @@ const ConfineArg = "__confine"
 // other beds' data (EACCES), but siblings stay visible and host paths (/tmp,
 // /usr) are shared — the "private room, shared toilet" tier.
 type landlock struct {
+	Stateless
 	self string // hostel binary path, re-execed as the confiner
 }
 
@@ -82,8 +84,8 @@ func newLandlock(facts hostfacts.Snapshot, bedsRoot string) (Isolator, hostfacts
 // and a workspace root placed inside a shared-RW allowance (e.g. under /tmp)
 // leaves sibling beds reachable — in both cases room's guarantee would be a
 // lie, so we honestly report it unavailable.
-// The check execs /bin/sh, not hostel itself: production only ever execs
-// system binaries post-confine, and hostel's own dir isn't in the allowlist.
+// The full runtime additionally enters the trusted workload helper. Only its
+// executable inode is allowed, never the surrounding carrier directory.
 func landlockSmoke(self, bedsRoot string) hostfacts.ProbeReport {
 	base, err := os.MkdirTemp(bedsRoot, ".probe-*")
 	if err != nil {
@@ -124,7 +126,7 @@ func (l *landlock) Name() string                        { return "landlock" }
 func (l *landlock) Level() Level                        { return Confined }
 func (l *landlock) Available() bool                     { return true } // only constructed when ABI≥1
 func (l *landlock) View(fs *bedfs.FS) bedfs.ProcessView { return bedfs.HostView(fs) }
-func (l *landlock) WorkdirMounted() bool                { return false }
+func (l *landlock) MountsRoot() bool                    { return false }
 
 func (l *landlock) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	// Prefix `hostel __confine <bed_home> --` before the user command,
@@ -169,7 +171,7 @@ func landlockRWDirs(dataDir string) []string {
 // paths (ro). BestEffort degrades on older ABIs; missing paths are dropped so a
 // distro without e.g. /lib32 doesn't fail the whole restriction.
 func applyLandlock(dataDir string) error {
-	return hostfs.RestrictPaths(landlockRODirs, landlockRWDirs(dataDir))
+	return hostfs.RestrictPaths(landlockRODirs, landlockRWDirs(dataDir), []string{hostprocess.Executable()})
 }
 
 func (l *landlock) AllowsMappings() bool { return false }

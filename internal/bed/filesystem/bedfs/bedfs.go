@@ -24,6 +24,7 @@ package bedfs
 import (
 	"errors"
 	"fmt"
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 	"os"
 	"path"
 	"path/filepath"
@@ -74,10 +75,11 @@ type Permission struct {
 // +spec=`File and directory APIs preserve client path spelling while each operation stays within the Bed data root or a declared mapping source.`
 // +case:id=filesystem_api_contract,desc=`Create, inspect, replace, chmod, move, search, slice-read, and delete a workspace tree`,expect=`all operations round-trip through the public client path without escaping the BedFS`
 type FS struct {
-	mappings []mappedRoot
-	readOnly bool
-	paths    paths
-	root     *os.Root
+	systemFiles []hostfs.Mapping
+	mappings    []mappedRoot
+	readOnly    bool
+	paths       paths
+	root        *os.Root
 	// uid/gid of the workspace dir when it differs from the daemon's euid
 	// (uid-isolated beds), else -1. Mechanism-independent invariant: whatever
 	// lands in a bed's workspace belongs to the bed — BedFS runs as the

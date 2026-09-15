@@ -165,17 +165,17 @@ func bwrapSmoke(path, bedsRoot string, masks []string) hostfacts.ProbeReport {
 	return report
 }
 
-func (b *bwrap) Name() string         { return "bwrap" }
-func (b *bwrap) Level() Level         { return Private }
-func (b *bwrap) Available() bool      { return true } // only constructed when probe passed
-func (b *bwrap) WorkdirMounted() bool { return true }
+func (b *bwrap) Name() string     { return "bwrap" }
+func (b *bwrap) Level() Level     { return Private }
+func (b *bwrap) Available() bool  { return true } // only constructed when probe passed
+func (b *bwrap) MountsRoot() bool { return true }
 func (b *bwrap) View(fs *bedfs.FS) bedfs.ProcessView {
 	return bedfs.RootedView(fs, bedfs.MappingSupport{ReadWrite: true, ReadOnly: true})
 }
 
 func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if b.rootful != nil {
-		return fmt.Errorf("rootful filesystem requires prepared execution with final Bed credentials")
+		return b.enterPrepared(cmd, fs)
 	}
 	// No silent degradation past this point: this isolator passed the boot
 	// probe, so any failure to build the sandbox is a hard error.
@@ -184,7 +184,9 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 		return err
 	}
 	executable := rootExecutable(fs, cmd.Path, b.View(fs).MappingSupport())
-	argv := buildBwrapArgs(b.root, fs.Rootfs(), fs.Workdir(), processCwd, b.maskPaths, fs.PathMappings(), existingRuntimePaths()...)
+	argv := b.args(fs.Rootfs(), fs.Workdir(), processCwd, fs.PathMappings())
+	argv = append(argv[:len(argv)-1], systemFileArgs(fs)...)
+	argv = append(argv, "--")
 	userArgs := append([]string{executable}, cmd.Args[1:]...)
 	cmd.Args = make([]string, 0, len(argv)+len(userArgs)+1)
 	cmd.Args = append(cmd.Args, b.path)

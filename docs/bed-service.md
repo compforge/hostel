@@ -136,6 +136,10 @@ Service 与 command、session 共同复用 `manager.Environment` 和 Executor �
 文件视图、BedUser、网络 allocation、权限准备与最终降权顺序由 Bed Manager 统一组合，
 服务执行计入对应 Bed 的资源归属。`ServiceSpec` 不能通过另一条 Carrier 进程启动路径绕过这些规则。
 
+Service 的可执行路径、相对路径和 PATH 查找都在降权后的 Bed 视图内完成；`directory`
+决定 cwd，Service 自己的 `env.PATH` 决定裸命令名的查找范围，不使用 daemon 的 `LookPath`
+提前判断程序是否存在。环境在特权准备及进入阶段不生效，最终交给 Service 进程。
+
 服务访问的 `/workspace`、工作目录和其他路径使用相同 BedFS 语义。Carrier 镜像中的程序
 与动态库、解释器等依赖需通过受控只读路径纳入所选执行视图；不能假定 Carrier 上存在
 某个路径就能在所有房型中执行。服务 runtime 目录是否持久化仍由 Store 规则决定，

@@ -18,7 +18,7 @@ package privilege
 
 import (
 	"fmt"
-	"golang.org/x/sys/unix"
+	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -27,56 +27,72 @@ import (
 	"syscall"
 )
 
-const credentialHelper = "setpriv"
+const bedInitCredentialArg = "__bedinit_credentials"
 
-// ProcessCredentialHelper resolves the helper independently from workspace
-// helper discovery. A deployment may narrow PATH to disable pathshim/PRoot;
-// distro setpriv remains a core runtime helper at its standard location.
+// ProcessCredentialHelper uses the running image, independent of workload PATH
+// and external credential utilities. Probes and real execution use this entry.
 func ProcessCredentialHelper() (string, error) {
-	if path, err := exec.LookPath(credentialHelper); err == nil {
-		return path, nil
-	}
-	for _, candidate := range []string{"/usr/bin/setpriv", "/bin/setpriv"} {
-		path, err := exec.LookPath(candidate)
-		if err == nil {
-			return filepath.Clean(path), nil
-		}
-	}
-	return "", fmt.Errorf("exec: %q: executable file not found", credentialHelper)
+	return hostprocess.Executable(), nil
 }
 
-// WrapCredentials applies process credentials before user code. setpriv performs
-// identity switching and capability removal in one operation while the child
-// still has the privileges required for both.
+// WrapCredentials is the complete credential-only launch path, also used by
+// identity probes. Filesystem composition uses WrapBedInit around a sealed workload.
 func WrapCredentials(cmd *exec.Cmd, uid, gid int) error {
-	path, err := ProcessCredentialHelper()
-	if err != nil {
-		return fmt.Errorf("privilege: credential helper: %w", err)
+	cwd := cmd.Dir
+	if cwd == "" {
+		cwd = "."
 	}
-	args := []string{path}
-	// Dropping the bounding set requires CAP_SETPCAP, not merely UID 0. When
-	// available, remove that ceiling as defense in depth; otherwise
-	// clearing all active sets plus no_new_privs still prevents the child from
-	// acquiring capabilities through a later exec.
-	var caps [2]unix.CapUserData
-	if err := unix.Capget(&unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}, &caps[0]); err != nil {
-		return fmt.Errorf("privilege: read child capability prerequisites: %w", err)
-	}
-	if caps[0].Effective&(1<<unix.CAP_SETPCAP) != 0 {
-		args = append(args, "--bounding-set=-all")
-	}
-	args = append(args, "--inh-caps=-all", "--ambient-caps=-all", "--no-new-privs")
-	if uid != os.Geteuid() || gid != os.Getegid() {
-		args = append(args,
-			"--reuid="+strconv.Itoa(uid),
-			"--regid="+strconv.Itoa(gid),
-			"--clear-groups",
-		)
-	}
-	args = append(args, "--", cmd.Path)
-	cmd.Args = append(args, cmd.Args[1:]...)
-	cmd.Path = path
+	hostprocess.WrapBedInit(cmd, hostprocess.Executable(), cwd)
+	WrapBedInit(cmd, hostprocess.Executable(), uid, gid)
 	return nil
+}
+
+// WrapBedInit installs the credential stage of bedinit.
+// It keeps workload env sealed until the final bedinit stage.
+func WrapBedInit(cmd *exec.Cmd, helper string, uid, gid int) {
+	args := []string{helper, bedInitCredentialArg, strconv.Itoa(uid), strconv.Itoa(gid), "--", cmd.Path}
+	cmd.Args, cmd.Path = append(args, cmd.Args[1:]...), helper
+}
+
+func init() {
+	if len(os.Args) < 2 || os.Args[1] != bedInitCredentialArg {
+		return
+	}
+	err := runBedInit(os.Args[2:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "hostel bedinit (credentials):", err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func runBedInit(args []string) error {
+	if len(args) < 4 || args[2] != "--" {
+		return fmt.Errorf("invalid credential arguments")
+	}
+	uid, err := strconv.Atoi(args[0])
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(args[1])
+	if err != nil {
+		return err
+	}
+	// Pin the trusted image while it is still readable to the daemon. Embedded
+	// runtimes may live below a directory that the final UID cannot traverse.
+	executable := args[3]
+	if executable == hostprocess.Executable() || executable == hostprocess.BedInitPath {
+		f, err := os.Open(executable)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		executable = fmt.Sprintf("/proc/self/fd/%d", f.Fd())
+	}
+	if err := DropCredentials(uid, gid); err != nil {
+		return err
+	}
+	return syscall.Exec(executable, args[3:], os.Environ())
 }
 
 // ChownTree recursively chowns root to uid:gid. Lchown retargets symlinks,
