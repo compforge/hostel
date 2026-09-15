@@ -14,7 +14,8 @@ an upstream control plane owns instance placement, cross-instance routing and AP
 Bed Spec expresses what a bed needs; Hostel makes a best effort to start it
 with the host's available capabilities. An explicit requirement that cannot be
 fulfilled causes startup to fail. Optional isolation can remain unavailable,
-and Hostel reports what it actually provides.
+and Hostel reports what it actually provides. How far it can go beyond explicit
+requirements evolves with the implementation.
 
 ## What you can do
 
