@@ -23,5 +23,9 @@
   "apparmor-required": {
     "securityContext": {"runAsUser": 0, "seccompProfile": {"type": "RuntimeDefault"}, "appArmorProfile": {"type": "RuntimeDefault"}},
     "required": {"Seccomp": "2"}
+  },
+  "filesystem-privileged": {
+    "securityContext": {"runAsUser": 0, "privileged": true, "seccompProfile": {"type": "Unconfined"}},
+    "required": {"Seccomp": "0", "ptrace_probe": "passed"}
   }
 }

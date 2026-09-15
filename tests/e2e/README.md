@@ -4,7 +4,7 @@ This suite owns Hostel's executable runtime contract. It starts a real Hostel
 binary or container on the runner, talks only to the public HTTP API, and cleans
 every process, container, bed, and temporary workspace it creates. The same
 binary suite can run on a host or inside a Kubernetes Pod. Environment selection,
-observations and runner setup are described in [E2E environments](../../docs/e2e-environments.md).
+observations and runner setup are described in [E2E environments](e2e-environments.md).
 sandctl placement and cross-carrier orchestration remain outside this boundary.
 
 ## Run the core contract
@@ -62,6 +62,18 @@ v0.1.3 does not implement the `probe --bind ...` subcommand and is unsupported.
 
 These variables are test-harness inputs: the launcher prepends their parent
 directories to the target `PATH`. Hostel itself has no per-helper path setting.
+
+## Compare filesystem behavior under permissions
+
+`TestFilesystemPermissions` checks two Beds' root data, read-write/read-only
+PathMappings, file API fallback, command/session interoperability, and external
+source retention after purge. It runs with automatically selected filesystem
+features and a separate carrier-view control. Use the same test selector across
+the Kubernetes permission profiles in [E2E environments](e2e-environments.md#rootfs-与-pathmappings-权限矩阵).
+
+```sh
+make e2e E2E_ARGS='-run TestFilesystemPermissions -timeout 3m'
+```
 
 ## Run native Bed root and Service cooperation
 

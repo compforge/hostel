@@ -110,3 +110,45 @@ command/session 的 capability 与 no_new_privs，以及 File API 的读写归�
 AppArmor 的实际约束测试必须使用编译并启用 AppArmor 的节点。显式请求 AppArmor
 而被节点拒绝是可保留的环境错误证据，不等于已验证 AppArmor 约束下的 Hostel。
 同理，cgroup v1、v2 和 cgroup 委派是不同前提，不能靠切换 Pod 的 capability 相互替代。
+
+## Rootfs 与 PathMappings 权限矩阵
+
+权限实验以文件任务的实际效果为主：Bed 的根数据是否独立，Carrier 共享数据在 API 和
+进程中是否可读写，只读声明在哪一层生效。UID/GID、capabilities、ptrace 和所选 helper
+是解释结果的前提，不能替代文件操作断言。
+
+`TestFilesystemPermissions` 在同一 Environment 内复用 dorm / room / suite 请求与
+local / supervisor 执行后端。文件机制保持 Auto，以观察真实权限下的选择；另设全关闭
+机制的 carrier 对照。非 Linux 只运行 local。Network 和 cgroup 在该用例中关闭，
+避免其他领域决定文件测试是否能启动。
+
+每个组合创建两 Bed 与测试独占的读写、只读源目录，验证：
+
+- Rootfs：相同绝对 Bed 路径的 API 数据互不覆盖；结构化 cwd 始终访问当前 Bed；
+  声明 `rootfs=true` 时，原生命令的绝对路径读写必须与 API 一致。
+  弱视图下记录原生路径访问 Carrier 或被访问控制拒绝，不能算作根视图兑现。
+- PathMappings：API 读取源、写回读写源、拒绝只读写入；两个 Bed 通过显式映射共享数据。
+  声明进程映射可用时验证原生路径，读写映射同时验证持久 session。
+- 降级：不支持的进程映射不能冒充已接入源；有根视图的未兑现映射验证 API 的
+  Bed 本地候选优先、缺失时读取 Carrier 源。API 的只读限制独立保留。
+- 回收：purge 两 Bed 后，调用方的共享源目录与数据仍然存在，再由测试 fixture 清理。
+
+```sh
+make e2e E2E_ARGS='-run TestFilesystemPermissions -timeout 3m'
+python3 tests/e2e/environments/kubernetes/run.py \
+  --kubeconfig /etc/rancher/hostel-k3s/kubeconfig.yaml \
+  --host devbox --image hostel-e2e:<revision> \
+  --profile ptrace-denied --test-filter '^TestFilesystemPermissions$' \
+  --output runs/k8s-filesystem-ptrace-denied
+```
+
+比较时使用同一源码与 userland，分别运行 runtime-default、ptrace-allowed、
+ptrace-denied、drop-all，以及实验专用 filesystem-privileged。
+最后一组在测试独占 Pod 中启用 privileged，用来观察可用的 mount 根视图，
+不是部署建议；仍以实际 `process_view` 和文件断言为准。
+AppArmor 需要支持它的节点，不把准入或节点拒绝记录成文件行为验证。
+
+逐组合保留文件 Level、mechanism、mode、rootfs、读写/只读映射支持与降级原因，
+并与提交和 admission 后的 securityContext、suite 日志一起留证。
+已有 `TestBedRootServiceCommandFiles` 单独验证 bwrap/PRoot 下 Service 与命令、API 的
+根数据互通；本矩阵不把它未执行的 Service 分支算入覆盖。
