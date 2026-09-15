@@ -1,0 +1,15 @@
+# kubeconfig belongs to Host; the suite itself runs inside the test Pod.
+service:
+  name: hostel
+  environment:
+    name: devbox-k8s
+    kind: kubernetes
+    host:
+      name: devbox
+      transport: ssh
+      address: ${HOSTEL_E2E_SSH_HOST}
+    kubeconfig: ${HOSTEL_E2E_KUBECONFIG}
+profile: ${HOSTEL_E2E_PROFILE:-runtime-default}
+custom:
+  require.os: linux
+  require.Seccomp: ${HOSTEL_E2E_EXPECT_SECCOMP:-2}
