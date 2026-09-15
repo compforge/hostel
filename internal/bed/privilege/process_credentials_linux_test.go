@@ -10,9 +10,36 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 )
+
+func TestPreferredIdentityRejectsUnsafeInheritedCredentials(t *testing.T) {
+	const child = "HOSTEL_TEST_UNSAFE_IDENTITY"
+	if os.Getenv(child) == "1" {
+		_, err := Resolve(t.Context(), hostfacts.Collect(), Config{UID: 1000, GID: 1000, Configured: true}, bed.Dorm, t.TempDir())
+		if err == nil || !strings.Contains(err.Error(), "shared identity probe") {
+			t.Fatalf("inherited root identity retained capabilities without rejection: %v", err)
+		}
+		return
+	}
+	if os.Geteuid() != 0 || len(MissingBedIdentityCapabilities(hostfacts.Collect().EffectiveCaps)) != 0 {
+		t.Skip("requires root with identity-management capabilities to construct the child condition")
+	}
+	helper, err := hostprivilege.ProcessCredentialHelper()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Remove both the ability to switch UID and the ability to clear the
+	// remaining bounding capabilities, only in this disposable test subprocess.
+	cmd := exec.Command(helper, "--bounding-set=-setuid,-setpcap", "--no-new-privs", "--", os.Args[0], "-test.run=^TestPreferredIdentityRejectsUnsafeInheritedCredentials$", "-test.v")
+	cmd.Env = append(os.Environ(), child+"=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("unsafe inherited identity regression: %v: %s", err, out)
+	}
+}
 
 func TestBedUserWrapDropsRootIdentityAndCapabilities(t *testing.T) {
 	if os.Geteuid() != 0 {

@@ -130,8 +130,8 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs.IntVar(&c.Bed.Resource.Admission.CPUThresholdPercent, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.Bed.Resource.Admission.MemoryThresholdPercent, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
 	fs.StringVar(&c.Bed.Executor.Backend, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
-	fs.IntVar(&c.Bed.Privilege.UID, "bed-uid", osx.EnvInt("HOSTEL_BED_UID", bedUID), "fixed non-root uid for Bed processes")
-	fs.IntVar(&c.Bed.Privilege.GID, "bed-gid", osx.EnvInt("HOSTEL_BED_GID", bedGID), "fixed non-root gid for Bed processes")
+	fs.IntVar(&c.Bed.Privilege.UID, "bed-uid", osx.EnvInt("HOSTEL_BED_UID", bedUID), "preferred non-root uid for Bed processes")
+	fs.IntVar(&c.Bed.Privilege.GID, "bed-gid", osx.EnvInt("HOSTEL_BED_GID", bedGID), "preferred non-root gid for Bed processes")
 	fs.StringVar(&c.Bed.Store.Sync, "sync", osx.EnvStr("HOSTEL_SYNC", "auto"), "Bed data synchronization policy: auto (per-bed detection) | noop | cas | pack | tar | restic")
 	fs.StringVar(&c.Bed.Store.ResticBinary, "restic-binary", osx.EnvStr("HOSTEL_RESTIC_BINARY", "restic"), "restic binary (requires 0.19.1)")
 	c.Bed.Store.ResticPassword = osx.EnvStr("HOSTEL_RESTIC_PASSWORD", "")
@@ -166,15 +166,15 @@ func Load(args []string, explicit Options) (*Config, error) {
 		}
 	}
 	explicit.apply(c)
-	c.Bed.Privilege.Explicit = explicit.Bed.Privilege.UID != nil || explicit.Bed.Privilege.GID != nil
+	c.Bed.Privilege.Configured = explicit.Bed.Privilege.UID != nil || explicit.Bed.Privilege.GID != nil
 	for _, key := range []string{"HOSTEL_BED_UID", "HOSTEL_BED_GID"} {
 		if _, exists := os.LookupEnv(key); exists {
-			c.Bed.Privilege.Explicit = true
+			c.Bed.Privilege.Configured = true
 		}
 	}
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "bed-uid" || f.Name == "bed-gid" {
-			c.Bed.Privilege.Explicit = true
+			c.Bed.Privilege.Configured = true
 		}
 	})
 	room, roomErr := bed.ParseRoomType(c.Bed.RoomType)
