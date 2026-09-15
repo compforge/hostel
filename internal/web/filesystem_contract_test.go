@@ -42,6 +42,9 @@ func TestProcessViewHTTPContract(t *testing.T) {
 		if rec.Code != http.StatusOK || !ok || view["mode"] == "" {
 			t.Fatalf("%s = %d %v", endpoint, rec.Code, body)
 		}
+		if _, ok := view["rootfs"].(bool); !ok {
+			t.Fatalf("%s omits native root capability: %v", endpoint, view)
+		}
 		for _, removed := range []string{"workspace_mount", "workspace_view"} {
 			if _, old := body[removed]; old {
 				t.Fatalf("%s still exposes %s", endpoint, removed)

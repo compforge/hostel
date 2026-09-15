@@ -139,12 +139,15 @@ func TestProotWrapsWorkspaceAndBedMappings(t *testing.T) {
 	want := []string{
 		"/usr/bin/room-helper", "--",
 		"/usr/bin/proot", "-v", "-1",
-		"-b", fs.Workdir() + ":/workspace!",
-		"-b", source + ":/mnt/memory!",
-		"-w", "/workspace/sub",
+		"-r", fs.Rootfs(),
 	}
 	if len(cmd.Args) < len(want) || !slices.Equal(cmd.Args[:len(want)], want) {
 		t.Fatalf("wrapper argv = %v, want prefix %v", cmd.Args, want)
+	}
+	for _, sequence := range [][]string{{"-b", fs.Workdir() + ":/workspace!"}, {"-b", source + ":/mnt/memory!"}, {"-w", "/workspace/sub"}} {
+		if indexOfSeq(cmd.Args, sequence...) < 0 {
+			t.Fatalf("missing %v in %v", sequence, cmd.Args)
+		}
 	}
 }
 
@@ -166,7 +169,17 @@ func TestWorkspaceViewFallsBackToCarrierWhenBothHelpersFail(t *testing.T) {
 
 func fakeProot(t *testing.T) string {
 	t.Helper()
-	return fakeNamedHelper(t, prootCommand, "#!/bin/sh\nprintf 'proot-view\\n/workspace\\n'\n")
+	return fakeNamedHelper(t, prootCommand, `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -r ]; then
+    /bin/mkdir -p "$2/mnt/probe"
+    printf root-view > "$2/mnt/probe/file"
+    break
+  fi
+  shift
+done
+printf 'proot-view\n/workspace\n'
+`)
 }
 
 func fakeFailingProot(t *testing.T) string {

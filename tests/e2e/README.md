@@ -62,6 +62,26 @@ v0.1.3 does not implement the `probe --bind ...` subcommand and is unsupported.
 These variables are test-harness inputs: the launcher prepends their parent
 directories to the target `PATH`. Hostel itself has no per-helper path setting.
 
+## Run native Bed root and Service cooperation
+
+`TestBedRootServiceCommandFiles` uses two live Bed Services with identical
+absolute paths under `/mnt`, `/tmp`, and a new root-level directory. The
+`file-api` and `executor` subcases each run three rounds with distinct per-Bed
+inputs. They verify Executor/file API writes → Service reads and writes →
+Executor/file API reads. Inputs and outputs are rechecked after both Beds have
+written, detecting cross-Bed overwrites and reads of another Bed's input.
+It covers local/supervisor executors with bwrap and PRoot,
+requires the selected root view without degradation, and purges both Beds.
+On non-Linux it skips; an absent helper skips unless explicitly supplied. Run on
+a disposable Linux runner with the required helpers:
+
+```sh
+make e2e E2E_ARGS='-run ^TestBedRootServiceCommandFiles -timeout 3m'
+```
+
+This is a native filesystem contract, not a proof of pathshim root redirection,
+complete container isolation, or a business-specific service integration.
+
 ## Run successful mixed-Store persistence
 
 `TestMixedBedStoresRoundTrip` requires binary mode and a disposable S3-compatible

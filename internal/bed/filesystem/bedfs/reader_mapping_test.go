@@ -126,7 +126,7 @@ func TestProcessViewMapsOnlySupportedDeclarations(t *testing.T) {
 			want string
 		}{
 			{"carrier", HostView(fs), host},
-			{"mount", MountedView(fs, "/tmp/.hostel/bed", DefaultWorkdir), "/mnt/project/input.txt"},
+			{"mount", RootedView(fs, MappingSupport{ReadWrite: true, ReadOnly: true}), "/mnt/project/input.txt"},
 			{"helper", RedirectedView(fs, MappingSupport{ReadWrite: true}), host},
 		} {
 			if tc.name == "helper" && !readOnly {

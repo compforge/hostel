@@ -16,10 +16,15 @@ Bed 在文件系统领域以 Rootfs、Workdir 和 PathMappings 提供类似 Cont
 各自的数据按 Bed 归属。`bed_home` 是每个 Bed 在 Carrier 上的数据落点；共享系统程序与
 工具链不改变 Bed 的文件归属，也不意味着各 Bed 共享同一个根目录身份或私有可写数据。
 
-当前 BedFS 已统一数据归属与结构化路径解析，进程侧仍按机制提供局部路径视图，尚未完整
-兑现每 Bed rootfs。即使 private 档，也是在 Carrier 根视图上遮蔽和挂载指定路径，不能
-据此宣称进程的 `/` 已整体成为 Bed 自己的根。数据路径解析规则见「三个路径空间」，
-进程侧的具体保证见「Executor 视图」。
+bwrap 与 PRoot 将 Bed 数据根作为进程的默认 `/`，再接入 Carrier 的系统程序和工具链。
+因此 `/mnt/jobs`、`/tmp` 或进程新建的根目录子树都属于当前 Bed，普通命令、session 与
+常驻 Service 使用同一数据视图，不需要为这些 Bed 自有目录声明外部映射。
+`/usr`、`/bin`、`/lib*`、`/sbin`、`/etc`、`/opt`、`/sys` 以及内核设备接口属于运行依赖覆盖，
+不是 Bed 私有数据；文件 API 仍只拥有 Bed 数据及显式外部映射，不自动开放 Carrier 系统文件。
+
+这不是可任意修改系统目录的完整容器镜像或 COW rootfs。pathshim 仍只兑现工作目录和
+受支持的显式映射，Carrier 视图不重定向原生绝对路径。调用方应读取
+`process_view.rootfs`，不能仅凭文件 API 可用或 `available=true` 推断原生根视图成立。
 
 ### Workdir
 
@@ -125,11 +130,10 @@ PRoot/pathshim 尽量让命令中的工作区路径也指向 BedFS，但它们�
 
 ### 机制的取舍
 
-**private 遮蔽后再挂回本 Bed**。只把 Carrier 根挂成只读仍允许读取邻居数据，因此先遮蔽
-工作区父目录和存在的宿主敏感路径（如 `/root`、`/home`、`/run/secrets`、
-`/var/run/secrets`），再挂回当前 BedFS；较低档位不能假定具有同样的遮蔽。工具链继续共享，`/usr/local`
-保留 Carrier 级可写软件环境。当前 bwrap 每次启动的 `/tmp` 是独立 tmpfs，不能当作
-跨命令持久的 Bed 数据；需要延续的数据应放在 BedFS 中。
+**private 从 Bed 根建立视图**。不继承 Carrier 的整个 `/`，避免数据路径误读邻居或落到
+只读 Carrier 目录。现存的系统运行依赖只读接入，`/usr/local` 保留 Carrier 级可写软件环境；
+若运行依赖覆盖重新暴露了 Bed 父目录，必须在挂回工作目录与显式映射前遮蔽它。
+`/tmp` 来自同一 BedFS，跨临时命令、session 和 Service 共享，但不因此自动进入 Store 快照。
 
 bwrap 使用 user namespace 完成挂载准备，并绑定已有 `/proc`，以适应容器内受限的 procfs。
 当前没有私有 PID namespace，因此私有文件视图不等于完整的进程不可见性。机制及参数顺序
@@ -150,7 +154,7 @@ UID backend 以独立进程身份兑现 confined 的数据访问边界，目录�
 |---|---|---|
 | Client | `/`、`/workspace/a`、`/tmp/job`、相对路径 `a` | BedFS；`/` 是 bed_home，相对路径以 Workdir 为基准 |
 | Carrier | `<beds-root>/<bed-id>/data/...` | BedFS；daemon 的文件操作和 Store 使用 |
-| Executor | shared/confined 下由 helper 或 Carrier 提供视图；private 下为内部 bed_home 挂载或 `/workspace` | BedFS `ProcessView` 定义语义，isolation 实现投影 |
+| Executor | bwrap/PRoot 保留 Bed 数据绝对路径；pathshim 局部映射；Carrier 使用宿主路径 | BedFS `ProcessView` 定义语义，isolation 实现投影 |
 
 映射规则只有一套：
 
@@ -164,8 +168,8 @@ UID backend 以独立进程身份兑现 confined 的数据访问边界，目录�
 上表描述当前 BedFS 的数据路径解析规则：路径先在当前 Bed 的客户端路径空间中规范化，
 命中 PathMapping 时使用声明的 Carrier 目录，否则解析到该 Bed 自己的 `bed_home` 下。
 返回路径使用对应的逆转换。`BedPath=/ → HostPath=<bed_home>` 只是这条默认解析规则的
-简写：Bed A 和 Bed B 分别使用自己的 bed_home，不会修改 Carrier 全局的 `/`，也不表示
-进程的 `/` 已整体替换为 bed_home。rootfs 的目标语义与这条数据落点规则应分别理解。
+简写：Bed A 和 Bed B 分别使用自己的 bed_home，不会修改 Carrier 全局的 `/`。
+bwrap/PRoot 在各自进程视图里兑现这条默认根规则，系统运行依赖覆盖仍按前述边界解释。
 
 Bed 创建请求示例：
 
@@ -192,7 +196,11 @@ Bed 创建请求示例：
 
 Executor 与 daemon 共享 mount namespace。Hostel 启动时从 `PATH` 发现 `proot`、`pathshim`，探测内置工作区路径视图，并按 PRoot → pathshim → Carrier 选择后端。额外 PathMappings 在 Bed 初始化时接入。Carrier 视图不能重定向进程路径，Landlock 当前也未允许外部数据进入其规则；这些组合保留 API 映射，报告进程映射不可用，仍允许 Bed 就绪。实际目录不存在或无法打开等准备错误仍会失败。
 
-PRoot 的路径 syscall 覆盖更完整，但依赖 ptrace；pathshim 不依赖 ptrace，作为次选。两者都可用时选择 PRoot。Landlock 或 uid 始终独立负责访问边界，进程路径 helper 不参与 isolation level 判定。
+PRoot 使用原生 rootfs 参数将未被运行依赖或显式映射覆盖的路径指向 Bed 根，并在启动
+探测中验证进程写入能由 BedFS 读回。它依赖 ptrace，但不保证系统覆盖只读或防止恶意逃逸。
+pathshim 不依赖 ptrace，作为次选，只提供局部路径视图。两者都可用时选择 PRoot。
+Landlock 或 uid 始终独立负责访问边界，进程路径 helper 不参与 isolation level 判定。
+PRoot 未兑现的外部映射，其进程路径仍落在 Bed 本地候选目录；API 的候选读取与只读检查独立保留。
 
 仅展开文件视图与文件边界时，进程链保持以下职责顺序；网络及最终降权的组合约束见 [isolation.md](isolation.md)：
 
@@ -207,14 +215,20 @@ PRoot 与 pathshim 将 Bed 的映射目录接入声明路径，没有 COW、whit
 
 ### private 文件
 
-bwrap 先遮蔽 `<beds-root>`，再投影同一 BedFS：
+bwrap 以同一 BedFS 构造每次执行的 mount 视图：
 
-- 整个 `bed_home` bind 到机制私有路径 `/tmp/.hostel/bed`，使 `/`、`/tmp/job` 等任意结构化 cwd 都有进程视图；
+- 整个 `bed_home` bind 到 `/`，原生数据路径和结构化路径使用相同拼写；
+- 只读接入现存系统运行依赖，保留共享软件目录的可写性，并遮蔽被这些覆盖重新暴露的敏感路径；
 - `bed_home/workspace` 额外 bind 到稳定的 `/workspace`，保持 OpenSandbox 与 agent 工具链约定；
 - 每个 PathMapping 将已有 HostPath bind 到 BedPath；ReadOnly 使用只读 bind；
-- BedFS 的 Workdir 子树优先使用 `/workspace`，其余路径使用内部 bed_home 投影。
+- 数据路径不再绕经内部挂载点；例如 `cwd="/"` 的实际工作目录就是 `/`。
 
-内部挂载点不是北向协议。调用方继续传 Client path；例如 `cwd="/"` 由 BedFS 解析为 bed_home，再投影到当前 Executor。
+Carrier 上不在系统运行依赖目录内的工具，应通过显式 PathMapping 接入，或放入 BedFS 后执行。
+不能为了让任意可执行文件可见，自动挂回它的 Carrier 父目录，否则会绕过跨 Bed 数据边界。
+
+`process_view.rootfs=true` 表示原生数据路径使用 Bed 根（bwrap/PRoot）；它不表示 PID、网络
+或完整 rootfs 安全隔离。路径能力与只读映射支持仍分别报告。启动探测必须验证真实的
+根目录写入及 BedFS 回读，不能只运行 `true` 或检查 `/workspace` 可读。
 
 `ProcessView` 负责 Carrier 数据路径到进程路径的转换，不单独拥有文件数据。`/v1/status` 的 `components.filesystem.process_view` 报告实际进程视图，health 与 capabilities 同样使用 `process_view`；`process_view.path_mappings` 分别报告进程侧读写映射与只读映射支持，二者独立于 file API 的可用性。`process_view.mode` 报告实际进程视图：`mount`、`proot`、`pathshim` 或 `carrier`；`available=false` 与 `reason` 表示没有用户态 helper 通过选择验证。BedFS 的结构化路径映射是所有房型的基础能力。
 
@@ -222,7 +236,9 @@ bwrap 先遮蔽 `<beds-root>`，再投影同一 BedFS：
 
 Hostel 解析 file API 的 `path`、命令的 `cwd` 等结构化字段，因此这些字段在所有房型都遵守 BedFS 语义。BedFS 先把 cwd 解析为 Carrier path；新进程由 isolation 投影到 Executor View，已启动的常驻 Shell 则持有启动时的 View，在执行用户命令前通过独立、带终态分帧的 shell 控制步骤切换目录。Web 层不构造 Executor path，也不把 `cd` 拼进用户命令；heredoc、多行脚本等命令文本保持原样。命令中的字面 `/tmp/x` 仍由实际进程 namespace 解释。
 
-PRoot 或 pathshim 可用时，shared/confined 文件视图的命令字面 `/workspace/x` 及配置目标会指向对应 BedFS source；映射外绝对路径仍由 Carrier 进程视图解释。helper 全部失败时可尝试 Carrier 视图，Hostel 通过能力与 diagnostics 接口如实上报降级和各项原始探测记录；完整组合仍须可执行。
+bwrap/PRoot 的原生数据路径指向 BedFS；pathshim 仅重定向 `/workspace` 和已支持的配置目标，
+其余绝对路径仍由 Carrier 进程视图解释。helper 全部失败时可尝试 Carrier 视图，Hostel
+如实报告降级；完整组合仍须可执行。不能把较弱视图的 API 成功当作原生 Service 路径已兑现。
 
 shared 文件视图与 carrier 共享 mount namespace，命令中的字面绝对路径可能成功写到进程根，而不是 BedFS。独占 carrier 可显式配置沿用原名称的 `--dorm-read-fallback-root /`：只读 file API 在 未命中额外映射且 BedFS 路径不存在时，把客户端绝对路径按该进程根作为第二候选重试；两处都存在时始终以 BedFS 为准。相对路径不回退，因为它本来就以 Bed Workdir 为执行与 API 基准。
 

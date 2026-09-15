@@ -65,9 +65,17 @@ func TestIsolationLevels(t *testing.T) {
 			must2xx(t, "cross-bed isolation probe", response)
 			switch files.Effective {
 			case "shared":
-				assertCommandExit(t, read, 0)
-				if read.Stdout != "secret-a" {
-					t.Fatalf("dorm did not expose shared carrier path: stdout=%q stderr=%q", read.Stdout, read.Stderr)
+				if health.ProcessView.Rootfs {
+					// PRoot changes ordinary path lookup, but is not a security
+					// boundary against intentional bypass of the helper.
+					if read.Result == nil || read.Result.Process.ExitCode == nil || *read.Result.Process.ExitCode == 0 {
+						t.Fatalf("Bed root exposed a sibling through its carrier spelling: %+v", read)
+					}
+				} else {
+					assertCommandExit(t, read, 0)
+					if read.Stdout != "secret-a" {
+						t.Fatalf("dorm did not expose shared carrier path: stdout=%q stderr=%q", read.Stdout, read.Stderr)
+					}
 				}
 			case "confined", "private":
 				if read.Result == nil || read.Result.Process.ExitCode == nil || *read.Result.Process.ExitCode == 0 {

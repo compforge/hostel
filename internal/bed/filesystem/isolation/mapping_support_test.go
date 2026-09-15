@@ -56,7 +56,7 @@ func TestHelpersOnlyRedirectSupportedMappings(t *testing.T) {
 				t.Fatal(err)
 			}
 			expected := "/project"
-			if blocked {
+			if blocked && backend.Mode() != "proot" {
 				expected = cwd
 			}
 			if got, err := backend.View(fs).Path(cwd); err != nil || got != expected {

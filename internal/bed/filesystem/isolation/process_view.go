@@ -90,7 +90,10 @@ func resolveProcessView(base Boundary, bedsRoot string, ptraceProbe hostfacts.Pr
 	return resolveProcessViewWithConfig(base, bedsRoot, ptraceProbe, probes, Config{})
 }
 func resolveProcessViewWithConfig(base Boundary, bedsRoot string, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport, config Config) (selected processViewBackend, report ProcessViewReport) {
-	defer func() { report.PathMappings = selected.MappingSupport() }()
+	defer func() {
+		report.PathMappings = selected.MappingSupport()
+		report.Rootfs = selected.Mode() == "mount" || selected.Mode() == "proot"
+	}()
 
 	pathshimDiscovery := hostfacts.ProbeReport{Error: "disabled_by_config"}
 	prootDiscovery := hostfacts.ProbeReport{Error: "disabled_by_config"}

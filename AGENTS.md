@@ -58,8 +58,8 @@ tini (pid1)                       pod 级收尸兜底
       └─ <other>/                 Bed 自身数据；是否同步由 SyncPaths 声明
 
 Executor View：
-  private files          → bed_home 内部挂载 + Workdir 和 PathMappings
-  shared/confined files  → 独立探测 PRoot/pathshim，按 PRoot → pathshim → Carrier 选择进程视图
+  private files          → Bed 数据根作为 / + 共享运行依赖 + PathMappings
+  shared/confined files  → PRoot 根视图 → pathshim 局部映射 → Carrier；按实际能力选择并披露
 ```
 
 Bed 的理想语义是独立执行空间，文件、进程、网络和资源按环境能力尽量隔离，并如实披露实际共享与缺口。房型汇总已选领域等级，不等于所有维度完整隔离；所有档位保持同一 BedFS 路径归属。目标、机制组合与实际保证见 `docs/isolation.md`。
