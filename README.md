@@ -4,18 +4,13 @@ English | [简体中文](README.zh-CN.md)
 
 **Hostel is a sandbox runtime for AI agents.** Think of Hostel / Bed as a lightweight
 take on kubelet / Pod: one daemon manages multiple sandboxes, called **beds**,
-on a laptop, VM, CI runner or in a container.
+on a laptop, VM, CI runner or in a container, making a best effort to meet each
+bed's needs within the host's capabilities.
 Each bed provides a workspace for commands, shell sessions and managed services.
 
 Beds share a machine or container, reducing the need to provision a separate
 runtime for every task. Hostel manages execution and local resources. In a cluster,
 an upstream control plane owns instance placement, cross-instance routing and API authorization.
-
-Bed Spec expresses what a bed needs; Hostel makes a best effort to start it
-with the host's available capabilities. An explicit requirement that cannot be
-fulfilled causes startup to fail. Optional isolation can remain unavailable,
-and Hostel reports what it actually provides. How far it can go beyond explicit
-requirements evolves with the implementation.
 
 ## What you can do
 
