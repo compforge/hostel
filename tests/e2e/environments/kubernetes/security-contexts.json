@@ -1,0 +1,27 @@
+{
+  "runtime-default": {
+    "securityContext": {"runAsUser": 0, "seccompProfile": {"type": "RuntimeDefault"}},
+    "required": {"Seccomp": "2"}
+  },
+  "ptrace-allowed": {
+    "securityContext": {"runAsUser": 0, "capabilities": {"add": ["SYS_PTRACE"]}, "seccompProfile": {"type": "Unconfined"}},
+    "required": {"Seccomp": "0", "ptrace_probe": "passed"}
+  },
+  "drop-all": {
+    "securityContext": {"runAsUser": 0, "allowPrivilegeEscalation": false, "capabilities": {"drop": ["ALL"]}, "seccompProfile": {"type": "RuntimeDefault"}},
+    "required": {"Seccomp": "2", "NoNewPrivs": "1", "CapEff": "0000000000000000"}
+  },
+  "ptrace-denied": {
+    "securityContext": {"runAsUser": 0, "seccompProfile": {"type": "Localhost", "localhostProfile": "hostel/deny-ptrace.json"}},
+    "required": {"Seccomp": "2", "ptrace_probe": "failed"}
+  },
+  "drop-all-inherit-user": {
+    "securityContext": {"runAsUser": 0, "allowPrivilegeEscalation": false, "capabilities": {"drop": ["ALL"]}, "seccompProfile": {"type": "RuntimeDefault"}},
+    "command": ["/usr/bin/env", "-u", "HOSTEL_BED_UID", "-u", "HOSTEL_BED_GID", "/e2e/e2e.test"],
+    "required": {"Seccomp": "2", "NoNewPrivs": "1", "CapEff": "0000000000000000"}
+  },
+  "apparmor-required": {
+    "securityContext": {"runAsUser": 0, "seccompProfile": {"type": "RuntimeDefault"}, "appArmorProfile": {"type": "RuntimeDefault"}},
+    "required": {"Seccomp": "2"}
+  }
+}

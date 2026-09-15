@@ -1,0 +1,6 @@
+{
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "syscalls": [
+    {"names": ["ptrace"], "action": "SCMP_ACT_ERRNO", "errnoRet": 1}
+  ]
+}
