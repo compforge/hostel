@@ -16,22 +16,22 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/filesystem"
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/resource"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	"github.com/qiankunli/hostel/internal/config"
-	"github.com/qiankunli/hostel/internal/feature"
 )
 
 func value[T any](v T) *T { return &v }
 func restrictedOptions() config.Options {
 	return config.Options{Bed: config.BedOptions{
-		Filesystem: filesystem.Options{Bwrap: value(feature.Off), Landlock: value(feature.Off), UID: value(feature.Off), PRoot: value(feature.Off), Pathshim: value(feature.Off)},
-		Network:    network.Options{NetNS: value(feature.Off)}, Resource: resource.Options{Cgroup: value(feature.Off)},
+		Filesystem: filesystem.Options{Bwrap: value(tool.Off), Landlock: value(tool.Off), UID: value(tool.Off), PRoot: value(tool.Off), Pathshim: value(tool.Off)},
+		Network:    network.Options{NetNS: value(tool.Off)}, Resource: resource.Options{Cgroup: value(tool.Off)},
 	}}
 }
 func requireTestBinary(t *testing.T) string {
 	t.Helper()
 	binary := os.Getenv(binaryEnv)
 	if binary == "" {
-		t.Skip("internal feature configuration runs through make e2e, not production images")
+		t.Skip("internal tool configuration runs through make e2e, not production images")
 	}
 	return binary
 }
@@ -43,16 +43,16 @@ func TestFeaturePoliciesOff(t *testing.T) {
 		Components struct {
 			Filesystem struct {
 				Effective string
-				Features  map[string]feature.Status
+				Tools     map[string]tool.Status
 			}
 			Network struct {
-				Enabled  bool
-				Features map[string]feature.Status
+				Enabled bool
+				Tools   map[string]tool.Status
 			}
 			Resource struct {
 				Accounting struct {
 					Available bool
-					Features  map[string]feature.Status
+					Tools     map[string]tool.Status
 				}
 			}
 		}
@@ -63,28 +63,28 @@ func TestFeaturePoliciesOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	must2xx(t, "feature status", response)
+	must2xx(t, "tool status", response)
 	if status.Components.Filesystem.Effective != "shared" || status.Components.Network.Enabled || status.Components.Resource.Accounting.Available {
-		t.Fatalf("disabled features active: %+v", status)
+		t.Fatalf("disabled tools active: %+v", status)
 	}
-	for _, features := range []map[string]feature.Status{status.Components.Filesystem.Features, status.Components.Network.Features, status.Components.Resource.Accounting.Features} {
-		if len(features) == 0 {
-			t.Fatal("missing feature diagnostics")
+	for _, tools := range []map[string]tool.Status{status.Components.Filesystem.Tools, status.Components.Network.Tools, status.Components.Resource.Accounting.Tools} {
+		if len(tools) == 0 {
+			t.Fatal("missing tool diagnostics")
 		}
-		for name, f := range features {
-			if f.Policy != feature.Off || f.Probe != "not_probed" || f.Selected || f.Reason != "disabled_by_config" {
+		for name, f := range tools {
+			if f.Policy != tool.Off || f.Probe != "not_probed" || f.Selected || f.Reason != "disabled_by_config" {
 				t.Fatalf("%s: %+v", name, f)
 			}
 		}
 	}
-	must2xx(t, "create unisolated Bed", c.createBed(t, "features-off"))
-	result, response := c.command(t, "features-off", map[string]any{"command": "printf feature-policy-ok", "timeout": 5000})
-	must2xx(t, "command with optional features disabled", response)
+	must2xx(t, "create unisolated Bed", c.createBed(t, "tools-off"))
+	result, response := c.command(t, "tools-off", map[string]any{"command": "printf tool-policy-ok", "timeout": 5000})
+	must2xx(t, "command with optional tools disabled", response)
 	assertCommandExit(t, result, 0)
-	if result.Stdout != "feature-policy-ok" {
+	if result.Stdout != "tool-policy-ok" {
 		t.Fatal(result.Stdout)
 	}
-	response, err = c.json(ctx, "GET", "/v1/beds/features-off/network/policy", "", nil, nil)
+	response, err = c.json(ctx, "GET", "/v1/beds/tools-off/network/policy", "", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,10 +99,10 @@ func TestFeatureRequiredStartupFailure(t *testing.T) {
 			options := restrictedOptions()
 			expected := "filesystem.pathshim required"
 			if scenario == "missing-pathshim" {
-				options.Bed.Filesystem.Pathshim = value(feature.Required)
+				options.Bed.Filesystem.Pathshim = value(tool.Required)
 			} else {
 				options.Bed.RoomType = value("room")
-				options.Bed.Filesystem.Bwrap = value(feature.Required)
+				options.Bed.Filesystem.Bwrap = value(tool.Required)
 				expected = "bwrap requires private files"
 			}
 			raw, err := json.Marshal(options)

@@ -8,7 +8,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 // hostTracker keeps the injected Tracker identity stable while Start selects
@@ -34,7 +34,7 @@ func (t *hostTracker) Start(ctx context.Context) error {
 		return fmt.Errorf("resource: %w", err)
 	}
 	if !t.started {
-		if t.config.Cgroup.Effective() == feature.Off {
+		if t.config.Cgroup.Effective() == tool.Off {
 			t.tracker = Noop("disabled_by_config")
 		} else {
 			t.tracker = t.create()
@@ -42,14 +42,14 @@ func (t *hostTracker) Start(ctx context.Context) error {
 		t.started = true
 	}
 	report := t.report()
-	log.Printf("resource: feature=cgroup policy=%s selected=%t reason=%s", t.config.Cgroup.Effective(), report.Available, report.Reason)
-	return report.Features["cgroup"].CheckRequired("resource.cgroup")
+	log.Printf("resource: tool=cgroup policy=%s selected=%t reason=%s", t.config.Cgroup.Effective(), report.Available, report.Reason)
+	return report.Tools["cgroup"].CheckRequired("resource.cgroup")
 }
 func (t *hostTracker) Report() Report { t.mu.RLock(); defer t.mu.RUnlock(); return t.report() }
 func (t *hostTracker) report() Report {
 	report := t.tracker.Report()
-	requirements := feature.Requirements{Conditions: []string{"Linux cgroup v2", "writable delegated hierarchy", "cpu/memory controller delegation"}}
-	report.Features = map[string]feature.Status{"cgroup": feature.Describe(t.config.Cgroup, requirements, t.started, report.Available, report.Available, report.Reason)}
+	requirements := tool.Requirements{Conditions: []string{"Linux cgroup v2", "writable delegated hierarchy", "cpu/memory controller delegation"}}
+	report.Tools = map[string]tool.Status{"cgroup": tool.Describe(t.config.Cgroup, requirements, t.started, report.Available, report.Available, report.Reason)}
 	return report
 }
 func (t *hostTracker) OpenGroup(id string) (*os.File, error) {

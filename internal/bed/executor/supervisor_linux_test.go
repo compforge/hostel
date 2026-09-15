@@ -25,8 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiankunli/hostel/internal/bed/executor/supervisor"
 	"github.com/qiankunli/hostel/internal/bed/resource"
-	"github.com/qiankunli/hostel/internal/supervisor"
 )
 
 // TestMain lets the package test binary serve as the re-exec target used by

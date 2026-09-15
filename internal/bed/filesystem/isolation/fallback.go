@@ -1,8 +1,9 @@
 package isolation
 
 import (
-	"github.com/qiankunli/hostel/internal/feature"
 	"maps"
+
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 // NextCombination excludes only an optional member of the failed composition.
@@ -18,17 +19,17 @@ func NextCombination(current Config, selected Isolator, reason string) (Config, 
 	}
 	switch report.ProcessView().Mode {
 	case "proot":
-		if current.PRoot.Effective() == feature.Auto {
+		if current.PRoot.Effective() == tool.Auto {
 			current.Excluded["proot"] = reason
 			return current, true
 		}
 	case "pathshim":
-		if current.Pathshim.Effective() == feature.Auto {
+		if current.Pathshim.Effective() == tool.Auto {
 			current.Excluded["pathshim"] = reason
 			return current, true
 		}
 	}
-	var policy *feature.Policy
+	var policy *tool.Policy
 	switch selected.Name() {
 	case "bwrap":
 		policy = &current.Bwrap
@@ -37,7 +38,7 @@ func NextCombination(current Config, selected Isolator, reason string) (Config, 
 	case "uid":
 		policy = &current.UID
 	}
-	if policy == nil || policy.Effective() != feature.Auto {
+	if policy == nil || policy.Effective() != tool.Auto {
 		return current, false
 	}
 	current.Excluded[selected.Name()] = reason

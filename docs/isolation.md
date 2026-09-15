@@ -40,7 +40,7 @@ Bed 是跨机制不变的单元；Executor 是它当前可替换的进程承载�
 
 ### 对外房型与领域等级
 
-Component 探测 Facts，结合配置组合 Features，提供本领域的 Level；Hostel 验证跨组件的运行组合，
+Component 探测 Facts，结合配置组合 Tools，提供本领域的 Level；Hostel 验证跨组件的运行组合，
 将多个 Component 实际提供的 Level 汇总为用户看到的 RoomType。
 
 房型是用户选择的虚拟统称，各 domain 拥有 facts、支持等级列表、排序和选择规则。公共 `Level` 只提供
@@ -59,7 +59,7 @@ Privilege 的 dedicated 映射到 suite，Network 的 shared 映射到 room：�
 配置是实例级的，不新增逐 Bed 房型开关。Resource 当前只有可选记账与准入，不提供硬限额；它与 Store、Executor
 暂不参与隔离等级汇总，显式返回空 Supported。弱隔离组件则须报告基线，不能用空列表冒充不参与。
 
-Feature 表达实现机制与采用策略，不是另一套等级。bwrap 提供 private 文件，Landlock 或 UID/DAC 提供 confined；
+Tool 表达实现机制与采用策略，不是另一套等级。bwrap 提供 private 文件，Landlock 或 UID/DAC 提供 confined；
 PRoot/pathshim 只改善路径兼容性，不提高 Level。`auto/off/required` 继续约束机制选择，见 [configuration.md](configuration.md)。
 
 ### 各维度的目标与当前兑现程度

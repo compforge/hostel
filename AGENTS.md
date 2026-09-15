@@ -93,8 +93,10 @@ internal/
 │   │   ├── sync/      noop/auto/cas/pack/tar/copy/restic 同步策略
 │   │   └── backend/   S3 位置、共享客户端和对象操作
 │   ├── executor/      可替换进程域的 Manager、local / supervisor backend
+│   │   └── supervisor/ Linux Executor 的 IPC、进程派生与收尸
 │   ├── configuration/ 进程配置来源的宿主观测、解析与 Bed 生命周期内的值管理
 │   ├── service/       Bed ServiceSpec 的规范化、就绪、监督、端口发布与停止
+│   ├── tool/          各领域可选工具的 Policy、Requirements 与 Status；领域自行选择、组合及管理生命周期
 │   └── resource/      cgroup accounting、carrier admission 与采样循环；未施加 per-Bed limits
 ├── amenity/           daemon 直属独立设施；Manager 维护 Bed ID 到 Tenant ID 的绑定，设施隐藏资源实现
 ├── host/              通用宿主能力；不依赖 Bed/Amenity 模型，不预设使用方
@@ -104,14 +106,14 @@ internal/
 │   ├── cgroup/        组层次、放置句柄、用量与释放；无 Bed/Executor 组织策略
 │   ├── privilege/     UID/GID、capability 清除与 ownership 操作
 │   └── facts/         只读系统事实与执行探测记录
-├── instance/          组合 Host 事实及 Bed Component / Amenity 两级状态；HTTP 只序列化
-├── supervisor/        Linux executor 的 IPC、进程派生与收尸
 ├── config/            flags + HOSTEL_* env
 ├── tracing/           OpenTelemetry 与 trace/log 关联
-└── web/               HTTP 薄入口；Bed 请求统一经过 Bed Manager，实例级设施操作交给 Amenity
+└── api/               HTTP server、中间件与路由组装
+    ├── handler/       请求适配与状态查询；Bed 操作经过 Bed Manager，实例级设施操作交给 Amenity
+    └── view/          对外响应结构与纯转换；不持有 Manager、不主动查询
 ```
 
-**数据流**：请求 →`web` 按 `X-Hostel-Bed`(缺省 default) 解析 bed → 调 `bed`/`bedfs` 核心 → 响应（命令走 SSE）。核心模型与领域组件**不含任何 HTTP 类型**，换框架只动 `web/`。
+**数据流**：请求 →`api/handler` 按 `X-Hostel-Bed`(缺省 default) 解析 bed → 调 `bed`/`bedfs` 核心 → 组装响应（命令走 SSE）。核心模型与领域组件**不含任何 HTTP 类型**，换框架只动 `api/`。
 
 ## 关键约定
 
@@ -132,13 +134,13 @@ internal/
     - Hostel 只上报事实，不自行选择 carrier；同步 trigger 的节奏、合并与重试由 Store 同步循环统一负责，详见 `docs/resource.md` / `docs/store.md`。
 - **执行层次是 `Bed → Executor → Execution`**：Bed 是 sandbox 的持久身份；Executor 是当前可替换的进程域；Execution 是一次运行。Executor 丢失只终结归属它的进程，不丢 Bed 数据，下一次请求在旧 Executor 清理成功后创建新 Executor。每次前台、后台或 session run 都生成 `Execution`；`execution_start` 先于输出，之后恰有一个 `execution_end`。`ProcessOutcome` 表达 exited / signaled / lost，termination cause 独立表达 timeout / cancel / interrupt / teardown / executor_lost，禁止再用裸 EOF、`-1` 或错误字符串承载多种语义。
 - **Trace 是生命周期事实的投影**：HTTP 使用路由模板 span，bed initialize/persist/evict 与 execution 使用稳定领域 span，stage 只记 event；不得把 command、env、stdout/stderr 写入 span。后台 initialization / execution 继承 trace identity 但不继承 HTTP cancel。详见 `docs/observability.md`。
-- **隔离按 Bed 的统一目标尽量兑现**：各 domain 拥有 facts → `LevelStatus.Supported`、配置选择与 `Level.Room()`；房型取已选等级满足要求的最低档，不反向削弱更强的组件。Feature 是机制及其采用策略，不是另一套 Level。启动组合验证允许有限回退，required 不丢弃，清理失败终止；live Bed 不重选。当前缺口见 `docs/isolation.md` 与 `docs/backlog.md`。
+- **隔离按 Bed 的统一目标尽量兑现**：各 domain 拥有 facts → `LevelStatus.Supported`、配置选择与 `Level.Room()`；房型取已选等级满足要求的最低档，不反向削弱更强的组件。Tool 是机制及其采用策略，不是另一套 Level。启动组合验证允许有限回退，required 不丢弃，清理失败终止；live Bed 不重选。当前缺口见 `docs/isolation.md` 与 `docs/backlog.md`。
   - daemon 身份与 BedUser 正交：command/session/Service 使用 resident Bed 的同一身份；Privilege 独立决定 shared/dedicated，Filesystem 不分配 UID。配置的 UID/GID 是建议值，不可用时可经验证继承 daemon 身份，并披露实际结果；Linux 子进程仍须通过 capability 清理与 no_new_privs 验证。见 `docs/privilege.md`。
   - BedFS 路径映射在所有档位一致；PRoot/pathshim 改善进程路径体验，不提供安全边界，也不提高文件隔离档位。
   - Bed.Spec.SyncPaths 声明 Store 自动同步的 BedFS 子树；额外 PathMappings 不进入快照，详见 `docs/store.md`。
 - **amenity 通则**：共享设施按 Bed 分配应用状态，产物落对应 Bed Workdir；设施状态、Bed 级凭据与 Bed 生命周期分别管理。北向使用 Bed 级动作或受限代理，不裸透传共享设施的管理协议。应用切分不等于文件、网络或资源完整隔离，当前机制与缺口见 `docs/amenity.md`。
 - **常驻 shell 的坑**：一个 Shell 只能有**一个** stdout reader（否则 run 间串输出——v1 踩过）；Run 之间串行；Shell 持有启动时的 Executor View，session run 的 cwd 必须经 `RunAt` 投影并作为独立控制步骤执行，禁止 Web 拼接 `cd` 或 Executor path；`exit` 会杀死 session，非零退出码用子 shell（`sh -c "exit N"`）。**锁纪律**：`runMu` 串行化 Run 且只有 Run 碰；`mu` 只护 `dead` 标志、纳秒级持有——曾因单锁设计让「shell 死亡+未断开客户端」死锁整个 daemon（含 healthz），别往 `mu` 里加阻塞代码（见 shell.go LOCKING 注释）。
-- **配置在启动入口收敛**：显式 Options > CLI > env > 默认值，组件只读确定的 Config；指针区分未指定与显式零值。按 Component → Feature → Requirements 组织选择与诊断，Feature 使用 auto/off/required，Linux Capabilities 属于实现前提。内部配置不自动扩展成公开参数，见 `docs/configuration.md`。
+- **配置在启动入口收敛**：显式 Options > CLI > env > 默认值，组件只读确定的 Config；指针区分未指定与显式零值。按 Component → Tool → Requirements 组织选择与诊断，Tool 使用 auto/off/required，Linux Capabilities 属于实现前提。内部配置不自动扩展成公开参数，见 `docs/configuration.md`。
 - **E2E owner 边界**：Hostel 的单机 suite 直接验证真实 daemon/image 的 bed runtime、隔离与 carrier userland；上层控制面只保留 placement、跨 carrier 持久化和 lifecycle 编排，不在 K8s E2E 重复证明 Hostel 内部契约。运行说明见 `tests/e2e/README.md`。
 - Go 项目常规：改完 `go build ./...` + `go test ./...` + `go vet ./...` 三件套过再提交（见 `Makefile`）。仓库在 `github.com/qiankunli/hostel`，保护分支 main 走 PR。
 - 根目录 `VERSION` 是二进制和镜像的唯一版本源；改变运行时行为时递增版本号，默认递增 patch。仅修改测试用例、测试 fixture、测试报告或文档时不递增。
@@ -150,7 +152,7 @@ internal/
 
 - Bed 粒度托管服务、统一 TCP 端口、ServiceSpec 与管理 API：`docs/bed-service.md`
 
-- 启动配置、Feature 策略与环境前提：`docs/configuration.md`
+- 启动配置、Tool 策略与环境前提：`docs/configuration.md`
 
 - 文件操作与传输：`docs/transfers.md`（files API 入口、Bed ↔ S3 Copy / Restic、操作状态与自动持久化边界）
 

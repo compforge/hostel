@@ -75,7 +75,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 - `/metrics` / `/metrics/watch`：按目标 bed 返回其累计 CPU 与当前内存；未获得 per-bed cgroup
   能力时保留协议兼容 fallback，但不声称精确归因。
 
-`internal/bed/resource` 只提供资源领域事实和 verdict；JSON shape 仍由 `internal/web` 负责，Bed Manager
+`internal/bed/resource` 只提供资源领域事实和 verdict；JSON shape 由 `internal/api` 负责，Bed Manager
 只消费 `Admitter.Check()`，不依赖 cgroup 文件或 HTTP 类型。
 
 ### 3. 当前准入策略

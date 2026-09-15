@@ -53,7 +53,7 @@ pool 存活，不随第一次调用结束而关闭。协议或网络失败丢弃
 - `pkg/mcpproxy` 是有意公开的单 sandbox Go API：`New`、`Configure`、`ListTools`、
   `CallTool`、`Close`。它不依赖 bed、Gin 或平台业务，可以由其它 sandbox runtime 复用。
 - `internal/amenity/mcp.go` 将 pool 生命周期绑定到 bed。
-- `internal/web/mcp.go` 负责请求大小、operation、HTTP 错误及低敏日志。
+- `internal/api/handler/mcp.go` 负责请求大小、operation、HTTP 错误及低敏日志。
 
 SDK 负责 MCP 握手、分页和传输；普通日志只记录 bed、路由、状态和耗时，不记录 bundle、
 secret、header 或工具参数，也不回显可能包含凭据的上游 transport 错误正文。

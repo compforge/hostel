@@ -5,7 +5,7 @@ import (
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem"
 	"github.com/qiankunli/hostel/internal/bed/store"
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -20,14 +20,14 @@ func TestExplicitComponentConfigOverridesEnvironment(t *testing.T) {
 	t.Setenv("HOSTEL_MAX_BEDS", "15")
 	options := Options{MaxBeds: ptr(0), Bed: BedOptions{
 		RoomType:   ptr("room"),
-		Filesystem: filesystem.Options{Bwrap: ptr(feature.Off), PRoot: ptr(feature.Auto)},
+		Filesystem: filesystem.Options{Bwrap: ptr(tool.Off), PRoot: ptr(tool.Auto)},
 		Store:      store.Options{Sync: ptr("auto"), Bucket: ptr("explicit-bucket"), Endpoint: ptr(""), PathStyle: ptr(false), AutoPackFileThreshold: ptr(0)},
 	}}
 	c, err := Load([]string{"--max-beds", "50"}, options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.MaxBeds != 0 || c.Bed.RoomType != "room" || c.Bed.Filesystem.Level != "confined" || c.Bed.Filesystem.Bwrap != feature.Off || c.Bed.Filesystem.PRoot != feature.Auto {
+	if c.MaxBeds != 0 || c.Bed.RoomType != "room" || c.Bed.Filesystem.Level != "confined" || c.Bed.Filesystem.Bwrap != tool.Off || c.Bed.Filesystem.PRoot != tool.Auto {
 		t.Fatal("explicit component options lost")
 	}
 	s := c.Bed.Store
@@ -48,7 +48,7 @@ func TestStartupRejectsFeatureConflictsAndUnknownFlags(t *testing.T) {
 			t.Fatalf("accepted %v", args)
 		}
 	}
-	_, err := Load(nil, Options{Bed: BedOptions{RoomType: ptr("room"), Filesystem: filesystem.Options{Bwrap: ptr(feature.Required)}}})
+	_, err := Load(nil, Options{Bed: BedOptions{RoomType: ptr("room"), Filesystem: filesystem.Options{Bwrap: ptr(tool.Required)}}})
 	if err == nil {
 		t.Fatal("accepted room with required bwrap")
 	}

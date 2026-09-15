@@ -21,7 +21,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 // Usage is one cumulative cgroup snapshot. CPUUsage includes processes that
@@ -33,10 +33,10 @@ type Usage struct {
 
 // Report describes whether exact per-bed accounting is active.
 type Report struct {
-	Features  map[string]feature.Status `json:"features,omitempty"`
-	Backend   string                    `json:"backend"`
-	Available bool                      `json:"available"`
-	Reason    string                    `json:"reason,omitempty"`
+	Tools     map[string]tool.Status `json:"tools,omitempty"`
+	Backend   string                 `json:"backend"`
+	Available bool                   `json:"available"`
+	Reason    string                 `json:"reason,omitempty"`
 }
 
 // Tracker prepares per-bed accounting groups and reads their cumulative usage.

@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 func TestOffNetworkDoesNotConstructHostPool(t *testing.T) {
-	m := NewConfigured(t.Context(), Config{NetNS: feature.Off})
+	m := NewConfigured(t.Context(), Config{NetNS: tool.Off})
 	if m.pool != nil {
 		t.Fatal("off network constructed a host pool")
 	}
@@ -18,7 +18,7 @@ func TestOffNetworkDoesNotConstructHostPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := m.Status()
-	if s.Enabled || s.Features["netns"].Probe != "not_probed" || s.Reason != "disabled_by_config" {
+	if s.Enabled || s.Tools["netns"].Probe != "not_probed" || s.Reason != "disabled_by_config" {
 		t.Fatalf("%+v", s)
 	}
 	if a, err := m.Acquire(t.Context(), "bed"); err != nil || a != nil {
@@ -45,12 +45,12 @@ func TestNetworkCapabilityFactsDoNotFollowSelection(t *testing.T) {
 	}
 	next, ok := m.config.WithoutOptionalNamespace("combination failed")
 	if !ok || next.NetNS != m.config.NetNS || next.Level != Shared {
-		t.Fatalf("fallback changed feature policy: %+v", next)
+		t.Fatalf("fallback changed tool policy: %+v", next)
 	}
 	if _, ok := next.WithoutOptionalNamespace("still failed"); ok {
 		t.Fatal("fallback made no progress")
 	}
-	if _, ok := (Config{NetNS: feature.Required, Level: Private}).WithoutOptionalNamespace("failed"); ok {
+	if _, ok := (Config{NetNS: tool.Required, Level: Private}).WithoutOptionalNamespace("failed"); ok {
 		t.Fatal("dropped required namespace")
 	}
 }
@@ -66,7 +66,7 @@ func (unavailableProvider) Status() Status {
 }
 func (unavailableProvider) Close(context.Context) error { return nil }
 func TestRequiredNetworkFailsStartup(t *testing.T) {
-	m := &Manager{config: Config{NetNS: feature.Required}, provider: unavailableProvider{}}
+	m := &Manager{config: Config{NetNS: tool.Required}, provider: unavailableProvider{}}
 	if err := m.Start(t.Context()); err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("%v", err)
 	}

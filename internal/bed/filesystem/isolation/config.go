@@ -4,18 +4,18 @@ import (
 	"fmt"
 
 	"github.com/qiankunli/hostel/internal/bed/privilege"
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 // Config controls selection without changing host observations or BedFS ownership.
 type Config struct {
 	DormReadFallbackRoot string
 	Level                string
-	Bwrap                feature.Policy
-	Landlock             feature.Policy
-	UID                  feature.Policy
-	PRoot                feature.Policy
-	Pathshim             feature.Policy
+	Bwrap                tool.Policy
+	Landlock             tool.Policy
+	UID                  tool.Policy
+	PRoot                tool.Policy
+	Pathshim             tool.Policy
 	// DedicatedIdentity is resolved by Privilege before filesystem selection.
 	DedicatedIdentity bool
 	// Excluded records failed startup combinations without rewriting user policy.
@@ -25,11 +25,11 @@ type Config struct {
 // Options preserves explicit Auto independently of omitted configuration.
 type Options struct {
 	DormReadFallbackRoot *string
-	Bwrap                *feature.Policy
-	Landlock             *feature.Policy
-	UID                  *feature.Policy
-	PRoot                *feature.Policy
-	Pathshim             *feature.Policy
+	Bwrap                *tool.Policy
+	Landlock             *tool.Policy
+	UID                  *tool.Policy
+	PRoot                *tool.Policy
+	Pathshim             *tool.Policy
 }
 
 func (c Config) Validate() error {
@@ -46,45 +46,45 @@ func (c Config) Validate() error {
 	}
 	required := 0
 	for _, name := range []string{"bwrap", "landlock", "uid"} {
-		if policies[name] == feature.Required {
+		if policies[name] == tool.Required {
 			required++
 		}
 	}
 	if required > 1 {
 		return fmt.Errorf("filesystem: bwrap, landlock and uid are mutually exclusive")
 	}
-	if c.PRoot == feature.Required && c.Pathshim == feature.Required {
+	if c.PRoot == tool.Required && c.Pathshim == tool.Required {
 		return fmt.Errorf("filesystem: proot and pathshim are mutually exclusive")
 	}
-	if c.Bwrap == feature.Required && parseRequest(c.Level) < Private {
+	if c.Bwrap == tool.Required && parseRequest(c.Level) < Private {
 		return fmt.Errorf("filesystem: bwrap requires private files")
 	}
-	if (c.Landlock == feature.Required || c.UID == feature.Required) && parseRequest(c.Level) < Confined {
+	if (c.Landlock == tool.Required || c.UID == tool.Required) && parseRequest(c.Level) < Confined {
 		return fmt.Errorf("filesystem: landlock/uid require at least confined files")
 	}
-	if c.Bwrap == feature.Required && (c.PRoot == feature.Required || c.Pathshim == feature.Required) {
+	if c.Bwrap == tool.Required && (c.PRoot == tool.Required || c.Pathshim == tool.Required) {
 		return fmt.Errorf("filesystem: bwrap mount view conflicts with required workspace helper")
 	}
 	return nil
 }
-func (c Config) policies() map[string]feature.Policy {
-	return map[string]feature.Policy{"bwrap": c.Bwrap.Effective(), "landlock": c.Landlock.Effective(), "uid": c.UID.Effective(), "proot": c.PRoot.Effective(), "pathshim": c.Pathshim.Effective()}
+func (c Config) policies() map[string]tool.Policy {
+	return map[string]tool.Policy{"bwrap": c.Bwrap.Effective(), "landlock": c.Landlock.Effective(), "uid": c.UID.Effective(), "proot": c.PRoot.Effective(), "pathshim": c.Pathshim.Effective()}
 }
-func requirements(name string) feature.Requirements {
+func requirements(name string) tool.Requirements {
 	switch name {
 	case "bwrap":
-		return feature.Requirements{Tools: []string{"bwrap"}, Conditions: []string{"rootful mount authority or unprivileged user namespace", "bwrap execution probe"}}
+		return tool.Requirements{Tools: []string{"bwrap"}, Conditions: []string{"rootful mount authority or unprivileged user namespace", "bwrap execution probe"}}
 	case "landlock":
-		return feature.Requirements{Conditions: []string{"Linux Landlock ABI", "Landlock confinement probe"}}
+		return tool.Requirements{Conditions: []string{"Linux Landlock ABI", "Landlock confinement probe"}}
 	case "uid":
 		names := []string{}
 		for _, requirement := range privilege.RequiredBedIdentityCapabilities() {
 			names = append(names, requirement.Name)
 		}
-		return feature.Requirements{Capabilities: names, Conditions: []string{"Hostel credential entry", "UID isolation probe"}}
+		return tool.Requirements{Capabilities: names, Conditions: []string{"Hostel credential entry", "UID isolation probe"}}
 	case "proot":
-		return feature.Requirements{Tools: []string{"proot"}, Conditions: []string{"ptrace permitted", "PRoot execution probe"}}
+		return tool.Requirements{Tools: []string{"proot"}, Conditions: []string{"ptrace permitted", "PRoot execution probe"}}
 	default:
-		return feature.Requirements{Tools: []string{"pathshim"}, Conditions: []string{"pathshim execution probe"}}
+		return tool.Requirements{Tools: []string{"pathshim"}, Conditions: []string{"pathshim execution probe"}}
 	}
 }

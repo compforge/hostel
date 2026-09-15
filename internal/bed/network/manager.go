@@ -8,21 +8,21 @@ import (
 	"sync"
 
 	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
 // Status is the component status: mechanism facts plus the Bed execution scope.
 type Status struct {
-	Expected  Level                     `json:"expected"`
-	Effective Level                     `json:"effective"`
-	Supported []Level                   `json:"supported"`
-	Features  map[string]feature.Status `json:"features"`
-	Enabled   bool                      `json:"enabled"`
-	Backend   string                    `json:"backend"`
-	Scope     string                    `json:"scope"`
-	Reason    string                    `json:"reason,omitempty"`
-	Probe     hostnetwork.Probe         `json:"probe"`
+	Expected  Level                  `json:"expected"`
+	Effective Level                  `json:"effective"`
+	Supported []Level                `json:"supported"`
+	Tools     map[string]tool.Status `json:"tools"`
+	Enabled   bool                   `json:"enabled"`
+	Backend   string                 `json:"backend"`
+	Scope     string                 `json:"scope"`
+	Reason    string                 `json:"reason,omitempty"`
+	Probe     hostnetwork.Probe      `json:"probe"`
 }
 
 // These protocol types are shared with the network mechanism; Bed model
@@ -60,7 +60,7 @@ func (m *Manager) SetPortManager(ports *hostnetwork.PortManager) {
 }
 func NewConfigured(ctx context.Context, cfg Config) *Manager {
 	m := &Manager{config: cfg}
-	if cfg.NetNS.Effective() != feature.Off {
+	if cfg.NetNS.Effective() != tool.Off {
 		m.pool = hostnetwork.New(ctx)
 	}
 	return m
@@ -72,8 +72,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err := m.config.Validate(); err != nil {
 		return fmt.Errorf("network: %w", err)
 	}
-	if m.config.NetNS.Effective() == feature.Off {
-		log.Printf("network: feature=netns policy=off reason=disabled_by_config")
+	if m.config.NetNS.Effective() == tool.Off {
+		log.Printf("network: tool=netns policy=off reason=disabled_by_config")
 		return nil
 	}
 	if starter, ok := m.provider.(interface{ Start(context.Context) error }); ok {
@@ -91,7 +91,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	return m.checkRequired()
 }
 func (m *Manager) checkRequired() error {
-	return m.Status().Features["netns"].CheckRequired("network.netns")
+	return m.Status().Tools["netns"].CheckRequired("network.netns")
 }
 func (m *Manager) Status() Status {
 	if m != nil && m.provider != nil {
@@ -119,11 +119,11 @@ func (m *Manager) LevelStatus() bed.LevelStatus {
 
 func (m *Manager) describe(s Status) Status {
 	available := s.Enabled
-	policy := feature.Auto
+	policy := tool.Auto
 	if m != nil {
 		policy = m.config.NetNS.Effective()
 	}
-	if policy == feature.Off {
+	if policy == tool.Off {
 		s.Enabled = false
 		s.Backend = "shared"
 		s.Scope = "carrier"
@@ -133,7 +133,7 @@ func (m *Manager) describe(s Status) Status {
 	if m != nil && m.config.Level == Shared {
 		s.Expected = Shared
 		s.Enabled, s.Backend, s.Scope = false, "shared", "carrier"
-		if policy != feature.Off {
+		if policy != tool.Off {
 			s.Reason = "shared network selected by profile"
 		}
 	}
@@ -142,14 +142,14 @@ func (m *Manager) describe(s Status) Status {
 		s.Reason = m.config.FallbackReason
 	}
 	s.Effective, s.Supported = Shared, []Level{Shared}
-	if available && policy != feature.Off {
+	if available && policy != tool.Off {
 		s.Supported = append(s.Supported, Private)
 	}
 	if s.Enabled {
 		s.Effective = Private
 	}
-	requirements := feature.Requirements{Capabilities: []string{"CAP_NET_ADMIN", "CAP_SYS_ADMIN"}, Tools: []string{"ip", "nft"}, Conditions: []string{"Linux", "IPv4 forwarding", "DNS resolvers", "namespace entry and connectivity probe"}}
-	s.Features = map[string]feature.Status{"netns": feature.Describe(policy, requirements, s.Probe.Stage != "", available, s.Enabled, s.Reason)}
+	requirements := tool.Requirements{Capabilities: []string{"CAP_NET_ADMIN", "CAP_SYS_ADMIN"}, Tools: []string{"ip", "nft"}, Conditions: []string{"Linux", "IPv4 forwarding", "DNS resolvers", "namespace entry and connectivity probe"}}
+	s.Tools = map[string]tool.Status{"netns": tool.Describe(policy, requirements, s.Probe.Stage != "", available, s.Enabled, s.Reason)}
 	return s
 }
 func (m *Manager) Acquire(ctx context.Context, id string) (Attachment, error) {

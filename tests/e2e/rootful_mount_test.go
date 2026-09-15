@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/feature"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 // Opt-in because this asserts host-privileged preparation, not a rootless
@@ -28,7 +28,7 @@ func TestRootfulPreparedMount(t *testing.T) {
 	for _, backend := range []string{"local", "supervisor"} {
 		t.Run(backend, func(t *testing.T) {
 			options := restrictedOptions()
-			options.Bed.Filesystem.Bwrap = value(feature.Required)
+			options.Bed.Filesystem.Bwrap = value(tool.Required)
 			c := startTarget(t, targetOptions{isolation: "suite", executor: backend, config: &options}).client
 			const bed = "rootful"
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

@@ -1,13 +1,13 @@
 package resource
 
-import "github.com/qiankunli/hostel/internal/feature"
+import "github.com/qiankunli/hostel/internal/bed/tool"
 
 type Config struct {
-	Cgroup    feature.Policy
+	Cgroup    tool.Policy
 	Admission AdmissionConfig
 }
 type Options struct {
-	Cgroup                 *feature.Policy
+	Cgroup                 *tool.Policy
 	CPUThresholdPercent    *int
 	MemoryThresholdPercent *int
 }

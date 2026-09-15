@@ -14,6 +14,17 @@ import (
 // Status reads expose global domain facts and only the tenants bound to the
 // selected Bed. Polling must neither allocate a tenant nor renew Bed activity.
 func TestStatusScopesAndTenantIdentity(t *testing.T) {
+	assertComponents := func(scope string, got map[string]json.RawMessage, want ...string) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%s components: got %d, want %d (%v)", scope, len(got), len(want), want)
+		}
+		for _, name := range want {
+			if got[name] == nil {
+				t.Fatalf("%s components: missing %q", scope, name)
+			}
+		}
+	}
 	target := startTarget(t, targetOptions{isolation: "dorm"})
 	c := target.client
 	name := "状态测试"
@@ -50,9 +61,11 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 		return d
 	}
 	before := read()
-	if before.ID != name || !before.Status.Lifecycle.Readiness.Ready || len(before.Status.Components) != 6 {
+	if before.ID != name || !before.Status.Lifecycle.Readiness.Ready {
 		t.Fatalf("detail: %+v", before)
 	}
+	assertComponents("bed", before.Status.Components,
+		"filesystem", "privilege", "network", "store", "executor", "resource", "services")
 	if _, exists := before.Status.Amenities["mcp"]; exists {
 		t.Fatal("status allocated MCP tenant")
 	}
@@ -95,9 +108,11 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 	if global.Host.Fact["runtime"] == nil || global.Host.Fact["process"] == nil || global.Host.Status.Ports == nil {
 		t.Fatalf("missing host facts: %+v", global.Host)
 	}
-	if global.Schema != 5 || len(global.Components) != 7 || global.Components["configuration"] == nil || global.Amenities["mcp"].Tenants != 1 {
+	if global.Schema != 8 || global.Amenities["mcp"].Tenants != 1 {
 		t.Fatalf("global status: %+v", global)
 	}
+	assertComponents("instance", global.Components,
+		"configuration", "filesystem", "privilege", "network", "executor", "store", "resource")
 	for _, b := range global.Beds {
 		if b.Status["amenities"] != nil || b.Status["components"] != nil {
 			t.Fatal("inventory expanded unit details")
