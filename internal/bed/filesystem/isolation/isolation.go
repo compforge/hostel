@@ -194,8 +194,8 @@ func (r *resolved) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 //
 // +spec=`effective isolation is the strongest available level not exceeding the request, and requested/effective/ceiling remain observable.`
 // +case:id=isolation_level_boundaries,desc=`Run the same sibling-path probe under shared, confined, and private file requests`,expect=`shared permits, confined denies, private hides, and unavailable levels degrade honestly`
-func New(facts hostfacts.Snapshot, requested, workspaceRoot string) Isolator {
-	iso, err := Resolve(facts, Config{Level: requested}, workspaceRoot)
+func New(facts hostfacts.Snapshot, requested, bedsRoot string) Isolator {
+	iso, err := Resolve(facts, Config{Level: requested}, bedsRoot)
 	if err != nil {
 		panic(err) // Invalid programmer-supplied level; external config uses Resolve.
 	}
@@ -205,7 +205,7 @@ func New(facts hostfacts.Snapshot, requested, workspaceRoot string) Isolator {
 // Resolve selects features once. Off excludes probes; Required constrains selection
 // rather than merely asserting availability. Runtime failures never reopen selection.
 // +spec=`Feature policies restrict selection without inventing host facts; every Required feature must be selected before readiness.`
-func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string) (Isolator, error) {
+func Resolve(facts hostfacts.Snapshot, config Config, bedsRoot string) (Isolator, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -230,12 +230,12 @@ func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string) (Iso
 		var probe hostfacts.ProbeReport
 		switch name {
 		case "bwrap":
-			candidate, probe = newBwrap(facts, workspaceRoot)
+			candidate, probe = newBwrap(facts, bedsRoot)
 		case "landlock":
-			candidate, probe = newLandlock(facts, workspaceRoot)
+			candidate, probe = newLandlock(facts, bedsRoot)
 		case "uid":
 			if config.DedicatedIdentity {
-				candidate, probe = newUID(facts, workspaceRoot)
+				candidate, probe = newUID(facts, bedsRoot)
 			} else {
 				candidate, probe = unavailable{name: "uid", lvl: Confined}, hostfacts.ProbeReport{Error: "dedicated Bed identity unavailable"}
 			}
@@ -253,7 +253,7 @@ func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string) (Iso
 			return nil, err
 		}
 	}
-	workspace, view := resolveProcessViewWithConfig(chosen, workspaceRoot, ptraceProbe, probes, config)
+	workspace, view := resolveProcessViewWithConfig(chosen, bedsRoot, ptraceProbe, probes, config)
 	for _, name := range []string{"proot", "pathshim"} {
 		probe := probes[name]
 		reason := probe.Error
@@ -265,7 +265,7 @@ func Resolve(facts hostfacts.Snapshot, config Config, workspaceRoot string) (Iso
 			return nil, err
 		}
 	}
-	log.Printf("isolation: requested=%s effective=%s observed_ceiling=%s feature=%s workspace_view=%s", req, chosen.Level(), ceiling, chosen.Name(), view.Mode)
+	log.Printf("isolation: requested=%s effective=%s observed_ceiling=%s feature=%s process_view=%s", req, chosen.Level(), ceiling, chosen.Name(), view.Mode)
 	for name, report := range reports {
 		if report.Policy != feature.Auto {
 			log.Printf("filesystem: feature=%s policy=%s selected=%t reason=%s", name, report.Policy, report.Selected, report.Reason)

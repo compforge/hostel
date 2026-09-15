@@ -23,15 +23,15 @@ import (
 )
 
 // paths converts between the client and carrier path spaces of one BedFS.
-// Executor process paths are a separate projection owned by View: file
+// Executor process paths are a separate projection owned by ProcessView: file
 // placement does not change with the isolation mechanism.
 //
 //	client:  what callers say. The client's "/" IS the bed_home —
 //	         this is a Bed-local data address, not the daemon or process root. So
-//	         /workspace/x, /tmp/x and a relative path (workspace-relative,
+//	         /workspace/x, /tmp/x and a relative path (Workdir-relative,
 //	         OpenSandbox SDK contract) all name places inside one bed, and
 //	         the mapping is injective: echoes reproduce the path as sent.
-//	host:    where it really lives — {workspace-root}/{bed id}/data/x on the
+//	host:    where it really lives — {beds-root}/{bed id}/data/x on the
 //	         carrier host. The daemon's own BedFS operations work here.
 //
 // Immutable value; safe to copy.
@@ -48,7 +48,7 @@ func newPaths(home string) paths {
 // Rootfs is the bed_home host dir this converter is anchored at.
 func (p paths) Rootfs() string { return p.home }
 
-// WorkdirHost is the host dir of the bed's workspace: the private-root
+// WorkdirHost is the host dir of the Bed's default working directory: the private-root
 // subdir the client names DefaultWorkdir. Derived, not stored — the client
 // namespace IS bed_home, so /workspace resolves by the general rule.
 func (p paths) WorkdirHost() string {
@@ -58,7 +58,7 @@ func (p paths) WorkdirHost() string {
 // FromClient maps a client path to the host path. The client's "/" is the
 // bed_home, so every absolute path lands inside the bed by the same
 // rule (/workspace/x included — no aliasing, echoes stay symmetric); relative
-// paths are workspace-relative per the OpenSandbox SDK contract. Bed selection
+// paths are Workdir-relative per the OpenSandbox SDK contract. Bed selection
 // has already happened before this conversion, so isolation level must not
 // change the mapping result.
 func (p paths) FromClient(cp string) (string, error) {
@@ -70,7 +70,7 @@ func (p paths) FromClient(cp string) (string, error) {
 	}
 	rel := cp
 	if !path.IsAbs(cp) {
-		rel = path.Join(DefaultWorkdir, cp) // workspace-relative
+		rel = path.Join(DefaultWorkdir, cp) // Workdir-relative
 	}
 	// Normalize under a fake root to neutralize any ".." segments.
 	clean := path.Clean("/" + strings.TrimPrefix(rel, "/"))

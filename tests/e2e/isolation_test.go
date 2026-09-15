@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,8 +34,8 @@ func TestIsolationLevels(t *testing.T) {
 			if required[requested] && health.Isolation.Effective != requested {
 				t.Fatalf("required isolation %s degraded to %s (files=%+v)", requested, health.Isolation.Effective, files)
 			}
-			if health.WorkspaceMount != (files.Effective == "private") {
-				t.Fatalf("workspace_mount=%v for effective isolation %s", health.WorkspaceMount, health.Isolation.Effective)
+			if (health.ProcessView.Mode == "mount") != (files.Effective == "private") {
+				t.Fatalf("process_view=%s for effective isolation %s", health.ProcessView.Mode, health.Isolation.Effective)
 			}
 			t.Logf("requested=%s effective=%s files=%+v", requested, health.Isolation.Effective, files)
 			helperRequired := strings.TrimSpace(os.Getenv(pathshimEnv)) != "" || strings.TrimSpace(os.Getenv(prootEnv)) != ""
@@ -52,13 +53,13 @@ func TestIsolationLevels(t *testing.T) {
 			})
 			must2xx(t, "write isolation probe", response)
 			assertCommandExit(t, write, 0)
-			bedA := c.waitBed(t, "isolation-a", func(b bedView) bool {
-				return b.Status.Phase == "resident" && b.Status.Readiness.Ready && b.Workspace != ""
-			}, "ready with workspace")
+			c.waitBed(t, "isolation-a", func(b bedView) bool {
+				return b.Status.Phase == "resident" && b.Status.Readiness.Ready && b.Workdir == "/workspace"
+			}, "ready with Bed workdir")
 
 			read, response := c.command(t, "isolation-b", map[string]any{
 				"command": "cat \"$TARGET\"",
-				"envs":    map[string]string{"TARGET": bedA.Workspace + "/secret.txt"},
+				"envs":    map[string]string{"TARGET": filepath.Join(target.bedsRoot, "isolation-a", "data", "workspace", "secret.txt")},
 				"timeout": 30_000,
 			})
 			must2xx(t, "cross-bed isolation probe", response)

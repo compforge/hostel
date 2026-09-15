@@ -40,7 +40,7 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 				t.Skipf("target for %s does not provide unzip", requested)
 			}
 
-			t.Logf("requested=%s effective=%s workspace_view=%s", requested, health.Isolation.Effective, health.ProcessView.Mode)
+			t.Logf("requested=%s effective=%s process_view=%s", requested, health.Isolation.Effective, health.ProcessView.Mode)
 			type bedCase struct {
 				id       string
 				expected string
@@ -113,7 +113,7 @@ func TestDormPathshimFailureUsesProotWithoutEscapingBedFS(t *testing.T) {
 		maxBeds:          4,
 		allowPtrace:      true,
 		pathshimHostPath: unavailablePathshim(t),
-		workspaceRoot:    "/workspace",
+		bedsRoot:         "/workspace",
 	})
 	c := target.client
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -124,9 +124,9 @@ func TestDormPathshimFailureUsesProotWithoutEscapingBedFS(t *testing.T) {
 		t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
 	}
 	if health.Isolation.Effective != "dorm" || health.ProcessView.Mode != "proot" || !health.ProcessView.Available {
-		t.Fatalf("fault injection did not activate dorm PRoot fallback: isolation=%+v workspace_view=%+v", health.Isolation, health.ProcessView)
+		t.Fatalf("fault injection did not activate dorm PRoot fallback: isolation=%+v process_view=%+v", health.Isolation, health.ProcessView)
 	}
-	t.Logf("fault active: workspace_view=%s available=%t", health.ProcessView.Mode, health.ProcessView.Available)
+	t.Logf("fault active: process_view=%s available=%t", health.ProcessView.Mode, health.ProcessView.Available)
 
 	type bedCase struct {
 		id       string

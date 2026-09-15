@@ -26,7 +26,7 @@ shell 会话和托管服务。
 
 ```bash
 make build
-./bin/hostel --isolation dorm --workspace-root ./.workspace --addr 127.0.0.1:8872
+./bin/hostel --isolation dorm --beds-root ./.workspace --addr 127.0.0.1:8872
 ```
 
 在另一个终端运行命令，并下载生成的文件：

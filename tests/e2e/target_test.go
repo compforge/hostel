@@ -38,11 +38,12 @@ type targetOptions struct {
 	pathshimHostPath string
 	proot            string
 	prootHostPath    string
-	workspaceRoot    string
+	bedsRoot         string
 }
 
 type target struct {
-	client *apiClient
+	client   *apiClient
+	bedsRoot string // Path in the target carrier, including container targets.
 }
 
 // startTarget owns one real hostel process. Tests talk only to its public HTTP
@@ -74,10 +75,11 @@ func startTarget(t *testing.T, options targetOptions) *target {
 	port := reservePort(t)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	baseURL := "http://" + addr
+	var bedsRoot string
 	if image != "" {
-		startImageTarget(t, image, addr, options)
+		bedsRoot = startImageTarget(t, image, addr, options)
 	} else {
-		startBinaryTarget(t, binary, addr, options)
+		bedsRoot = startBinaryTarget(t, binary, addr, options)
 	}
 
 	c := newAPIClient(baseURL)
@@ -89,7 +91,7 @@ func startTarget(t *testing.T, options targetOptions) *target {
 		_, lastErr = c.json(ctx, "GET", "/healthz", "", nil, &health)
 		cancel()
 		if lastErr == nil && health.OK {
-			return &target{client: c}
+			return &target{client: c, bedsRoot: bedsRoot}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -110,7 +112,7 @@ func reservePort(t *testing.T) int {
 	return port
 }
 
-func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions) {
+func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions) string {
 	t.Helper()
 	absolute, err := filepath.Abs(binary)
 	if err != nil {
@@ -125,16 +127,16 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 	if err != nil {
 		t.Fatalf("create hostel log: %v", err)
 	}
-	workspaceRoot := options.workspaceRoot
-	if workspaceRoot == "" {
+	bedsRoot := options.bedsRoot
+	if bedsRoot == "" {
 		// Bed UIDs must traverse the fixture root to use absolute workspace paths.
 		// testing.T.TempDir's private ancestors would hide an otherwise valid UID backend.
-		workspaceRoot, err = os.MkdirTemp("", "hostel-e2e-beds-")
+		bedsRoot, err = os.MkdirTemp("", "hostel-e2e-beds-")
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = os.RemoveAll(workspaceRoot) })
-		if err := os.Chmod(workspaceRoot, 0755); err != nil {
+		t.Cleanup(func() { _ = os.RemoveAll(bedsRoot) })
+		if err := os.Chmod(bedsRoot, 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -154,7 +156,7 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 	}
 	cmd := exec.Command(absolute,
 		"--addr", addr,
-		"--workspace-root", workspaceRoot,
+		"--beds-root", bedsRoot,
 		"--isolation", options.isolation,
 		"--executor", options.executor,
 		"--sync", options.store,
@@ -209,24 +211,25 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 			}
 		}
 	})
+	return bedsRoot
 }
 
-func startImageTarget(t *testing.T, image, addr string, options targetOptions) {
+func startImageTarget(t *testing.T, image, addr string, options targetOptions) string {
 	t.Helper()
 	if options.config != nil {
 		t.Fatal("internal startup options require make e2e (test binary); production images do not expose this input")
 	}
 	name := fmt.Sprintf("hostel-e2e-%d-%d", os.Getpid(), time.Now().UnixNano())
-	workspaceRoot := options.workspaceRoot
-	if workspaceRoot == "" {
-		workspaceRoot = "/tmp/" + name + "-beds"
+	bedsRoot := options.bedsRoot
+	if bedsRoot == "" {
+		bedsRoot = "/tmp/" + name + "-beds"
 	}
 	args := []string{
 		"run", "--detach", "--rm", "--name", name, "--network", "host",
 		"-e", "HOSTEL_ADDR=" + addr,
 		// Most isolation E2E keeps carrier paths outside the guest /workspace
 		// bind. A test may override this to reproduce a real carrier-root layout.
-		"-e", "HOSTEL_WORKSPACE_ROOT=" + workspaceRoot,
+		"-e", "HOSTEL_BEDS_ROOT=" + bedsRoot,
 		"-e", "HOSTEL_ISOLATION=" + options.isolation,
 		"-e", "HOSTEL_EXECUTOR=auto",
 		"-e", "HOSTEL_SYNC=noop",
@@ -279,6 +282,7 @@ func startImageTarget(t *testing.T, image, addr string, options targetOptions) {
 			t.Logf("hostel container log:\n%s", logs.String())
 		}
 	})
+	return bedsRoot
 }
 
 func prependHelperDirs(base string, helpers ...string) string {

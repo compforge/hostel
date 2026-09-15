@@ -27,9 +27,9 @@ func TestIsolationAndManagedServiceConfigContract(t *testing.T) {
 	// The three north-facing room types are configuration values; resolution to
 	// a host mechanism is deliberately tested in internal/isolation.
 	for _, mode := range []string{"dorm", "room", "suite", "auto"} {
-		c := mustLoad(t, []string{"-isolation", mode, "-workspace-root", "/var/lib/hostel"})
-		if c.Bed.RoomType != mode || c.WorkspaceRoot != "/var/lib/hostel" {
-			t.Fatalf("mode %q: isolation=%q root=%q", mode, c.Bed.RoomType, c.WorkspaceRoot)
+		c := mustLoad(t, []string{"-isolation", mode, "-beds-root", "/var/lib/hostel"})
+		if c.Bed.RoomType != mode || c.BedsRoot != "/var/lib/hostel" {
+			t.Fatalf("mode %q: isolation=%q root=%q", mode, c.Bed.RoomType, c.BedsRoot)
 		}
 		wantFiles := map[string]string{"dorm": "shared", "room": "confined", "suite": "private", "auto": "private"}[mode]
 		if c.Bed.Filesystem.Level != wantFiles {
@@ -162,5 +162,22 @@ func TestPathsAreNotInstanceFlags(t *testing.T) {
 		if _, err := Load([]string{flag, "/project"}, Options{}); err == nil {
 			t.Fatalf("accepted removed flag %s", flag)
 		}
+	}
+}
+
+func TestBedsRootConfigPrecedence(t *testing.T) {
+	t.Setenv("HOSTEL_BEDS_ROOT", "/carrier/env")
+	if c := mustLoad(t, nil); c.BedsRoot != "/carrier/env" {
+		t.Fatalf("env beds root = %q", c.BedsRoot)
+	}
+	if c := mustLoad(t, []string{"--beds-root", "/carrier/flag"}); c.BedsRoot != "/carrier/flag" {
+		t.Fatalf("flag beds root = %q", c.BedsRoot)
+	}
+	c, err := Load([]string{"--beds-root", "/carrier/flag"}, Options{BedsRoot: ptr("/carrier/option")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BedsRoot != "/carrier/option" {
+		t.Fatalf("explicit beds root = %q", c.BedsRoot)
 	}
 }

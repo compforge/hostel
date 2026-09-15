@@ -115,7 +115,7 @@ func TestFeatureRequiredStartupFailure(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, binary, "--workspace-root", filepath.Join(t.TempDir(), "beds"))
+			cmd := exec.CommandContext(ctx, binary, "--beds-root", filepath.Join(t.TempDir(), "beds"))
 			// No helper can be discovered. All other optional probes are off; the
 			// expected failure occurs before BedUser or executor preparation.
 			cmd.Env = append(os.Environ(), "PATH="+t.TempDir(), "HOSTEL_E2E_CONFIG="+file)

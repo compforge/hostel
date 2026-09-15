@@ -34,18 +34,18 @@ import (
 // ownership is enforced before this boundary by bed's process-env builder.
 type bwrap struct {
 	path      string   // bwrap binary (probed at boot)
-	root      string   // parent dir of all bed workspaces (masked in-sandbox)
+	root      string   // parent dir of all Bed directories (masked in-sandbox)
 	maskPaths []string // existing sensitive host paths to mask (computed once)
 }
 
 // newBwrap probes bubblewrap at boot: binary present AND the FULL mount shape
 // we will actually use starts (binary-present-but-broken — unprivileged userns
 // disabled, or no /workspace mount point on the RO host root — must not count
-// as isolated; a partial probe once let healthz report workspace_mount:true
+// as isolated; a partial probe once let healthz report process_view.mode=mount
 // while every exec failed). On failure it falls back to direct so the daemon
 // still boots and /healthz reports the truth.
 // Probe pattern borrowed from OpenSandbox execd, extended to the real argv.
-func newBwrap(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfacts.ProbeReport) {
+func newBwrap(facts hostfacts.Snapshot, bedsRoot string) (Isolator, hostfacts.ProbeReport) {
 	path := facts.BwrapPath
 	report := hostfacts.ProbeReport{
 		ConfiguredPath: "bwrap",
@@ -67,12 +67,12 @@ func newBwrap(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfac
 	}
 	// The workspace root may not exist yet at probe time (the bed manager
 	// creates it later); the smoke test masks it, so it must exist now.
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
-		log.Printf("isolation: cannot create workspace root %s: %v", workspaceRoot, err)
+	if err := os.MkdirAll(bedsRoot, 0o755); err != nil {
+		log.Printf("isolation: cannot create workspace root %s: %v", bedsRoot, err)
 	}
 
 	masks := resolveMaskPaths(defaultMaskCandidates)
-	report = bwrapSmoke(path, workspaceRoot, masks)
+	report = bwrapSmoke(path, bedsRoot, masks)
 	report.ConfiguredPath = "bwrap"
 	report.ResolvedPath = path
 	report.Exists = true
@@ -92,7 +92,7 @@ func newBwrap(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfac
 	}
 	return &bwrap{
 		path:      path,
-		root:      workspaceRoot,
+		root:      bedsRoot,
 		maskPaths: masks,
 	}, report
 }
@@ -128,8 +128,8 @@ func resolveMaskPaths(candidates []string) []string {
 
 // bwrapSmoke exercises the startup baseline: namespaces, masking and the
 // workspace bind. Additional mappings come from each BedFS when Wrap is called.
-func bwrapSmoke(path, workspaceRoot string, masks []string) hostfacts.ProbeReport {
-	probeHome, err := os.MkdirTemp(workspaceRoot, ".probe-*")
+func bwrapSmoke(path, bedsRoot string, masks []string) hostfacts.ProbeReport {
+	probeHome, err := os.MkdirTemp(bedsRoot, ".probe-*")
 	if err != nil {
 		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: temp bed_home: %v", err)}
 	}
@@ -138,7 +138,7 @@ func bwrapSmoke(path, workspaceRoot string, masks []string) hostfacts.ProbeRepor
 	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
 		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: workspace: %v", err)}
 	}
-	argv := buildBwrapArgs(workspaceRoot, probeHome, probeWorkspace, bedfs.DefaultWorkdir, masks, nil)
+	argv := buildBwrapArgs(bedsRoot, probeHome, probeWorkspace, bedfs.DefaultWorkdir, masks, nil)
 	cmd := exec.Command(path, append(argv, "true")...)
 	report := hostfacts.RunExecProbe(cmd)
 	if report.Error != "" {

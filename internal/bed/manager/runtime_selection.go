@@ -37,7 +37,7 @@ type RuntimeSelection struct {
 }
 type CombinationAttempt struct {
 	Filesystem  string          `json:"filesystem"`
-	ProcessView string          `json:"workspace_view"`
+	ProcessView string          `json:"process_view"`
 	Network     string          `json:"network"`
 	Identity    privilege.Level `json:"identity"`
 	Executor    string          `json:"executor"`

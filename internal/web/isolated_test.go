@@ -52,7 +52,7 @@ func (s *isolatedBlockingStore) Persist(ctx context.Context, _ string, _ string,
 func createIsolatedSession(t *testing.T, s *Server) string {
 	t.Helper()
 	rec := do(t, s, http.MethodPost, "/v1/isolated/session",
-		strings.NewReader(`{"profile":"balanced","workspace":{"path":"/workspace","mode":"rw"}}`),
+		strings.NewReader(`{"profile":"balanced","workdir":"/workspace"}`),
 		map[string]string{"Content-Type": "application/json"})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create isolated session = %d %s", rec.Code, rec.Body.String())
@@ -90,7 +90,7 @@ func TestIsolatedSessionLifecycleAndStatefulRun(t *testing.T) {
 		t.Fatalf("decode isolated state: %v", err)
 	}
 	if state.Status != "active" || state.Profile != "balanced" ||
-		state.Workspace == nil || state.Workspace.Path != "/workspace" || state.Workspace.Mode != "rw" {
+		state.Workdir != "/workspace" {
 		t.Fatalf("isolated state = %+v", state)
 	}
 
@@ -222,7 +222,7 @@ func TestIsolatedFilesReuseBedWithoutCreatingMissingSession(t *testing.T) {
 func TestIsolatedUnsupportedOptionsAndCapabilities(t *testing.T) {
 	s := newTestServer(t)
 	rec := do(t, s, http.MethodPost, "/v1/isolated/session",
-		strings.NewReader(`{"profile":"strict","workspace":{"path":"/workspace","mode":"overlay"}}`),
+		strings.NewReader(`{"profile":"strict","workdir":"/workspace"}`),
 		map[string]string{"Content-Type": "application/json"})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("unsupported create = %d %s", rec.Code, rec.Body.String())
@@ -291,5 +291,43 @@ func TestDefaultBedIsNotAnIsolatedSession(t *testing.T) {
 	}
 	if _, ok := s.mgr.Get(""); !ok {
 		t.Fatal("isolated delete removed the default bed")
+	}
+}
+
+func TestIsolatedWorkdirContract(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{"default", `{}`, http.StatusCreated},
+		{"explicit", `{"workdir":"/workspace"}`, http.StatusCreated},
+		{"unsupported", `{"workdir":"/project"}`, http.StatusBadRequest},
+		{"removed_workspace", `{"workspace":{"path":"/workspace","mode":"ro"}}`, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestServer(t)
+			rec := do(t, s, http.MethodPost, "/v1/isolated/session", strings.NewReader(tc.body), map[string]string{"Content-Type": "application/json"})
+			if rec.Code != tc.status {
+				t.Fatalf("create = %d %s", rec.Code, rec.Body.String())
+			}
+			if tc.status != http.StatusCreated {
+				return
+			}
+			var created isolatedCreateResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+				t.Fatal(err)
+			}
+			rec = do(t, s, http.MethodGet, "/v1/isolated/session/"+created.SessionID, nil, nil)
+			var state map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Code != http.StatusOK || state["workdir"] != "/workspace" {
+				t.Fatalf("state = %d %v", rec.Code, state)
+			}
+			if _, old := state["workspace"]; old {
+				t.Fatal("legacy workspace in state")
+			}
+		})
 	}
 }

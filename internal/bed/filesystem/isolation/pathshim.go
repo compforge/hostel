@@ -54,8 +54,8 @@ func (p *pathshimView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 
 // +spec=`A pathshim process view applies the workdir and process-supported Bed path mappings atomically without changing isolation level or mount capability.`
 // +case:id=pathshim_process_view,desc=`Probe and run one command through the selected dorm or room mechanism`,expect=`Every process-supported mapping reaches its declared source, command semantics survive, and probe failure falls back to carrier paths`
-func newPathshimView(base Boundary, workspaceRoot string, discovery hostfacts.ProbeReport) (processViewBackend, ProcessViewReport, hostfacts.ProbeReport) {
-	probe := hostfacts.WithExecutionProbe(discovery, probePathshim(base, workspaceRoot, discovery.ResolvedPath))
+func newPathshimView(base Boundary, bedsRoot string, discovery hostfacts.ProbeReport) (processViewBackend, ProcessViewReport, hostfacts.ProbeReport) {
+	probe := hostfacts.WithExecutionProbe(discovery, probePathshim(base, bedsRoot, discovery.ResolvedPath))
 	reason := probe.Error
 	if reason != "" {
 		log.Printf("isolation: pathshim process view unavailable (%s)", reason)
@@ -68,11 +68,11 @@ func newPathshimView(base Boundary, workspaceRoot string, discovery hostfacts.Pr
 	}, ProcessViewReport{Mode: "pathshim", Available: true}, probe
 }
 
-func probePathshim(base Boundary, workspaceRoot, executable string) hostfacts.ProbeReport {
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+func probePathshim(base Boundary, bedsRoot, executable string) hostfacts.ProbeReport {
+	if err := os.MkdirAll(bedsRoot, 0o755); err != nil {
 		return hostfacts.ProbeReport{Error: "create workspace root: " + err.Error()}
 	}
-	probeHome, err := os.MkdirTemp(workspaceRoot, ".pathshim-probe-*")
+	probeHome, err := os.MkdirTemp(bedsRoot, ".pathshim-probe-*")
 	if err != nil {
 		return hostfacts.ProbeReport{Error: "create probe bed: " + err.Error()}
 	}

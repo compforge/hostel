@@ -43,7 +43,7 @@ Feature 使用统一的 Policy：
 这是实例级配置，Filesystem 的内部预期等级由房型推导。dorm 请求 shared 文件、shared 身份、shared 网络；
 room 请求 confined 文件、dedicated 身份、shared 网络；suite/auto 请求 private 文件、dedicated 身份、private 网络。
 Feature Policy 控制采用哪个实现。例如 room、UID=required 要求使用 UID/DAC 文件机制。互斥功能同时 required，
-或房型与 required 实现冲突，在探测前拒绝配置。Required workspace helper 会排除互斥的 Bwrap 挂载视图。
+或房型与 required 实现冲突，在探测前拒绝配置。Required process path helper 会排除互斥的 Bwrap 挂载视图。
 
 基础 BedFS 路径归属和必要的执行降权没有通用关闭开关。关闭可选隔离不绕过这些契约。
 Requirements 由实现声明，caller 不给环境前提设置 Policy；实际准备顺序和依赖校验由所属组件负责。

@@ -27,6 +27,14 @@ Workdir 是 Bed 的默认工作目录，当前为 `/workspace`，也是 API 相�
 它是 Bed 根文件空间中的普通目录；具体进程的 cwd 可以覆盖默认值，常驻 shell 也可通过
 `cd` 改变当前目录。Store 默认同步 `/workspace` 是独立策略，不由 Workdir 的身份推导。
 
+Bed 管理 API 的 `workdir` 返回 Bed 路径 `/workspace`，不返回 Carrier 目录。
+Isolated session 的创建请求与状态同样使用 `workdir` 字符串；省略时使用 `/workspace`，
+当前不支持其他默认工作目录，未识别的创建字段会被拒绝。只读要求归属具体数据映射，Workdir 不承载访问模式或 overlay 机制。
+`/workspace` 只是默认路径值，Workspace 不再是独立的 Bed 概念。
+
+Carrier 上所有 Bed 目录的父目录由 `--beds-root` / `HOSTEL_BEDS_ROOT` 配置，
+默认值也为 `/workspace`，但属于 Carrier 路径空间，与 Bed 的 Workdir 分别解释。
+
 ### PathMappings
 
 Bed 需要接入任务输入或与 Carrier 共享数据，因此通过 PathMappings 声明将 Carrier 已有
@@ -140,8 +148,8 @@ UID backend 以独立进程身份兑现 confined 的数据访问边界，目录�
 
 | 空间 | 示例 | 所有者 |
 |---|---|---|
-| Client | `/`、`/workspace/a`、`/tmp/job`、相对路径 `a` | BedFS；`/` 是 bed_home，相对路径以 workspace 为基准 |
-| Carrier | `<workspace-root>/<bed-id>/data/...` | BedFS；daemon 的文件操作和 Store 使用 |
+| Client | `/`、`/workspace/a`、`/tmp/job`、相对路径 `a` | BedFS；`/` 是 bed_home，相对路径以 Workdir 为基准 |
+| Carrier | `<beds-root>/<bed-id>/data/...` | BedFS；daemon 的文件操作和 Store 使用 |
 | Executor | shared/confined 下由 helper 或 Carrier 提供视图；private 下为内部 bed_home 挂载或 `/workspace` | BedFS `ProcessView` 定义语义，isolation 实现投影 |
 
 映射规则只有一套：
@@ -184,7 +192,7 @@ Bed 创建请求示例：
 
 Executor 与 daemon 共享 mount namespace。Hostel 启动时从 `PATH` 发现 `proot`、`pathshim`，探测内置工作区路径视图，并按 PRoot → pathshim → Carrier 选择后端。额外 PathMappings 在 Bed 初始化时接入。Carrier 视图不能重定向进程路径，Landlock 当前也未允许外部数据进入其规则；这些组合保留 API 映射，报告进程映射不可用，仍允许 Bed 就绪。实际目录不存在或无法打开等准备错误仍会失败。
 
-PRoot 的路径 syscall 覆盖更完整，但依赖 ptrace；pathshim 不依赖 ptrace，作为次选。两者都可用时选择 PRoot。Landlock 或 uid 始终独立负责访问边界，workspace helper 不参与 isolation level 判定。
+PRoot 的路径 syscall 覆盖更完整，但依赖 ptrace；pathshim 不依赖 ptrace，作为次选。两者都可用时选择 PRoot。Landlock 或 uid 始终独立负责访问边界，进程路径 helper 不参与 isolation level 判定。
 
 仅展开文件视图与文件边界时，进程链保持以下职责顺序；网络及最终降权的组合约束见 [isolation.md](isolation.md)：
 
@@ -199,16 +207,16 @@ PRoot 与 pathshim 将 Bed 的映射目录接入声明路径，没有 COW、whit
 
 ### private 文件
 
-bwrap 先遮蔽 `<workspace-root>`，再投影同一 BedFS：
+bwrap 先遮蔽 `<beds-root>`，再投影同一 BedFS：
 
 - 整个 `bed_home` bind 到机制私有路径 `/tmp/.hostel/bed`，使 `/`、`/tmp/job` 等任意结构化 cwd 都有进程视图；
 - `bed_home/workspace` 额外 bind 到稳定的 `/workspace`，保持 OpenSandbox 与 agent 工具链约定；
 - 每个 PathMapping 将已有 HostPath bind 到 BedPath；ReadOnly 使用只读 bind；
-- BedFS 的 workspace 子树优先使用 `/workspace`，其余路径使用内部 bed_home 投影。
+- BedFS 的 Workdir 子树优先使用 `/workspace`，其余路径使用内部 bed_home 投影。
 
 内部挂载点不是北向协议。调用方继续传 Client path；例如 `cwd="/"` 由 BedFS 解析为 bed_home，再投影到当前 Executor。
 
-`capabilities.workspace_mount` 只说明进程里是否存在 private 文件视图的真实 `/workspace` mount，不表示整个 Bed 为 suite 或 BedFS 是否可用。内部 `ProcessView` 负责 Carrier 数据路径到进程路径的转换，不单独拥有文件数据。HTTP 保留 `workspace_view` 字段名；`workspace_view.path_mappings` 分别报告进程侧读写映射与只读映射支持，二者独立于 file API 的可用性。`workspace_view.mode` 报告实际进程视图：`mount`、`proot`、`pathshim` 或 `carrier`；`available=false` 与 `reason` 表示没有用户态 helper 通过选择验证。BedFS 的结构化路径映射是所有房型的基础能力。
+`ProcessView` 负责 Carrier 数据路径到进程路径的转换，不单独拥有文件数据。`/v1/status` 的 `components.filesystem.process_view` 报告实际进程视图，health 与 capabilities 同样使用 `process_view`；`process_view.path_mappings` 分别报告进程侧读写映射与只读映射支持，二者独立于 file API 的可用性。`process_view.mode` 报告实际进程视图：`mount`、`proot`、`pathshim` 或 `carrier`；`available=false` 与 `reason` 表示没有用户态 helper 通过选择验证。BedFS 的结构化路径映射是所有房型的基础能力。
 
 ## 五、结构化路径与命令文本
 
@@ -216,13 +224,13 @@ Hostel 解析 file API 的 `path`、命令的 `cwd` 等结构化字段，因此�
 
 PRoot 或 pathshim 可用时，shared/confined 文件视图的命令字面 `/workspace/x` 及配置目标会指向对应 BedFS source；映射外绝对路径仍由 Carrier 进程视图解释。helper 全部失败时可尝试 Carrier 视图，Hostel 通过能力与 diagnostics 接口如实上报降级和各项原始探测记录；完整组合仍须可执行。
 
-shared 文件视图与 carrier 共享 mount namespace，命令中的字面绝对路径可能成功写到进程根，而不是 BedFS。独占 carrier 可显式配置沿用原名称的 `--dorm-read-fallback-root /`：只读 file API 在 未命中额外映射且 BedFS 路径不存在时，把客户端绝对路径按该进程根作为第二候选重试；两处都存在时始终以 BedFS 为准。相对路径不回退，因为它本来就以 bed workspace 为执行与 API 基准。
+shared 文件视图与 carrier 共享 mount namespace，命令中的字面绝对路径可能成功写到进程根，而不是 BedFS。独占 carrier 可显式配置沿用原名称的 `--dorm-read-fallback-root /`：只读 file API 在 未命中额外映射且 BedFS 路径不存在时，把客户端绝对路径按该进程根作为第二候选重试；两处都存在时始终以 BedFS 为准。相对路径不回退，因为它本来就以 Bed Workdir 为执行与 API 基准。
 
 这是一条默认关闭的只读候选策略，不是第二套路径映射或写入语义。上传、替换、改权限、移动和删除始终只操作 BedFS；confined/private 文件也不启用回退。配置的 root 会暴露给 file API 读取，因此共享 carrier 不得开启，也不得把它理解为隔离保证。
 
 ## 六、生命周期与边界
 
-- Bed owns BedFS：`bed_home`、workspace、generation 与快照身份随 Bed 存续；
+- Bed owns BedFS：`bed_home`、Workdir、generation 与快照身份随 Bed 存续；
 - Executor owns process realm：只持有 BedFS View，可丢失和替换；
 - Shell owns its Executor View：session run 的结构化 cwd 由 Shell 投影并更新持久 cwd；
 - Store consumes Bed SyncPaths：快照始终包含 `meta.json`，并包含 `Bed.Spec.SyncPaths` 选择的默认映射子树（默认 `/workspace`）；

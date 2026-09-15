@@ -5,7 +5,7 @@ and `linux/arm64`. Run `make image` from the repository root for the current
 architecture, or `make image-multiarch IMAGE=<repository>:<tag>` to build and
 push both architectures.
 
-## Workspace helpers
+## Process path helpers
 
 The image installs pinned PRoot and pathshim binaries in `/usr/bin`, which is
 already part of `PATH`, together with PRoot's `libtalloc2` runtime dependency.

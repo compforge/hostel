@@ -21,8 +21,8 @@ func TestIsolatedSessionCompatibility(t *testing.T) {
 		CreatedAt time.Time `json:"created_at"`
 	}
 	create, err := c.json(ctx, "POST", "/v1/isolated/session", "", map[string]any{
-		"profile":   "balanced",
-		"workspace": map[string]string{"path": "/workspace", "mode": "rw"},
+		"profile": "balanced",
+		"workdir": "/workspace",
 	}, &created)
 	cancel()
 	if err != nil || create.Status != http.StatusCreated || created.SessionID == "" || created.CreatedAt.IsZero() {
@@ -32,18 +32,15 @@ func TestIsolatedSessionCompatibility(t *testing.T) {
 
 	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 	var state struct {
-		Status    string `json:"status"`
-		Profile   string `json:"profile"`
-		Workspace struct {
-			Path string `json:"path"`
-			Mode string `json:"mode"`
-		} `json:"workspace"`
-		ShareNet bool `json:"share_net"`
+		Status   string `json:"status"`
+		Profile  string `json:"profile"`
+		Workdir  string `json:"workdir"`
+		ShareNet bool   `json:"share_net"`
 	}
 	get, err := c.json(ctx, "GET", base, "", nil, &state)
 	cancel()
 	if err != nil || get.Status != http.StatusOK || state.Status != "active" || state.Profile != "balanced" ||
-		state.Workspace.Path != "/workspace" || state.Workspace.Mode != "rw" {
+		state.Workdir != "/workspace" {
 		t.Fatalf("get isolated session: status=%d err=%v state=%+v body=%s", get.Status, err, state, get.Body)
 	}
 

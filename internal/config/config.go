@@ -54,9 +54,9 @@ type Config struct {
 	OTLPTracesHTTPEndpoint string
 	// Addr is the HTTP listen address.
 	Addr string
-	// WorkspaceRoot is the parent dir under which each bed gets its workspace
-	// (<root>/<bedID>). In a pod this is typically a bind of shared network FS.
-	WorkspaceRoot string
+	// BedsRoot is the carrier parent directory for per-Bed identity and data
+	// (<root>/<bed name>). It is independent of the Bed workdir.
+	BedsRoot string
 	// DefaultBed is the bed id used when a request omits one — lets simple
 	// single-tenant callers ignore the bed concept entirely.
 	DefaultBed string
@@ -118,7 +118,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs.BoolVar(&c.EnableTracing, "enable-tracing", osx.EnvBool("HOSTEL_ENABLE_TRACING", false), "export OpenTelemetry traces")
 	fs.StringVar(&c.OTLPTracesGRPCEndpoint, "otel-traces-grpc-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_GRPC_ENDPOINT", ""), "OTLP gRPC traces endpoint")
 	fs.StringVar(&c.OTLPTracesHTTPEndpoint, "otel-traces-http-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_HTTP_ENDPOINT", ""), "OTLP HTTP traces endpoint")
-	fs.StringVar(&c.WorkspaceRoot, "workspace-root", osx.EnvStr("HOSTEL_WORKSPACE_ROOT", "/workspace"), "parent dir for per-bed workspaces")
+	fs.StringVar(&c.BedsRoot, "beds-root", osx.EnvStr("HOSTEL_BEDS_ROOT", "/workspace"), "carrier parent dir for per-bed data")
 	fs.StringVar(&c.Bed.RoomType, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "Bed room type: dorm | room | suite | auto (auto=highest available profile)")
 	fs.StringVar(&c.Bed.Filesystem.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")
 	fs.StringVar(&c.DefaultBed, "default-bed", osx.EnvStr("HOSTEL_DEFAULT_BED", "default"), "bed id used when a request omits one")
@@ -132,7 +132,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs.StringVar(&c.Bed.Executor.Backend, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
 	fs.IntVar(&c.Bed.Privilege.UID, "bed-uid", osx.EnvInt("HOSTEL_BED_UID", bedUID), "fixed non-root uid for Bed processes")
 	fs.IntVar(&c.Bed.Privilege.GID, "bed-gid", osx.EnvInt("HOSTEL_BED_GID", bedGID), "fixed non-root gid for Bed processes")
-	fs.StringVar(&c.Bed.Store.Sync, "sync", osx.EnvStr("HOSTEL_SYNC", "auto"), "workspace synchronization policy: auto (per-bed detection) | noop | cas | pack | tar | restic")
+	fs.StringVar(&c.Bed.Store.Sync, "sync", osx.EnvStr("HOSTEL_SYNC", "auto"), "Bed data synchronization policy: auto (per-bed detection) | noop | cas | pack | tar | restic")
 	fs.StringVar(&c.Bed.Store.ResticBinary, "restic-binary", osx.EnvStr("HOSTEL_RESTIC_BINARY", "restic"), "restic binary (requires 0.19.1)")
 	c.Bed.Store.ResticPassword = osx.EnvStr("HOSTEL_RESTIC_PASSWORD", "")
 	fs.StringVar(&c.Bed.Store.Bucket, "s3-bucket", osx.EnvStr("HOSTEL_S3_BUCKET", ""), "S3 bucket for bed snapshots")

@@ -141,11 +141,14 @@ func TestStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode diagnostics: %v", err)
 	}
-	if body["schema_version"] != float64(5) {
+	if body["schema_version"] != float64(6) {
 		t.Fatalf("diagnostics schema_version = %v", body["schema_version"])
 	}
 	components, _ := body["components"].(map[string]any)
 	isolationFacts, _ := components["filesystem"].(map[string]any)
+	if view, ok := isolationFacts["process_view"].(map[string]any); !ok || view["mode"] == "" {
+		t.Fatalf("filesystem process_view = %v", isolationFacts)
+	}
 	host, _ := body["host"].(map[string]any)
 	system, _ := host["fact"].(map[string]any)
 	hostStatus, _ := host["status"].(map[string]any)

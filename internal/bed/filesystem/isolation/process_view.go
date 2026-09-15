@@ -85,11 +85,11 @@ func wrapRuntimeCommand(boundary Boundary, workspace processViewBackend, cmd *ex
 // concern rather than Hostel configuration.
 //
 // +spec=`For shared/confined files, Hostel discovers pathshim and PRoot through PATH, probes every candidate whose prerequisites are satisfied, then resolves the process view in PRoot → pathshim → carrier order without changing the selected isolation level.`
-// +case:id=workspace_view_fallback,desc=`Vary helper discovery, ptrace, pathshim, and PRoot probe outcomes independently`,expect=`Diagnostics preserve discovery facts; PRoot wins when usable, pathshim is next, and carrier is the final fallback`
-func resolveProcessView(base Boundary, workspaceRoot string, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport) (processViewBackend, ProcessViewReport) {
-	return resolveProcessViewWithConfig(base, workspaceRoot, ptraceProbe, probes, Config{})
+// +case:id=process_view_fallback,desc=`Vary helper discovery, ptrace, pathshim, and PRoot probe outcomes independently`,expect=`Diagnostics preserve discovery facts; PRoot wins when usable, pathshim is next, and carrier is the final fallback`
+func resolveProcessView(base Boundary, bedsRoot string, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport) (processViewBackend, ProcessViewReport) {
+	return resolveProcessViewWithConfig(base, bedsRoot, ptraceProbe, probes, Config{})
 }
-func resolveProcessViewWithConfig(base Boundary, workspaceRoot string, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport, config Config) (selected processViewBackend, report ProcessViewReport) {
+func resolveProcessViewWithConfig(base Boundary, bedsRoot string, ptraceProbe hostfacts.ProbeReport, probes map[string]hostfacts.ProbeReport, config Config) (selected processViewBackend, report ProcessViewReport) {
 	defer func() { report.PathMappings = selected.MappingSupport() }()
 
 	pathshimDiscovery := hostfacts.ProbeReport{Error: "disabled_by_config"}
@@ -119,7 +119,7 @@ func resolveProcessViewWithConfig(base Boundary, workspaceRoot string, ptracePro
 	var pathshimReport, prootReport ProcessViewReport
 
 	if pathshimDiscovery.Error == "" {
-		candidate, report, probe := newPathshimView(base, workspaceRoot, pathshimDiscovery)
+		candidate, report, probe := newPathshimView(base, bedsRoot, pathshimDiscovery)
 		probes["pathshim"] = probe
 		if report.Available {
 			pathshimCandidate, pathshimReport = candidate, report
@@ -135,7 +135,7 @@ func resolveProcessViewWithConfig(base Boundary, workspaceRoot string, ptracePro
 	} else if !ptraceProbe.Succeeded() {
 		reasons = append(reasons, "ptrace: "+rawProbeFailure(ptraceProbe))
 	} else {
-		candidate, report, probe := newProotView(base, workspaceRoot, prootDiscovery)
+		candidate, report, probe := newProotView(base, bedsRoot, prootDiscovery)
 		probes["proot"] = probe
 		if report.Available {
 			prootCandidate, prootReport = candidate, report

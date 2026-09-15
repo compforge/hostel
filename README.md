@@ -28,7 +28,7 @@ From a source checkout with Go and Make installed:
 
 ```bash
 make build
-./bin/hostel --isolation dorm --workspace-root ./.workspace --addr 127.0.0.1:8872
+./bin/hostel --isolation dorm --beds-root ./.workspace --addr 127.0.0.1:8872
 ```
 
 In another terminal, run a command and download its output file:

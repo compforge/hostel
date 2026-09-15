@@ -14,11 +14,11 @@
 
 以下名词全仓（代码 / 注释 / 文档）统一使用，避免同物多名、一名多物：
 
-- **bed**：隔离执行单元，对外即一个 sandbox（workspace + 常驻 shell，状态跨命令保持）。
+- **bed**：隔离执行单元，对外即一个 sandbox（独立文件空间 + 执行环境，状态跨命令保持）。
 - **bed name**：调用方给定的不透明路由标识，支持中文；HTTP 现有的 bed/id 参数及 `BED_ID` 都表达 Name，缺省为 `default`。Hostel 不解释其上层业务语义。
 - **bed id**：Hostel 生成的本地身份；本地数据保留期间跨重启恢复，Forget 后同名创建换 ID。领域资源以 ID 归属，远端快照以 Name/快照引用定位。
-- **workspace-root**：所有 bed 目录的**父目录**，**可配、不写死**（`--workspace-root` / `HOSTEL_WORKSPACE_ROOT`，默认 `/workspace`）；**daemon 启动时创建一次**。
-- **bed 目录**：`{workspace-root}/{bed name}`，含 `meta.json`（可移植身份）+ `data/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面首次请求通过 `Ensure` 加入同一初始化并等待，详见 `docs/kernel.md`。
+- **beds-root**：所有 bed 目录的**父目录**，**可配、不写死**（`--beds-root` / `HOSTEL_BEDS_ROOT`，默认 `/workspace`）；**daemon 启动时创建一次**。
+- **bed 目录**：`{beds-root}/{bed name}`，含 `meta.json`（可移植身份）+ `data/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面首次请求通过 `Ensure` 加入同一初始化并等待，详见 `docs/kernel.md`。
 - **BedFS**：Bed 持有的文件系统数据域；统一拥有 Rootfs、Workdir、PathMappings、三个路径空间与文件操作。Executor 替换不改变 BedFS 身份，详见 `docs/filesystem.md`。
 - **bed_home（data 目录）**：BedFS 的宿主根 `{bed 目录}/data`——**Bed 自身数据根**；未命中外部映射的客户端路径解析到它下面，回显保持 Bed 路径。它不整体持久化，也不表示进程已有独立的 `/`。
 - **Workdir**：Bed 默认工作目录，当前为 `/workspace`（`bedfs.DefaultWorkdir`），也是 API 相对路径的解析基准；具体进程的 cwd 可以覆盖。Rootfs、Workdir 与 PathMappings 的关系见 `docs/filesystem.md`。
@@ -50,11 +50,11 @@ tini (pid1)                       pod 级收尸兜底
 未命中 PathMappings 的客户端路径：/workspace/x → data/workspace/x；/tmp/x → data/tmp/x；相对路径 = Workdir 相对
    │  BedFS.Resolve：单射 rebase（回显为其逆映射）
    ▼
-<workspace-root>/                 宿主侧，所有 bed 父目录；可配 HOSTEL_WORKSPACE_ROOT，默认 /workspace，daemon 启动建
+<beds-root>/                 宿主侧，所有 bed 父目录；可配 HOSTEL_BEDS_ROOT，默认 /workspace，daemon 启动建
 └─ <bed name>/                      bed 目录；InitializeBed / Ensure 首次初始化时创建
    ├─ meta.json                   可移植身份
    └─ data/                       bed_home（客户端的 /）；不整体进快照
-      ├─ workspace/               OpenSandbox workspace；默认唯一持久化数据子树
+      ├─ workspace/               默认 Workdir；默认 Store 同步子树
       └─ <other>/                 Bed 自身数据；是否同步由 SyncPaths 声明
 
 Executor View：
@@ -112,7 +112,7 @@ internal/
 
 ## 关键约定
 
-- **bed = 客人单元 = 对外一个 sandbox**（workspace + 常驻 shell，状态跨命令保持）；**房型是 Bed 跨领域隔离保证的虚拟统称**——bed 是跨档不变的基本单位，房型不替代 bed 命名（见 `docs/isolation.md`）。
+- **bed = 客人单元 = 对外一个 sandbox**（独立文件空间 + 执行环境，状态跨命令保持）；**房型是 Bed 跨领域隔离保证的虚拟统称**——bed 是跨档不变的基本单位，房型不替代 bed 命名（见 `docs/isolation.md`）。
   - **默认 bed 兜底**：不带 bed 的原生请求落 `default`，单租户调用方可无视 bed 概念；default bed 不暴露为 isolated session，永不被清数据、不可 purge、不占任何 bed 数量名额。
   - **生命周期事实分维度**：
     - inventory 的 `status.phase=initializing|resident|evicting|purging|dormant|failed` 表达 Bed 所处阶段，`status.readiness` 表达能否服务；Bed 详情将这组事实置于 `status.lifecycle`。
@@ -127,13 +127,13 @@ internal/
     - `--bed-pressure-threshold-percent` 默认 80，`occupied/max-beds` 或 `pinned/max-pinned-beds` 任一达水位即上报软 `bed_pressure`。
     - `max-pinned-beds` 不是准入限制，超过也不返回 429；CPU/内存 pressure 仍单独执行资源准入。
     - Hostel 只上报事实，不自行选择 carrier；同步 trigger 的节奏、合并与重试由 Store 同步循环统一负责，详见 `docs/resource.md` / `docs/store.md`。
-- **执行层次是 `Bed → Executor → Execution`**：Bed 是 workspace / sandbox 的持久身份；Executor 是当前可替换的进程域；Execution 是一次运行。Executor 丢失只终结归属它的进程，不丢 Bed 数据，下一次请求在旧 Executor 清理成功后创建新 Executor。每次前台、后台或 session run 都生成 `Execution`；`execution_start` 先于输出，之后恰有一个 `execution_end`。`ProcessOutcome` 表达 exited / signaled / lost，termination cause 独立表达 timeout / cancel / interrupt / teardown / executor_lost，禁止再用裸 EOF、`-1` 或错误字符串承载多种语义。
+- **执行层次是 `Bed → Executor → Execution`**：Bed 是 sandbox 的持久身份；Executor 是当前可替换的进程域；Execution 是一次运行。Executor 丢失只终结归属它的进程，不丢 Bed 数据，下一次请求在旧 Executor 清理成功后创建新 Executor。每次前台、后台或 session run 都生成 `Execution`；`execution_start` 先于输出，之后恰有一个 `execution_end`。`ProcessOutcome` 表达 exited / signaled / lost，termination cause 独立表达 timeout / cancel / interrupt / teardown / executor_lost，禁止再用裸 EOF、`-1` 或错误字符串承载多种语义。
 - **Trace 是生命周期事实的投影**：HTTP 使用路由模板 span，bed initialize/persist/evict 与 execution 使用稳定领域 span，stage 只记 event；不得把 command、env、stdout/stderr 写入 span。后台 initialization / execution 继承 trace identity 但不继承 HTTP cancel。详见 `docs/observability.md`。
 - **隔离按 Bed 的统一目标尽量兑现**：各 domain 拥有 facts → `LevelStatus.Supported`、配置选择与 `Level.Room()`；房型取已选等级满足要求的最低档，不反向削弱更强的组件。Feature 是机制及其采用策略，不是另一套 Level。启动组合验证允许有限回退，required 不丢弃，清理失败终止；live Bed 不重选。当前缺口见 `docs/isolation.md` 与 `docs/backlog.md`。
   - daemon 身份与 BedUser 正交：command/session/Service 使用 resident Bed 的同一身份；Privilege 独立决定 shared/dedicated，Filesystem 不分配 UID。自动基线允许继承 daemon 身份，不以切换用户为前提；Linux 子进程仍须通过 capability 清理与 no_new_privs 验证。见 `docs/privilege.md`。
   - BedFS 路径映射在所有档位一致；PRoot/pathshim 改善进程路径体验，不提供安全边界，也不提高文件隔离档位。
   - Bed.Spec.SyncPaths 声明 Store 自动同步的 BedFS 子树；额外 PathMappings 不进入快照，详见 `docs/store.md`。
-- **amenity 通则**：共享设施按 Bed 分配应用状态，产物落对应 workspace；设施状态、Bed 级凭据与 Bed 生命周期分别管理。北向使用 Bed 级动作或受限代理，不裸透传共享设施的管理协议。应用切分不等于文件、网络或资源完整隔离，当前机制与缺口见 `docs/amenity.md`。
+- **amenity 通则**：共享设施按 Bed 分配应用状态，产物落对应 Bed Workdir；设施状态、Bed 级凭据与 Bed 生命周期分别管理。北向使用 Bed 级动作或受限代理，不裸透传共享设施的管理协议。应用切分不等于文件、网络或资源完整隔离，当前机制与缺口见 `docs/amenity.md`。
 - **常驻 shell 的坑**：一个 Shell 只能有**一个** stdout reader（否则 run 间串输出——v1 踩过）；Run 之间串行；Shell 持有启动时的 Executor View，session run 的 cwd 必须经 `RunAt` 投影并作为独立控制步骤执行，禁止 Web 拼接 `cd` 或 Executor path；`exit` 会杀死 session，非零退出码用子 shell（`sh -c "exit N"`）。**锁纪律**：`runMu` 串行化 Run 且只有 Run 碰；`mu` 只护 `dead` 标志、纳秒级持有——曾因单锁设计让「shell 死亡+未断开客户端」死锁整个 daemon（含 healthz），别往 `mu` 里加阻塞代码（见 shell.go LOCKING 注释）。
 - **配置在启动入口收敛**：显式 Options > CLI > env > 默认值，组件只读确定的 Config；指针区分未指定与显式零值。按 Component → Feature → Requirements 组织选择与诊断，Feature 使用 auto/off/required，Linux Capabilities 属于实现前提。内部配置不自动扩展成公开参数，见 `docs/configuration.md`。
 - **E2E owner 边界**：Hostel 的单机 suite 直接验证真实 daemon/image 的 bed runtime、隔离与 carrier userland；上层控制面只保留 placement、跨 carrier 持久化和 lifecycle 编排，不在 K8s E2E 重复证明 Hostel 内部契约。运行说明见 `tests/e2e/README.md`。
@@ -158,7 +158,7 @@ internal/
 - Filesystem（BedFS、路径空间、进程视图与文件隔离机制）：`docs/filesystem.md`
 - 隔离总览（跨领域隔离目标、机制组合、降级与实际保证）：`docs/isolation.md`
 - 权限模型（daemon / BedUser、UID 租约、capability、降权顺序与部署前提）：`docs/privilege.md`
-- Store（Hostel 直管各 bed 的持久化与 Restore；本地 workspace=工作副本、S3 快照=持久身份）：`docs/store.md`
+- Store（Hostel 直管各 bed 的持久化与 Restore；本地 Bed 数据=工作副本、S3 快照=持久身份）：`docs/store.md`
 - 资源治理方案（carrier 采集/汇报/admission + per-bed accounting 已落地，per-bed limits 待实现）：`docs/resource.md`
 - 可观测性设计（统一生命周期事实，并投影到日志、接口和 metric）：`docs/observability.md`
 - 快速上手 / API 一览 / 配置：`README.md`

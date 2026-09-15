@@ -52,17 +52,17 @@ const carrierSoftwareRoot = "/usr/local"
 //  3. --bind /usr/local /usr/local — carrier-wide shared software, writable
 //  4. --dev /dev, --ro-bind /proc /proc, --tmpfs /tmp — fresh dev/tmp; /proc
 //     is bound (not --proc) so no procfs remount is needed under masked /proc
-//  5. Masking: --tmpfs over workspaceRoot (sibling beds cease to exist),
+//  5. Masking: --tmpfs over bedsRoot (sibling beds cease to exist),
 //     and over each maskPath (host user data / mounted secrets)
 //  6. Create the private BedFS mount point under /tmp, then bind bed_home
 //     there. This gives every structured BedFS path an Executor-visible name.
 //  7. Bind workspace and Bed path mappings to their stable process
-//     paths (must come AFTER the workspaceRoot mask).
+//     paths (must come AFTER the bedsRoot mask).
 //  8. --chdir <process cwd>, --die-with-parent, --
 //
 // maskPaths are host paths that exist. Environment ownership lives in bed's
 // process-env builder, so isolation mechanisms never inherit or filter it.
-func buildBwrapArgs(workspaceRoot, bedHome, workspace string, cwd string, maskPaths []string, mappings []model.PathMapping) []string {
+func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths []string, mappings []model.PathMapping) []string {
 	// Bed policy owns this mount order: mask siblings and credentials before
 	// exposing the selected data roots. The host mechanism only encodes the plan.
 	mounts := []hostfs.Mount{
@@ -71,7 +71,7 @@ func buildBwrapArgs(workspaceRoot, bedHome, workspace string, cwd string, maskPa
 		{Kind: hostfs.Dev, Target: "/dev"},
 		{Kind: hostfs.ReadOnlyBind, Source: "/proc", Target: "/proc"},
 		{Kind: hostfs.Tmpfs, Target: "/tmp"},
-		{Kind: hostfs.Tmpfs, Target: workspaceRoot},
+		{Kind: hostfs.Tmpfs, Target: bedsRoot},
 	}
 	for _, p := range maskPaths {
 		mounts = append(mounts, hostfs.Mount{Kind: hostfs.Tmpfs, Target: p})

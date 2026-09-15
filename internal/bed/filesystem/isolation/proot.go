@@ -52,8 +52,8 @@ func (p *prootView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	return nil
 }
 
-func newProotView(base Boundary, workspaceRoot string, discovery hostfacts.ProbeReport) (processViewBackend, ProcessViewReport, hostfacts.ProbeReport) {
-	probe := hostfacts.WithExecutionProbe(discovery, probeProot(base, workspaceRoot, discovery.ResolvedPath))
+func newProotView(base Boundary, bedsRoot string, discovery hostfacts.ProbeReport) (processViewBackend, ProcessViewReport, hostfacts.ProbeReport) {
+	probe := hostfacts.WithExecutionProbe(discovery, probeProot(base, bedsRoot, discovery.ResolvedPath))
 	if probe.Error != "" {
 		log.Printf("isolation: proot process view unavailable (%s)", probe.Error)
 		return nil, ProcessViewReport{Mode: "carrier", Available: false, Reason: probe.Error}, probe
@@ -66,11 +66,11 @@ func newProotView(base Boundary, workspaceRoot string, discovery hostfacts.Probe
 	return workspace, ProcessViewReport{Mode: workspace.Mode(), Available: true}, probe
 }
 
-func probeProot(base Boundary, workspaceRoot, executable string) hostfacts.ProbeReport {
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
+func probeProot(base Boundary, bedsRoot, executable string) hostfacts.ProbeReport {
+	if err := os.MkdirAll(bedsRoot, 0o755); err != nil {
 		return hostfacts.ProbeReport{Error: "create workspace root: " + err.Error()}
 	}
-	probeHome, err := os.MkdirTemp(workspaceRoot, ".proot-probe-*")
+	probeHome, err := os.MkdirTemp(bedsRoot, ".proot-probe-*")
 	if err != nil {
 		return hostfacts.ProbeReport{Error: "create probe bed: " + err.Error()}
 	}

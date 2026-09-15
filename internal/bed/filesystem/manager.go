@@ -78,14 +78,13 @@ func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
 }
 
 type Status struct {
-	Features  map[string]feature.Status `json:"features"`
-	Requested string                    `json:"requested"`
-	Effective string                    `json:"effective"`
-	Ceiling   string                    `json:"ceiling"`
-	Supported []string                  `json:"supported"`
-	Mechanism string                    `json:"mechanism"`
-	// ProcessView retains the workspace_view wire name for existing clients.
-	ProcessView isolation.ProcessViewReport      `json:"workspace_view"`
+	Features    map[string]feature.Status        `json:"features"`
+	Requested   string                           `json:"requested"`
+	Effective   string                           `json:"effective"`
+	Ceiling     string                           `json:"ceiling"`
+	Supported   []string                         `json:"supported"`
+	Mechanism   string                           `json:"mechanism"`
+	ProcessView isolation.ProcessViewReport      `json:"process_view"`
 	Probes      map[string]hostfacts.ProbeReport `json:"probes"`
 }
 

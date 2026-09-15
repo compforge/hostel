@@ -23,7 +23,7 @@ func TestMixedBedStoresRoundTrip(t *testing.T) {
 	}
 	objects := newS3Fixture(t)
 	root := filepath.Join(t.TempDir(), "source")
-	source := startTarget(t, targetOptions{store: "noop", maxBeds: 8, workspaceRoot: root}).client
+	source := startTarget(t, targetOptions{store: "noop", maxBeds: 8, bedsRoot: root}).client
 	beds := []struct{ id, store string }{
 		{"cas-a", "cas"}, {"cas-b", "cas"}, {"pack-a", "pack"}, {"tar-a", "tar"}, {"noop-a", "noop"},
 	}

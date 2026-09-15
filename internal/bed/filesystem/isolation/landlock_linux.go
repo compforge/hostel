@@ -44,7 +44,7 @@ type landlock struct {
 	self string // hostel binary path, re-execed as the confiner
 }
 
-func newLandlock(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, hostfacts.ProbeReport) {
+func newLandlock(facts hostfacts.Snapshot, bedsRoot string) (Isolator, hostfacts.ProbeReport) {
 	report := hostfacts.ProbeReport{}
 	// Landlock ABI ≥ 1 means the kernel exposes filesystem restrictions (a custom
 	// kernel without CONFIG_SECURITY_LANDLOCK reports 0 — the boot probe already
@@ -61,11 +61,11 @@ func newLandlock(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, host
 	report.ResolvedPath = self
 	// The workspace root may not exist yet at probe time (the bed manager
 	// creates it later); the smoke confines a temp dir under it.
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
-		log.Printf("isolation: cannot create workspace root %s: %v", workspaceRoot, err)
+	if err := os.MkdirAll(bedsRoot, 0o755); err != nil {
+		log.Printf("isolation: cannot create workspace root %s: %v", bedsRoot, err)
 	}
 	// ABI presence alone doesn't prove ENFORCEMENT — run the full form once.
-	report = landlockSmoke(self, workspaceRoot)
+	report = landlockSmoke(self, bedsRoot)
 	report.ResolvedPath = self
 	if report.Failed() {
 		log.Printf("isolation: landlock ABI present but unusable (%s)", report.Error)
@@ -84,8 +84,8 @@ func newLandlock(facts hostfacts.Snapshot, workspaceRoot string) (Isolator, host
 // lie, so we honestly report it unavailable.
 // The check execs /bin/sh, not hostel itself: production only ever execs
 // system binaries post-confine, and hostel's own dir isn't in the allowlist.
-func landlockSmoke(self, workspaceRoot string) hostfacts.ProbeReport {
-	base, err := os.MkdirTemp(workspaceRoot, ".probe-*")
+func landlockSmoke(self, bedsRoot string) hostfacts.ProbeReport {
+	base, err := os.MkdirTemp(bedsRoot, ".probe-*")
 	if err != nil {
 		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: temp dir: %v", err)}
 	}

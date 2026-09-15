@@ -61,7 +61,7 @@ Lifecycle 的更新权。读写都复制可变成员，不能通过返回的 map
 使用 Hostel 生成的本地 ID；Amenity Manager 用本地 ID 绑定设施内的 Tenant ID。远端快照仍按 Name / 快照引用定位。
 
 一个本地生命周期只有一个共享 `*bed.Bed`，从 Recover 到 Forget 都使用它；初始化重试和
-Executor 重建只替换领域资源，不新建 Bed。ID 保存在 `{workspace-root}/.identities/{name}.local`，
+Executor 重建只替换领域资源，不新建 Bed。ID 保存在 `{beds-root}/.identities/{name}.local`，
 重启时与本地目录一起恢复；该记录位于可替换 BedFS 树之外，不进入远端快照。正常 evict/purge
 在运行资源和所有本地目录清理成功后执行 Forget、删除记录；同名再次创建产生新 ID。
 资源分配的 generation/租约由对应 Manager 持有，清理按原 allocation 执行。
@@ -228,7 +228,7 @@ Bed Manager 是保活与回收决策的唯一 owner。共享 Bed 的 Lifecycle S
 续期不是 operation，不改变 active、pinned 或 Store 同步事实。一个 idle、非 pinned
 的 Bed 仍可处于保留期，继续占用 resident/occupied 容量，使 Carrier 保持 retained。
 期限只约束自动回收，不阻止显式删除或 daemon shutdown，也不保证 Service 不会故障重启。
-保活基准属于本次驻留，不进入 workspace 快照；daemon 重启后由上层重新确认运行态与保留期限。
+保活基准属于本次驻留，不进入 Bed 快照；daemon 重启后由上层重新确认运行态与保留期限。
 
 ### 执行与进程归属
 
@@ -242,7 +242,7 @@ Bed Service 共用隔离和目录视图，但只叠加自己的环境，不隐�
 
 环境声明在本地 Bed 生命周期内固定，重复创建必须一致，原生 Ensure 只加入已有声明。
 它随 daemon 私有的本地身份记录保存，Executor 替换和保留目录的重启不会丢失；不进入
-workspace 快照或状态响应，也不记录环境值到日志。Forget 后或跨实例重建由调用方重新
+Bed 快照或状态响应，也不记录环境值到日志。Forget 后或跨实例重建由调用方重新
 声明，不能从用户可替换的文件数据恢复执行配置。独立 env 仅控制继承，不增加同 Bed
 进程间的安全隔离。
 
@@ -322,7 +322,7 @@ Hostel。Hostel 没有 drain 接口，也不因空闲自行退出；它通过 `i
 
 BedFS 负责逻辑数据根及路径投影；Store 管理自动持久化，也提供无业务含义的 [Bed ↔ S3 文件传输](transfers.md)。
 自动持久化负责数据在生命周期之外能否恢复。当前默认只
-持久化 workspace 子树和 Bed 元数据。正常 evict 删除本地工作副本，durable 策略可从快照
+持久化 SyncPaths 声明的子树和 Bed 元数据。正常 evict 删除本地工作副本，durable 策略可从快照
 恢复，noop 不保留数据。配置归属与恢复契约见 [store.md](store.md)。
 
 Amenity 是独立设施。Tenant 是 Hostel 为服务 Bed 定义的设施使用单元，具体资源实现由设施隐藏。Chromium 使用 BrowserContext，
