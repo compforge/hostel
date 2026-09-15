@@ -1,0 +1,13 @@
+# Execute the compiled suite on this Host, with HOSTEL_E2E_ON_TARGET=1.
+service:
+  name: hostel
+  environment:
+    name: devbox
+    kind: host
+    host:
+      name: devbox
+      transport: ssh
+      address: ${HOSTEL_E2E_SSH_HOST}
+profile: baseline
+custom:
+  require.os: linux

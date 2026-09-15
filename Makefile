@@ -9,6 +9,7 @@ LDFLAGS   := -X main.version=$(VERSION)
 PLATFORMS := linux/amd64,linux/arm64
 E2E_ARGS ?=
 E2E_IMAGE ?=
+E2E_ENVIRONMENT ?= local
 TEST_FILES ?=
 TEST_PACKAGES ?= ./...
 
@@ -36,7 +37,10 @@ test: ## Run all tests with the race detector
 
 e2e: ## Run the single-machine runtime contract against a real hostel test build
 	go build -tags=e2e -ldflags "$(LDFLAGS)" -o bin/hostel-e2e ./cmd/hostel
-	HOSTEL_E2E_BINARY="$(CURDIR)/bin/hostel-e2e" go test -tags=e2e -count=1 -v $(E2E_ARGS) ./tests/e2e
+	HOSTEL_E2E_BINARY="$(CURDIR)/bin/hostel-e2e" \
+		HOSTEL_E2E_ENVIRONMENT_FILE="$(CURDIR)/tests/e2e/environments/$(E2E_ENVIRONMENT)/config.yaml" \
+		HOSTEL_E2E_RUNS_DIR="$(CURDIR)/runs" HOSTEL_E2E_REVISION="$(shell git describe --always --dirty --tags)" \
+		go test -tags=e2e -count=1 -v $(E2E_ARGS) ./tests/e2e
 
 e2e-image: ## Run the full contract, including PyPI/npm/Chromium (set E2E_IMAGE)
 	@test -n "$(E2E_IMAGE)" || { echo "E2E_IMAGE is required"; exit 1; }

@@ -156,6 +156,10 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 	}
 	cmd := exec.Command(absolute,
 		"--addr", addr,
+		// A developer's browser may already own the daemon's default CDP
+		// port. Each fixture launches its own amenity on a run-owned port.
+		"--chromium-debug-port", fmt.Sprint(reservePort(t)),
+		"--chromium-cdp-url", "",
 		"--beds-root", bedsRoot,
 		"--isolation", options.isolation,
 		"--executor", options.executor,
@@ -227,6 +231,8 @@ func startImageTarget(t *testing.T, image, addr string, options targetOptions) s
 	args := []string{
 		"run", "--detach", "--rm", "--name", name, "--network", "host",
 		"-e", "HOSTEL_ADDR=" + addr,
+		"-e", fmt.Sprintf("HOSTEL_CHROMIUM_DEBUG_PORT=%d", reservePort(t)),
+		"-e", "HOSTEL_CHROMIUM_CDP_URL=",
 		// Most isolation E2E keeps carrier paths outside the guest /workspace
 		// bind. A test may override this to reproduce a real carrier-root layout.
 		"-e", "HOSTEL_BEDS_ROOT=" + bedsRoot,

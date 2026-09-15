@@ -1,5 +1,6 @@
 /bin/
 /.workspace/
+/runs/
 *.out
 /.devloop/
 /.worktrees/

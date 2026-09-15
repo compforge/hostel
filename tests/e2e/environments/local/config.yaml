@@ -1,0 +1,6 @@
+service:
+  name: hostel
+  environment:
+    name: local
+    kind: host
+profile: baseline

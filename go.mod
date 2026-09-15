@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.2
 	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc
 	github.com/chromedp/chromedp v0.15.1
+	github.com/compforge/quality-harness/sdks/go v0.0.0-20260915033150-2969dd5a1c30
 	github.com/folbricht/desync v1.0.3
 	github.com/gin-gonic/gin v1.10.1
 	github.com/landlock-lsm/go-landlock v0.9.0

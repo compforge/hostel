@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: hostel-e2e-
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 2100
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: suite
+          image: hostel-e2e:dev
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 0
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: HOSTEL_E2E_PROFILE
+              value: runtime-default
+            - name: HOSTEL_E2E_EXPECT_SECCOMP
+              value: "2"
+            # Access-host identity and path are metadata here; the suite never
+            # reads kubeconfig or contacts the Kubernetes API from inside the Pod.
+            - name: HOSTEL_E2E_SSH_HOST
+              value: devbox
+            - name: HOSTEL_E2E_KUBECONFIG
+              value: /etc/rancher/k3s/k3s.yaml
+            - name: HOSTEL_E2E_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
