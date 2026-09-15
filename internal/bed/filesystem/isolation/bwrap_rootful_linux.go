@@ -55,7 +55,7 @@ func (b *bwrap) Prepare(ctx context.Context, fs *bedfs.FS) error {
 		}
 	}
 	args := b.args(fs.Rootfs(), fs.Workdir(), bedfs.DefaultWorkdir, fs.PathMappings())
-	args = append(args[:len(args)-1], runtimeFileArgs(fs)...)
+	args = append(args[:len(args)-1], systemFileArgs(fs)...)
 	args = append(args, "--")
 	view, err := hostfs.PrepareMountNamespace(ctx, b.path, b.rootful.helper, args)
 	if err != nil {

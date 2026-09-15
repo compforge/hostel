@@ -99,11 +99,11 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 	// Network owns DNS contents. Filesystem must capture that allocation's
 	// resolver before pinning a mount view; ip-netns exec mounts do not survive
 	// entering a previously prepared mount namespace.
-	var runtimeFiles []hostfs.Mapping
+	var systemFiles []hostfs.Mapping
 	if net := m.network.Attachment(b.Bed); net != nil && net.ResolverPath() != "" {
-		runtimeFiles = append(runtimeFiles, hostfs.Mapping{Source: net.ResolverPath(), Target: "/etc/resolv.conf"})
+		systemFiles = append(systemFiles, hostfs.Mapping{Source: net.ResolverPath(), Target: "/etc/resolv.conf"})
 	}
-	if err := trace.stage("prepare_process_view", func() error { return m.files.PrepareView(ctx, b.Bed, runtimeFiles) }); err != nil {
+	if err := trace.stage("prepare_process_view", func() error { return m.files.PrepareView(ctx, b.Bed, systemFiles) }); err != nil {
 		return nil, fmt.Errorf("bed: prepare process view: %w", err)
 	}
 	m.updateInitialization(init, "PreparingResources", "preparing Bed accounting group")

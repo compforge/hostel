@@ -75,11 +75,11 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 	for _, file := range files {
 		for _, mapping := range fs.PathMappings() {
 			if bed.PathsOverlap(file.Target, mapping.BedPath) {
-				return fmt.Errorf("%w: mapping %s overlaps runtime file %s", bed.ErrInvalidPaths, mapping.BedPath, file.Target)
+				return fmt.Errorf("%w: mapping %s overlaps system file %s", bed.ErrInvalidPaths, mapping.BedPath, file.Target)
 			}
 		}
 	}
-	fs.SetRuntimeFiles(files)
+	fs.SetSystemFiles(files)
 	if err := m.isolator.Prepare(ctx, fs); err != nil {
 		return err
 	}

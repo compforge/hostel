@@ -185,7 +185,7 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	}
 	executable := rootExecutable(fs, cmd.Path, b.View(fs).MappingSupport())
 	argv := b.args(fs.Rootfs(), fs.Workdir(), processCwd, fs.PathMappings())
-	argv = append(argv[:len(argv)-1], runtimeFileArgs(fs)...)
+	argv = append(argv[:len(argv)-1], systemFileArgs(fs)...)
 	argv = append(argv, "--")
 	userArgs := append([]string{executable}, cmd.Args[1:]...)
 	cmd.Args = make([]string, 0, len(argv)+len(userArgs)+1)

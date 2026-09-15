@@ -98,9 +98,9 @@ func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths [
 	return argv
 }
 
-func runtimeFileArgs(fs *bedfs.FS) []string {
+func systemFileArgs(fs *bedfs.FS) []string {
 	var args []string
-	for _, file := range fs.RuntimeFiles() {
+	for _, file := range fs.SystemFiles() {
 		args = append(args, "--ro-bind", file.Source, file.Target)
 	}
 	return args
