@@ -26,7 +26,7 @@ type Manager struct {
 func NewManager(iso isolation.Isolator, status bed.StatusWriter[bed.FilesystemStatus]) *Manager {
 	return &Manager{files: make(map[*bed.Bed]*bedfs.FS), isolator: iso, status: status}
 }
-func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
+func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	if m.Files(b) != nil {
 		return nil
 	}
@@ -58,7 +58,11 @@ func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
 			log.Printf("filesystem: bed=%s path=%s mapping available through API; process mapping unavailable read_only=%t", b.ID.String(), mapping.BedPath, mapping.ReadOnly)
 		}
 	}
-	if p, ok := m.isolator.(isolation.Preparer); ok {
+	if p, ok := m.isolator.(isolation.ContextPreparer); ok {
+		if err := p.PrepareContext(ctx, fs); err != nil {
+			return err
+		}
+	} else if p, ok := m.isolator.(isolation.Preparer); ok {
 		if err := p.Prepare(fs); err != nil {
 			return err
 		}
@@ -71,6 +75,11 @@ func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
 	fs := m.Files(b)
 	if fs == nil {
 		return nil
+	}
+	if owner, ok := m.isolator.(isolation.Releaser); ok {
+		if err := owner.Release(fs); err != nil {
+			return err
+		}
 	}
 	if err := fs.Close(); err != nil {
 		return err

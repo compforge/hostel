@@ -23,8 +23,10 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 )
 
 // bwrap confines each command under bubblewrap. Mount view per
@@ -35,6 +37,7 @@ type bwrap struct {
 	path      string   // bwrap binary (probed at boot)
 	root      string   // parent dir of all Bed directories (masked in-sandbox)
 	maskPaths []string // existing sensitive host paths to mask (computed once)
+	rootful   *rootfulMounts
 }
 
 // newBwrap probes bubblewrap at boot: binary present AND the FULL mount shape
@@ -64,6 +67,23 @@ func newBwrap(facts hostfacts.Snapshot, bedsRoot string) (Isolator, hostfacts.Pr
 	}
 
 	masks := resolveMaskPaths(defaultMaskCandidates)
+	if canPrepareRootful(facts) {
+		helper, err := hostfs.StaticBootstrap()
+		if err == nil {
+			candidate := &bwrap{path: path, root: bedsRoot, maskPaths: masks,
+				rootful: &rootfulMounts{helper: helper, views: make(map[*bedfs.FS]*hostfs.MountNamespace)}}
+			rootfulProbe := candidate.rootfulSmoke()
+			if rootfulProbe.Succeeded() {
+				rootfulProbe.ConfiguredPath, rootfulProbe.ResolvedPath = "bwrap", path
+				rootfulProbe.Exists, rootfulProbe.Executable = true, true
+				log.Printf("isolation: bwrap selected preparation=rootful")
+				return candidate, rootfulProbe
+			}
+			log.Printf("isolation: rootful bwrap unavailable: %s; probing unprivileged preparation", rootfulProbe.Error)
+		} else {
+			log.Printf("isolation: rootful bwrap unavailable: %v; probing unprivileged preparation", err)
+		}
+	}
 	report = bwrapSmoke(path, bedsRoot, masks)
 	report.ConfiguredPath = "bwrap"
 	report.ResolvedPath = path
@@ -154,6 +174,9 @@ func (b *bwrap) View(fs *bedfs.FS) bedfs.ProcessView {
 }
 
 func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
+	if b.rootful != nil {
+		return fmt.Errorf("rootful filesystem requires prepared execution with final Bed credentials")
+	}
 	// No silent degradation past this point: this isolator passed the boot
 	// probe, so any failure to build the sandbox is a hard error.
 	processCwd, err := b.View(fs).Path(commandCwd(fs, cwd))
@@ -175,3 +198,19 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 }
 
 func (b *bwrap) AllowsMappings() bool { return true }
+
+func (b *bwrap) args(home, workspace, cwd string, mappings []model.PathMapping) []string {
+	args := buildBwrapArgs(b.root, home, workspace, cwd, b.maskPaths, mappings, existingRuntimePaths()...)
+	if b.rootful != nil {
+		// Rootful preparation creates a mount namespace using existing host
+		// authority. No user namespace or UID remapping is needed.
+		filtered := args[:0]
+		for _, arg := range args {
+			if arg != "--unshare-user" {
+				filtered = append(filtered, arg)
+			}
+		}
+		args = filtered
+	}
+	return args
+}

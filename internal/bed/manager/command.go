@@ -32,14 +32,14 @@ import (
 func (m *Manager) buildCommand(b *managedBed, command, cwd string, envs map[string]string) (*exec.Cmd, error) {
 	m.touchBed(b)
 	cmd := exec.Command(m.shellPath, shellCommandArgs(m.shellPath, command)...)
-	if err := b.environment.Wrap(cmd, cwd); err != nil {
-		return nil, err
-	}
 	env, err := m.buildExecutionEnv(b, envs)
 	if err != nil {
 		return nil, err
 	}
 	cmd.Env = env
+	if err := b.environment.Wrap(cmd, cwd); err != nil {
+		return nil, err
+	}
 	return cmd, nil
 }
 

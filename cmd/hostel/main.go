@@ -40,6 +40,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/store"
 	"github.com/qiankunli/hostel/internal/config"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"github.com/qiankunli/hostel/internal/supervisor"
 	"github.com/qiankunli/hostel/internal/tracing"
@@ -56,6 +57,12 @@ func main() {
 	// this child applies the Bed file boundary before exec-ing the command.
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
+		case hostfs.CaptureArg, hostfs.EnterArg:
+			if err := hostfs.RunMountHelper(os.Args[1:]); err != nil {
+				fmt.Fprintf(os.Stderr, "hostel mount helper: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case isolation.ConfineArg: // landlock: __confine <dataDir> -- <cmd>...
 			os.Exit(runConfine(os.Args[2:]))
 		case supervisor.Arg: // supervised Executor: __supervisor --socket S --bed B --executor E

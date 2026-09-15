@@ -135,7 +135,8 @@ PRoot/pathshim 尽量让命令中的工作区路径也指向 BedFS，但它们�
 若运行依赖覆盖重新暴露了 Bed 父目录，必须在挂回工作目录与显式映射前遮蔽它。
 `/tmp` 来自同一 BedFS，跨临时命令、session 和 Service 共享，但不因此自动进入 Store 快照。
 
-bwrap 使用 user namespace 完成挂载准备，并绑定已有 `/proc`，以适应容器内受限的 procfs。
+bwrap 优先使用 Hostel 已有的管理权限准备挂载，权限不足时再尝试无特权 user namespace。
+两条路径均绑定已有 `/proc`，以适应容器内受限的 procfs。
 当前没有私有 PID namespace，因此私有文件视图不等于完整的进程不可见性。机制及参数顺序
 锚点在 `internal/bed/filesystem/isolation/bwrap_args.go`；部署权限示例见
 [deploy/k8s/README.md](../deploy/k8s/README.md)。
@@ -208,14 +209,16 @@ PRoot 未兑现的外部映射，其进程路径仍落在 Bed 本地候选目录
 shared: selected BedUser → proot / pathshim → command
 confined (Landlock): selected BedUser → __confine → proot / pathshim → command
 confined (UID): dedicated BedUser → proot / pathshim → command
-private: selected BedUser → bwrap → command
+private/rootful: Bed Manager 预备 mount view → 进入视图 → selected BedUser → command
+private/rootless: selected BedUser → bwrap(user namespace) → command
 ```
 
 PRoot 与 pathshim 将 Bed 的映射目录接入声明路径，没有 COW、whiteout 或每次调用的私有副本。多个 command/session 访问同一目录时，遵守底层文件系统的并发语义。它们提供用户态路径视图，不提供 mount namespace 或安全边界；当前只在访问边界允许时应用读写映射，只读映射的进程保护由 bwrap 提供。不支持的声明保留为 API 映射，helper 不把它当作已兑现的进程路径。
 
 ### private 文件
 
-bwrap 以同一 BedFS 构造每次执行的 mount 视图：
+bwrap 以同一 BedFS 构造 mount 视图。rootful 路径在 Bed Manager 初始化期间创建并持有，
+Executor、session 和 Service 共用；无特权路径在执行时通过 bwrap 建立同形视图：
 
 - 整个 `bed_home` bind 到 `/`，原生数据路径和结构化路径使用相同拼写；
 - 只读接入现存系统运行依赖，保留共享软件目录的可写性，并遮蔽被这些覆盖重新暴露的敏感路径；
@@ -225,6 +228,10 @@ bwrap 以同一 BedFS 构造每次执行的 mount 视图：
 
 Carrier 上不在系统运行依赖目录内的工具，应通过显式 PathMapping 接入，或放入 BedFS 后执行。
 不能为了让任意可执行文件可见，自动挂回它的 Carrier 父目录，否则会绕过跨 Bed 数据边界。
+
+rootful 准备阶段保留 `/proc` 作为运行时目录，不接受覆盖它的 PathMapping；拒绝而非静默改写声明。
+准备过程只执行经文件描述符固定的静态 Hostel helper。工作负载进入已准备的 namespace 后，
+先降权再解析用户 cwd 和执行用户程序，不通过 Bed 文件系统查找特权程序。
 
 `process_view.rootfs=true` 表示原生数据路径使用 Bed 根（bwrap/PRoot）；它不表示 PID、网络
 或完整 rootfs 安全隔离。路径能力与只读映射支持仍分别报告。启动探测必须验证真实的
