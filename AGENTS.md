@@ -73,7 +73,7 @@ deploy/
 ├── docker/Dockerfile  多阶段多架构镜像(amd64/arm64,builder 原生交叉编译免 QEMU)：静态 hostel + debian-slim（内置 bwrap/PRoot/pathshim + 可选 chromium）；tini PID1；hostel --health 做 HEALTHCHECK
 └── k8s/              Kubernetes 部署示例；AppArmor 的 PSA 豁免申请见 pod-security-admission-exemption.yaml
 cmd/hostel/main.go     daemon 入口：配置、组件组装、启动探测、Web 与信号；驱动 Manager 启停
-tests/e2e/             真实进程/镜像 E2E：同一 suite 可在 Host 或 K8s Pod 内运行；环境配置与事实入口，见 docs/e2e-environments.md
+tests/e2e/             真实进程/镜像 E2E：同一 suite 可在 Host 或 K8s Pod 内运行；环境配置与事实入口，见 tests/e2e/e2e-environments.md
 internal/
 ├── bed/               唯一 Bed 模型（Spec / 分域 Status）及生命周期契约；不导入领域实现
 │   ├── manager/       Composite：准入、初始化/回收顺序、operation/session、执行环境组装与诊断聚合
@@ -163,7 +163,7 @@ internal/
 - 可观测性设计（统一生命周期事实，并投影到日志、接口和 metric）：`docs/observability.md`
 - 快速上手 / API 一览 / 配置：`README.md`
 - 单机 E2E（binary/image profiles、环境契约与覆盖边界）：`tests/e2e/README.md`
-- E2E Environment、可选 Host 与 Pod 内 runner：`docs/e2e-environments.md`
+- E2E Environment、可选 Host 与 Pod 内 runner：`tests/e2e/e2e-environments.md`
 - 归属（execd 参考的具体设计点）：`NOTICE`
 - API 契约来源：上游 OpenSandbox 仓库的 `specs/execd-api.yaml`（https://github.com/alibaba/opensandbox）
 
