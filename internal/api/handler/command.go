@@ -36,6 +36,8 @@ type RunCommandRequest struct {
 	Stdin      string            `json:"stdin,omitempty"`
 	Cwd        string            `json:"cwd,omitempty"`
 	Background bool              `json:"background,omitempty"`
+	UID        *int              `json:"uid,omitempty"`
+	GID        *int              `json:"gid,omitempty"`
 	TimeoutMs  int64             `json:"timeout,omitempty"`
 	Envs       map[string]string `json:"envs,omitempty"`
 }
@@ -77,12 +79,25 @@ func (s *Handler) runCommand(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
+	if s.isExecd(c) {
+		if req.UID != nil || req.GID != nil || req.Background {
+			respondError(c, 400, apiview.ErrNotSupported, "uid, gid and background commands are not supported by this adapter")
+			return
+		}
+		if req.TimeoutMs < 0 || req.TimeoutMs > 86400000 {
+			badRequest(c, "timeout must be between 0 and 86400000 milliseconds")
+			return
+		}
+	}
 	if req.Command == "" {
 		badRequest(c, "missing 'command'")
 		return
 	}
 	if err := bed.ValidateRequestEnv(req.Envs); err != nil {
 		badRequest(c, err.Error())
+		return
+	}
+	if s.isExecd(c) && !s.prepareExecd(c, b, &req) {
 		return
 	}
 	cwdInBed, ok := s.resolveCwd(c, ops, req.Cwd)
@@ -126,6 +141,8 @@ func (s *Handler) runCommand(c *gin.Context) {
 		return
 	}
 	result := execution.Wait()
+	stopSSE()
+	stopSSE = func() {}
 	payload := apiview.ExecutionResultFrom(result)
 	sse.send(apiview.StreamEvent{
 		Type:        apiview.EventExecutionEnd,
@@ -290,6 +307,8 @@ func (s *Handler) sessionRun(c *gin.Context) {
 		return
 	}
 	result := execution.Wait()
+	stopSSE()
+	stopSSE = func() {}
 	payload := apiview.ExecutionResultFrom(result)
 	sse.send(apiview.StreamEvent{Type: apiview.EventExecutionEnd, ExecutionID: result.ExecutionID, Result: &payload})
 }

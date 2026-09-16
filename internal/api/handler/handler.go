@@ -40,6 +40,8 @@ func New(mgr *bed.Manager, cfg Config) *Handler {
 
 // RegisterRoutes installs the HTTP contract on the supplied engine.
 func (s *Handler) RegisterRoutes(e *gin.Engine) {
+	s.registerExecd(e.Group("/execd"))
+	s.registerExecd(e.Group("/v1/beds/:bedId/execd"))
 	e.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
 	e.GET("/healthz", s.healthz)
 	e.GET("/v1/status", s.status)

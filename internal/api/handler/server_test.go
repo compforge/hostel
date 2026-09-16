@@ -21,6 +21,7 @@ func NewServer(mgr *bed.Manager, options ...func(*Config)) *testServer {
 	}
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
+	engine.HandleMethodNotAllowed = true
 	engine.Use(gin.Recovery())
 	h := New(mgr, cfg)
 	h.RegisterRoutes(engine)
