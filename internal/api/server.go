@@ -40,6 +40,7 @@ func NewServer(mgr *bed.Manager, options ...ServerOption) *Server {
 	}
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
+	engine.HandleMethodNotAllowed = true
 	if cfg.tracing {
 		engine.Use(otelgin.Middleware("hostel", otelgin.WithFilter(traceHTTPPath)))
 	}

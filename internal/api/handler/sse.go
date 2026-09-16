@@ -64,7 +64,14 @@ func (s *sseStream) send(ev apiview.StreamEvent) {
 	if ev.Timestamp == 0 {
 		ev.Timestamp = time.Now().UnixMilli()
 	}
-	b, _ := json.Marshal(ev)
+	var payload any = ev
+	if s.c.GetBool(execdContextKey) {
+		payload = execdEvent(ev)
+	}
+	b, _ := json.Marshal(payload)
+	if s.c.GetBool(execdContextKey) {
+		b = append([]byte("data: "), b...)
+	}
 	b = append(b, '\n', '\n')
 	_, _ = s.c.Writer.Write(b)
 	s.flush()

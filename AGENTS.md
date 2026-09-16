@@ -2,7 +2,7 @@
 
 ## 项目定位与边界
 
-**面向 AI agent 的 sandbox runtime**：在一台机器 / 一个容器内管理多个隔离执行单元（**bed**）。资源与文件 API 以 OpenSandbox 为设计基线，执行协议由 hostel 自己拥有。形态上 daemon 组装 **Web Server、Bed Manager、Amenity Manager**；Bed Manager 以唯一 Bed 模型组合驱动各领域 Manager。可单机跑（laptop/VM/CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
+**面向 AI agent 的 sandbox runtime**：在一台机器 / 一个容器内管理多个隔离执行单元（**bed**）。资源与文件 API 以 OpenSandbox 为设计基线，原生执行协议由 hostel 自己拥有；`/execd` 与 Bed 路径入口在 API 层适配 OpenSandbox，见 `docs/execd.md`。形态上 daemon 组装 **Web Server、Bed Manager、Amenity Manager**；Bed Manager 以唯一 Bed 模型组合驱动各领域 Manager。可单机跑（laptop/VM/CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
 
 **产品背景**：Hostel / Bed 可类比轻量、尽力实现的 Docker / Container：在受限的 Host/Pod 上，从 API 视角提供尽可能接近 Container 的使用体验。文件与执行等 API 优先完成用户任务，底层缺少某项机制（如 cgroup）不应自动使整个 Bed 不可用；领域可通过路径解析、候选读取等方式补齐体验，并分别报告功能可用性与实际隔离保证。产品取舍见 [核心架构](docs/kernel.md#一定位与目标)，文件路径的具体语义见 [Filesystem](docs/filesystem.md)。
 
@@ -174,3 +174,5 @@ internal/
 
 - 共享设施、Bed 切片与凭据、CDP 代理及实际边界：`docs/amenity.md`
 - MCP 远程工具与连接生命周期、公共 Go 嵌入入口：`docs/mcp.md`
+
+- OpenSandbox Execd 双入口、协议与准入回调：`docs/execd.md`
