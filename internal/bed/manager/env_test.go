@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -67,7 +68,7 @@ func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 		"PATH":                  "/request/bin",
 		"REQUEST_API_KEY":       "explicit-secret",
 		"AWS_SECRET_ACCESS_KEY": "carrier-secret",
-		"TMPDIR":                "/tmp",
+		"TMPDIR":                filepath.Join(b.BedFS().Rootfs(), "tmp"),
 	} {
 		if got := env[name]; got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
@@ -144,4 +145,21 @@ func envMap(environ []string) map[string]string {
 		}
 	}
 	return env
+}
+
+func TestTemporaryEnvironmentOverrides(t *testing.T) {
+	m := newTestManager(t)
+	defer m.Close(context.Background())
+	b, err := m.Ensure(t.Context(), "temporary-env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := m.buildBedEnv(b, map[string]string{"TMPDIR": "/custom/service"})
+	if err != nil || envMap(env)["TMPDIR"] != "/custom/service" {
+		t.Fatalf("service overlay: %v %v", env, err)
+	}
+	env, err = m.buildExecutionEnv(b, map[string]string{"TMPDIR": "/custom/request"})
+	if err != nil || envMap(env)["TMPDIR"] != "/custom/request" {
+		t.Fatalf("request overlay: %v %v", env, err)
+	}
 }

@@ -22,7 +22,7 @@ bwrap 与 PRoot 将 Bed 数据根作为进程的默认 `/`，再接入 Carrier �
 `/usr`、`/bin`、`/lib*`、`/sbin`、`/etc`、`/opt`、`/sys` 以及内核设备接口属于运行依赖覆盖，
 不是 Bed 私有数据；文件 API 仍只拥有 Bed 数据及显式外部映射，不自动开放 Carrier 系统文件。
 
-这不是可任意修改系统目录的完整容器镜像或 COW rootfs。pathshim 仍只兑现工作目录和
+这不是可任意修改系统目录的完整容器镜像或 COW rootfs。pathshim 兑现工作目录、Bed 临时目录和
 受支持的显式映射，Carrier 视图不重定向原生绝对路径。调用方应读取
 `process_view.rootfs`，不能仅凭文件 API 可用或 `available=true` 推断原生根视图成立。
 
@@ -155,7 +155,7 @@ UID backend 以独立进程身份兑现 confined 的数据访问边界，目录�
 |---|---|---|
 | Client | `/`、`/workspace/a`、`/tmp/job`、相对路径 `a` | BedFS；`/` 是 bed_home，相对路径以 Workdir 为基准 |
 | Carrier | `<beds-root>/<bed-id>/data/...` | BedFS；daemon 的文件操作和 Store 使用 |
-| Executor | bwrap/PRoot 保留 Bed 数据绝对路径；pathshim 局部映射；Carrier 使用宿主路径 | BedFS `ProcessView` 定义语义，isolation 实现投影 |
+| Executor | bwrap/PRoot 保留 Bed 数据绝对路径；pathshim 映射工作目录、`/tmp` 和显式路径；Carrier 使用宿主路径 | BedFS `ProcessView` 定义语义，isolation 实现投影 |
 
 映射规则只有一套：
 
@@ -272,3 +272,21 @@ rootful mount 在此时完成；降级到 PRoot/pathshim 或无特权 bwrap 时�
 - API handler 只选择与房型、部署配置匹配的 BedFS 读取策略：不能自行拼 carrier 路径或 mount point。
 
 daemon 文件 API 先做客户端路径规范化，再以选中映射的目录句柄执行 descriptor-relative 文件操作。路径中的 symlink 只允许解析到该根之内；逃出根目录或与并发 symlink 替换竞态的操作会失败。这条安全边界属于 BedFS，不散落到各 handler。
+
+## Bed 临时目录
+
+`/tmp` 默认属于当前 BedFS，与 command、session 和 Service 共用；Executor 重建不清空它，
+默认 Store 同步不包含它，Bed 本地数据回收时一并删除。默认目录具有 sticky bit，
+显式 PathMapping 的外部目录仍由调用方管理权限和生命周期。
+
+mount/PRoot 的根视图以及 pathshim 的默认映射让进程 `/tmp` 与文件 API 指向同一份数据。
+显式 `/tmp` 映射替换默认落点，子路径映射沿用更具体的路径声明。pathshim 仅提供路径兼容，
+不因此获得完整根视图或更强隔离。
+
+统一进程环境把 `TMPDIR` 设置为当前视图可访问的 Bed 临时目录；Bed、Service 和请求的
+显式环境继续按原有优先级覆盖它。Carrier 视图使用 Bed 私有目录的宿主路径，无法重定向
+程序硬编码的 `/tmp`。依赖原生 `/tmp` 的调用方必须选择支持该路径的进程视图，不能以
+只读下载回退代替文件修改、删除和进程路径的一致性。
+
+启动组合探测通过 command、session 和 Service 写临时文件并从 BedFS 核验；选中机制无法
+兑现时，按已有探测失败流程处理，不把文件上传成功当作进程路径可用。

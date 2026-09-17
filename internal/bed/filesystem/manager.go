@@ -49,7 +49,7 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	}
 	// Temporary files are Bed data too: separate executions and Services must
 	// share this directory, not receive an unrelated per-process tmpfs.
-	if err := fs.EnsureDir(filepath.Join(home, "tmp")); err != nil {
+	if err := fs.PrepareTempdir(); err != nil {
 		return err
 	}
 	// API mapping ownership survives an unavailable process-path mechanism.

@@ -67,6 +67,9 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 		}
 		command += " && /usr/bin/awk '$1 == \"NoNewPrivs:\" { n=$2 } $1 ~ /^Cap(" + capabilitySets + "):/ && $2 != \"0000000000000000\" { bad=1 } END { exit (bad || n != 1) }' /proc/self/status"
 	}
+	// This is part of the selected composition probe: advertised process paths
+	// must reach BedFS through every process entry point, not just through uploads.
+	command += ` && printf temporary >> "$TMPDIR/.hostel-environment-probe"`
 	result, err := m.RunForeground(ctx, b, command, cwd, nil, 5*time.Second, nil)
 	if err != nil {
 		return err
@@ -116,6 +119,13 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	}
 	if _, err := b.BedFS().Stat("/workspace/.hostel-environment-probe/service-marker"); err != nil {
 		return fmt.Errorf("isolation: service/file view probe: %w", err)
+	}
+	data, err := b.BedFS().Read("/tmp/.hostel-environment-probe")
+	if err != nil {
+		return fmt.Errorf("isolation: temporary directory/file view probe: %w", err)
+	}
+	if string(data) != "temporarytemporarytemporary" {
+		return fmt.Errorf("isolation: command, session and Service do not share the Bed temporary directory")
 	}
 	return nil
 }

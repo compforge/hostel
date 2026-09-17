@@ -86,6 +86,9 @@ func probePathshim(base Boundary, bedsRoot, executable string) hostfacts.ProbeRe
 		return hostfacts.ProbeReport{Error: err.Error()}
 	}
 	defer fs.Close()
+	if err := fs.PrepareTempdir(); err != nil {
+		return hostfacts.ProbeReport{Error: "prepare temporary directory: " + err.Error()}
+	}
 	if err := base.Prepare(context.Background(), fs); err != nil {
 		return hostfacts.ProbeReport{Error: "prepare probe bed: " + err.Error()}
 	}
