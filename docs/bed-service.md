@@ -17,9 +17,9 @@ Service 是 Bed 定义的一部分。一个 Bed 可以没有服务，也可以�
 |---|---|---|
 | `ServiceSpec` | Bed 创建者 | 完整描述进程 argv、工作目录、环境引用、监督策略和可选 HTTP 能力 |
 | Bed 服务声明 | Bed Spec，由 Bed Manager 写入 | 保存规范化后的非敏感 `ServiceSpec`，作为 Bed 不可变定义的一部分 |
-| Service 运行状态 | Service Manager | 维护期望运行、就绪、重启及 endpoint 状态 |
+| Service 运行状态 | Service Manager | 维护期望运行、就绪、重启及 PortMapping 引用 |
 | Service Execution | Executor 与既有执行记录机制 | 承载一次实际运行，记录进程退出事实及执行归属 |
-| PortMapping | Bed Network | 保存端口需求与本次 execution 的内外地址，拥有预留、发布、撤销和释放 |
+| PortMapping | Bed Network | 保存端口需求与本次 execution 的 Bed / Host 端口，拥有预留、发布、撤销和释放 |
 | Port allocation | daemon 级 Port Manager | 统一管理各领域申请的端口、监听占用及具体 allocation 的释放 |
 
 服务以 `(Bed ID, service name)` 定位。同一 Bed 可用相同的程序定义创建多个服务，例如
@@ -195,7 +195,7 @@ Amenity listener。daemon 关闭时先停止各领域的使用者，再关闭 Po
 2. 共享网络先检查候选地址能否绑定，排除已有外部 listener；再将地址注入服务，启动并检查就绪。
 3. 若有明确绑定冲突，确认本次启动的进程树退出，释放对应 allocation；偏好或自动端口有限换号重试，硬要求端口直接失败。
    其他启动错误按实际原因报告，不能全部归类为端口冲突。
-4. 进程存活且 HTTP 就绪成功、没有已确认的归属冲突时发布 endpoint；端口池或重试预算耗尽时明确失败。
+4. 进程存活且 HTTP 就绪成功、没有已确认的归属冲突时发布 Host 端口；端口池或重试预算耗尽时明确失败。
 
 Port Manager 管理经 Hostel 申请的端口，不拦截 Bed 用户程序自行调用 bind，也不能
 阻止其他进程抢占端口。内核实际 bind
@@ -232,13 +232,13 @@ endpoint 身份；HTTP 200 或携带 Bearer token 的请求成功均不证明服
 核对并建立实际监听，不把历史端口记录当作当前预留。
 
 端口 allocation、转发实例、token 和 Execution ID 属于本次运行，而非 Ready 状态。
-已发布服务暂时未就绪时保留这些资源和状态中的 endpoint，不主动关闭已有转发连接；
-只有运行结束才清理。状态地址表示本次运行的绑定，不保证服务当前可用。
+已发布服务暂时未就绪时保留这些资源和 PortMapping 的端口，不主动关闭已有转发连接；
+只有运行结束才清理。映射状态表示本次运行的绑定，不保证服务当前可用。
 
 ### 外部默认通过 PodIP:port 访问
 
-调用方按 Bed name 与 service name 查询 endpoint；Hostel 返回当前运行实例对应的
-地址和就绪状态。共享 Pod 网络时，服务直接监听分配的 Pod 端口；独立 Bed netns 时，
+调用方按 Bed name 与 service name 查询服务及其 PortMapping；Hostel 返回当前运行实例的
+端口和就绪状态，调用方用已知的 Carrier host 组装地址。共享 Pod 网络时，服务直接监听分配的 Pod 端口；独立 Bed netns 时，
 Hostel 持有单独的 Carrier 监听端口，转发到该 Bed 可达的 TCP endpoint：
 
 ```text
@@ -309,7 +309,6 @@ workspace 快照不携带本地进程身份、endpoint 或部署凭据。
 
 | CLI / 环境变量 | 默认值 | 含义 |
 |---|---|---|
-| `--service-advertise-host` / `HOSTEL_SERVICE_ADVERTISE_HOST` | `127.0.0.1` | 调用方可达地址；Pod 部署中应注入 Pod IP |
 | `--port-range-start` / `HOSTEL_PORT_RANGE_START` | `20000` | 动态 TCP 端口池起点 |
 | `--port-range-end` / `HOSTEL_PORT_RANGE_END` | `29999` | 动态 TCP 端口池终点（含） |
 
@@ -387,17 +386,20 @@ Bed 回收不会释放它。UDP DNS 仍由网络组件实际绑定和释放，�
 |---|---|
 | `POST /v1/beds` 的 `services` 字段 | 创建时启用；省略等于空列表，重复创建不允许修改 |
 | `GET /v1/beds/{bed}/services` | 列表，不创建 Bed、不续租 |
-| `GET /v1/beds/{bed}/services/{service}` | 状态、Execution/Executor ID 和非敏感 endpoint |
+| `GET /v1/beds/{bed}/services/{service}` | 状态、Execution/Executor ID 和 port_mapping 引用 |
 | `GET /v1/beds/{bed}/services/{service}/logs?cursor=0` | 有界 Execution 日志及下一游标 |
 | `POST /v1/beds/{bed}/services/{service}/restart` | 异步重启单个服务，返回 202 |
-| `POST /v1/beds/{bed}/services/{service}/access` | 传 `{"hold_seconds":300}`，取得 internal_endpoint、endpoint、port_mapping、可选 token、Execution ID 和限时 hold |
+| `POST /v1/beds/{bed}/services/{service}/access` | 传 `{"hold_seconds":300}`，取得 port_mapping 快照（含 execution_id 与实际端口）、可选 token 和限时 hold |
 | `DELETE /v1/beds/{bed}/service-holds/{hold}` | 提前释放 hold，幂等 |
 
-Bed 详情的 `status.services` 展示服务状态，`status.port_mappings` 展示本次运行的内外端口与映射状态；`GET /v1/status` 的 `host.status.ports`
+Bed 详情的 `status.services` 展示服务状态，`status.port_mappings` 展示本次运行的 Bed / Host 端口与映射状态；`GET /v1/status` 的 `host.status.ports`
 展示 Hostel 管理的端口分配及其 owner、scope、address 和 `reserved/listening` 状态，
 不枚举操作系统全部监听端口；端口预留也不代表服务就绪。诊断和持久化声明不含 token。
 
-调用方先获取 access，再直连 endpoint，任务结束后释放 hold。hold 为 1–7200 秒，
+调用方先获取 access，从映射快照中的实际端口推导地址，任务结束后释放 hold。
+Bed 内使用 loopback + `bed_port`；外部使用已知的 Carrier host + `host_port`。
+派生关系只作为调用约定，Hostel 不另存地址或 URL。共享网络的动态端口与降级语义见
+[网络模型](network.md#发现归属与回收)。hold 为 1–7200 秒，
 到期自动结束 operation，期间普通/显式 eviction 都不能销毁 Bed；daemon shutdown
 仍可强制结束。HTTP 返回后仍在执行的异步任务也必须覆盖在 hold 内。
 提前释放允许显式 eviction 继续，自动回收仍遵守既有 `retained_until` 保守期限。

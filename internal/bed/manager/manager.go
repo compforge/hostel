@@ -196,7 +196,7 @@ func NewManager(host hostfacts.Snapshot, root, defaultBed, shellPath string, iso
 	}
 	m.configurations = configurations
 	if m.services == nil {
-		m.portMappings = network.NewPortMappings(nil, "")
+		m.portMappings = network.NewPortMappings(nil)
 		m.services = service.NewManager(m.portMappings, m.servicesChanged)
 	}
 	m.services.SetConfigurationManager(configurations)

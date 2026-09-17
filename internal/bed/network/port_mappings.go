@@ -17,24 +17,25 @@ import (
 // PortMappings owns runtime port resources for Bed consumers. Service readiness
 // stays with Service; this registry neither probes nor starts application code.
 type PortMappings struct {
-	mu        sync.Mutex
-	ports     *hostnetwork.PortManager
-	advertise string
-	beds      map[*bed.Bed]map[string]*PortMapping
+	mu    sync.Mutex
+	ports *hostnetwork.PortManager
+	beds  map[*bed.Bed]map[string]*PortMapping
 }
 
+// PortMappingStatus is the source of allocated Bed/Host ports. Bed clients use
+// loopback plus BedPort; external clients use their carrier host plus HostPort.
+// Shared networking uses the same port for both. Addresses and application URLs
+// are derived by callers, never stored alongside these port facts.
 type PortMappingStatus struct {
-	Name            string `json:"name"`
-	Protocol        string `json:"protocol"`
-	Service         string `json:"service"`
-	ExecutionID     string `json:"execution_id,omitempty"`
-	Network         string `json:"network"`
-	State           string `json:"state"`
-	BedPort         int    `json:"bed_port"`
-	HostPort        int    `json:"host_port,omitempty"`
-	InternalAddress string `json:"internal_address"`
-	ExternalAddress string `json:"external_address,omitempty"`
-	Reason          string `json:"reason,omitempty"`
+	Name        string `json:"name"`
+	Protocol    string `json:"protocol"`
+	Service     string `json:"service"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	Network     string `json:"network"`
+	State       string `json:"state"`
+	BedPort     int    `json:"bed_port"`
+	HostPort    int    `json:"host_port,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // PortMapping is an exact allocation handle; release never addresses resources
@@ -50,11 +51,11 @@ type PortMapping struct {
 	status       PortMappingStatus
 }
 
-func NewPortMappings(ports *hostnetwork.PortManager, advertise string) *PortMappings {
-	return &PortMappings{ports: ports, advertise: advertise, beds: make(map[*bed.Bed]map[string]*PortMapping)}
+func NewPortMappings(ports *hostnetwork.PortManager) *PortMappings {
+	return &PortMappings{ports: ports, beds: make(map[*bed.Bed]map[string]*PortMapping)}
 }
-func (m *PortMappings) Available(publish bool) bool {
-	return m != nil && m.ports != nil && (!publish || m.advertise != "")
+func (m *PortMappings) Available() bool {
+	return m != nil && m.ports != nil
 }
 
 func (m *PortMappings) Reserve(b *bed.Bed, name, service, scope, host string, avoidPreferred bool) (*PortMapping, error) {
@@ -68,8 +69,8 @@ func (m *PortMappings) Reserve(b *bed.Bed, name, service, scope, host string, av
 	if spec.Name == "" {
 		return nil, fmt.Errorf("undeclared port mapping %q", name)
 	}
-	if !m.Available(spec.Publish) {
-		return nil, fmt.Errorf("port mapping %s: port manager or advertised host unavailable", name)
+	if !m.Available() {
+		return nil, fmt.Errorf("port mapping %s: port manager unavailable", name)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -104,7 +105,7 @@ func (m *PortMappings) Reserve(b *bed.Bed, name, service, scope, host string, av
 		mode = "private"
 	}
 	p := &PortMapping{owner: m, bed: b, spec: spec, allocation: allocation, probeAddress: net.JoinHostPort(host, strconv.Itoa(allocation.Port())), status: PortMappingStatus{
-		Name: name, Protocol: spec.Protocol, Service: service, Network: mode, State: "reserved", BedPort: allocation.Port(), InternalAddress: net.JoinHostPort("127.0.0.1", strconv.Itoa(allocation.Port())), Reason: reason,
+		Name: name, Protocol: spec.Protocol, Service: service, Network: mode, State: "reserved", BedPort: allocation.Port(), Reason: reason,
 	}}
 	if m.beds[b] == nil {
 		m.beds[b] = make(map[string]*PortMapping)
@@ -145,7 +146,6 @@ func (p *PortMapping) Publish() error {
 			port = forward.Port()
 		}
 		p.status.HostPort = port
-		p.status.ExternalAddress = net.JoinHostPort(p.owner.advertise, strconv.Itoa(port))
 	}
 	p.status.State = "listening"
 	return nil
@@ -160,7 +160,6 @@ func (p *PortMapping) Withdraw() error {
 		return nil
 	}
 	p.status.State = "stopping"
-	p.status.ExternalAddress = ""
 	p.status.HostPort = 0
 	if p.forward != nil {
 		if err := p.forward.Close(); err != nil {

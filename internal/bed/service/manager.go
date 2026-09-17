@@ -35,30 +35,29 @@ type Runtime interface {
 	Start(context.Context, Launch) (Process, error)
 	Network() (scope, host string, err error)
 }
+
+// Status references its PortMapping; network owns all allocated port facts.
 type Status struct {
-	PortMapping      string `json:"port_mapping,omitempty"`
-	InternalEndpoint string `json:"internal_endpoint,omitempty"`
-	Name             string `json:"name"`
-	Required         bool   `json:"required"`
-	Phase            string `json:"phase"`
+	PortMapping string `json:"port_mapping,omitempty"`
+	Name        string `json:"name"`
+	Required    bool   `json:"required"`
+	Phase       string `json:"phase"`
 	// Ready is current availability, not a process-lifecycle phase.
 	Ready       bool                            `json:"ready"`
 	ExecutionID string                          `json:"execution_id,omitempty"`
 	ExecutorID  string                          `json:"executor_id,omitempty"`
 	Restarts    int                             `json:"restarts"`
-	Endpoint    string                          `json:"endpoint,omitempty"`
 	Reason      string                          `json:"reason,omitempty"`
 	Outcome     *executor.ProcessOutcome        `json:"outcome,omitempty"`
 	Listener    *hostnetwork.ListenerInspection `json:"listener,omitempty"`
 }
 
-// Access is a credential-bearing response, separate from diagnostic status.
+// Access snapshots the current mapping and credential under the Service lock.
+// Clients derive URLs from its ports and their reachable carrier host; storing
+// derived addresses here would create another source of network state.
 type Access struct {
-	InternalEndpoint string `json:"internal_endpoint"`
-	PortMapping      string `json:"port_mapping"`
-	Endpoint         string `json:"endpoint"`
-	ExecutionID      string `json:"execution_id"`
-	Token            string `json:"token,omitempty"`
+	PortMapping network.PortMappingStatus `json:"port_mapping"`
+	Token       string                    `json:"token,omitempty"`
 }
 type Manager struct {
 	bed.Noop
@@ -117,8 +116,8 @@ func (m *Manager) Resolve(specs []bed.ServiceSpec, mappings []bed.PortMappingSpe
 			return nil, fmt.Errorf("port mapping %s has multiple service consumers", p.Name)
 		}
 		used[p.Name] = true
-		if !m.mappings.Available(p.Publish) {
-			return nil, fmt.Errorf("service %s requires a port manager and published mappings require an advertised host", s.Name)
+		if !m.mappings.Available() {
+			return nil, fmt.Errorf("service %s requires a port manager", s.Name)
 		}
 	}
 	return resolved, nil
@@ -202,15 +201,6 @@ func (m *Manager) Status(b *bed.Bed) []Status {
 	defer g.mu.Unlock()
 	for _, r := range g.records {
 		s := r.status
-		if r.mapping != nil {
-			mapping := r.mapping.Status()
-			if mapping.State == "listening" && r.spec.HTTP != nil {
-				s.InternalEndpoint = "http://" + mapping.InternalAddress
-				if mapping.ExternalAddress != "" {
-					s.Endpoint = "http://" + mapping.ExternalAddress
-				}
-			}
-		}
 		if s.Listener != nil {
 			v := *s.Listener
 			s.Listener = &v
@@ -237,11 +227,7 @@ func (m *Manager) Access(b *bed.Bed, name string) (Access, error) {
 			if p.State != "listening" || p.ExecutionID != r.status.ExecutionID {
 				continue
 			}
-			endpoint := ""
-			if p.ExternalAddress != "" {
-				endpoint = "http://" + p.ExternalAddress
-			}
-			return Access{Endpoint: endpoint, InternalEndpoint: "http://" + p.InternalAddress, PortMapping: p.Name, ExecutionID: p.ExecutionID, Token: r.token}, nil
+			return Access{PortMapping: p, Token: r.token}, nil
 		}
 	}
 	return Access{}, fmt.Errorf("HTTP service unavailable")

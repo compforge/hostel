@@ -21,10 +21,10 @@ import (
 
 var ErrServicesConflict = errors.New("bed: cannot change declared services")
 
-func WithServices(ports *hostnetwork.PortManager, advertise string) ManagerOption {
+func WithServices(ports *hostnetwork.PortManager) ManagerOption {
 	return func(m *Manager) {
 		m.ports = ports
-		m.portMappings = network.NewPortMappings(ports, advertise)
+		m.portMappings = network.NewPortMappings(ports)
 		m.services = service.NewManager(m.portMappings, m.servicesChanged)
 		m.network.SetPortMappings(m.portMappings)
 	}

@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,11 +25,10 @@ type servicePortsView struct {
 	Status struct {
 		Components map[string]json.RawMessage `json:"components"`
 		Services   []struct {
-			Name             string `json:"name"`
-			Ready            bool   `json:"ready"`
-			ExecutionID      string `json:"execution_id"`
-			Endpoint         string `json:"endpoint"`
-			InternalEndpoint string `json:"internal_endpoint"`
+			Name        string `json:"name"`
+			Ready       bool   `json:"ready"`
+			ExecutionID string `json:"execution_id"`
+			PortMapping string `json:"port_mapping"`
 		} `json:"services"`
 		PortMappings []struct {
 			Name        string `json:"name"`
@@ -117,19 +119,27 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 		}
 		var access struct {
 			Access struct {
-				Endpoint         string `json:"endpoint"`
-				InternalEndpoint string `json:"internal_endpoint"`
-				ExecutionID      string `json:"execution_id"`
+				PortMapping struct {
+					Name        string `json:"name"`
+					ExecutionID string `json:"execution_id"`
+					BedPort     int    `json:"bed_port"`
+					HostPort    int    `json:"host_port"`
+				} `json:"port_mapping"`
 			} `json:"access"`
 			Hold struct {
 				ID string `json:"id"`
 			} `json:"hold"`
 		}
 		request("POST", "/v1/beds/"+name+"/services/web/access", map[string]int{"hold_seconds": 30}, &access)
-		if access.Access.Endpoint != s.Endpoint || access.Access.InternalEndpoint != s.InternalEndpoint || access.Access.ExecutionID != s.ExecutionID || access.Hold.ID == "" {
+		if access.Access.PortMapping.HostPort != p.HostPort || access.Access.PortMapping.BedPort != p.BedPort || access.Access.PortMapping.Name != s.PortMapping || access.Access.PortMapping.ExecutionID != s.ExecutionID || access.Hold.ID == "" {
 			t.Fatalf("access disagrees with status: %+v", access)
 		}
-		req, err := http.NewRequestWithContext(ctx, "GET", s.Endpoint, nil)
+		target, err := url.Parse(c.baseURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hostURL := "http://" + net.JoinHostPort(target.Hostname(), strconv.Itoa(access.Access.PortMapping.HostPort))
+		req, err := http.NewRequestWithContext(ctx, "GET", hostURL, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +152,7 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 		if err != nil || response.StatusCode != 200 || string(body) != name {
 			t.Fatalf("external service: status=%d body=%s err=%v", response.StatusCode, body, err)
 		}
-		script := fmt.Sprintf("import urllib.request; print(urllib.request.urlopen(%q, timeout=3).read().decode())", s.InternalEndpoint)
+		script := fmt.Sprintf("import urllib.request; print(urllib.request.urlopen(%q, timeout=3).read().decode())", "http://"+net.JoinHostPort("127.0.0.1", strconv.Itoa(access.Access.PortMapping.BedPort)))
 		result, responseCommand := c.command(t, name, map[string]any{"command": shellx.Quote(python) + " -c " + shellx.Quote(script), "timeout": 5000})
 		must2xx(t, "internal service", responseCommand)
 		assertCommandExit(t, result, 0)

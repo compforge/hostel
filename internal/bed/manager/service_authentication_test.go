@@ -69,7 +69,7 @@ func TestBedServiceOptionalAuthentication(t *testing.T) {
 					t.Fatal("access read credentials ahead of process restart")
 				}
 			}
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, first.Endpoint+"/ready", nil)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testServiceURL(first.PortMapping.HostPort)+"/ready", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -88,7 +88,7 @@ func TestBedServiceOptionalAuthentication(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitService(t, m, b, "main", func(s service.Status) bool {
-				return s.Phase == "running" && s.Ready && s.ExecutionID != first.ExecutionID
+				return s.Phase == "running" && s.Ready && s.ExecutionID != first.PortMapping.ExecutionID
 			})
 			current, err := m.services.Access(b.Bed, "main")
 			if err != nil {

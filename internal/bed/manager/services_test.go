@@ -91,7 +91,7 @@ func testServiceManager(t *testing.T) (*Manager, []model.ServiceSpec, *hostnetwo
 	t.Helper()
 	ports, _ := hostnetwork.NewPortManager(25000, 25100)
 	m := newTestManager(t)
-	WithServices(ports, "127.0.0.1")(m)
+	WithServices(ports)(m)
 	credential := filepath.Join(t.TempDir(), "service-value")
 	if err := os.WriteFile(credential, []byte("from-file\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestBedServicesShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
 	}
 	a, _ := m.services.Access(b.Bed, "main")
 	other, _ := m.services.Access(b.Bed, "tools")
-	if a.Endpoint == other.Endpoint || a.Token == other.Token || a.ExecutionID == other.ExecutionID {
+	if testServiceURL(a.PortMapping.HostPort) == testServiceURL(other.PortMapping.HostPort) || a.Token == other.Token || a.PortMapping.ExecutionID == other.PortMapping.ExecutionID {
 		t.Fatal("service instances share runtime identity")
 	}
 	data, err := os.ReadFile(filepath.Join(b.Workdir(), "service-started"))
@@ -209,13 +209,13 @@ func TestBedServiceRestartChangesIdentityAndToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitService(t, m, b, "main", func(s service.Status) bool {
-		return s.Phase == "running" && s.Ready && s.ExecutionID != old.ExecutionID
+		return s.Phase == "running" && s.Ready && s.ExecutionID != old.PortMapping.ExecutionID
 	})
 	current, _ := m.services.Access(b.Bed, "main")
 	if old.Token == current.Token {
 		t.Fatal("restarted service reused token")
 	}
-	req, _ := http.NewRequest(http.MethodGet, current.Endpoint+"/ready", nil)
+	req, _ := http.NewRequest(http.MethodGet, testServiceURL(current.PortMapping.HostPort)+"/ready", nil)
 	req.Header.Set("Authorization", "Bearer "+old.Token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -248,7 +248,7 @@ func TestBedServiceExecutionsUseCommonRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	access, _ := m.services.Access(b.Bed, "main")
-	e, ok := m.executions.Get(access.ExecutionID)
+	e, ok := m.executions.Get(access.PortMapping.ExecutionID)
 	if !ok || e.Mode != ExecutionService || e.ExecutorID != b.Bed.Status().Executor.ID {
 		t.Fatal("service bypassed execution registry")
 	}
@@ -278,7 +278,7 @@ func TestBedServiceNeverPublishesSquatterAndRetriesBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := m.services.Status(b.Bed)[0]
-	if strings.HasSuffix(s.Endpoint, ":25000") || s.Restarts != 0 {
+	if m.PortMappings(b.Bed)[0].HostPort == 25000 || s.Restarts != 0 {
 		t.Fatalf("binding conflict was not retried independently: %+v", s)
 	}
 }
@@ -328,7 +328,7 @@ func TestBedServiceLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
 	// The complete desired state lives with the local Bed identity. Recovery no
 	// longer depends on a deployment-owned template catalog.
 	host := hostfacts.Collect()
-	next, err := NewManager(host, m.root, "default", "/bin/sh", isolation.New(host, "shared", m.root), nil, 0, nil, WithServices(ports, "127.0.0.1"))
+	next, err := NewManager(host, m.root, "default", "/bin/sh", isolation.New(host, "shared", m.root), nil, 0, nil, WithServices(ports))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,4 +361,8 @@ func testServiceOptions(specs []model.ServiceSpec) CreateOptions {
 		options.PortMappings = append(options.PortMappings, model.PortMappingSpec{Name: s.PortMapping, Protocol: "tcp", Publish: true})
 	}
 	return options
+}
+
+func testServiceURL(port int) string {
+	return fmt.Sprintf("http://127.0.0.1:%d", port)
 }

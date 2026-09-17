@@ -37,7 +37,6 @@ type BedOptions struct {
 // value's zero-ness, wins over flags/environment/defaults. Runtime Config is concrete.
 // +spec=`Explicit options override CLI/env/defaults, including Auto, false and zero; components never read startup environment.`
 type Options struct {
-	ServiceAdvertiseHost        *string
 	PortRangeStart              *int
 	PortRangeEnd                *int
 	Bed                         BedOptions
@@ -66,7 +65,6 @@ type Options struct {
 func (o Options) apply(c *Config) {
 	apply(&c.Bed.Configuration.Sources, o.Bed.ConfigurationSources)
 	apply(&c.Bed.RoomType, o.Bed.RoomType)
-	apply(&c.ServiceAdvertiseHost, o.ServiceAdvertiseHost)
 	apply(&c.PortRangeStart, o.PortRangeStart)
 	apply(&c.PortRangeEnd, o.PortRangeEnd)
 	apply(&c.ShowVersion, o.ShowVersion)
