@@ -151,7 +151,7 @@ func main() {
 
 	mgr, err := bed.NewManager(host, cfg.BedsRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
 		bed.WithRuntimeSelection(selection),
-		bed.WithServices(ports, cfg.ServiceAdvertiseHost),
+		bed.WithServices(ports),
 		bed.WithConfiguration(cfg.Bed.Configuration),
 	)
 	if err != nil {

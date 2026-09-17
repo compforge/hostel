@@ -20,7 +20,7 @@ func TestStatusObserverUsesInjectedHostSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ports.Close()
-	beds, err := manager.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "shared", root), facilities, 0, nil, manager.WithServices(ports, "127.0.0.1"))
+	beds, err := manager.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "shared", root), facilities, 0, nil, manager.WithServices(ports))
 	if err != nil {
 		t.Fatal(err)
 	}

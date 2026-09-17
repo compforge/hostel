@@ -36,7 +36,7 @@ func TestServiceReadinessPreservesRunningTask(t *testing.T) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	request := func(path string) *http.Response {
 		t.Helper()
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, first.HostEndpoint+path, nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testServiceURL(first.PortMapping.HostPort)+path, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +62,7 @@ func TestServiceReadinessPreservesRunningTask(t *testing.T) {
 	unready := waitService(t, m, b, "main", func(s service.Status) bool {
 		return !s.Ready && s.Reason == "ReadinessHTTPStatus503" && !b.Bed.Status().Lifecycle.Ready
 	})
-	if unready.Phase != "running" || unready.ExecutionID != before.ExecutionID || unready.ExecutorID != before.ExecutorID || unready.HostEndpoint != before.HostEndpoint || unready.Restarts != before.Restarts || unready.Outcome != nil {
+	if unready.Phase != "running" || unready.ExecutionID != before.ExecutionID || unready.ExecutorID != before.ExecutorID || unready.PortMapping != before.PortMapping || unready.Restarts != before.Restarts || unready.Outcome != nil {
 		t.Fatalf("readiness changed run identity: before=%+v after=%+v", before, unready)
 	}
 	if !reflect.DeepEqual(ports.Status(), allocations) {
@@ -77,7 +77,7 @@ func TestServiceReadinessPreservesRunningTask(t *testing.T) {
 	if evicted, err := m.Evict(t.Context(), b.Name); err != nil || evicted {
 		t.Fatalf("unready service lost its hold: %t %v", evicted, err)
 	}
-	execution, ok := m.executions.Get(first.ExecutionID)
+	execution, ok := m.executions.Get(first.PortMapping.ExecutionID)
 	if !ok {
 		t.Fatal("missing execution")
 	}
@@ -100,7 +100,7 @@ func TestServiceReadinessPreservesRunningTask(t *testing.T) {
 		t.Fatalf("in-flight task interrupted or replaced: %q %v", completed, err)
 	}
 	request("/exit").Body.Close()
-	next := waitService(t, m, b, "main", func(s service.Status) bool { return s.Ready && s.ExecutionID != first.ExecutionID })
+	next := waitService(t, m, b, "main", func(s service.Status) bool { return s.Ready && s.ExecutionID != first.PortMapping.ExecutionID })
 	if next.Restarts != 1 {
 		t.Fatalf("real exit did not consume exactly one restart: %+v", next)
 	}

@@ -57,29 +57,34 @@ services:
 
 Bed 详情直接返回 `status.services` 和 `status.port_mappings`；`status.components.network`
 继续描述隔离能力与网络状态。每项映射报告 `name`、`protocol`、`service`、`execution_id`、
-`network`、`state`、`bed_port`、`host_port`、`bed_address`、`host_address` 和降级 `reason`。
-`bed_address` 是 Bed 内使用的 `host:port`；`host_port` / `host_address` 仅在发布时存在，
-`host_address` 使用 Carrier 的 advertised host。这里的 Host 是承载 Hostel 的网络域，
-部署在 Pod 时通常就是 Carrier Pod，不特指 Kubernetes Node。
+`network`、`state`、`bed_port`、`host_port` 和降级 `reason`。`host_port` 仅在发布时存在。
+端口事实只由 PortMapping 持有；Service 状态通过 `port_mapping` 名称引用它。
+地址和应用 URL 是派生值，不作为独立状态或 API 字段，避免同一绑定出现多个信息源。
 
-HTTP Service 的 status 和 access 使用同一组地址字段：`bed_endpoint` 供 Bed 内进程访问，
-`host_endpoint` 供 Carrier 外部调用方访问；access 另返回 `port_mapping`、`execution_id`，
-有认证时含 token。两种网络模式使用同一接口，调用方不必自行判断 netns 或拼接端口。
-未发布服务的 `host_endpoint` 为空（status 省略，access 返回空字符串）。
+HTTP Service 的 access 返回当前 `port_mapping` 完整快照和可选 token，映射内包含
+`execution_id` 与实际端口。快照与凭据在同一 Service 锁内读取，调用方无需另外查询
+映射来拼接本次执行的地址。它不是另一份运行时状态，也不保证服务不会随后重启。
 
-以偏好 `bed_port=8080`、`publish=true`，实际分配 Host 端口 `23456` 为例：
+调用方按以下规则推导地址；HTTP 服务再加 `http://`：
 
-| 实际网络 | `bed_endpoint` | `host_endpoint` |
-|---|---|---|
-| private netns，偏好端口可用 | `http://127.0.0.1:8080` | `http://<CarrierPodIP>:23456` |
-| shared | `http://127.0.0.1:23456` | `http://<CarrierPodIP>:23456` |
+| 访问位置 | 地址来源 |
+|---|---|
+| Bed 内 | `127.0.0.1` + 映射的实际 `bed_port` |
+| Carrier 外 | 调用方已知的 Carrier IP/域名 + 映射的 `host_port` |
 
-`bed_endpoint` 表达从 Bed 内可访问，不承诺独立 netns 或固定端口。共享网络时，
-已发布映射的实际 `bed_port = host_port`，Bed 地址随之降级；`require_bed_port=true`
-无法满足时仍直接失败。私有 netns 的 loopback 属于 Bed，自身的 `127.0.0.1:host_port`
-不能代替 Host 入口；若要从 Bed 访问 Host 发布端口，需使用可达的 Host 网关地址。
-advertised host 不保证在 Bed 内可达，因此 Bed 内应直接消费 `bed_endpoint`。
-地址属于当前 execution，重启后必须重新发现，不能将端口当成稳定身份。
+Carrier host 来自调用方的部署或连接信息，例如 Sandctl 持有的 Carrier Pod IP；
+Hostel 不配置或推测这个地址。Host 指承载 Hostel 的网络域，Pod 部署时通常就是
+Carrier Pod。外部访问需要该 host 和端口可达；不能从经过代理的控制面 URL 假定数据端口可达。
+未发布时没有 `host_port`，调用方不得据此构造外部地址。
+
+例如偏好 `bed_port=8080`、`publish=true`，Host 实际分配 `23456`：私有 netns 且
+偏好端口可用时，Bed 内访问 `127.0.0.1:8080`，外部访问 `<CarrierPodIP>:23456`；
+共享网络时，实际 `bed_port = host_port = 23456`，Bed 内访问 `127.0.0.1:23456`。
+Bed 内访问不承诺独立 netns 或固定端口；`require_bed_port=true` 无法满足仍直接失败。
+私有 netns 的 loopback 属于 Bed，不能用自身的 `127.0.0.1:host_port` 访问 Host 入口；
+若特意走 Host 发布端口，需要可达的 Host 网关地址，普通 Bed 内调用直接使用 `bed_port`。
+
+端口属于当前 execution，重启后必须重新发现，不能将端口当成稳定身份。
 
 `internal/bed/network.PortMappings` 复用 Host PortManager/TCPForwarder，拥有 reserve、publish、
 withdraw、release；Service 仅负责进程、HTTP readiness 和重启，并绑定具体映射句柄。

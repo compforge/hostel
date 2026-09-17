@@ -81,7 +81,7 @@ func (p *fakeProcess) Stop(context.Context, time.Duration) error {
 
 func testController(t *testing.T, required bool) (*Manager, *bed.Bed) {
 	t.Helper()
-	m := newTestManager(nil, "", nil)
+	m := newTestManager(nil, nil)
 	b := newServiceTestBed("test", "", bed.Spec{Services: []bed.ServiceSpec{{Name: "worker", Command: []string{"worker"}, Required: required, MaxRestarts: 1}}})
 	t.Cleanup(func() {
 		if err := m.Close(context.Background()); err != nil {
@@ -137,7 +137,7 @@ func TestBedScopedHTTPServiceWithUnavailableInspection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := newTestManager(ports, "127.0.0.1", nil)
+	m := newTestManager(ports, nil)
 	m.inspectListener = func(context.Context, int, string) (hostnetwork.ListenerInspection, error) {
 		return hostnetwork.ListenerInspection{State: hostnetwork.ListenerUnavailable, Method: "proc", Reason: "permission_denied"}, nil
 	}
@@ -177,7 +177,7 @@ func TestBedScopedHTTPServiceWithUnavailableInspection(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := m.Status(b)[0]
-	if status.Phase != "running" || !status.Ready || status.Restarts != 0 || status.HostEndpoint == "" || status.Listener.State != hostnetwork.ListenerUnavailable {
+	if status.Phase != "running" || !status.Ready || status.Restarts != 0 || m.mappings.Status(b)[0].HostPort == 0 || status.Listener.State != hostnetwork.ListenerUnavailable {
 		t.Fatalf("scoped service status = %+v", status)
 	}
 	// Network scope is not reported as process ownership, including steady state.
@@ -210,7 +210,7 @@ func TestReleaseAndPrepareKeepsNewServiceGroup(t *testing.T) {
 
 func TestReadinessIsIndependentFromRunningPhase(t *testing.T) {
 	for _, required := range []bool{false, true} {
-		m := newTestManager(nil, "", nil)
+		m := newTestManager(nil, nil)
 		g := &group{bed: newServiceTestBed("status", "", bed.Spec{}), changed: make(chan struct{})}
 		r := &record{spec: bed.ServiceSpec{Required: required}, status: Status{Phase: "running"}}
 		g.records = []*record{r}

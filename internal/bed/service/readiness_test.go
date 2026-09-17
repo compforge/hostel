@@ -22,7 +22,7 @@ func httpTestManager(t *testing.T) (*Manager, *hostnetwork.PortManager) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := newTestManager(ports, "127.0.0.1", nil)
+	m := newTestManager(ports, nil)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -90,10 +90,10 @@ func TestSharedHTTPServiceDegradesAfterReadyAndRestarts(t *testing.T) {
 	degraded.Store(true)
 	waitHTTPStatus(t, m, b, func(s Status) bool { return s.Listener != nil && s.Listener.State == hostnetwork.ListenerUnavailable })
 	status := m.Status(b)[0]
-	if status.Phase != "running" || !status.Ready || status.ExecutionID != first.ExecutionID || status.Restarts != 0 {
+	if status.Phase != "running" || !status.Ready || status.ExecutionID != first.PortMapping.ExecutionID || status.Restarts != 0 {
 		t.Fatalf("inspection failure killed service: %+v", status)
 	}
-	resp, err := http.Get(first.HostEndpoint + "/ready")
+	resp, err := http.Get(testServiceURL(first.PortMapping.HostPort) + "/ready")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,9 @@ func TestSharedHTTPServiceDegradesAfterReadyAndRestarts(t *testing.T) {
 	if err := m.Restart(b, "web"); err != nil {
 		t.Fatal(err)
 	}
-	waitHTTPStatus(t, m, b, func(s Status) bool { return s.Phase == "running" && s.Ready && s.ExecutionID != first.ExecutionID })
+	waitHTTPStatus(t, m, b, func(s Status) bool {
+		return s.Phase == "running" && s.Ready && s.ExecutionID != first.PortMapping.ExecutionID
+	})
 	second, err := m.Access(b, "web")
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +141,7 @@ func TestSharedHTTPServicesHaveDistinctEndpoints(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			endpoints <- a.HostEndpoint
+			endpoints <- testServiceURL(a.PortMapping.HostPort)
 		}()
 	}
 	wg.Wait()
@@ -195,7 +197,7 @@ func TestUnavailableInspectionStillRequiresHTTPReadiness(t *testing.T) {
 		t.Fatal("unhealthy service ready")
 	}
 	status := m.Status(b)[0]
-	if status.HostEndpoint != "" || !strings.Contains(status.Reason, "readiness timeout") {
+	if len(m.mappings.Status(b)) != 0 || !strings.Contains(status.Reason, "readiness timeout") {
 		t.Fatalf("status=%+v", status)
 	}
 	runtime.mu.Lock()
@@ -250,7 +252,7 @@ func TestExitDuringProbeDoesNotPublishOrRetryAsConflict(t *testing.T) {
 		t.Fatal("exited service published ready")
 	}
 	status := m.Status(b)[0]
-	if status.HostEndpoint != "" || status.Reason != "process exited before readiness" {
+	if len(m.mappings.Status(b)) != 0 || status.Reason != "process exited before readiness" {
 		t.Fatalf("status=%+v", status)
 	}
 	runtime.mu.Lock()

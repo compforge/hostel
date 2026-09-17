@@ -5,6 +5,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"net"
+	"strconv"
 	"testing"
 )
 
@@ -19,7 +20,7 @@ func TestPortMappingModesAndOwnership(t *testing.T) {
 		}
 		_ = ports.Close()
 	})
-	mappings := NewPortMappings(ports, "127.0.0.1")
+	mappings := NewPortMappings(ports)
 	makeBed := func(name string) *bed.Bed {
 		return bed.New(name, "", bed.Spec{PortMappings: []bed.PortMappingSpec{{Name: "http", Protocol: "tcp", BedPort: 8080, Publish: true}}})
 	}
@@ -40,13 +41,13 @@ func TestPortMappingModesAndOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := first.Status()
-	if s.HostPort != s.BedPort || s.BedAddress != s.HostAddress || s.ExecutionID != "execution-one" {
+	if s.HostPort != s.BedPort || s.ExecutionID != "execution-one" {
 		t.Fatalf("shared publication: %+v", s)
 	}
 	if err := first.Withdraw(); err != nil {
 		t.Fatal(err)
 	}
-	if first.Status().HostAddress != "" || mappings.CheckReleased(a) == nil {
+	if first.Status().HostPort != 0 || mappings.CheckReleased(a) == nil {
 		t.Fatal("withdraw released internal ownership")
 	}
 	if err := first.Release(); err != nil {
@@ -95,7 +96,7 @@ func TestRequiredAndUnpublishedPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ports.Close()
-	mappings := NewPortMappings(ports, "")
+	mappings := NewPortMappings(ports)
 	b := bed.New("fixed", "", bed.Spec{PortMappings: []bed.PortMappingSpec{{Name: "fixed", BedPort: port, RequireBedPort: true}}})
 	if _, err := mappings.Reserve(b, "fixed", "server", "", "127.0.0.1", false); !errors.Is(err, hostnetwork.ErrPortsExhausted) {
 		t.Fatalf("required port silently changed: %v", err)
@@ -109,13 +110,13 @@ func TestRequiredAndUnpublishedPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Release()
-	if p.ListenAddress() != p.Status().BedAddress {
+	if p.ListenAddress() != net.JoinHostPort("127.0.0.1", strconv.Itoa(p.Status().BedPort)) {
 		t.Fatalf("unpublished shared listener: %s", p.ListenAddress())
 	}
 	if err := p.Publish(); err != nil {
 		t.Fatal(err)
 	}
-	if p.Status().HostPort != 0 || p.Status().HostAddress != "" {
+	if p.Status().HostPort != 0 {
 		t.Fatal("unpublished mapping exposed external discovery")
 	}
 }
