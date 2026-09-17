@@ -39,7 +39,8 @@ var ErrInvalidPolicy = hostnetwork.ErrInvalidPolicy
 func NormalizePolicy(p Policy) (Policy, error) { return hostnetwork.NormalizePolicy(p) }
 
 type Manager struct {
-	config Config
+	portMappings *PortMappings
+	config       Config
 	bed.Noop
 	provider    Provider
 	pool        *hostnetwork.Pool

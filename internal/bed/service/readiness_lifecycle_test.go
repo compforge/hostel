@@ -138,7 +138,7 @@ func TestActualExitRetainsRestartPolicy(t *testing.T) {
 	}{{"never", 1, false}, {"on-failure", 0, false}, {"on-failure", 1, true}, {"always", 0, true}} {
 		t.Run(fmt.Sprintf("%s/%d", tc.policy, tc.exit), func(t *testing.T) {
 			m, _ := testController(t, true)
-			b := bed.New("policy", "", bed.Spec{Services: []bed.ServiceSpec{{Name: "worker", Command: []string{"worker"}, Required: true, Restart: tc.policy, MaxRestarts: 1}}})
+			b := newServiceTestBed("policy", "", bed.Spec{Services: []bed.ServiceSpec{{Name: "worker", Command: []string{"worker"}, Required: true, Restart: tc.policy, MaxRestarts: 1}}})
 			runtime := &fakeRuntime{}
 			if err := m.PrepareBed(t.Context(), b, runtime); err != nil {
 				t.Fatal(err)

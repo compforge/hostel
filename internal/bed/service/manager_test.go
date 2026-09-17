@@ -81,8 +81,8 @@ func (p *fakeProcess) Stop(context.Context, time.Duration) error {
 
 func testController(t *testing.T, required bool) (*Manager, *bed.Bed) {
 	t.Helper()
-	m := NewManager(nil, "", nil)
-	b := bed.New("test", "", bed.Spec{Services: []bed.ServiceSpec{{Name: "worker", Command: []string{"worker"}, Required: required, MaxRestarts: 1}}})
+	m := newTestManager(nil, "", nil)
+	b := newServiceTestBed("test", "", bed.Spec{Services: []bed.ServiceSpec{{Name: "worker", Command: []string{"worker"}, Required: required, MaxRestarts: 1}}})
 	t.Cleanup(func() {
 		if err := m.Close(context.Background()); err != nil {
 			t.Error(err)
@@ -137,7 +137,7 @@ func TestBedScopedHTTPServiceWithUnavailableInspection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := NewManager(ports, "127.0.0.1", nil)
+	m := newTestManager(ports, "127.0.0.1", nil)
 	m.inspectListener = func(context.Context, int, string) (hostnetwork.ListenerInspection, error) {
 		return hostnetwork.ListenerInspection{State: hostnetwork.ListenerUnavailable, Method: "proc", Reason: "permission_denied"}, nil
 	}
@@ -166,7 +166,7 @@ func TestBedScopedHTTPServiceWithUnavailableInspection(t *testing.T) {
 		process.stop = func() { _ = server.Close() }
 		return process, nil
 	}}
-	b := bed.New("scoped", "", bed.Spec{Services: []bed.ServiceSpec{{
+	b := newServiceTestBed("scoped", "", bed.Spec{Services: []bed.ServiceSpec{{
 		Name: "worker", Command: []string{"worker"}, Env: map[string]string{"SERVICE_LISTEN": "${LISTEN_ADDR}"},
 		Required: true, MaxRestarts: 1, StartupSeconds: 2, StopSeconds: 1,
 		HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "SERVICE_TOKEN"}},
@@ -210,8 +210,8 @@ func TestReleaseAndPrepareKeepsNewServiceGroup(t *testing.T) {
 
 func TestReadinessIsIndependentFromRunningPhase(t *testing.T) {
 	for _, required := range []bool{false, true} {
-		m := NewManager(nil, "", nil)
-		g := &group{bed: bed.New("status", "", bed.Spec{}), changed: make(chan struct{})}
+		m := newTestManager(nil, "", nil)
+		g := &group{bed: newServiceTestBed("status", "", bed.Spec{}), changed: make(chan struct{})}
 		r := &record{spec: bed.ServiceSpec{Required: required}, status: Status{Phase: "running"}}
 		g.records = []*record{r}
 		ready, failed := groupReadiness(g)

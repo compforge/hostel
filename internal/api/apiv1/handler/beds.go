@@ -68,6 +68,7 @@ func (s *Handler) bedList(c *gin.Context) {
 }
 
 type createBedRequest struct {
+	PortMappings  []model.PortMappingSpec              `json:"port_mappings,omitempty"`
 	PathMappings  []model.PathMapping                  `json:"path_mappings,omitempty"`
 	SyncPaths     []string                             `json:"sync_paths,omitempty"`
 	EnvFiles      map[string]string                    `json:"env_files,omitempty"`
@@ -96,7 +97,7 @@ func (s *Handler) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{PathMappings: req.PathMappings, SyncPaths: req.SyncPaths, Env: req.Env, EnvFiles: req.EnvFiles, EnvFrom: req.EnvFrom, EnvValueFrom: req.EnvValueFrom, Sync: req.Sync, NetworkPolicy: req.NetworkPolicy, Services: req.Services})
+	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{PortMappings: req.PortMappings, PathMappings: req.PathMappings, SyncPaths: req.SyncPaths, Env: req.Env, EnvFiles: req.EnvFiles, EnvFrom: req.EnvFrom, EnvValueFrom: req.EnvValueFrom, Sync: req.Sync, NetworkPolicy: req.NetworkPolicy, Services: req.Services})
 	if err != nil {
 		if errors.Is(err, network.ErrUnavailable) {
 			respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, "bed network policy is unavailable")

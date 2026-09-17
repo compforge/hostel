@@ -14,7 +14,7 @@ import (
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
-	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
+	"github.com/qiankunli/hostel/internal/bed/network"
 )
 
 var readinessClient = &http.Client{
@@ -36,8 +36,8 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 		var outcome executor.ProcessOutcome
 		var err error
 		for attempt := 0; attempt < 3; attempt++ {
-			explicit, outcome, err = m.run(ctx, g, r)
-			if !errors.Is(err, errBindingConflict) {
+			explicit, outcome, err = m.run(ctx, g, r, attempt > 0)
+			if !errors.Is(err, errBindingConflict) || requiredPort(g.bed, r.spec.PortMapping) {
 				break
 			}
 		}
@@ -96,7 +96,7 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 }
 
 // +spec=`Readiness loss changes admission only: preserve the process, Execution ID, token, port allocations, forwarder and existing connections until this run actually ends.`
-func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, outcome executor.ProcessOutcome, retErr error) {
+func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred bool) (explicit bool, outcome executor.ProcessOutcome, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return false, outcome, err
 	}
@@ -106,9 +106,8 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 	if err != nil {
 		return false, outcome, err
 	}
-	var allocation *hostnetwork.PortAllocation
-	var scope, host, address, token string
-	var forward *hostnetwork.TCPForwarder
+	var mapping *network.PortMapping
+	var address, token string
 	if spec.HTTP != nil && spec.HTTP.Authentication != nil {
 		auth := spec.HTTP.Authentication
 		switch auth.TokenSource {
@@ -127,28 +126,44 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 			}
 		}
 	}
-	if spec.HTTP != nil {
-		var err error
-		scope, host, err = g.runtime.Network()
+	if spec.PortMapping != "" {
+		scope, host, err := g.runtime.Network()
 		if err != nil {
 			return false, outcome, err
 		}
-		allocation, err = m.ports.Reserve(g.bed.ID.String()+"/service/"+r.spec.Name, scope, "0.0.0.0:0")
+		mapping, err = m.mappings.Reserve(g.bed, spec.PortMapping, spec.Name, scope, host, avoidPreferred)
 		if err != nil {
 			return false, outcome, err
 		}
-		defer allocation.Release()
-		address = net.JoinHostPort(host, strconv.Itoa(allocation.Port()))
+		g.mu.Lock()
+		r.mapping = mapping
+		g.mu.Unlock()
+		defer func() {
+			for {
+				if err := mapping.Release(); err == nil {
+					break
+				}
+				m.update(g, r, func(s *Status) { s.Reason = "PortCleanupPending" })
+				time.Sleep(time.Second)
+			}
+			g.mu.Lock()
+			if r.mapping == mapping {
+				r.mapping = nil
+			}
+			g.mu.Unlock()
+		}()
+		address = mapping.ProbeAddress()
 	}
+
 	command := append([]string(nil), spec.Command...)
-	if allocation != nil {
-		replace := strings.NewReplacer("${PORT}", strconv.Itoa(allocation.Port()), "${LISTEN_ADDR}", allocation.Address())
+	if mapping != nil {
+		replace := strings.NewReplacer("${PORT}", strconv.Itoa(mapping.Port()), "${LISTEN_ADDR}", mapping.ListenAddress())
 		for i, v := range command {
 			command[i] = replace.Replace(v)
 		}
 		for k, v := range env {
 			// Credentials are opaque and must not undergo address substitution.
-			if spec.HTTP.Authentication == nil || k != spec.HTTP.Authentication.TokenEnv {
+			if spec.HTTP == nil || spec.HTTP.Authentication == nil || k != spec.HTTP.Authentication.TokenEnv {
 				env[k] = replace.Replace(v)
 			}
 		}
@@ -161,8 +176,10 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		// Withdraw discovery before terminating; existing forwarding connections
 		// are closed before the process/environment can be reused.
 		m.update(g, r, func(s *Status) { s.Endpoint = ""; s.Phase = "stopping" })
-		if forward != nil {
-			_ = forward.Close()
+		if mapping != nil {
+			if err := mapping.Withdraw(); err != nil {
+				retErr = errors.Join(retErr, err)
+			}
 		}
 		// Keep this owner alive if cleanup fails. Stop callers retain the group
 		// and can retry; never release a live process's port or filesystem.
@@ -180,6 +197,9 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		outcome = proc.Outcome()
 		m.update(g, r, func(s *Status) { s.Outcome = &outcome })
 	}()
+	if mapping != nil {
+		mapping.Bind(proc.ExecutionID())
+	}
 	m.update(g, r, func(s *Status) {
 		s.Phase = "running"
 		s.ExecutionID = proc.ExecutionID()
@@ -225,26 +245,16 @@ func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, 
 		case <-timer.C:
 		}
 	}
-	endpoint := ""
-	if allocation != nil {
-		if err := allocation.Confirm(); err != nil {
+	if mapping != nil {
+		if err := mapping.Publish(); err != nil {
 			return false, outcome, err
 		}
-		publishedPort := allocation.Port()
-		if scope != "" {
-			var err error
-			forward, err = hostnetwork.NewTCPForwarder(m.ports, g.bed.ID.String()+"/service/"+r.spec.Name+"/publish", address)
-			if err != nil {
-				return false, outcome, err
-			}
-			publishedPort = forward.Port()
-		}
-		endpoint = "http://" + net.JoinHostPort(m.advertise, strconv.Itoa(publishedPort))
 	}
+
 	g.mu.Lock()
 	r.token = token
 	g.mu.Unlock()
-	m.update(g, r, func(s *Status) { s.Ready = true; s.Endpoint = endpoint; s.Reason = "" })
+	m.update(g, r, func(s *Status) { s.Ready = true; s.Reason = "" })
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -299,4 +309,13 @@ func probeHTTP(ctx context.Context, address, path, token string) readinessResult
 		return readinessResult{Reason: fmt.Sprintf("ReadinessHTTPStatus%d", resp.StatusCode)}
 	}
 	return readinessResult{Ready: true}
+}
+
+func requiredPort(b *bed.Bed, name string) bool {
+	for _, p := range b.Spec().PortMappings {
+		if p.Name == name {
+			return p.RequireBedPort
+		}
+	}
+	return false
 }

@@ -16,6 +16,65 @@ Network 定义 shared/private 两级：dorm/room 预期 shared，suite/auto 预�
 继续共享 carrier 网络。探测成功后，单个 Bed 创建网络失败会使该次初始化失败，不能在
 同一实例中静默改成共享网络。运行中权限撤销也不会自动放开已隔离 Bed。
 
+## Bed PortMapping
+
+`Bed.Spec.PortMappings` 是命名的 TCP 端口需求；与 PathMapping 一样，调用方声明逻辑关系，
+Hostel 根据实际能力兑现。Service 通过 `port_mapping` 引用其中一项，不再自行持有端口分配策略。
+当前由托管 Service 消费映射，每项最多绑定一个 Service；没有消费者的声明不预占运行端口。
+
+```yaml
+port_mappings:
+  - name: workspace-http
+    protocol: tcp
+    bed_port: 8080
+    require_bed_port: false
+    publish: true
+services:
+  - name: workspace-api
+    port_mapping: workspace-http
+    # command / env 通过 ${PORT} 或 ${LISTEN_ADDR} 接收实际监听地址
+```
+
+`protocol` 默认 `tcp`；`bed_port=0` 表示自动分配。非零端口默认是偏好，
+`require_bed_port=true` 才是硬要求，必须同时指定非零 `bed_port`。
+`publish` 显式控制 Carrier 入口与外部地址发现，默认 false。Host 端口由统一端口池动态分配，
+不接受静态 `host_port`，也不写入持久化声明。
+
+| 实际网络 | Bed 内监听 | Carrier 发布 | Bed 内访问 |
+|---|---|---|---|
+| private netns | 优先使用 `bed_port`；未指定或偏好冲突时动态分配 | 独立 Host 端口，TCP 转发至 Bed IP | `127.0.0.1:bed_port` |
+| shared | 普通请求使用 Host 动态端口池；硬要求才尝试指定端口 | 与 Bed 监听为同一个端口，无额外转发 | `127.0.0.1:host_port` |
+
+硬要求冲突直接失败，不换端口。偏好降级原因通过 `reason` 披露；共享网络下的典型原因是
+`SharedNetworkUsesHostPort`。这不会提升网络隔离等级，也不能让共享网络中的每个 Bed 都使用
+`127.0.0.1:8080`。需要该假设的程序必须消费发现结果或修改监听配置。
+
+`publish=false` 时不返回外部地址、不创建转发；共享网络注入 loopback 监听地址。
+私有网络中的 listener 仍需供 Carrier readiness 探测。发布选项是监听/发现契约，不是防火墙：
+程序自行忽略 `${LISTEN_ADDR}` 或其他进程主动 bind 不受它约束。
+
+### 发现、归属与回收
+
+Bed 详情直接返回 `status.services` 和 `status.port_mappings`；`status.components.network`
+继续描述隔离能力与网络状态。每项映射报告 `name`、`protocol`、`service`、`execution_id`、
+`network`、`state`、`bed_port`、`host_port`、`internal_address`、`external_address` 和降级 `reason`。
+`host_port` / `external_address` 仅在发布时存在；内部地址相对于该 Bed 的网络视图。
+
+HTTP Service 的 access 同时返回 `internal_endpoint`、外部 `endpoint`、`port_mapping` 和
+`execution_id`，有认证时另含 token。Bed 内进程消费内部地址，外部调用方消费外部地址；
+两种网络模式使用同一接口。未发布服务的外部 endpoint 为空。地址属于当前 execution，
+重启后必须重新发现，不能将端口当成稳定身份。
+
+`internal/bed/network.PortMappings` 复用 Host PortManager/TCPForwarder，拥有 reserve、publish、
+withdraw、release；Service 仅负责进程、HTTP readiness 和重启，并绑定具体映射句柄。
+准备顺序是网络就绪 → 预留 Bed 端口 → 启动进程 → Service 就绪 → 发布 Host 入口。
+纯 TCP 服务没有 HTTP readiness 时，发布以进程存活为准，不宣称应用已能服务请求。
+
+Readiness 暂时丢失保留本次运行及连接，但拒绝新 access。真正停止时先撤销发现与转发、
+再停止进程、最后释放内部端口；清理失败保留责任并重试。网络 namespace 在映射回收后才可释放。
+同名重建和重启不能让旧句柄释放新资源。持久化只记录声明，恢复时重新分配；
+不恢复旧 Host 端口、endpoint 或 execution。重建 Bed 时调用方重新提交完整声明。
+
 ## 主流程
 
 启动时检查 Linux、`ip`/`nft`、现有 IPv4 forwarding 和 DNS，然后创建临时

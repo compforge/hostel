@@ -14,6 +14,7 @@ import (
 	"github.com/qiankunli/go-stdx/randx"
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
+	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/service"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
@@ -23,7 +24,9 @@ var ErrServicesConflict = errors.New("bed: cannot change declared services")
 func WithServices(ports *hostnetwork.PortManager, advertise string) ManagerOption {
 	return func(m *Manager) {
 		m.ports = ports
-		m.services = service.NewManager(ports, advertise, m.servicesChanged)
+		m.portMappings = network.NewPortMappings(ports, advertise)
+		m.services = service.NewManager(m.portMappings, m.servicesChanged)
+		m.network.SetPortMappings(m.portMappings)
 	}
 }
 
@@ -34,6 +37,9 @@ func (m *Manager) PortStatus() []hostnetwork.PortStatus {
 	return m.ports.Status()
 }
 func (m *Manager) Services() *service.Manager { return m.services }
+func (m *Manager) PortMappings(b *model.Bed) []network.PortMappingStatus {
+	return m.portMappings.Status(b)
+}
 
 func (m *Manager) ServiceLogs(b *Resident, id string, cursor int64) ([]ExecutionOutput, int64, bool, bool, error) {
 	e, ok := m.executions.Get(id)

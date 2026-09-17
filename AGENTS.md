@@ -163,7 +163,7 @@ internal/
 
 - 文件操作与传输：`docs/transfers.md`（files API 入口、Bed ↔ S3 Copy / Restic、操作状态与自动持久化边界）
 
-- 网络管理：`docs/network.md`（自动探测、命令作用域与诊断；共享 Chromium 代理待支持）
+- 网络管理与 Bed PortMapping：`docs/network.md`（命名 TCP 需求、private/shared 内外地址、资源回收；共享 Chromium 代理待支持）
 
 - 核心架构（定位、Bed 模型、请求与状态、组件契约及生命周期主流程）：`docs/kernel.md`
 - 待办清单（尚未交付的演进项）：`docs/backlog.md`

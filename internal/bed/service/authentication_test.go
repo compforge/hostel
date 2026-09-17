@@ -19,7 +19,7 @@ func TestUnavailableTokenFilePreventsProcessStart(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			b := bed.New("token-file", "", bed.Spec{Services: []bed.ServiceSpec{{
+			b := newServiceTestBed("token-file", "", bed.Spec{Services: []bed.ServiceSpec{{
 				Name: "web", Command: []string{"server"}, Required: true,
 				EnvFiles: map[string]string{"TOKEN": path},
 				HTTP:     &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}},

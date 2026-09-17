@@ -33,7 +33,7 @@ func TestBedServiceOptionalAuthentication(t *testing.T) {
 					spec.EnvFiles["SERVICE_TOKEN"] = credential
 				}
 			}
-			if _, err := m.InitializeBedWithOptions(t.Context(), "authentication", CreateOptions{Services: specs[:1]}); err != nil {
+			if _, err := m.InitializeBedWithOptions(t.Context(), "authentication", testServiceOptions(specs[:1])); err != nil {
 				t.Fatal(err)
 			}
 			b, err := m.Ensure(t.Context(), "authentication")

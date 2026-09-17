@@ -44,9 +44,11 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 		ID           string    `json:"id"`
 		LastActiveAt time.Time `json:"last_active_at"`
 		Status       struct {
-			Lifecycle  bedLifecycleView           `json:"lifecycle"`
-			Components map[string]json.RawMessage `json:"components"`
-			Amenities  map[string]tenantView      `json:"amenities"`
+			Services     []json.RawMessage          `json:"services"`
+			PortMappings []json.RawMessage          `json:"port_mappings"`
+			Lifecycle    bedLifecycleView           `json:"lifecycle"`
+			Components   map[string]json.RawMessage `json:"components"`
+			Amenities    map[string]tenantView      `json:"amenities"`
 		} `json:"status"`
 	}
 	path := "/v1/beds/" + url.PathEscape(name)
@@ -61,11 +63,11 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 		return d
 	}
 	before := read()
-	if before.ID != name || !before.Status.Lifecycle.Readiness.Ready {
+	if before.ID != name || !before.Status.Lifecycle.Readiness.Ready || before.Status.Services == nil || before.Status.PortMappings == nil {
 		t.Fatalf("detail: %+v", before)
 	}
 	assertComponents("bed", before.Status.Components,
-		"filesystem", "privilege", "network", "store", "executor", "resource", "services")
+		"filesystem", "privilege", "network", "store", "executor", "resource")
 	if _, exists := before.Status.Amenities["mcp"]; exists {
 		t.Fatal("status allocated MCP tenant")
 	}
@@ -108,7 +110,7 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 	if global.Host.Fact["runtime"] == nil || global.Host.Fact["process"] == nil || global.Host.Status.Ports == nil {
 		t.Fatalf("missing host facts: %+v", global.Host)
 	}
-	if global.Schema != 8 || global.Amenities["mcp"].Tenants != 1 {
+	if global.Schema != 9 || global.Amenities["mcp"].Tenants != 1 {
 		t.Fatalf("global status: %+v", global)
 	}
 	assertComponents("instance", global.Components,

@@ -8,6 +8,7 @@ import (
 // ServiceSpec is the immutable, non-secret definition of a process supervised
 // with its Bed. Runtime addresses and generated credentials never enter it.
 type ServiceSpec struct {
+	PortMapping    string                         `json:"port_mapping,omitempty"`
 	Name           string                         `json:"name"`
 	Command        []string                       `json:"command"`
 	Directory      string                         `json:"directory,omitempty"`

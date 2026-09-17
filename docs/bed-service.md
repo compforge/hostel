@@ -19,6 +19,7 @@ Service 是 Bed 定义的一部分。一个 Bed 可以没有服务，也可以�
 | Bed 服务声明 | Bed Spec，由 Bed Manager 写入 | 保存规范化后的非敏感 `ServiceSpec`，作为 Bed 不可变定义的一部分 |
 | Service 运行状态 | Service Manager | 维护期望运行、就绪、重启及 endpoint 状态 |
 | Service Execution | Executor 与既有执行记录机制 | 承载一次实际运行，记录进程退出事实及执行归属 |
+| PortMapping | Bed Network | 保存端口需求与本次 execution 的内外地址，拥有预留、发布、撤销和释放 |
 | Port allocation | daemon 级 Port Manager | 统一管理各领域申请的端口、监听占用及具体 allocation 的释放 |
 
 服务以 `(Bed ID, service name)` 定位。同一 Bed 可用相同的程序定义创建多个服务，例如
@@ -59,8 +60,13 @@ Bed 创建声明示例（HTTP API 使用对应 JSON）：
 
 ```yaml
 id: agent-bed
+port_mappings:
+  - name: workspace-http
+    bed_port: 8080
+    publish: true
 services:
   - name: workspace-api
+    port_mapping: workspace-http
     command: [/opt/bed-services/workspace-api, --listen, "${LISTEN_ADDR}"]
     directory: /workspace
     env:
@@ -150,12 +156,16 @@ Service 的可执行路径、相对路径和 PATH 查找都在降权后的 Bed �
 
 ### 默认 TCP 监听，端口冲突由 Hostel 管理
 
+声明、private/shared 分配规则、内外地址发现与硬要求见 [Bed PortMapping](network.md#bed-portmapping)。
+HTTP 服务必须引用映射，非 HTTP 服务可以引用 TCP 映射；无监听需求的 worker 不需要映射。
+
+
 非 Web 服务不需要 endpoint。Web 服务默认 TCP 监听，在 Pod 部署下对外提供
-`PodIP:port`。服务声明通过 `${PORT}` / `${LISTEN_ADDR}` 表达如何接收监听地址，Service Manager 向 Port Manager 申请地址并注入
+`PodIP:port`。服务声明通过 `${PORT}` / `${LISTEN_ADDR}` 表达如何接收监听地址，Service Manager 向 Bed Network 的 PortMappings 申请映射并注入
 启动参数或环境；不要求服务使用 Unix socket，也不要求上层手工为各 Bed 配置端口。
 
 daemon 创建唯一 Port Manager，统一供 Amenity、Bed、Service 以及 Hostel 自身监听
-入口使用，避免各领域分别维护端口池。Service Manager 将返回的 allocation 绑定到
+入口使用，避免各领域分别维护端口池。Bed Network 将返回的 allocation 绑定到
 确切的 Bed ID、service name 和运行实例；Amenity 和 Bed 相关组件维护自己的绑定。
 
 Port Manager 位于 `internal/host/network`，只处理网络作用域、地址、端口和不透明
@@ -172,7 +182,7 @@ Port Manager 的统一职责是：
 - 汇总占用、申请方类别、冲突和池耗尽等诊断，状态查询不暴露凭据、不执行远端探测。
 
 Amenity 的共享端口归设施实例，Bed 专属端口归具体 Bed allocation，服务监听和发布
-端口归对应 Service。Bed 释放只回收其独占资源；不能关闭仍被其他 Bed 使用的共享
+端口由 Bed Network 持有并绑定对应 Service execution。Bed 释放只回收其独占资源；不能关闭仍被其他 Bed 使用的共享
 Amenity listener。daemon 关闭时先停止各领域的使用者，再关闭 Port Manager 剩余监听。
 
 当前 Port Manager 管理 TCP；冲突域按网络 namespace、监听地址及地址族判断。共享 Carrier 网络的各 Bed
@@ -183,7 +193,7 @@ Amenity listener。daemon 关闭时先停止各领域的使用者，再关闭 Po
 
 1. 在统一端口池中原子分配候选端口，排除同冲突域的 Amenity、Bed、Service 和控制面 allocation。
 2. 共享网络先检查候选地址能否绑定，排除已有外部 listener；再将地址注入服务，启动并检查就绪。
-3. 若有明确绑定冲突，确认本次启动的进程树退出，释放对应 allocation，换端口有限重试。
+3. 若有明确绑定冲突，确认本次启动的进程树退出，释放对应 allocation；偏好或自动端口有限换号重试，硬要求端口直接失败。
    其他启动错误按实际原因报告，不能全部归类为端口冲突。
 4. 进程存活且 HTTP 就绪成功、没有已确认的归属冲突时发布 endpoint；端口池或重试预算耗尽时明确失败。
 
@@ -237,7 +247,7 @@ Hostel 持有单独的 Carrier 监听端口，转发到该 Bed 可达的 TCP end
 ```
 
 两种模式都必须经过统一的端口分配、实例归属和就绪发布规则。代理入口由 Hostel
-实际 bind 并持续持有，目标来自 Service Manager 的登记，不允许调用方指定任意目标。
+实际 bind 并持续持有，目标来自 Bed Network 当前映射的登记，不允许调用方指定任意目标。
 连接与探活必须使用目标 Bed 网络，不能错误连接 Carrier 的同号端口。
 
 PodIP 和动态端口不作为永久业务标识。调用方通过发现结果定位服务，重启或重建后
@@ -306,8 +316,9 @@ workspace 快照不携带本地进程身份、endpoint 或部署凭据。
 `POST /v1/beds` 直接携带完整声明，例如：
 
 ```json
-{"id":"agent","services":[{
+{"id":"agent","port_mappings":[{"name":"http","bed_port":8080,"publish":true}],"services":[{
   "name":"example-http",
+  "port_mapping":"http",
   "command":["/opt/bed-services/example-http","--listen","${LISTEN_ADDR}"],
   "directory":"/workspace",
   "env":{"WORKSPACE_ID":"workspace-1"},
@@ -339,9 +350,9 @@ Service 也可用 `env_from` 导入命名来源，或用 `env_value_from` 选择
 `max_restarts=0` 使用默认预算 5，最高 100；退避从一秒增长到最多三十秒。
 Executor 丢失也在该预算内恢复服务，与应用自然退出的重启策略分开判断。
 启动超时默认 30 秒（1–120），停止宽限默认 5 秒（1–30）。
-明确端口冲突换端口最多尝试三次，不把任意应用失败归类为端口冲突。
+偏好或自动端口遇到明确冲突最多尝试三次，硬要求端口不换号，不把任意应用失败归类为端口冲突。
 
-HTTP 服务声明 `ready_path`，`authentication` 可省略或为 null。配置认证时，
+HTTP 服务必须引用已声明的 `port_mapping`，并声明 `ready_path`，`authentication` 可省略或为 null。配置认证时，
 `scheme` 必须为 `bearer`，同时明确 `token_source` 和 `token_env`：
 
 - `generated`：每次执行生成新 token 并注入指定环境变量，不允许与 `env` / `env_files` 同名项冲突。
@@ -379,10 +390,10 @@ Bed 回收不会释放它。UDP DNS 仍由网络组件实际绑定和释放，�
 | `GET /v1/beds/{bed}/services/{service}` | 状态、Execution/Executor ID 和非敏感 endpoint |
 | `GET /v1/beds/{bed}/services/{service}/logs?cursor=0` | 有界 Execution 日志及下一游标 |
 | `POST /v1/beds/{bed}/services/{service}/restart` | 异步重启单个服务，返回 202 |
-| `POST /v1/beds/{bed}/services/{service}/access` | 传 `{"hold_seconds":300}`，取得 endpoint、可选 token、Execution ID 和限时 hold |
+| `POST /v1/beds/{bed}/services/{service}/access` | 传 `{"hold_seconds":300}`，取得 internal_endpoint、endpoint、port_mapping、可选 token、Execution ID 和限时 hold |
 | `DELETE /v1/beds/{bed}/service-holds/{hold}` | 提前释放 hold，幂等 |
 
-Bed 详情的 `status.components.services` 展示服务状态；`GET /v1/status` 的 `host.status.ports`
+Bed 详情的 `status.services` 展示服务状态，`status.port_mappings` 展示本次运行的内外端口与映射状态；`GET /v1/status` 的 `host.status.ports`
 展示 Hostel 管理的端口分配及其 owner、scope、address 和 `reserved/listening` 状态，
 不枚举操作系统全部监听端口；端口预留也不代表服务就绪。诊断和持久化声明不含 token。
 

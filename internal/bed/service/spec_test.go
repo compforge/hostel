@@ -77,7 +77,7 @@ func TestNormalizeAuthentication(t *testing.T) {
 		{name: "empty environment", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}, env: map[string]string{"TOKEN": ""}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			input := []bed.ServiceSpec{{Name: "web", Command: []string{"server"}, Env: tc.env, EnvFiles: tc.files, HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: tc.auth}}}
+			input := []bed.ServiceSpec{{Name: "web", PortMapping: "http", Command: []string{"server"}, Env: tc.env, EnvFiles: tc.files, HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: tc.auth}}}
 			resolved, err := Normalize(input)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%t, err=%v", tc.valid, err)
@@ -94,5 +94,37 @@ func TestNormalizeAuthentication(t *testing.T) {
 				t.Fatal("changed pinned authentication accepted")
 			}
 		})
+	}
+}
+
+func TestResolvePortMappingConsumers(t *testing.T) {
+	m, _ := httpTestManager(t)
+	mappings := []bed.PortMappingSpec{{Name: "http", Protocol: "tcp", Publish: true}}
+	spec := bed.ServiceSpec{Name: "web", PortMapping: "http", Command: []string{"server"}, HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/"}}
+	if _, err := m.Resolve([]bed.ServiceSpec{spec}, nil); err == nil {
+		t.Fatal("undeclared mapping accepted")
+	}
+	other := spec
+	other.Name = "other"
+	if _, err := m.Resolve([]bed.ServiceSpec{spec, other}, mappings); err == nil {
+		t.Fatal("shared consumer ownership accepted")
+	}
+	if _, err := m.Resolve([]bed.ServiceSpec{spec}, mappings); err != nil {
+		t.Fatal(err)
+	}
+	spec.PortMapping = ""
+	if _, err := Normalize([]bed.ServiceSpec{spec}); err == nil {
+		t.Fatal("HTTP without mapping accepted")
+	}
+}
+func TestNonHTTPPortMapping(t *testing.T) {
+	m, _ := httpTestManager(t)
+	b := bed.New("tcp", "", bed.Spec{PortMappings: []bed.PortMappingSpec{{Name: "tcp", Protocol: "tcp"}}, Services: []bed.ServiceSpec{{Name: "tcp", PortMapping: "tcp", Command: []string{"worker"}, Env: map[string]string{"LISTEN": "${LISTEN_ADDR}"}, Required: true}}})
+	runtime := &fakeRuntime{}
+	if err := m.PrepareBed(t.Context(), b, runtime); err != nil {
+		t.Fatal(err)
+	}
+	if !m.Status(b)[0].Ready {
+		t.Fatal("TCP process not ready")
 	}
 }

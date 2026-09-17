@@ -137,7 +137,7 @@ func TestRenewExpirationFencesIdleCollection(t *testing.T) {
 func TestRenewExpirationKeepsServiceExecution(t *testing.T) {
 	m, specs, _ := testServiceManager(t)
 	m.SetBedIdleTTL(time.Minute)
-	if _, err := m.InitializeBedWithOptions(t.Context(), "renew-service", CreateOptions{Services: specs}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "renew-service", testServiceOptions(specs)); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "renew-service")
