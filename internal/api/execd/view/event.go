@@ -1,8 +1,10 @@
 package view
 
 import (
+	"errors"
 	"strconv"
 
+	hostel "github.com/qiankunli/hostel/internal"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
@@ -25,6 +27,9 @@ func ExitCode(result bed.ExecutionResult) int {
 		return 124
 	}
 	code := 125
+	if result.Process == nil {
+		return code
+	}
 	switch result.Process.Kind {
 	case executor.ProcessExited:
 		code = result.Process.ExitCode
@@ -41,5 +46,13 @@ func Terminal(result bed.ExecutionResult) StreamEvent {
 	if code == 0 {
 		return StreamEvent{Type: "execution_complete", ExecutionTime: result.Duration.Milliseconds()}
 	}
-	return StreamEvent{Type: "error", Error: &StreamError{Name: "CommandExecError", Value: strconv.Itoa(code), Traceback: []string{string(result.Cause), result.Process.Error}}}
+	message := ""
+	if result.Process != nil {
+		message = result.Process.Error
+	}
+	var preparation *hostel.Error
+	if errors.As(result.Err, &preparation) {
+		message = preparation.Message()
+	}
+	return StreamEvent{Type: "error", Error: &StreamError{Name: "CommandExecError", Value: strconv.Itoa(code), Traceback: []string{string(result.Cause), message}}}
 }

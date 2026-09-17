@@ -1,8 +1,10 @@
 package view
 
 import (
+	"errors"
 	"time"
 
+	hostel "github.com/qiankunli/hostel/internal"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
@@ -34,7 +36,8 @@ type ExecutionResult struct {
 	StartedAt       time.Time            `json:"started_at"`
 	FinishedAt      time.Time            `json:"finished_at"`
 	DurationMs      int64                `json:"duration_ms"`
-	Process         ProcessOutcome       `json:"process"`
+	Process         *ProcessOutcome      `json:"process"`
+	Error           string               `json:"error,omitempty"`
 	Cause           bed.TerminationCause `json:"termination_cause"`
 }
 
@@ -62,17 +65,22 @@ func ExecutionOutputFrom(output bed.ExecutionOutput) ExecutionOutput {
 }
 
 func ExecutionResultFrom(result bed.ExecutionResult) ExecutionResult {
-	process := ProcessOutcome{
-		Kind:       result.Process.Kind,
-		CoreDumped: result.Process.CoreDumped,
-		Error:      result.Process.Error,
+	var process *ProcessOutcome
+	if result.Process != nil {
+		process = &ProcessOutcome{Kind: result.Process.Kind, CoreDumped: result.Process.CoreDumped, Error: result.Process.Error}
+		switch result.Process.Kind {
+		case executor.ProcessExited:
+			process.ExitCode = &result.Process.ExitCode
+		case executor.ProcessSignaled:
+			process.Signal = &result.Process.Signal
+		}
 	}
-	switch result.Process.Kind {
-	case executor.ProcessExited:
-		process.ExitCode = &result.Process.ExitCode
-	case executor.ProcessSignaled:
-		process.Signal = &result.Process.Signal
+	message := ""
+	var preparation *hostel.Error
+	if errors.As(result.Err, &preparation) {
+		message = preparation.Message()
 	}
+
 	return ExecutionResult{
 		ExecutionID:     result.ExecutionID,
 		BedID:           result.BedID,
@@ -83,6 +91,7 @@ func ExecutionResultFrom(result bed.ExecutionResult) ExecutionResult {
 		FinishedAt:      result.FinishedAt,
 		DurationMs:      result.Duration.Milliseconds(),
 		Process:         process,
+		Error:           message,
 		Cause:           result.Cause,
 	}
 }

@@ -48,6 +48,9 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.startErr = os.MkdirAll(m.root, 0755)
 		if m.startErr == nil {
 			m.startErr = m.recoverLocalIdentities()
+			if m.startErr == nil {
+				m.startErr = m.cleanupPreviousExecutionLogs(ctx)
+			}
 		}
 	}
 	if m.startErr != nil {

@@ -34,13 +34,16 @@ info/search、上传下载、移动、删除、权限、内容替换和目录创
 Execution 在 Bed 目录的私有 executions 子目录保存后台输出，不进入 BedFS、默认
 Store 快照或 64 KiB 片段缓存。运行中日志不清理；终态记录和文件至少保留 24 小时，
 每小时清理到期记录。Executor 替换保留历史；Bed evict/purge/Forget 结束该本地身份后
-清理，重用 Bed Name 不得读到旧历史。daemon 重启不恢复执行历史，不承诺跨 carrier 日志。
+清理，重用 Bed Name 不得读到旧历史。daemon 重启不恢复执行历史，启动准入前清理旧日志，不承诺跨 carrier 日志。
+磁盘日志的保留期与内存片段缓存独立：最多为 1024 条已完成 Execution 保留缓存，
+更早记录释放缓存，原生片段 API 显式返回 truncated；Execd 字节日志仍从磁盘读取。
 写入失败会停止执行并报告 output_failure，读取失败不会伪装为空日志。
 
 Session 复用持久 Shell。每次运行的环境准备、cwd 展开与命令执行在同一 run lock 内
 完成；cwd 支持 $NAME、${NAME} 和前导 ~，拒绝命令替换。准入回调的环境值作为受信任
 session 环境更新保留。超时/取消关闭当前 Shell，后续请求返回 session 不可用，不隐式
-创建新的 session。原生执行协议与 URL 保持不变。
+创建新的 session。准备失败使用统一领域错误，报告 preparation_failed；命令未启动时
+没有进程退出结果，Shell 仍可继续使用。错误映射见 [错误契约](errors.md)。
 
 命令流使用 OpenSandbox 的 init、stdout、stderr、ping，以及成功时的
 execution_complete 或失败时的 error。CommandExecError.evalue 保留退出码；timeout

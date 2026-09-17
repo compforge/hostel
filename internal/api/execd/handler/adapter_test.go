@@ -120,7 +120,7 @@ func TestAdapterSessionAndBackground(t *testing.T) {
 				t.Fatal(rec.Body.String())
 			}
 			rec = run("pwd", "$(touch /tmp/should-not-run)")
-			if !strings.Contains(rec.Body.String(), `"type":"error"`) {
+			if !strings.Contains(rec.Body.String(), `"type":"error"`) || !strings.Contains(rec.Body.String(), "preparation_failed") || strings.Contains(rec.Body.String(), "executor_lost") {
 				t.Fatal(rec.Body.String())
 			}
 			rec = run("printf alive", "")

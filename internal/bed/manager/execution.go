@@ -17,12 +17,16 @@ package manager
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	hostel "github.com/qiankunli/hostel/internal"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
@@ -42,17 +46,18 @@ const (
 type TerminationCause string
 
 const (
-	CauseOutputFailure  TerminationCause = "output_failure"
-	CauseNatural        TerminationCause = "natural"
-	CauseTimeout        TerminationCause = "timeout"
-	CauseClientCanceled TerminationCause = "client_canceled"
-	CauseInterrupted    TerminationCause = "interrupted"
-	CauseServiceStop    TerminationCause = "service_stop"
-	CauseBedTeardown    TerminationCause = "bed_teardown"
-	CauseDaemonShutdown TerminationCause = "daemon_shutdown"
-	CauseExternalSignal TerminationCause = "external_signal"
-	CauseOOM            TerminationCause = "oom"
-	CauseExecutorLost   TerminationCause = "executor_lost"
+	CausePreparationFailed TerminationCause = "preparation_failed"
+	CauseOutputFailure     TerminationCause = "output_failure"
+	CauseNatural           TerminationCause = "natural"
+	CauseTimeout           TerminationCause = "timeout"
+	CauseClientCanceled    TerminationCause = "client_canceled"
+	CauseInterrupted       TerminationCause = "interrupted"
+	CauseServiceStop       TerminationCause = "service_stop"
+	CauseBedTeardown       TerminationCause = "bed_teardown"
+	CauseDaemonShutdown    TerminationCause = "daemon_shutdown"
+	CauseExternalSignal    TerminationCause = "external_signal"
+	CauseOOM               TerminationCause = "oom"
+	CauseExecutorLost      TerminationCause = "executor_lost"
 )
 
 // OutputStream identifies one side of an execution's output.
@@ -83,8 +88,10 @@ type ExecutionResult struct {
 	StartedAt       time.Time
 	FinishedAt      time.Time
 	Duration        time.Duration
-	Process         executor.ProcessOutcome
-	Cause           TerminationCause
+	// Process is nil when the command did not start; Err preserves the preparation failure.
+	Process *executor.ProcessOutcome
+	Err     error
+	Cause   TerminationCause
 }
 
 type ExecutionStatus struct {
@@ -206,13 +213,14 @@ func (e *Execution) appendOutput(stream OutputStream, text string) ExecutionOutp
 
 	retained := output
 	if len(retained.Text) > executionOutputBytes {
-		retained.Text = retained.Text[len(retained.Text)-executionOutputBytes:]
+		retained.Text = strings.Clone(retained.Text[len(retained.Text)-executionOutputBytes:])
 		e.truncated = true
 	}
 	e.output = append(e.output, retained)
 	e.outputBytes += len(retained.Text)
 	for e.outputBytes > executionOutputBytes || len(e.output) > executionOutputFragments {
 		e.outputBytes -= len(e.output[0].Text)
+		e.output[0] = ExecutionOutput{} // Release text still referenced by the backing array.
 		e.output = e.output[1:]
 		e.dropped++
 		e.truncated = true
@@ -221,6 +229,10 @@ func (e *Execution) appendOutput(stream OutputStream, text string) ExecutionOutp
 }
 
 func (e *Execution) finish(outcome executor.ProcessOutcome, onFinish func(ExecutionResult)) ExecutionResult {
+	return e.finishResult(&outcome, nil, onFinish)
+}
+
+func (e *Execution) finishResult(outcome *executor.ProcessOutcome, failure error, onFinish func(ExecutionResult)) ExecutionResult {
 	finishedAt := time.Now()
 	cause, stopDone := e.claimFinish()
 	if stopDone != nil {
@@ -228,6 +240,9 @@ func (e *Execution) finish(outcome executor.ProcessOutcome, onFinish func(Execut
 		// In particular, a session's shell may observe EOF before Kill has
 		// finished serializing the process-group signal.
 		<-stopDone
+	}
+	if cause == "" && failure != nil {
+		cause = CausePreparationFailed
 	}
 	if cause == "" {
 		switch outcome.Kind {
@@ -250,6 +265,7 @@ func (e *Execution) finish(outcome executor.ProcessOutcome, onFinish func(Execut
 		FinishedAt:      finishedAt,
 		Duration:        finishedAt.Sub(e.startedAt),
 		Process:         outcome,
+		Err:             failure,
 		Cause:           cause,
 	}
 	e.finishedAt = &finishedAt
@@ -265,8 +281,12 @@ func (e *Execution) finish(outcome executor.ProcessOutcome, onFinish func(Execut
 	if onFinish != nil {
 		onFinish(result)
 	}
+	processKind := "not_started"
+	if outcome != nil {
+		processKind = string(outcome.Kind)
+	}
 	e.span.SetAttributes(
-		attribute.String("hostel.execution.process.outcome", string(result.Process.Kind)),
+		attribute.String("hostel.execution.process.outcome", processKind),
 		attribute.String("hostel.execution.termination_cause", string(result.Cause)),
 		attribute.Int64("hostel.execution.duration_ms", result.Duration.Milliseconds()),
 	)
@@ -277,11 +297,15 @@ func (e *Execution) finish(outcome executor.ProcessOutcome, onFinish func(Execut
 		"mode", result.Mode,
 		"executor_id", result.ExecutorID,
 		"executor_backend", result.ExecutorBackend,
-		"outcome", result.Process.Kind,
+		"outcome", processKind,
 		"cause", result.Cause,
 		"duration_ms", result.Duration.Milliseconds(),
 	}
-	switch result.Process.Kind {
+	if failure != nil {
+		e.span.SetStatus(codes.Error, "execution preparation failed")
+		attrs = append(attrs, "error", "execution preparation failed")
+	}
+	switch executor.ProcessOutcomeKind(processKind) {
 	case executor.ProcessExited:
 		e.span.SetAttributes(attribute.Int("hostel.execution.exit_code", result.Process.ExitCode))
 		attrs = append(attrs, "exit_code", result.Process.ExitCode)
@@ -526,16 +550,16 @@ func (r *ExecutionRegistry) trackSession(
 				onOutput(output)
 			}
 		})
-		outcome := executor.ProcessOutcome{}
-		if err != nil {
-			outcome = executor.Lost(shell.ExecutorID, err)
-		} else {
-			outcome = executor.Exited(result.ExitCode)
-		}
 		if timeoutTimer != nil {
 			timeoutTimer.Stop()
 		}
-		execution.finish(outcome, onFinish)
+		if errors.Is(err, hostel.ErrPreparationFailed) {
+			execution.finishResult(nil, err, onFinish)
+		} else if err != nil {
+			execution.finish(executor.Lost(shell.ExecutorID, err), onFinish)
+		} else {
+			execution.finish(executor.Exited(result.ExitCode), onFinish)
+		}
 		r.prune()
 	}()
 	return execution
@@ -569,28 +593,50 @@ func (r *ExecutionRegistry) killBed(bedID string, cause TerminationCause) {
 	}
 }
 
+// prune retains metadata/disk logs independently from the bounded hot output
+// cache. Running executions are never evicted. Old native fragment cursors
+// explicitly report truncation after their cache is released.
 func (r *ExecutionRegistry) prune() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	kept := r.order[:0]
-	for _, id := range r.order {
-		execution, ok := r.executions[id]
+	kept := make([]string, 0, len(r.order))
+	nativeRecords, hotRecords := 0, 0
+	for i := len(r.order) - 1; i >= 0; i-- {
+		id := r.order[i]
+		e, ok := r.executions[id]
 		if !ok {
 			continue
 		}
-		status := execution.Status()
-		expired := status.FinishedAt != nil && time.Since(*status.FinishedAt) >= 24*time.Hour
-		evictable := expired || (execution.Mode != ExecutionBackground && len(r.executions) > executionHistoryLimit)
-		if evictable && !status.Running {
-			if err := execution.removeLog(); err != nil {
-				kept = append(kept, id) // Retry cleanup on the next collection pass.
-				continue
+		status := e.Status()
+		if !status.Running {
+			expired := status.FinishedAt != nil && time.Since(*status.FinishedAt) >= 24*time.Hour
+			if e.Mode != ExecutionBackground && !expired {
+				nativeRecords++
 			}
-			delete(r.executions, id)
-			continue
+			evict := expired || (e.Mode != ExecutionBackground && nativeRecords > executionHistoryLimit)
+			if evict {
+				if err := e.removeLog(); err == nil {
+					delete(r.executions, id)
+					continue
+				}
+				// Keep failed cleanup in the index so a later collection can retry.
+			}
+			hotRecords++
+			if hotRecords > executionHistoryLimit {
+				e.releaseOutput()
+			}
 		}
 		kept = append(kept, id)
 	}
+	slices.Reverse(kept)
 	r.order = kept
+}
+
+func (e *Execution) releaseOutput() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.output = nil
+	e.outputBytes = 0
+	e.dropped = e.nextOutput
+	e.truncated = e.truncated || e.nextOutput > 0
 }

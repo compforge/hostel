@@ -119,6 +119,10 @@ func TestOpenSandboxAdapterLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		must2xx(t, "create session", response)
+		response, err = c.json(ctx, "POST", base+"/session/"+session.ID+"/run", "adapter-a", map[string]any{"command": "touch should-not-run", "cwd": "/tmp/adapter/missing", "timeout": 3000}, nil)
+		if err != nil || response.Status != 200 || !strings.Contains(string(response.Body), "preparation_failed") || strings.Contains(string(response.Body), "executor_lost") {
+			t.Fatalf("preparation classification: %+v %v", response, err)
+		}
 		for _, command := range []string{`export SAVED=value; printf '%s' "$SAVED" > output`, `test "$SAVED" = value && test "$(cat output)" = value`} {
 			response, err = c.json(ctx, "POST", base+"/session/"+session.ID+"/run", "adapter-a", map[string]any{"command": command, "timeout": 3000}, nil)
 			if err != nil || !strings.Contains(string(response.Body), `"type":"execution_complete"`) {

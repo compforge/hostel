@@ -595,7 +595,7 @@ func TestLostExecutorResultDoesNotExposeTransportError(t *testing.T) {
 		BedID:           "bed-test",
 		ExecutorID:      "executor-test",
 		ExecutorBackend: "supervisor",
-		Process:         executor.Lost("executor-test", io.EOF),
+		Process:         &executor.ProcessOutcome{Kind: executor.ProcessLost, Error: "executor executor-test lost", Detail: io.EOF.Error()},
 		Cause:           bed.CauseExecutorLost,
 	})
 	encoded, err := json.Marshal(payload)

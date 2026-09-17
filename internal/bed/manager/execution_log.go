@@ -1,7 +1,9 @@
 package manager
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 )
@@ -128,4 +130,28 @@ func (w executionLogWriter) Write(p []byte) (int, error) {
 		go e.RequestStop(CauseOutputFailure)
 	}
 	return n, err
+}
+
+// Execution history is daemon-local. Clean the previous daemon's output before
+// admission, including default and cold Beds which may never be evicted. Do not
+// follow symlinks or traverse BedFS; only remove our private execution directory.
+func (m *Manager) cleanupPreviousExecutionLogs(ctx context.Context) error {
+	for _, local := range m.localIdentities {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		path := filepath.Join(local.bed.Spec().Dir, "executions")
+		_, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect previous execution logs for bed %s: %w", local.bed.Name, err)
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("clean previous execution logs for bed %s: %w", local.bed.Name, err)
+		}
+		log.Printf("hostel previous execution logs removed: bed=%s reason=history_not_recoverable", local.bed.Name)
+	}
+	return nil
 }

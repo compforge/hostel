@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/qiankunli/go-stdx/shellx"
+	hostel "github.com/qiankunli/hostel/internal"
 )
 
 // SessionSettings applies trusted environment updates and a caller's directory
@@ -20,7 +21,7 @@ type SessionSettings struct {
 
 func (s *Shell) prepareSessionLocked(ctx context.Context, settings *SessionSettings) (string, error) {
 	if err := ValidateRequestEnv(settings.Environment); err != nil {
-		return "", err
+		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session environment", err)
 	}
 	if len(settings.Environment) > 0 {
 		var control strings.Builder
@@ -32,7 +33,7 @@ func (s *Shell) prepareSessionLocked(ctx context.Context, settings *SessionSetti
 			return "", err
 		}
 		if result.ExitCode != 0 {
-			return "", fmt.Errorf("session environment update failed")
+			return "", hostel.WrapError(hostel.ErrPreparationFailed, "session environment", fmt.Errorf("environment update rejected"))
 		}
 	}
 	if settings.Directory == "" {
@@ -40,7 +41,7 @@ func (s *Shell) prepareSessionLocked(ctx context.Context, settings *SessionSetti
 	}
 	expression, err := directoryExpression(settings.Directory)
 	if err != nil {
-		return "", err
+		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", err)
 	}
 	var output strings.Builder
 	result, err := s.runLocked(ctx, `(printf '%s\n' "$PWD"; printf '%s\n' `+expression+`)`, func(line string) { output.WriteString(line) })
@@ -48,17 +49,21 @@ func (s *Shell) prepareSessionLocked(ctx context.Context, settings *SessionSetti
 		return "", err
 	}
 	if result.ExitCode != 0 {
-		return "", fmt.Errorf("cannot expand session directory")
+		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", fmt.Errorf("cannot expand directory"))
 	}
 	lines := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
 	if len(lines) != 2 || lines[1] == "" {
-		return "", fmt.Errorf("invalid expanded session directory")
+		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", fmt.Errorf("invalid expanded directory"))
 	}
 	directory := lines[1]
 	if !path.IsAbs(directory) {
 		directory = path.Join(lines[0], directory)
 	}
-	return s.view.ResolveDirectory(directory)
+	resolved, err := s.view.ResolveDirectory(directory)
+	if err != nil {
+		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", err)
+	}
+	return resolved, nil
 }
 func directoryExpression(value string) (string, error) {
 	if strings.ContainsAny(value, "\n\r\x00") {

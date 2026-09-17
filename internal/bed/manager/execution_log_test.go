@@ -3,9 +3,12 @@ package manager
 import (
 	"context"
 	"fmt"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -103,5 +106,116 @@ func TestLogCleanupFailureIsRetried(t *testing.T) {
 	r.prune()
 	if _, ok := r.Get(e.ID); ok {
 		t.Fatal("successful cleanup retained execution")
+	}
+}
+
+func TestBackgroundHistoryOutlivesBoundedHotOutput(t *testing.T) {
+	m := newTestManager(t)
+	defer m.Close(context.Background())
+	b, err := m.Ensure(t.Context(), "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := m.StartExecution(t.Context(), b, ExecutionBackground, "printf retained", "", "", nil, time.Second, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Wait()
+	r := m.Executions()
+	// Real output is independently readable even after newer completed commands
+	// exhaust the native hot fragment cache. No extra processes are needed here.
+	r.mu.Lock()
+	for i := 0; i < executionHistoryLimit+1; i++ {
+		id := fmt.Sprintf("background-%d", i)
+		end := time.Now()
+		record := &Execution{ID: id, Mode: ExecutionBackground, result: &ExecutionResult{}, finishedAt: &end}
+		record.appendOutput(StreamStdout, strings.Repeat("x", executionOutputBytes))
+		r.executions[id] = record
+		r.order = append(r.order, id)
+	}
+	r.mu.Unlock()
+	r.prune()
+	bytes, records := 0, 0
+	r.mu.Lock()
+	for _, record := range r.executions {
+		bytes += record.outputBytes
+		records++
+	}
+	r.mu.Unlock()
+	if bytes > executionHistoryLimit*executionOutputBytes || records < executionHistoryLimit+2 {
+		t.Fatal(bytes, records)
+	}
+	fragments, cursor, running, truncated := e.Logs(-1)
+	if len(fragments) != 0 || cursor != 0 || running || !truncated {
+		t.Fatal(fragments, cursor, running, truncated)
+	}
+	f, end, err := e.OpenBackgroundLog(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(f)
+	f.Close()
+	if err != nil || string(data) != "retained" || end != 8 {
+		t.Fatal(string(data), end, err)
+	}
+	// Background metadata must not crowd a newly completed native command out.
+	foreground, err := m.StartExecution(t.Context(), b, ExecutionForeground, "printf current", "", "", nil, time.Second, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreground.Wait()
+	r.prune()
+	if _, ok := r.Get(foreground.ID); !ok {
+		t.Fatal("background metadata evicted new foreground history")
+	}
+}
+
+func TestRestartCleansUnrecoverableExecutionLogs(t *testing.T) {
+	m := newTestManager(t)
+	b, err := m.Ensure(t.Context(), "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.BedFS().Write("keep", []byte("user data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	e, err := m.StartExecution(t.Context(), b, ExecutionBackground, "printf old", "", "", nil, time.Second, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Wait()
+	oldLog, root := e.log.path, m.root
+	if err := m.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	host := hostfacts.Collect()
+	m2, err := NewManager(host, root, "default", "/bin/bash", isolation.New(host, "shared", root), nil, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m2.Close(context.Background())
+	restored, err := m2.Ensure(t.Context(), "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldLog); !os.IsNotExist(err) {
+		t.Fatal("unrecoverable log remains", err)
+	}
+	if _, ok := m2.Executions().Get(e.ID); ok {
+		t.Fatal("history unexpectedly recovered")
+	}
+	if _, err := restored.BedFS().Stat("keep"); err != nil {
+		t.Fatal("cleanup touched BedFS", err)
+	}
+	fresh, err := m2.StartExecution(t.Context(), restored, ExecutionBackground, "printf fresh", "", "", nil, time.Second, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh.Wait()
+	if err := m2.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fresh.log.path); err != nil {
+		t.Fatal("repeated Start removed current logs", err)
 	}
 }

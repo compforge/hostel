@@ -2,10 +2,12 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"os"
 
 	"github.com/gin-gonic/gin"
+	hostel "github.com/qiankunli/hostel/internal"
 	apiview "github.com/qiankunli/hostel/internal/api/execd/view"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
@@ -59,6 +61,13 @@ func (s *Handler) fileReader(fs *bedfs.FS) *bedfs.Reader {
 	return bedfs.NewReader(s.mgr.Isolator().View(fs), fallback)
 }
 func respondBedError(c *gin.Context, err error) {
+	if errors.Is(err, hostel.ErrInvalidArgument) {
+		var detail *hostel.Error
+		if errors.As(err, &detail) {
+			badRequest(c, detail.Message())
+			return
+		}
+	}
 	respondError(c, 409, apiview.ErrServiceUnavailable, err.Error())
 }
 func downloadErr(c *gin.Context, err error) {

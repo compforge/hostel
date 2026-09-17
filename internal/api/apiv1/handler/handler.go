@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	hostel "github.com/qiankunli/hostel/internal"
 	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
@@ -152,6 +153,13 @@ func (s *Handler) RegisterRoutes(e *gin.Engine) {
 // respondBedError maps bed resolution/admission failures: a full or
 // resource-pressured instance is 429 backpressure, anything else is a bad id.
 func respondBedError(c *gin.Context, err error) {
+	if errors.Is(err, hostel.ErrInvalidArgument) {
+		var detail *hostel.Error
+		if errors.As(err, &detail) {
+			badRequest(c, detail.Message())
+			return
+		}
+	}
 	if errors.Is(err, bed.ErrPathsConflict) || errors.Is(err, bed.ErrServicesConflict) || errors.Is(err, bed.ErrEnvConflict) {
 		respondError(c, http.StatusConflict, apiview.ErrBedInvalid, err.Error())
 		return

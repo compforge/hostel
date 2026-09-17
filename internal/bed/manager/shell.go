@@ -28,7 +28,7 @@ import (
 
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/go-stdx/shellx"
-
+	hostel "github.com/qiankunli/hostel/internal"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 )
@@ -220,11 +220,14 @@ func (s *Shell) runAt(ctx context.Context, cwdInBed, command string, settings *S
 	if cwdInBed != "" {
 		processCwd, err := s.view.Path(cwdInBed)
 		if err != nil {
-			return nil, fmt.Errorf("shell: project cwd %q: %w", cwdInBed, err)
+			return nil, hostel.WrapError(hostel.ErrPreparationFailed, "session directory", err)
 		}
 		result, err := s.runLocked(ctx, "command cd -- "+shellx.Quote(processCwd), onLine)
-		if err != nil || result.ExitCode != 0 {
-			return result, err
+		if err != nil {
+			return nil, err
+		}
+		if result.ExitCode != 0 {
+			return nil, hostel.WrapError(hostel.ErrPreparationFailed, "session directory", fmt.Errorf("cd exited %d", result.ExitCode))
 		}
 	}
 	return s.runLocked(ctx, command, onLine)
@@ -301,7 +304,7 @@ func (m *Manager) StartSessionExecution(
 }
 func (m *Manager) StartConfiguredSessionExecution(ctx context.Context, b *Resident, shell *Shell, command string, settings SessionSettings, timeout time.Duration, onStart func(ExecutionStatus), onOutput func(ExecutionOutput)) (*Execution, error) {
 	if err := ValidateRequestEnv(settings.Environment); err != nil {
-		return nil, err
+		return nil, hostel.WrapError(hostel.ErrInvalidArgument, "session environment", err)
 	}
 	return m.startSessionExecution(ctx, b, shell, command, "", &settings, timeout, onStart, onOutput)
 }
