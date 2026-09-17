@@ -40,13 +40,13 @@ func TestPortMappingModesAndOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := first.Status()
-	if s.HostPort != s.BedPort || s.InternalAddress != s.ExternalAddress || s.ExecutionID != "execution-one" {
+	if s.HostPort != s.BedPort || s.BedAddress != s.HostAddress || s.ExecutionID != "execution-one" {
 		t.Fatalf("shared publication: %+v", s)
 	}
 	if err := first.Withdraw(); err != nil {
 		t.Fatal(err)
 	}
-	if first.Status().ExternalAddress != "" || mappings.CheckReleased(a) == nil {
+	if first.Status().HostAddress != "" || mappings.CheckReleased(a) == nil {
 		t.Fatal("withdraw released internal ownership")
 	}
 	if err := first.Release(); err != nil {
@@ -109,13 +109,13 @@ func TestRequiredAndUnpublishedPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Release()
-	if p.ListenAddress() != p.Status().InternalAddress {
+	if p.ListenAddress() != p.Status().BedAddress {
 		t.Fatalf("unpublished shared listener: %s", p.ListenAddress())
 	}
 	if err := p.Publish(); err != nil {
 		t.Fatal(err)
 	}
-	if p.Status().HostPort != 0 || p.Status().ExternalAddress != "" {
+	if p.Status().HostPort != 0 || p.Status().HostAddress != "" {
 		t.Fatal("unpublished mapping exposed external discovery")
 	}
 }

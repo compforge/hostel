@@ -69,7 +69,7 @@ func TestBedServiceOptionalAuthentication(t *testing.T) {
 					t.Fatal("access read credentials ahead of process restart")
 				}
 			}
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, first.Endpoint+"/ready", nil)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, first.HostEndpoint+"/ready", nil)
 			if err != nil {
 				t.Fatal(err)
 			}

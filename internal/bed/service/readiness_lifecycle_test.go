@@ -54,7 +54,7 @@ func TestReadinessRetainsForwardingConnections(t *testing.T) {
 	if len(allocations) != 2 {
 		t.Fatalf("expected backend and forwarder allocations: %+v", allocations)
 	}
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, first.Endpoint+"/task", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, first.HostEndpoint+"/task", nil)
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {

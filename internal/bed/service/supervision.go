@@ -31,7 +31,7 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 	defer close(r.done)
 	restarts := 0
 	for {
-		m.update(g, r, func(s *Status) { s.Phase = "starting"; s.Endpoint = ""; s.Reason = ""; s.Restarts = restarts })
+		m.update(g, r, func(s *Status) { s.Phase = "starting"; s.HostEndpoint = ""; s.Reason = ""; s.Restarts = restarts })
 		var explicit bool
 		var outcome executor.ProcessOutcome
 		var err error
@@ -42,7 +42,7 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 			}
 		}
 		if ctx.Err() != nil {
-			m.update(g, r, func(s *Status) { s.Phase = "stopped"; s.Endpoint = "" })
+			m.update(g, r, func(s *Status) { s.Phase = "stopped"; s.HostEndpoint = "" })
 			return
 		}
 		failure := err != nil || outcome.Kind != executor.ProcessExited || outcome.ExitCode != 0
@@ -60,7 +60,7 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 			log.Printf("hostel service restart scheduled: bed=%s id=%s service=%s restart=%d reason=%q outcome=%s exit_code=%d signal=%d", g.bed.Name, g.bed.ID, r.spec.Name, restarts, failureReason, outcome.Kind, outcome.ExitCode, outcome.Signal)
 			m.update(g, r, func(s *Status) {
 				s.Phase = "backoff"
-				s.Endpoint = ""
+				s.HostEndpoint = ""
 				s.Restarts = restarts
 				s.Reason = "RestartScheduled"
 			})
@@ -78,7 +78,7 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 		}
 		m.update(g, r, func(s *Status) {
 			s.Phase = "failed"
-			s.Endpoint = ""
+			s.HostEndpoint = ""
 			s.Reason = "ProcessExited"
 			if err != nil {
 				s.Reason = err.Error()
@@ -100,7 +100,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 	if err := ctx.Err(); err != nil {
 		return false, outcome, err
 	}
-	m.update(g, r, func(s *Status) { s.Phase = "starting"; s.Endpoint = ""; s.Listener = nil })
+	m.update(g, r, func(s *Status) { s.Phase = "starting"; s.HostEndpoint = ""; s.Listener = nil })
 	spec := r.spec
 	env, err := m.configurations.Resolve(spec.Configuration())
 	if err != nil {
@@ -175,7 +175,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 	defer func() {
 		// Withdraw discovery before terminating; existing forwarding connections
 		// are closed before the process/environment can be reused.
-		m.update(g, r, func(s *Status) { s.Endpoint = ""; s.Phase = "stopping" })
+		m.update(g, r, func(s *Status) { s.HostEndpoint = ""; s.Phase = "stopping" })
 		if mapping != nil {
 			if err := mapping.Withdraw(); err != nil {
 				retErr = errors.Join(retErr, err)

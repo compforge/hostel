@@ -110,7 +110,7 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 	if global.Host.Fact["runtime"] == nil || global.Host.Fact["process"] == nil || global.Host.Status.Ports == nil {
 		t.Fatalf("missing host facts: %+v", global.Host)
 	}
-	if global.Schema != 9 || global.Amenities["mcp"].Tenants != 1 {
+	if global.Schema != 10 || global.Amenities["mcp"].Tenants != 1 {
 		t.Fatalf("global status: %+v", global)
 	}
 	assertComponents("instance", global.Components,

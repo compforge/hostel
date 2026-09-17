@@ -150,7 +150,7 @@ func TestBedServicesShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
 	}
 	a, _ := m.services.Access(b.Bed, "main")
 	other, _ := m.services.Access(b.Bed, "tools")
-	if a.Endpoint == other.Endpoint || a.Token == other.Token || a.ExecutionID == other.ExecutionID {
+	if a.HostEndpoint == other.HostEndpoint || a.Token == other.Token || a.ExecutionID == other.ExecutionID {
 		t.Fatal("service instances share runtime identity")
 	}
 	data, err := os.ReadFile(filepath.Join(b.Workdir(), "service-started"))
@@ -215,7 +215,7 @@ func TestBedServiceRestartChangesIdentityAndToken(t *testing.T) {
 	if old.Token == current.Token {
 		t.Fatal("restarted service reused token")
 	}
-	req, _ := http.NewRequest(http.MethodGet, current.Endpoint+"/ready", nil)
+	req, _ := http.NewRequest(http.MethodGet, current.HostEndpoint+"/ready", nil)
 	req.Header.Set("Authorization", "Bearer "+old.Token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -278,7 +278,7 @@ func TestBedServiceNeverPublishesSquatterAndRetriesBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := m.services.Status(b.Bed)[0]
-	if strings.HasSuffix(s.Endpoint, ":25000") || s.Restarts != 0 {
+	if strings.HasSuffix(s.HostEndpoint, ":25000") || s.Restarts != 0 {
 		t.Fatalf("binding conflict was not retried independently: %+v", s)
 	}
 }

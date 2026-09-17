@@ -23,18 +23,20 @@ type PortMappings struct {
 	beds      map[*bed.Bed]map[string]*PortMapping
 }
 
+// BedAddress is reachable from this Bed, including shared-network fallback.
+// HostAddress is the advertised carrier address and exists only while published.
 type PortMappingStatus struct {
-	Name            string `json:"name"`
-	Protocol        string `json:"protocol"`
-	Service         string `json:"service"`
-	ExecutionID     string `json:"execution_id,omitempty"`
-	Network         string `json:"network"`
-	State           string `json:"state"`
-	BedPort         int    `json:"bed_port"`
-	HostPort        int    `json:"host_port,omitempty"`
-	InternalAddress string `json:"internal_address"`
-	ExternalAddress string `json:"external_address,omitempty"`
-	Reason          string `json:"reason,omitempty"`
+	Name        string `json:"name"`
+	Protocol    string `json:"protocol"`
+	Service     string `json:"service"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	Network     string `json:"network"`
+	State       string `json:"state"`
+	BedPort     int    `json:"bed_port"`
+	HostPort    int    `json:"host_port,omitempty"`
+	BedAddress  string `json:"bed_address"`
+	HostAddress string `json:"host_address,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // PortMapping is an exact allocation handle; release never addresses resources
@@ -104,7 +106,7 @@ func (m *PortMappings) Reserve(b *bed.Bed, name, service, scope, host string, av
 		mode = "private"
 	}
 	p := &PortMapping{owner: m, bed: b, spec: spec, allocation: allocation, probeAddress: net.JoinHostPort(host, strconv.Itoa(allocation.Port())), status: PortMappingStatus{
-		Name: name, Protocol: spec.Protocol, Service: service, Network: mode, State: "reserved", BedPort: allocation.Port(), InternalAddress: net.JoinHostPort("127.0.0.1", strconv.Itoa(allocation.Port())), Reason: reason,
+		Name: name, Protocol: spec.Protocol, Service: service, Network: mode, State: "reserved", BedPort: allocation.Port(), BedAddress: net.JoinHostPort("127.0.0.1", strconv.Itoa(allocation.Port())), Reason: reason,
 	}}
 	if m.beds[b] == nil {
 		m.beds[b] = make(map[string]*PortMapping)
@@ -145,7 +147,7 @@ func (p *PortMapping) Publish() error {
 			port = forward.Port()
 		}
 		p.status.HostPort = port
-		p.status.ExternalAddress = net.JoinHostPort(p.owner.advertise, strconv.Itoa(port))
+		p.status.HostAddress = net.JoinHostPort(p.owner.advertise, strconv.Itoa(port))
 	}
 	p.status.State = "listening"
 	return nil
@@ -160,7 +162,7 @@ func (p *PortMapping) Withdraw() error {
 		return nil
 	}
 	p.status.State = "stopping"
-	p.status.ExternalAddress = ""
+	p.status.HostAddress = ""
 	p.status.HostPort = 0
 	if p.forward != nil {
 		if err := p.forward.Close(); err != nil {

@@ -35,30 +35,35 @@ type Runtime interface {
 	Start(context.Context, Launch) (Process, error)
 	Network() (scope, host string, err error)
 }
+
+// BedEndpoint is relative to this Bed; shared networking uses the allocated host
+// port on loopback. HostEndpoint uses the advertised carrier address. Neither
+// endpoint is a stable identity across service executions.
 type Status struct {
-	PortMapping      string `json:"port_mapping,omitempty"`
-	InternalEndpoint string `json:"internal_endpoint,omitempty"`
-	Name             string `json:"name"`
-	Required         bool   `json:"required"`
-	Phase            string `json:"phase"`
+	PortMapping string `json:"port_mapping,omitempty"`
+	BedEndpoint string `json:"bed_endpoint,omitempty"`
+	Name        string `json:"name"`
+	Required    bool   `json:"required"`
+	Phase       string `json:"phase"`
 	// Ready is current availability, not a process-lifecycle phase.
-	Ready       bool                            `json:"ready"`
-	ExecutionID string                          `json:"execution_id,omitempty"`
-	ExecutorID  string                          `json:"executor_id,omitempty"`
-	Restarts    int                             `json:"restarts"`
-	Endpoint    string                          `json:"endpoint,omitempty"`
-	Reason      string                          `json:"reason,omitempty"`
-	Outcome     *executor.ProcessOutcome        `json:"outcome,omitempty"`
-	Listener    *hostnetwork.ListenerInspection `json:"listener,omitempty"`
+	Ready        bool                            `json:"ready"`
+	ExecutionID  string                          `json:"execution_id,omitempty"`
+	ExecutorID   string                          `json:"executor_id,omitempty"`
+	Restarts     int                             `json:"restarts"`
+	HostEndpoint string                          `json:"host_endpoint,omitempty"`
+	Reason       string                          `json:"reason,omitempty"`
+	Outcome      *executor.ProcessOutcome        `json:"outcome,omitempty"`
+	Listener     *hostnetwork.ListenerInspection `json:"listener,omitempty"`
 }
 
 // Access is a credential-bearing response, separate from diagnostic status.
+// Its BedEndpoint and HostEndpoint have the same network perspective as Status.
 type Access struct {
-	InternalEndpoint string `json:"internal_endpoint"`
-	PortMapping      string `json:"port_mapping"`
-	Endpoint         string `json:"endpoint"`
-	ExecutionID      string `json:"execution_id"`
-	Token            string `json:"token,omitempty"`
+	BedEndpoint  string `json:"bed_endpoint"`
+	PortMapping  string `json:"port_mapping"`
+	HostEndpoint string `json:"host_endpoint"`
+	ExecutionID  string `json:"execution_id"`
+	Token        string `json:"token,omitempty"`
 }
 type Manager struct {
 	bed.Noop
@@ -205,9 +210,9 @@ func (m *Manager) Status(b *bed.Bed) []Status {
 		if r.mapping != nil {
 			mapping := r.mapping.Status()
 			if mapping.State == "listening" && r.spec.HTTP != nil {
-				s.InternalEndpoint = "http://" + mapping.InternalAddress
-				if mapping.ExternalAddress != "" {
-					s.Endpoint = "http://" + mapping.ExternalAddress
+				s.BedEndpoint = "http://" + mapping.BedAddress
+				if mapping.HostAddress != "" {
+					s.HostEndpoint = "http://" + mapping.HostAddress
 				}
 			}
 		}
@@ -237,11 +242,11 @@ func (m *Manager) Access(b *bed.Bed, name string) (Access, error) {
 			if p.State != "listening" || p.ExecutionID != r.status.ExecutionID {
 				continue
 			}
-			endpoint := ""
-			if p.ExternalAddress != "" {
-				endpoint = "http://" + p.ExternalAddress
+			hostEndpoint := ""
+			if p.HostAddress != "" {
+				hostEndpoint = "http://" + p.HostAddress
 			}
-			return Access{Endpoint: endpoint, InternalEndpoint: "http://" + p.InternalAddress, PortMapping: p.Name, ExecutionID: p.ExecutionID, Token: r.token}, nil
+			return Access{HostEndpoint: hostEndpoint, BedEndpoint: "http://" + p.BedAddress, PortMapping: p.Name, ExecutionID: p.ExecutionID, Token: r.token}, nil
 		}
 	}
 	return Access{}, fmt.Errorf("HTTP service unavailable")

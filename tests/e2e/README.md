@@ -79,7 +79,7 @@ make e2e E2E_ARGS='-run TestFilesystemPermissions -timeout 3m'
 
 `TestBedPortMappings` starts two HTTP Services with the same preferred Bed port.
 For local and supervisor executors it checks per-Bed status and access agreement,
-external HTTP access, Bed-command access through `internal_endpoint`, restart
+external HTTP access, Bed-command access through `bed_endpoint`, restart
 identity, distinct Host ports, and allocation cleanup on eviction. It requires the
 binary profile and Python 3. The supervisor executor requires Linux. Shared networking with
 the local executor runs on macOS/Linux; private netns

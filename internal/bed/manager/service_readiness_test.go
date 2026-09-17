@@ -36,7 +36,7 @@ func TestServiceReadinessPreservesRunningTask(t *testing.T) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	request := func(path string) *http.Response {
 		t.Helper()
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, first.Endpoint+path, nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, first.HostEndpoint+path, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -62,7 +62,7 @@ func TestServiceReadinessPreservesRunningTask(t *testing.T) {
 	unready := waitService(t, m, b, "main", func(s service.Status) bool {
 		return !s.Ready && s.Reason == "ReadinessHTTPStatus503" && !b.Bed.Status().Lifecycle.Ready
 	})
-	if unready.Phase != "running" || unready.ExecutionID != before.ExecutionID || unready.ExecutorID != before.ExecutorID || unready.Endpoint != before.Endpoint || unready.Restarts != before.Restarts || unready.Outcome != nil {
+	if unready.Phase != "running" || unready.ExecutionID != before.ExecutionID || unready.ExecutorID != before.ExecutorID || unready.HostEndpoint != before.HostEndpoint || unready.Restarts != before.Restarts || unready.Outcome != nil {
 		t.Fatalf("readiness changed run identity: before=%+v after=%+v", before, unready)
 	}
 	if !reflect.DeepEqual(ports.Status(), allocations) {

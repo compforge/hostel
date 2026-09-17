@@ -93,7 +93,7 @@ func TestSharedHTTPServiceDegradesAfterReadyAndRestarts(t *testing.T) {
 	if status.Phase != "running" || !status.Ready || status.ExecutionID != first.ExecutionID || status.Restarts != 0 {
 		t.Fatalf("inspection failure killed service: %+v", status)
 	}
-	resp, err := http.Get(first.Endpoint + "/ready")
+	resp, err := http.Get(first.HostEndpoint + "/ready")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestSharedHTTPServicesHaveDistinctEndpoints(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			endpoints <- a.Endpoint
+			endpoints <- a.HostEndpoint
 		}()
 	}
 	wg.Wait()
@@ -195,7 +195,7 @@ func TestUnavailableInspectionStillRequiresHTTPReadiness(t *testing.T) {
 		t.Fatal("unhealthy service ready")
 	}
 	status := m.Status(b)[0]
-	if status.Endpoint != "" || !strings.Contains(status.Reason, "readiness timeout") {
+	if status.HostEndpoint != "" || !strings.Contains(status.Reason, "readiness timeout") {
 		t.Fatalf("status=%+v", status)
 	}
 	runtime.mu.Lock()
@@ -250,7 +250,7 @@ func TestExitDuringProbeDoesNotPublishOrRetryAsConflict(t *testing.T) {
 		t.Fatal("exited service published ready")
 	}
 	status := m.Status(b)[0]
-	if status.Endpoint != "" || status.Reason != "process exited before readiness" {
+	if status.HostEndpoint != "" || status.Reason != "process exited before readiness" {
 		t.Fatalf("status=%+v", status)
 	}
 	runtime.mu.Lock()

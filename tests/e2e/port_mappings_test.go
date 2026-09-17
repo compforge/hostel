@@ -22,11 +22,11 @@ type servicePortsView struct {
 	Status struct {
 		Components map[string]json.RawMessage `json:"components"`
 		Services   []struct {
-			Name             string `json:"name"`
-			Ready            bool   `json:"ready"`
-			ExecutionID      string `json:"execution_id"`
-			Endpoint         string `json:"endpoint"`
-			InternalEndpoint string `json:"internal_endpoint"`
+			Name         string `json:"name"`
+			Ready        bool   `json:"ready"`
+			ExecutionID  string `json:"execution_id"`
+			HostEndpoint string `json:"host_endpoint"`
+			BedEndpoint  string `json:"bed_endpoint"`
 		} `json:"services"`
 		PortMappings []struct {
 			Name        string `json:"name"`
@@ -34,6 +34,8 @@ type servicePortsView struct {
 			State       string `json:"state"`
 			BedPort     int    `json:"bed_port"`
 			HostPort    int    `json:"host_port"`
+			BedAddress  string `json:"bed_address"`
+			HostAddress string `json:"host_address"`
 			ExecutionID string `json:"execution_id"`
 			Reason      string `json:"reason"`
 		} `json:"port_mappings"`
@@ -109,6 +111,9 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 		if !s.Ready || p.State != "listening" || p.Network != mode || p.ExecutionID != s.ExecutionID || p.Name != "http" {
 			t.Fatalf("runtime identity: %+v", d)
 		}
+		if p.BedAddress != fmt.Sprintf("127.0.0.1:%d", p.BedPort) || p.HostAddress == "" || s.BedEndpoint != "http://"+p.BedAddress || s.HostEndpoint != "http://"+p.HostAddress {
+			t.Fatalf("service and mapping addresses disagree: %+v", d)
+		}
 		if mode == "shared" && (p.BedPort != p.HostPort || p.BedPort == 8080 || p.Reason != "SharedNetworkUsesHostPort") {
 			t.Fatalf("shared mapping: %+v", p)
 		}
@@ -117,19 +122,19 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 		}
 		var access struct {
 			Access struct {
-				Endpoint         string `json:"endpoint"`
-				InternalEndpoint string `json:"internal_endpoint"`
-				ExecutionID      string `json:"execution_id"`
+				HostEndpoint string `json:"host_endpoint"`
+				BedEndpoint  string `json:"bed_endpoint"`
+				ExecutionID  string `json:"execution_id"`
 			} `json:"access"`
 			Hold struct {
 				ID string `json:"id"`
 			} `json:"hold"`
 		}
 		request("POST", "/v1/beds/"+name+"/services/web/access", map[string]int{"hold_seconds": 30}, &access)
-		if access.Access.Endpoint != s.Endpoint || access.Access.InternalEndpoint != s.InternalEndpoint || access.Access.ExecutionID != s.ExecutionID || access.Hold.ID == "" {
+		if access.Access.HostEndpoint != s.HostEndpoint || access.Access.BedEndpoint != s.BedEndpoint || access.Access.ExecutionID != s.ExecutionID || access.Hold.ID == "" {
 			t.Fatalf("access disagrees with status: %+v", access)
 		}
-		req, err := http.NewRequestWithContext(ctx, "GET", s.Endpoint, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", s.HostEndpoint, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +147,7 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 		if err != nil || response.StatusCode != 200 || string(body) != name {
 			t.Fatalf("external service: status=%d body=%s err=%v", response.StatusCode, body, err)
 		}
-		script := fmt.Sprintf("import urllib.request; print(urllib.request.urlopen(%q, timeout=3).read().decode())", s.InternalEndpoint)
+		script := fmt.Sprintf("import urllib.request; print(urllib.request.urlopen(%q, timeout=3).read().decode())", s.BedEndpoint)
 		result, responseCommand := c.command(t, name, map[string]any{"command": shellx.Quote(python) + " -c " + shellx.Quote(script), "timeout": 5000})
 		must2xx(t, "internal service", responseCommand)
 		assertCommandExit(t, result, 0)

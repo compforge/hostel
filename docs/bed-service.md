@@ -387,17 +387,19 @@ Bed 回收不会释放它。UDP DNS 仍由网络组件实际绑定和释放，�
 |---|---|
 | `POST /v1/beds` 的 `services` 字段 | 创建时启用；省略等于空列表，重复创建不允许修改 |
 | `GET /v1/beds/{bed}/services` | 列表，不创建 Bed、不续租 |
-| `GET /v1/beds/{bed}/services/{service}` | 状态、Execution/Executor ID 和非敏感 endpoint |
+| `GET /v1/beds/{bed}/services/{service}` | 状态、Execution/Executor ID 和非敏感 bed_endpoint / host_endpoint |
 | `GET /v1/beds/{bed}/services/{service}/logs?cursor=0` | 有界 Execution 日志及下一游标 |
 | `POST /v1/beds/{bed}/services/{service}/restart` | 异步重启单个服务，返回 202 |
-| `POST /v1/beds/{bed}/services/{service}/access` | 传 `{"hold_seconds":300}`，取得 internal_endpoint、endpoint、port_mapping、可选 token、Execution ID 和限时 hold |
+| `POST /v1/beds/{bed}/services/{service}/access` | 传 `{"hold_seconds":300}`，取得 bed_endpoint、host_endpoint、port_mapping、可选 token、Execution ID 和限时 hold |
 | `DELETE /v1/beds/{bed}/service-holds/{hold}` | 提前释放 hold，幂等 |
 
-Bed 详情的 `status.services` 展示服务状态，`status.port_mappings` 展示本次运行的内外端口与映射状态；`GET /v1/status` 的 `host.status.ports`
+Bed 详情的 `status.services` 展示服务状态，`status.port_mappings` 展示本次运行的 Bed / Host 端口、地址与映射状态；`GET /v1/status` 的 `host.status.ports`
 展示 Hostel 管理的端口分配及其 owner、scope、address 和 `reserved/listening` 状态，
 不枚举操作系统全部监听端口；端口预留也不代表服务就绪。诊断和持久化声明不含 token。
 
-调用方先获取 access，再直连 endpoint，任务结束后释放 hold。hold 为 1–7200 秒，
+调用方先获取 access，Bed 内使用 `bed_endpoint`，外部使用 `host_endpoint`，任务结束后释放 hold。
+`bed_endpoint` 在共享网络下使用动态分配端口，不承诺固定端口；地址与降级语义见
+[网络模型](network.md#发现归属与回收)。hold 为 1–7200 秒，
 到期自动结束 operation，期间普通/显式 eviction 都不能销毁 Bed；daemon shutdown
 仍可强制结束。HTTP 返回后仍在执行的异步任务也必须覆盖在 hold 内。
 提前释放允许显式 eviction 继续，自动回收仍遵守既有 `retained_until` 保守期限。

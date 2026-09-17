@@ -177,7 +177,7 @@ func TestBedScopedHTTPServiceWithUnavailableInspection(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := m.Status(b)[0]
-	if status.Phase != "running" || !status.Ready || status.Restarts != 0 || status.Endpoint == "" || status.Listener.State != hostnetwork.ListenerUnavailable {
+	if status.Phase != "running" || !status.Ready || status.Restarts != 0 || status.HostEndpoint == "" || status.Listener.State != hostnetwork.ListenerUnavailable {
 		t.Fatalf("scoped service status = %+v", status)
 	}
 	// Network scope is not reported as process ownership, including steady state.
