@@ -137,7 +137,7 @@ func (r serviceRuntime) Start(ctx context.Context, launch service.Launch) (servi
 	}
 	// Supervision owns cancellation and graceful stop. Do not turn a service
 	// into a permanent Bed operation or couple it to the create HTTP request.
-	execution := m.executions.track(context.WithoutCancel(ctx), b.Name, ExecutionService, e.ID(), e.Backend(), proc, outR, errR, 0, nil, nil, nil)
+	execution := m.executions.track(context.WithoutCancel(ctx), b.Name, ExecutionService, e.ID(), e.Backend(), proc, outR, errR, 0, "", nil, nil, nil, nil)
 	return &serviceProcess{process: proc, execution: execution}, nil
 }
 

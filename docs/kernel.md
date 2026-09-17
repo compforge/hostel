@@ -356,8 +356,9 @@ netns，其出站与故障边界必须单独说明。设施协议不得裸透传
 ## 六、模块边界与深入阅读
 
 
-`cmd/hostel` 组装配置与组件；`api` 组装 HTTP server、中间件与路由，`api/handler` 负责请求适配、状态查询与响应组装，
-`api/view` 只承载响应结构与纯转换，不持有 Manager 或主动查询。Bed、BedFS、
+`cmd/hostel` 组装配置与组件；`api` 组装 HTTP server、中间件与路由，`api/apiv1` 与 `api/execd` 分别拥有原生与 OpenSandbox 协议；各自的 `handler` 负责请求适配、
+状态查询与响应组装，各自的 `view` 承载响应结构与纯转换，不持有 Manager 或主动查询。
+两套 adapter 不互相依赖；通用执行、日志、Session 与文件能力归 Bed 等下层 owner。Bed、BedFS、
 Executor、Store 与 Network 保持领域职责，不依赖 HTTP 类型；通用宿主机制归 `internal/host`。
 跨机制顺序由领域执行与生命周期入口协调，不能让 Web handler 拼接内部细节。
 

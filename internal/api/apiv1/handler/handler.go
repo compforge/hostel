@@ -1,0 +1,323 @@
+// Package handler adapts HTTP requests to Bed and Amenity operations.
+package handler
+
+import (
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	"github.com/qiankunli/hostel/internal/bed/resource"
+)
+
+// BedHeader carries the caller-owned Bed.Name; empty means the default Bed.
+const BedHeader = "X-Hostel-Bed"
+
+// Handler queries domain owners and assembles their results into API views.
+type Handler struct {
+	observer             statusObserver
+	mgr                  *bed.Manager
+	metricSampleInterval time.Duration
+	dormReadFallbackRoot string
+}
+
+type Config struct {
+	DormReadFallbackRoot string
+}
+
+func New(mgr *bed.Manager, cfg Config) *Handler {
+	return &Handler{
+		observer:             newStatusObserver(mgr.HostFacts(), mgr, mgr.Amenities()),
+		mgr:                  mgr,
+		metricSampleInterval: time.Second,
+		dormReadFallbackRoot: cfg.DormReadFallbackRoot,
+	}
+}
+
+// RegisterRoutes installs the HTTP contract on the supplied engine.
+func (s *Handler) RegisterRoutes(e *gin.Engine) {
+	e.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
+	e.GET("/healthz", s.healthz)
+	e.GET("/v1/status", s.status)
+
+	metrics := e.Group("/metrics")
+	{
+		metrics.GET("", s.getMetrics)
+		metrics.GET("/watch", s.watchMetrics)
+	}
+
+	files := e.Group("/files")
+	{
+		files.GET("/info", s.filesInfo)
+		files.DELETE("", s.filesDelete)
+		files.POST("/mv", s.filesRename)
+		files.POST("/permissions", s.filesChmod)
+		files.GET("/search", s.filesSearch)
+		files.POST("/replace", s.filesReplace)
+		files.POST("/upload", s.filesUpload)
+		files.GET("/download", s.filesDownload)
+	}
+
+	dirs := e.Group("/directories")
+	{
+		dirs.GET("/list", s.dirList)
+		dirs.POST("", s.dirCreate)
+		dirs.DELETE("", s.dirDelete)
+	}
+
+	e.PUT("/v1/mcp/config", s.mcpRequest(s.mcpConfigure))
+	e.POST("/v1/mcp/servers/:name/tools/list", s.mcpRequest(s.mcpListTools))
+	e.POST("/v1/mcp/servers/:name/tools/call", s.mcpRequest(s.mcpCallTool))
+
+	e.POST("/command", s.runCommand)
+	e.DELETE("/command", s.interruptCommand)
+	e.GET("/command/status/:id", s.commandStatus)
+	e.GET("/command/:id/logs", s.commandLogs)
+
+	sess := e.Group("/session")
+	{
+		sess.POST("", s.sessionCreate)
+		sess.POST("/:sessionId/run", s.sessionRun)
+		sess.DELETE("/:sessionId", s.withOp(bed.OpControl, s.sessionDelete))
+	}
+
+	isolated := e.Group("/v1/isolated")
+	{
+		isolated.POST("/session", s.isolatedCreate)
+		isolated.GET("/sessions", s.isolatedList)
+		isolated.GET("/capabilities", s.isolatedCapabilities)
+		isolated.GET("/session/:sessionId", s.withIsolatedBed(s.isolatedGet))
+		isolated.POST("/session/:sessionId/run", s.withIsolatedBed(s.isolatedRun))
+		isolated.DELETE("/session/:sessionId", s.withIsolatedBed(s.isolatedDelete))
+		isolated.GET("/session/:sessionId/diff", s.withIsolatedBed(s.isolatedDiff))
+		isolated.POST("/session/:sessionId/commit", s.withIsolatedBed(s.isolatedCommit))
+		isolated.GET("/session/:sessionId/files/info", s.withIsolatedBed(s.filesInfo))
+		isolated.GET("/session/:sessionId/files/download", s.withIsolatedBed(s.filesDownload))
+		isolated.POST("/session/:sessionId/files/upload", s.withIsolatedBed(s.filesUpload))
+		isolated.DELETE("/session/:sessionId/files", s.withIsolatedBed(s.filesDelete))
+		isolated.POST("/session/:sessionId/files/mv", s.withIsolatedBed(s.filesRename))
+		isolated.POST("/session/:sessionId/files/permissions", s.withIsolatedBed(s.filesChmod))
+		isolated.POST("/session/:sessionId/files/replace", s.withIsolatedBed(s.filesReplace))
+		isolated.GET("/session/:sessionId/files/search", s.withIsolatedBed(s.filesSearch))
+		isolated.GET("/session/:sessionId/directories/list", s.withIsolatedBed(s.dirList))
+		isolated.POST("/session/:sessionId/directories", s.withIsolatedBed(s.dirCreate))
+		isolated.DELETE("/session/:sessionId/directories", s.withIsolatedBed(s.dirDelete))
+	}
+
+	// Per-bed CDP proxy websocket (bed + token in query; playwright can't set
+	// headers). Top-level, not under /v1/beds — the client passes the whole URL.
+	e.GET("/v1/cdp", s.browserCDP)
+
+	v1 := e.Group("/v1/beds")
+	{
+		v1.GET("", s.bedList)
+		v1.POST("", s.bedCreate)
+		v1.GET("/capabilities", s.capabilities)
+		v1.GET("/:bedId", s.bedGet)
+		v1.POST("/:bedId/renew-expiration", s.bedRenewExpiration)
+		v1.GET("/:bedId/services", s.serviceList)
+		v1.GET("/:bedId/services/:service", s.serviceGet)
+		v1.GET("/:bedId/services/:service/logs", s.serviceLogs)
+		v1.POST("/:bedId/services/:service/restart", s.serviceRestart)
+		v1.POST("/:bedId/services/:service/access", s.serviceAccess)
+		v1.DELETE("/:bedId/service-holds/:holdId", s.serviceHoldRelease)
+		v1.GET("/:bedId/network/healthz", s.networkPolicy)
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+			v1.Handle(method, "/:bedId/network/policy", s.networkPolicy)
+		}
+		v1.DELETE("/:bedId", s.bedDelete)
+		v1.POST("/:bedId/checkpoint", s.bedCheckpoint)
+		v1.POST("/:bedId/transfers", s.startTransfer)
+		v1.GET("/:bedId/transfers/:transferId", s.transferStatus)
+		v1.DELETE("/:bedId/transfers/:transferId", s.cancelTransfer)
+		// Browser amenity verbs (docs/amenity.md §2) — bed-scoped actions,
+		// never a raw CDP passthrough.
+		v1.POST("/:bedId/browser/goto", s.browserGoto)
+		v1.POST("/:bedId/browser/screenshot", s.browserScreenshot)
+		v1.POST("/:bedId/browser/text", s.browserText)
+		v1.POST("/:bedId/browser/click", s.browserClick)
+		v1.POST("/:bedId/browser/type", s.browserType)
+		v1.POST("/:bedId/browser/press", s.browserPress)
+		v1.POST("/:bedId/browser/scroll", s.browserScroll)
+		v1.POST("/:bedId/browser/wait", s.browserWait)
+		v1.POST("/:bedId/browser/close", s.browserClose)
+		v1.GET("/:bedId/browser/info", s.browserInfo)
+	}
+}
+
+// respondBedError maps bed resolution/admission failures: a full or
+// resource-pressured instance is 429 backpressure, anything else is a bad id.
+func respondBedError(c *gin.Context, err error) {
+	if errors.Is(err, bed.ErrPathsConflict) || errors.Is(err, bed.ErrServicesConflict) || errors.Is(err, bed.ErrEnvConflict) {
+		respondError(c, http.StatusConflict, apiview.ErrBedInvalid, err.Error())
+		return
+	}
+	if errors.Is(err, bed.ErrSyncConflict) {
+		respondError(c, http.StatusConflict, apiview.ErrBedSyncConflict, err.Error())
+		return
+	}
+	if errors.Is(err, bed.ErrResourcePressure) {
+		respondError(c, http.StatusTooManyRequests, apiview.ErrResourcePressure, err.Error())
+		return
+	}
+	if errors.Is(err, bed.ErrBedLimit) {
+		respondError(c, http.StatusTooManyRequests, apiview.ErrBedLimitExceeded, err.Error())
+		return
+	}
+	if errors.Is(err, bed.ErrBedUnavailable) {
+		respondError(c, http.StatusConflict, apiview.ErrBedBusy, err.Error())
+		return
+	}
+	if errors.Is(err, bed.ErrBedPurging) {
+		respondError(c, http.StatusConflict, apiview.ErrBedBusy, err.Error())
+		return
+	}
+	respondError(c, http.StatusBadRequest, apiview.ErrBedInvalid, err.Error())
+}
+
+const resolvedBedContextKey = "hostel.resolved-bed"
+
+// bedOf resolves the target bed from the request (header/query → default),
+// creating it on first use. Adapters that require an existing bed may inject a
+// pre-resolved value, which also prevents their read paths from creating one.
+// On invalid id it writes an error and returns nil.
+func (s *Handler) bedOf(c *gin.Context) *bed.Resident {
+	if resolved, ok := c.Get(resolvedBedContextKey); ok {
+		if b, ok := resolved.(*bed.Resident); ok {
+			return b
+		}
+	}
+	id := c.GetHeader(BedHeader)
+	if id == "" {
+		id = c.Query("bed")
+	}
+	b, err := s.mgr.Ensure(c.Request.Context(), id)
+	if err != nil {
+		respondBedError(c, err)
+		return nil
+	}
+	return b
+}
+
+// withOp wraps a request-scoped handler in one operation of the given kind:
+// the bed is resolved, held for the handler's lifetime and released on return
+// (docs/kernel.md: an operation's span is one request). Explicit
+// BeginOperation is reserved for work whose span is NOT the request —
+// background /command outlives it, foreground runs take their timeout from
+// the request body, isolatedCreate creates the bed it then holds.
+func (s *Handler) withOp(kind bed.OperationKind, next func(*gin.Context, *bed.Resident)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		b := s.bedOf(c)
+		if b == nil {
+			return
+		}
+		finish, err := s.mgr.BeginOperation(b, kind, 0)
+		if err != nil {
+			respondBedError(c, err)
+			return
+		}
+		defer finish()
+		next(c, b)
+	}
+}
+
+// opsOf returns filesystem ops rooted at the request's bed and holds one
+// operation reference until finish is called.
+func (s *Handler) opsOf(c *gin.Context) (*bed.Resident, *bedfs.FS, func()) {
+	b := s.bedOf(c)
+	if b == nil {
+		return nil, nil, nil
+	}
+	finish, err := s.mgr.BeginOperation(b, bed.OpFile, 0)
+	if err != nil {
+		respondBedError(c, err)
+		return nil, nil, nil
+	}
+	return b, b.BedFS(), finish
+}
+
+func (s *Handler) healthz(c *gin.Context) {
+	iso := s.mgr.Isolator()
+	high, low := s.mgr.LuggageLimits()
+	resources := s.mgr.ResourceReport()
+	c.JSON(http.StatusOK, gin.H{
+		"ok":                             true,
+		"network":                        s.mgr.NetworkReport(),
+		"isolator":                       iso.Name(),
+		"isolator_ok":                    iso.Available(),
+		"process_view":                   processView(iso),
+		"bed_user":                       s.mgr.BedUserReport(),
+		"executor_backend":               s.mgr.ExecutorBackend(),
+		"occupied_beds":                  s.mgr.OccupiedBedCount(),
+		"resident_beds":                  s.mgr.ResidentBedCount(),
+		"max_beds":                       s.mgr.MaxBeds(),
+		"pinned_beds":                    s.mgr.PinnedBedCount(),
+		"max_pinned_beds":                s.mgr.MaxPinnedBeds(),
+		"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
+		"bed_pressure":                   s.mgr.BedPressure(),
+		"persistence":                    s.mgr.SyncName(),
+		"resource_accounting": gin.H{
+			"backend":   resources.Backend,
+			"available": resources.Available,
+			"reason":    resources.Reason,
+		},
+		"resource_admission": resourceAdmissionView(s.mgr.ResourceAdmissionReport()),
+		"isolation":          s.mgr.RoomStatus(),
+		"default_bed":        s.mgr.DefaultBedID(),
+		// Watermarks only — live luggage bytes require a scan; poll
+		// /v1/beds for those.
+		"luggage_high_bytes": high,
+		"luggage_low_bytes":  low,
+	})
+}
+
+// GET /v1/status serializes the instance-level Component and Amenity view.
+// The status observer composes the Bed and Amenity Managers. Reading it does not rerun startup probes or perform remote I/O.
+//
+// +spec=`Instance diagnostics expose cached facts and component reports; reading the endpoint never reruns probes.`
+func (s *Handler) status(c *gin.Context) {
+	c.JSON(http.StatusOK, s.observer.Status())
+}
+
+func resourceAdmissionView(report resource.AdmissionReport) gin.H {
+	view := gin.H{
+		"enabled":                  report.Enabled,
+		"available":                report.Available,
+		"accepting":                report.Accepting,
+		"reason":                   report.Reason,
+		"cpu_threshold_percent":    report.CPUThresholdPercent,
+		"memory_threshold_percent": report.MemoryThresholdPercent,
+	}
+	if report.CPUAvailable {
+		view["cpu_usage_percent"] = report.CPUUsagePercent
+	}
+	if report.CPULimitCores > 0 {
+		view["cpu_limit_cores"] = report.CPULimitCores
+	}
+	if report.MemoryAvailable {
+		view["memory_usage_percent"] = report.MemoryUsagePercent
+	}
+	if report.MemoryLimitBytes > 0 {
+		view["memory_current_bytes"] = report.MemoryCurrentBytes
+		view["memory_limit_bytes"] = report.MemoryLimitBytes
+	}
+	if !report.SampledAt.IsZero() {
+		view["sampled_at"] = report.SampledAt
+	}
+	return view
+}
+
+func processView(iso isolation.Isolator) isolation.ProcessViewReport {
+	if report, ok := iso.(isolation.Report); ok {
+		return report.ProcessView()
+	}
+	mode := "carrier"
+	if iso.MountsRoot() {
+		mode = "mount"
+	}
+	return isolation.ProcessViewReport{Mode: mode, Available: true}
+}

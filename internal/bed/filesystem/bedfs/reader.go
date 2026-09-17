@@ -182,3 +182,8 @@ func emptyMappingPlaceholder(local *FS, prefix, p string) (bool, error) {
 	}
 	return false, err
 }
+
+// Open returns a confined descriptor for streaming and byte-range reads.
+func (r *Reader) Open(p string) (*os.File, error) {
+	return readWithFallback(r, p, func(fs *FS) (*os.File, error) { return fs.Open(p) })
+}

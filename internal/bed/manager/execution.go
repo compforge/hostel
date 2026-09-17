@@ -42,6 +42,7 @@ const (
 type TerminationCause string
 
 const (
+	CauseOutputFailure  TerminationCause = "output_failure"
 	CauseNatural        TerminationCause = "natural"
 	CauseTimeout        TerminationCause = "timeout"
 	CauseClientCanceled TerminationCause = "client_canceled"
@@ -101,6 +102,9 @@ type ExecutionStatus struct {
 // Execution is one one-shot command lifetime. Foreground and background are
 // the same object; mode only decides whether the initiating HTTP request waits.
 type Execution struct {
+	Content string
+	log     *executionLog
+
 	ID              string
 	BedID           string
 	Mode            ExecutionMode
@@ -199,6 +203,7 @@ func (e *Execution) appendOutput(stream OutputStream, text string) ExecutionOutp
 	defer e.mu.Unlock()
 	output := ExecutionOutput{Sequence: e.nextOutput, Stream: stream, Text: text}
 	e.nextOutput++
+
 	retained := output
 	if len(retained.Text) > executionOutputBytes {
 		retained.Text = retained.Text[len(retained.Text)-executionOutputBytes:]
@@ -248,6 +253,12 @@ func (e *Execution) finish(outcome executor.ProcessOutcome, onFinish func(Execut
 		Cause:           cause,
 	}
 	e.finishedAt = &finishedAt
+	if e.log != nil {
+		if err := e.log.writer.Close(); err != nil && e.log.err == nil {
+			e.log.err = err
+		}
+		e.log.writer = nil
+	}
 	e.result = &result
 	e.finishing = false
 	e.mu.Unlock()
@@ -372,11 +383,13 @@ func (r *ExecutionRegistry) track(
 	proc executor.Process,
 	stdout, stderr io.ReadCloser,
 	timeout time.Duration,
+	content string, outputLog *executionLog,
 	onStart func(ExecutionStatus),
 	onOutput func(ExecutionOutput),
 	onFinish func(ExecutionResult),
 ) *Execution {
 	execution := newExecution(ctx, bedID, mode, executorID, executorBackend, proc.Kill)
+	execution.Content, execution.log = content, outputLog
 	r.mu.Lock()
 	r.executions[execution.ID] = execution
 	r.order = append(r.order, execution.ID)
@@ -411,7 +424,11 @@ func (r *ExecutionRegistry) track(
 		drain := func(stream OutputStream, input io.ReadCloser) {
 			defer wg.Done()
 			defer input.Close()
-			reader := bufio.NewReader(input)
+			var source io.Reader = input
+			if execution.log != nil {
+				source = io.TeeReader(input, executionLogWriter{execution})
+			}
+			reader := bufio.NewReader(source)
 			for {
 				text, err := reader.ReadString('\n')
 				if text != "" {
@@ -466,6 +483,7 @@ func (r *ExecutionRegistry) trackSession(
 	shell *Shell,
 	command string,
 	cwdInBed string,
+	settings *SessionSettings,
 	timeout time.Duration,
 	onStart func(ExecutionStatus),
 	onOutput func(ExecutionOutput),
@@ -502,7 +520,7 @@ func (r *ExecutionRegistry) trackSession(
 	}
 
 	go func() {
-		result, err := shell.RunAt(execution.ctx, cwdInBed, command, func(text string) {
+		result, err := shell.runAt(execution.ctx, cwdInBed, command, settings, func(text string) {
 			output := execution.appendOutput(StreamStdout, text)
 			if onOutput != nil {
 				onOutput(output)
@@ -554,16 +572,21 @@ func (r *ExecutionRegistry) killBed(bedID string, cause TerminationCause) {
 func (r *ExecutionRegistry) prune() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.executions) <= executionHistoryLimit {
-		return
-	}
+
 	kept := r.order[:0]
 	for _, id := range r.order {
 		execution, ok := r.executions[id]
 		if !ok {
 			continue
 		}
-		if len(r.executions) > executionHistoryLimit && !execution.Status().Running {
+		status := execution.Status()
+		expired := status.FinishedAt != nil && time.Since(*status.FinishedAt) >= 24*time.Hour
+		evictable := expired || (execution.Mode != ExecutionBackground && len(r.executions) > executionHistoryLimit)
+		if evictable && !status.Running {
+			if err := execution.removeLog(); err != nil {
+				kept = append(kept, id) // Retry cleanup on the next collection pass.
+				continue
+			}
 			delete(r.executions, id)
 			continue
 		}

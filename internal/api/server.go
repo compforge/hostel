@@ -6,7 +6,8 @@ import (
 	"slices"
 
 	"github.com/gin-gonic/gin"
-	"github.com/qiankunli/hostel/internal/api/handler"
+	"github.com/qiankunli/hostel/internal/api/apiv1/handler"
+	execd "github.com/qiankunli/hostel/internal/api/execd/handler"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
@@ -47,6 +48,7 @@ func NewServer(mgr *bed.Manager, options ...ServerOption) *Server {
 	engine.Use(gin.Recovery())
 	handlers := handler.New(mgr, handler.Config{DormReadFallbackRoot: cfg.dormReadFallbackRoot})
 	handlers.RegisterRoutes(engine)
+	execd.New(mgr, execd.Config{DormReadFallbackRoot: cfg.dormReadFallbackRoot}).RegisterRoutes(engine)
 	return &Server{engine: engine}
 }
 

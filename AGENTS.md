@@ -109,11 +109,15 @@ internal/
 ├── config/            flags + HOSTEL_* env
 ├── tracing/           OpenTelemetry 与 trace/log 关联
 └── api/               HTTP server、中间件与路由组装
-    ├── handler/       请求适配与状态查询；Bed 操作经过 Bed Manager，实例级设施操作交给 Amenity
-    └── view/          对外响应结构与纯转换；不持有 Manager、不主动查询
+    ├── apiv1/         Hostel 原生协议（保留现有 URL）
+    │   ├── handler/   请求适配与状态查询
+    │   └── view/      原生响应与纯转换
+    └── execd/         OpenSandbox Execd 协议，双入口共用 adapter
+        ├── handler/   请求适配、鉴权和准入回调
+        └── view/      OpenSandbox 响应、权限与 SSE 编码
 ```
 
-**数据流**：请求 →`api/handler` 按 `X-Hostel-Bed`(缺省 default) 解析 bed → 调 `bed`/`bedfs` 核心 → 组装响应（命令走 SSE）。核心模型与领域组件**不含任何 HTTP 类型**，换框架只动 `api/`。
+**数据流**：请求 →`api/apiv1/handler` 或 `api/execd/handler` 按 `X-Hostel-Bed`(缺省 default) 解析 bed → 调 `bed`/`bedfs` 核心 → 组装响应（命令走 SSE）。核心模型与领域组件**不含任何 HTTP 类型或协议族编码**；两套 adapter 不互相依赖，复用能力进入 `internal/bed` 等 owner。换框架只动 `api/`。
 
 ## 关键约定
 

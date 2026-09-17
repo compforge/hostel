@@ -270,3 +270,9 @@ make e2e E2E_ARGS='-run ^TestBedTemporaryDirectory -timeout 5m'
 
 When testing a custom binary with `/tmp` redirection, install or mount it outside `/tmp`
 (for example `/usr/local/bin`): Hostel re-executes itself as `bedinit` inside the selected view.
+
+`TestOpenSandboxAdapterLifecycle` covers both Execd addresses, directory creation, line downloads,
+persistent session state, cross-Bed session rejection, background partial output after the launch
+response closes, byte-cursor polling, cancellation and explicit unsupported code kernels.
+Run with `make e2e E2E_ARGS='-run TestOpenSandbox -timeout 3m'`. File Range, metadata, permissions,
+large log retention and cleanup also have protocol/domain regression tests in the regular suite.

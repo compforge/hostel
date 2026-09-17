@@ -145,3 +145,33 @@ func (s MappingSupport) Supports(readOnly bool) bool {
 }
 
 func (v ProcessView) MappingSupport() MappingSupport { return v.mappings }
+
+// ResolveDirectory converts a process cwd back through this Bed's authorized
+// roots, then validates it using a confined descriptor. It never creates cwd.
+func (v ProcessView) ResolveDirectory(p string) (string, error) {
+	client := p
+	if v.homeMount == "" {
+		if rel, ok := relativeTo(v.fs.Rootfs(), p); ok {
+			client = joinProcessPath("/", rel)
+		}
+		for _, m := range v.fs.PathMappings() {
+			if rel, ok := relativeTo(m.HostPath, p); ok {
+				client = joinProcessPath(m.BedPath, rel)
+				break
+			}
+		}
+	}
+	f, err := v.fs.Open(client)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("cwd must be a directory")
+	}
+	return v.fs.Resolve(client)
+}
