@@ -68,6 +68,7 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 	}
 	wantPrefix := []string{
 		probe, "--quiet",
+		"--bind", filepath.Join(home, "tmp") + ":/tmp",
 		"--bind", workspace + ":/workspace",
 		"--bind", source + ":/mnt/memory",
 		"--cwd", "/workspace/sub", "--",

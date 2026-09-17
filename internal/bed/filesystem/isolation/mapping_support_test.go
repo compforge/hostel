@@ -65,3 +65,34 @@ func TestHelpersOnlyRedirectSupportedMappings(t *testing.T) {
 		}
 	}
 }
+
+func TestExplicitTemporaryMappingReplacesDefault(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "beds", "one", "data")
+	if err := os.MkdirAll(home, 0755); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := bedfs.New(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	source, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.SetPathMappings([]model.PathMapping{{HostPath: source, BedPath: "/tmp"}}); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, m := range processMappings(fs, bedfs.MappingSupport{ReadWrite: true}) {
+		if m.Target == "/tmp" {
+			count++
+			if m.Source != source {
+				t.Fatal("default shadows explicit temporary mapping")
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("temporary mappings=%d", count)
+	}
+}

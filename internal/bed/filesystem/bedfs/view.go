@@ -25,6 +25,9 @@ import (
 // DefaultWorkdir is the default Bed working directory and relative API path base.
 const DefaultWorkdir = "/workspace"
 
+// TemporaryDir is the default Bed-owned temporary directory.
+const TemporaryDir = "/tmp"
+
 // ProcessView projects one BedFS from carrier paths into an Executor's filesystem
 // namespace. Isolation mechanisms choose the projection; BedFS owns its path
 // semantics so command cwd and file APIs cannot drift apart.
@@ -45,7 +48,7 @@ func RootedView(fs *FS, support MappingSupport) ProcessView {
 	return ProcessView{fs: fs, mappings: support, homeMount: "/", workdirMount: DefaultWorkdir}
 }
 
-// RedirectedView gives the workdir its stable process path and honors the
+// RedirectedView gives the workdir and temporary directory stable process paths and honors the
 // BedFS mappings. Other paths in the default root keep their carrier spelling;
 // user-space helpers do not claim a complete guest root.
 func RedirectedView(fs *FS, support MappingSupport) ProcessView {
@@ -78,6 +81,11 @@ func (v ProcessView) Path(host string) (string, error) {
 			return joinProcessPath(v.workdirMount, workspaceRel), nil
 		}
 	}
+	if v.workdirMount != "" {
+		if rel, ok := relativeTo(filepath.Join(v.fs.Rootfs(), "tmp"), host); ok {
+			return joinProcessPath(TemporaryDir, rel), nil
+		}
+	}
 	if v.homeMount == "" {
 		return filepath.Clean(host), nil
 	}
@@ -94,6 +102,16 @@ func (v ProcessView) Rootfs() string {
 func (v ProcessView) Workdir() string {
 	workspace, _ := v.Path(v.fs.Workdir())
 	return workspace
+}
+
+// Tempdir returns the selected process path, including explicit caller mappings.
+// Carrier views use a Bed-owned host path because they cannot redirect /tmp.
+func (v ProcessView) Tempdir() (string, error) {
+	host, err := v.fs.Resolve(TemporaryDir)
+	if err != nil {
+		return "", err
+	}
+	return v.Path(host)
 }
 
 func relativeTo(root, candidate string) (string, bool) {

@@ -254,3 +254,19 @@ allocations under `host.status.ports`. It separates `healthz.isolation` (request
 `/v1/status.components.filesystem` (shared/confined/private). Filesystem assertions
 must use the latter: a degraded room profile may retain a private file view.
 These cases require an explicit E2E run; compile-only validation is not execution evidence.
+
+## Bed temporary directories
+
+`TestBedTemporaryDirectory` verifies command output capture, session reads of API uploads,
+Service cooperation, Execd downloads, API deletion observed by a later command, and identical
+file names in two Beds. It runs carrier/pathshim/PRoot/mount with local and Linux supervisor
+executors, requires each selected mechanism, and purges its Beds. Carrier uses the generated
+`TMPDIR`; the other modes additionally require literal `/tmp`. Explicit helper inputs require
+that helper; unavailable prerequisites are reported as skips.
+
+```sh
+make e2e E2E_ARGS='-run ^TestBedTemporaryDirectory -timeout 5m'
+```
+
+When testing a custom binary with `/tmp` redirection, install or mount it outside `/tmp`
+(for example `/usr/local/bin`): Hostel re-executes itself as `bedinit` inside the selected view.

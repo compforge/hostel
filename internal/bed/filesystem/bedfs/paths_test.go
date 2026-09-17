@@ -80,11 +80,11 @@ func TestViewPath(t *testing.T) {
 		}
 	})
 
-	t.Run("workspace only view", func(t *testing.T) {
+	t.Run("redirected view", func(t *testing.T) {
 		view := RedirectedView(fs, MappingSupport{ReadWrite: true})
 		cases := []struct{ host, want string }{
 			{root, root},
-			{filepath.Join(root, "tmp", "x"), filepath.Join(root, "tmp", "x")},
+			{filepath.Join(root, "tmp", "x"), "/tmp/x"},
 			{workspace, "/workspace"},
 			{filepath.Join(workspace, "sub"), "/workspace/sub"},
 		}
