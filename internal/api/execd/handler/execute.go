@@ -38,9 +38,6 @@ func (s *Handler) runCommand(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	if !s.prepareExecd(c, b, &req) {
-		return
-	}
 	cwd := ""
 	if req.Cwd != "" {
 		var err error
@@ -123,14 +120,10 @@ func (s *Handler) sessionRun(c *gin.Context) {
 		badRequest(c, "command and valid millisecond timeout required")
 		return
 	}
-	admission := view.CommandRequest{Command: req.Command, Cwd: req.Cwd, TimeoutMs: req.Timeout}
-	if !s.prepareExecd(c, b, &admission) {
-		return
-	}
 	stream := &eventStream{c: c}
 	stop := func() {}
 	defer func() { stop() }()
-	e, err := s.mgr.StartConfiguredSessionExecution(c.Request.Context(), b, sh, req.Command, bed.SessionSettings{Directory: req.Cwd, Environment: admission.Envs}, time.Duration(req.Timeout)*time.Millisecond, func(status bed.ExecutionStatus) { stop = stream.start(c.Request.Context(), status.ID) }, func(out bed.ExecutionOutput) { stream.send(view.StreamEvent{Type: string(out.Stream), Text: out.Text}) })
+	e, err := s.mgr.StartConfiguredSessionExecution(c.Request.Context(), b, sh, req.Command, bed.SessionSettings{Directory: req.Cwd}, time.Duration(req.Timeout)*time.Millisecond, func(status bed.ExecutionStatus) { stop = stream.start(c.Request.Context(), status.ID) }, func(out bed.ExecutionOutput) { stream.send(view.StreamEvent{Type: string(out.Stream), Text: out.Text}) })
 	if err != nil {
 		respondBedError(c, err)
 		return

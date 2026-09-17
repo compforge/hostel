@@ -114,7 +114,7 @@ internal/
     │   ├── handler/   请求适配与状态查询
     │   └── view/      原生响应与纯转换
     └── execd/         OpenSandbox Execd 协议，双入口共用 adapter
-        ├── handler/   请求适配、鉴权和准入回调
+        ├── handler/   请求适配与本地鉴权
         └── view/      OpenSandbox 响应、权限与 SSE 编码
 ```
 
@@ -182,4 +182,4 @@ internal/
 - 共享设施、Bed 切片与凭据、CDP 代理及实际边界：`docs/amenity.md`
 - MCP 远程工具与连接生命周期、公共 Go 嵌入入口：`docs/mcp.md`
 
-- OpenSandbox Execd 双入口、协议与准入回调：`docs/execd.md`
+- OpenSandbox Execd 双入口、协议与鉴权：`docs/execd.md`
