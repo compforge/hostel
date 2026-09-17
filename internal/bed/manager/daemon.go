@@ -48,6 +48,9 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.startErr = os.MkdirAll(m.root, 0755)
 		if m.startErr == nil {
 			m.startErr = m.recoverLocalIdentities()
+			if m.startErr == nil {
+				m.startErr = m.cleanupPreviousExecutionLogs(ctx)
+			}
 		}
 	}
 	if m.startErr != nil {
@@ -122,6 +125,8 @@ func (m *Manager) runCollection(ctx context.Context) error {
 		defer ticker.Stop()
 		idle = ticker.C
 	}
+	history := time.NewTicker(time.Hour)
+	defer history.Stop()
 	luggage := time.NewTicker(time.Minute)
 	defer luggage.Stop()
 	for {
@@ -132,6 +137,8 @@ func (m *Manager) runCollection(ctx context.Context) error {
 			if ids := m.CollectExpired(ctx, now); len(ids) > 0 {
 				log.Printf("hostel: reaped idle beds: %v", ids)
 			}
+		case <-history.C:
+			m.executions.prune()
 		case <-luggage.C:
 			if ids := m.CollectLuggage(ctx); len(ids) > 0 {
 				log.Printf("hostel: reaped luggage: %v", ids)

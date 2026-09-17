@@ -265,6 +265,8 @@ func (m *Manager) removeIdentityTrees(ctx context.Context, local *localIdentity,
 			return fmt.Errorf("inspect bed %s local identity: %w", local.bed.Name, err)
 		}
 	}
+	// History is bound to this Bed lifetime, never to a subsequently reused name.
+	m.executions.forgetBed(local.bed.Name)
 	// The caller has stopped this allocation's runtime resources. The cleanup
 	// fence remains visible until Forget completes, even if the hook fails.
 	forget := model.NewSequence(model.Forget, model.Participant{Name: "privilege", Lifecycle: m.privileges})

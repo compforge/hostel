@@ -28,7 +28,7 @@ import (
 
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/go-stdx/shellx"
-
+	hostel "github.com/qiankunli/hostel/internal"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 )
@@ -202,19 +202,32 @@ func (s *Shell) Run(ctx context.Context, command string, onLine func(string)) (*
 // was fixed when this shell started. The control step is framed separately so
 // arbitrary command source (including heredocs) remains byte-for-byte intact.
 func (s *Shell) RunAt(ctx context.Context, cwdInBed, command string, onLine func(string)) (*RunResult, error) {
+	return s.runAt(ctx, cwdInBed, command, nil, onLine)
+}
+func (s *Shell) runAt(ctx context.Context, cwdInBed, command string, settings *SessionSettings, onLine func(string)) (*RunResult, error) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	if s.Dead() {
 		return nil, fmt.Errorf("shell: session is dead")
 	}
+	if settings != nil {
+		var err error
+		cwdInBed, err = s.prepareSessionLocked(ctx, settings)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if cwdInBed != "" {
 		processCwd, err := s.view.Path(cwdInBed)
 		if err != nil {
-			return nil, fmt.Errorf("shell: project cwd %q: %w", cwdInBed, err)
+			return nil, hostel.WrapError(hostel.ErrPreparationFailed, "session directory", err)
 		}
 		result, err := s.runLocked(ctx, "command cd -- "+shellx.Quote(processCwd), onLine)
-		if err != nil || result.ExitCode != 0 {
-			return result, err
+		if err != nil {
+			return nil, err
+		}
+		if result.ExitCode != 0 {
+			return nil, hostel.WrapError(hostel.ErrPreparationFailed, "session directory", fmt.Errorf("cd exited %d", result.ExitCode))
 		}
 	}
 	return s.runLocked(ctx, command, onLine)
@@ -287,11 +300,20 @@ func (m *Manager) StartSessionExecution(
 	onStart func(ExecutionStatus),
 	onOutput func(ExecutionOutput),
 ) (*Execution, error) {
+	return m.startSessionExecution(ctx, b, shell, command, cwdInBed, nil, timeout, onStart, onOutput)
+}
+func (m *Manager) StartConfiguredSessionExecution(ctx context.Context, b *Resident, shell *Shell, command string, settings SessionSettings, timeout time.Duration, onStart func(ExecutionStatus), onOutput func(ExecutionOutput)) (*Execution, error) {
+	if err := ValidateRequestEnv(settings.Environment); err != nil {
+		return nil, hostel.WrapError(hostel.ErrInvalidArgument, "session environment", err)
+	}
+	return m.startSessionExecution(ctx, b, shell, command, "", &settings, timeout, onStart, onOutput)
+}
+func (m *Manager) startSessionExecution(ctx context.Context, b *Resident, shell *Shell, command, cwdInBed string, settings *SessionSettings, timeout time.Duration, onStart func(ExecutionStatus), onOutput func(ExecutionOutput)) (*Execution, error) {
 	finishOperation, err := m.BeginOperation(b, OpExec, timeout)
 	if err != nil {
 		return nil, err
 	}
-	execution := m.executions.trackSession(ctx, b.Name, shell, command, cwdInBed, timeout, onStart, onOutput, func(result ExecutionResult) {
+	execution := m.executions.trackSession(ctx, b.Name, shell, command, cwdInBed, settings, timeout, onStart, onOutput, func(result ExecutionResult) {
 		finishOperation()
 		b.RecordCommand(result.Duration)
 	})

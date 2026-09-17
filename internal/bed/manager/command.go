@@ -108,8 +108,23 @@ func (m *Manager) StartExecution(
 	if err != nil {
 		return nil, err
 	}
+	var outputLog *executionLog
+	if mode == ExecutionBackground {
+		var err error
+		outputLog, err = newExecutionLog(b.Spec().Dir)
+		if err != nil {
+			finishOperation()
+			return nil, err
+		}
+	}
+	cleanupLog := func() {
+		if outputLog != nil {
+			outputLog.discard()
+		}
+	}
 	input, err := newCommandInput(stdin)
 	if err != nil {
+		cleanupLog()
 		finishOperation()
 		return nil, err
 	}
@@ -119,10 +134,11 @@ func (m *Manager) StartExecution(
 	input.closeReader()
 	if err != nil {
 		input.close()
+		cleanupLog()
 		finishOperation()
 		return nil, err
 	}
-	execution := m.executions.track(ctx, b.Name, mode, bedExecutor.ID(), bedExecutor.Backend(), proc, stdout, stderr, timeout, onStart, onOutput, func(result ExecutionResult) {
+	execution := m.executions.track(ctx, b.Name, mode, bedExecutor.ID(), bedExecutor.Backend(), proc, stdout, stderr, timeout, command, outputLog, onStart, onOutput, func(result ExecutionResult) {
 		input.close()
 		finishOperation()
 		b.RecordCommand(result.Duration)

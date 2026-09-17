@@ -26,27 +26,29 @@ import (
 	"fmt"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 	"os"
+	"os/user"
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
-// FileInfo mirrors the OpenSandbox execd file metadata shape so existing SDKs
-// deserialize hostel responses unchanged. Paths are reported back in client
-// form (bed-rooted; symmetric with what the caller sent).
+// FileInfo describes BedFS metadata using Unix permission bits and Bed paths.
+// Protocol adapters own their external field encodings.
 type FileInfo struct {
 	Path       string    `json:"path,omitempty"`
 	Type       string    `json:"type,omitempty"` // "file" | "directory" | "symlink"
 	Size       int64     `json:"size"`
+	CreatedAt  time.Time `json:"created_at,omitzero"`
 	ModifiedAt time.Time `json:"modified_at,omitzero"`
 	Owner      string    `json:"owner"`
 	Group      string    `json:"group"`
 	Mode       int       `json:"mode"`
 }
 
-// ReplaceItem / ReplaceResult mirror execd's /files/replace shapes.
+// ReplaceItem / ReplaceResult describe a literal content substitution.
 type ReplaceItem struct {
 	Old string `json:"old,omitempty"`
 	New string `json:"new,omitempty"`
@@ -55,14 +57,13 @@ type ReplaceResult struct {
 	ReplacedCount int `json:"replacedCount"`
 }
 
-// RenameItem mirrors execd's /files/mv item shape.
+// RenameItem describes a move within the authorized filesystem.
 type RenameItem struct {
 	Src  string `json:"src,omitempty"`
 	Dest string `json:"dest,omitempty"`
 }
 
-// Permission mirrors execd's permission shape (owner/group accepted but not
-// applied in v1 — hostel runs beds under one uid; only mode is applied).
+// Permission uses Unix mode bits. Ownership must match the Bed-assigned identity.
 type Permission struct {
 	Owner string `json:"owner"`
 	Group string `json:"group"`
@@ -245,14 +246,28 @@ func (o *FS) Workdir() string { return o.paths.WorkdirHost() }
 func (o *FS) virtual(full string) string { return o.paths.ToClient(full) }
 
 func (o *FS) info(full string, li os.FileInfo) FileInfo {
-	typ := "file"
+	typ := "other"
 	switch {
+	case li.Mode().IsRegular():
+		typ = "file"
 	case li.IsDir():
 		typ = "directory"
 	case li.Mode()&os.ModeSymlink != 0:
 		typ = "symlink"
 	}
+	owner, group := "", ""
+	if uid, gid, ok := ownerOf(li); ok {
+		owner = strconv.Itoa(uid)
+		group = strconv.Itoa(gid)
+		if u, err := user.LookupId(owner); err == nil {
+			owner = u.Username
+		}
+		if g, err := user.LookupGroupId(group); err == nil {
+			group = g.Name
+		}
+	}
 	return FileInfo{
+		Owner: owner, Group: group, CreatedAt: creationTime(li),
 		Path:       o.virtual(full),
 		Type:       typ,
 		Size:       li.Size(),
@@ -428,10 +443,11 @@ func (o *FS) Rename(src, dest string) error {
 	return o.root.Rename(sRel, dRel)
 }
 
-// Chmod applies mode bits. Owner/group are accepted for spec compatibility but
-// not applied in v1 (single-uid beds); real setuid lands with the OSEP-0013
-// isolation port.
+// Chmod applies permissions without crossing the Bed's assigned identity.
 func (o *FS) Chmod(p string, perm Permission) error {
+	if err := o.ValidatePermission(p, perm); err != nil {
+		return err
+	}
 	o, routeErr := o.route(p, true)
 	if routeErr != nil {
 		return routeErr
@@ -449,6 +465,27 @@ func (o *FS) Chmod(p string, perm Permission) error {
 		return err
 	}
 	defer f.Close()
+	if perm.Owner != "" || perm.Group != "" {
+		info, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		uid, gid, ok := ownerOf(info)
+		if !ok {
+			return fmt.Errorf("bedfs: ownership unavailable")
+		}
+		owner := strconv.Itoa(uid)
+		group := strconv.Itoa(gid)
+		if u, err := user.LookupId(owner); err == nil && perm.Owner == u.Username {
+			owner = u.Username
+		}
+		if g, err := user.LookupGroupId(group); err == nil && perm.Group == g.Name {
+			group = g.Name
+		}
+		if (perm.Owner != "" && perm.Owner != owner) || (perm.Group != "" && perm.Group != group) {
+			return fmt.Errorf("bedfs: changing file ownership is not supported")
+		}
+	}
 	return f.Chmod(os.FileMode(perm.Mode) & os.ModePerm)
 }
 

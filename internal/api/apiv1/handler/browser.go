@@ -1,0 +1,317 @@
+// Copyright 2026 Li Qiankun
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package handler
+
+import (
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gobwas/ws"
+
+	"github.com/qiankunli/hostel/internal/amenity"
+	bed "github.com/qiankunli/hostel/internal/bed/manager"
+)
+
+// browserOf resolves the bed from the :bedId path param and the Browser
+// amenity, writing the error response when either is missing. The raw CDP
+// socket is never exposed — only these bed-scoped verbs (docs/amenity.md §2).
+func (s *Handler) browserOf(c *gin.Context) (*bed.Resident, amenity.Browser, func()) {
+	b, err := s.mgr.Ensure(c.Request.Context(), c.Param("bedId"))
+	if err != nil {
+		respondBedError(c, err)
+		return nil, nil, nil
+	}
+	finish, err := s.mgr.BeginOperation(b, bed.OpBrowser, 0)
+	if err != nil {
+		respondBedError(c, err)
+		return nil, nil, nil
+	}
+	br, err := s.mgr.Amenities().Browser(c.Request.Context(), b.ID)
+	if err != nil {
+		finish()
+		respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, err.Error())
+		return nil, nil, nil
+	}
+	return b, br, finish
+}
+
+// GET /v1/beds/:bedId/browser/info — per-bed CDP endpoint (execd-compatible
+// envelope). The control plane fetches this and injects the cdp_url into the
+// bed as PLAYWRIGHT_MCP_CDP_ENDPOINT; the bed's playwright then connectOverCDP
+// to a proxied socket that shows only this bed's slice of the shared browser.
+// The url is bed-local (127.0.0.1): the bed shares the pod net ns with hostel.
+func (s *Handler) browserInfo(c *gin.Context) {
+	b, br, finishOperation := s.browserOf(c)
+	if br == nil {
+		return
+	}
+	defer finishOperation()
+	token, err := br.CDPToken()
+	if err != nil {
+		runtimeError(c, err.Error())
+		return
+	}
+	// Reuse the port the request came in on; host is always loopback for the bed.
+	_, port := splitHostPort(c.Request.Host)
+	cdpURL := (&url.URL{
+		Scheme:   "ws",
+		Host:     "127.0.0.1:" + port,
+		Path:     "/v1/cdp",
+		RawQuery: url.Values{"bed": {b.Name}, "t": {token}}.Encode(),
+	}).String()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    gin.H{"cdp_url": cdpURL},
+	})
+}
+
+// GET /v1/cdp?bed=&t= — websocket upgrade → per-bed CDP proxy. Not bed-scoped
+// by path: playwright connectOverCDP passes the full url (incl. query) and
+// can't set headers, so the bed id + token ride the query. ServeCDP
+// authenticates the token against the bed-level secret, so a guessed bed/token
+// is refused there.
+func (s *Handler) browserCDP(c *gin.Context) {
+	bedID := c.Query("bed")
+	token := c.Query("t")
+	if bedID == "" || token == "" {
+		badRequest(c, "missing bed or token")
+		return
+	}
+	// Ensure before upgrading: ServeCDP ensures the tenant at dial time (the
+	// lazy browser boot point) and needs the bed's workspace for that create.
+	b, err := s.mgr.Ensure(c.Request.Context(), bedID)
+	if err != nil {
+		respondBedError(c, err)
+		return
+	}
+	conn, _, _, err := ws.UpgradeHTTP(c.Request, c.Writer)
+	if err != nil {
+		// Response already partially written by the upgrader on failure.
+		log.Printf("hostel: cdp ws upgrade for bed=%s failed: %v", bedID, err)
+		return
+	}
+	// A CDP connection is a session, not an operation (docs/kernel.md):
+	// stateful, ended by the client or revoked by evict — it must not hold
+	// the bed active. closeFn kills the conn, unblocking the proxy loops.
+	sess, err := s.mgr.OpenSession(b, bed.SessionKindCDP, func() { conn.Close() })
+	if err != nil {
+		conn.Close()
+		log.Printf("hostel: cdp session for bed=%s refused: %v", bedID, err)
+		return
+	}
+	defer sess.Close()
+	br, err := s.mgr.Amenities().Browser(sess.Context(), b.ID)
+	if err != nil {
+		return
+	}
+	if err := br.ServeCDP(sess.Context(), conn, b.Workdir(), token, sess.Touch); err != nil {
+		log.Printf("hostel: cdp proxy for bed=%s ended: %v", bedID, err)
+	}
+}
+
+// POST /v1/beds/:bedId/browser/goto {url}
+//
+// +spec=`Browser actions are scoped to one bed-owned browser context.`
+// +case:id=chromium_bed_workflow,desc=`Navigate, interact with, and read a page through bed-scoped verbs`,expect=`the same bed observes the resulting page state`
+func (s *Handler) browserGoto(c *gin.Context) {
+	b, br, finishOperation := s.browserOf(c)
+	if br == nil {
+		return
+	}
+	defer finishOperation()
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.URL == "" {
+		badRequest(c, "missing 'url'")
+		return
+	}
+	title, loc, err := br.Goto(c.Request.Context(), b.Workdir(), req.URL)
+	if err != nil {
+		runtimeError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"title": title, "url": loc})
+}
+
+// POST /v1/beds/:bedId/browser/screenshot {path?}
+//
+// +spec=`A screenshot is written into the bed workspace and returned as a BedFS /workspace path.`
+// +case:id=chromium_screenshot_artifact,desc=`Capture a screenshot and download it through the file API`,expect=`a non-empty PNG is returned from the reported bed path`
+func (s *Handler) browserScreenshot(c *gin.Context) {
+	b, br, finishOperation := s.browserOf(c)
+	if br == nil {
+		return
+	}
+	defer finishOperation()
+	var req struct {
+		Path string `json:"path,omitempty"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	saved, err := br.Screenshot(c.Request.Context(), b.Workdir(), req.Path)
+	if err != nil {
+		runtimeError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"path": saved})
+}
+
+// POST /v1/beds/:bedId/browser/text
+func (s *Handler) browserText(c *gin.Context) {
+	b, br, finishOperation := s.browserOf(c)
+	if br == nil {
+		return
+	}
+	defer finishOperation()
+	text, err := br.Text(c.Request.Context(), b.Workdir())
+	if err != nil {
+		runtimeError(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"text": text})
+}
+
+// POST /v1/beds/:bedId/browser/close — release this bed's browser context.
+func (s *Handler) browserClose(c *gin.Context) {
+	_, br, finishOperation := s.browserOf(c)
+	if br == nil {
+		return
+	}
+	defer finishOperation()
+	if err := br.CloseContext(c.Request.Context()); err != nil {
+		runtimeError(c, err.Error())
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// POST /v1/beds/:bedId/browser/click {selector}
+func (s *Handler) browserClick(c *gin.Context) {
+	b, br, finishOperation := s.browserOf(c)
+	if br == nil {
+		return
+	}
+	defer finishOperation()
+	var req struct {
+		Selector string `json:"selector"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Selector == "" {
+		badRequest(c, "missing 'selector'")
+		return
+	}
+	if err := br.Click(c.Request.Context(), b.Workdir(), req.Selector); err != nil {
+		runtimeError(c, err.Error())
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// POST /v1/beds/:bedId/browser/type {selector, text, clear?}
+func (s *Handler) browserType(c *gin.Context) {
+	b, br, finishOperation := s.browserOf(c)
+	if br == nil {
+		return
+	}
+	defer finishOperation()
+	var req struct {
+		Selector string `json:"selector"`
+		Text     string `json:"text"`
+		Clear    bool   `json:"clear,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Selector == "" {
+		badRequest(c, "missing 'selector'")
+		return
+	}
+	if err := br.Type(c.Request.Context(), b.Workdir(), req.Selector, req.Text, req.Clear); err != nil {
+		runtimeError(c, err.Error())
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// POST /v1/beds/:bedId/browser/press {key}
+func (s *Handler) browserPress(c *gin.Context) {
+	b, br, finishOperation := s.browserOf(c)
+	if br == nil {
+		return
+	}
+	defer finishOperation()
+	var req struct {
+		Key string `json:"key"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Key == "" {
+		badRequest(c, "missing 'key'")
+		return
+	}
+	if err := br.Press(c.Request.Context(), b.Workdir(), req.Key); err != nil {
+		runtimeError(c, err.Error())
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// POST /v1/beds/:bedId/browser/scroll {dx?, dy?}
+func (s *Handler) browserScroll(c *gin.Context) {
+	b, br, finishOperation := s.browserOf(c)
+	if br == nil {
+		return
+	}
+	defer finishOperation()
+	var req struct {
+		DX int `json:"dx,omitempty"`
+		DY int `json:"dy,omitempty"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	if err := br.Scroll(c.Request.Context(), b.Workdir(), req.DX, req.DY); err != nil {
+		runtimeError(c, err.Error())
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// POST /v1/beds/:bedId/browser/wait {selector}
+func (s *Handler) browserWait(c *gin.Context) {
+	b, br, finishOperation := s.browserOf(c)
+	if br == nil {
+		return
+	}
+	defer finishOperation()
+	var req struct {
+		Selector string `json:"selector"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Selector == "" {
+		badRequest(c, "missing 'selector'")
+		return
+	}
+	if err := br.Wait(c.Request.Context(), b.Workdir(), req.Selector); err != nil {
+		runtimeError(c, err.Error())
+		return
+	}
+	c.Status(http.StatusOK)
+}
+
+// splitHostPort returns host and port from a "host:port" (port "" if absent).
+// net.SplitHostPort errors on a bare host; we tolerate that.
+func splitHostPort(hostport string) (host, port string) {
+	if h, p, err := net.SplitHostPort(hostport); err == nil {
+		return h, p
+	}
+	return hostport, ""
+}

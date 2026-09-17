@@ -7,9 +7,43 @@ Hostel 在 API 层适配 OpenSandbox Execd，内部仍由 Bed Manager、Executor
 `/v1/beds/:bedId/execd/...` 从路径读取同一标识。两组路由共用 handler，入口只负责
 绑定已有 Bed。路径优先于 header，不存在的 Bed 返回 404，不会隐式创建。
 
-支持 ping、前台 command、按 execution id 取消 command、files/upload、files/download
-和批量 directories 删除。命令支持 stdin、cwd、envs 和毫秒 timeout；UID/GID 切换、
-background、下载范围参数以及尚未实现的接口会明确失败，不返回假成功。
+`internal/api/apiv1/{handler,view}` 拥有原生协议；
+`internal/api/execd/{handler,view}` 拥有 OpenSandbox 适配。两者直接调用 Bed Manager、
+Execution、Session 和 BedFS，不互相依赖。`internal/api` 仅组装 server、中间件与路由；
+Bed 层不含协议族事件、错误码或权限编码。
+
+支持 ping、前台/后台 command、状态、日志、取消、session 创建/执行/删除，以及文件
+info/search、上传下载、移动、删除、权限、内容替换和目录创建/列表/删除。
+命令支持 stdin、cwd、envs 和毫秒 timeout；UID/GID 覆盖仍明确拒绝。code/context 路由
+返回 501 NOT_SUPPORTED，本版本不提供代码 kernel，也不将 code 转交 shell。
+
+权限在 Execd JSON 中以 644/755 表达，在 BedFS 中保持 Unix mode bits。owner/group
+只能确认符合 Bed 身份的现有文件属主，不能静默忽略或任意切换属主。mode=0 沿用上游
+“不修改 mode”的行为。元数据包含 owner/group、mode、modified_at 和 created_at；Linux
+无可移植 birth time 时使用 ctime，其他平台按本机可用时间提供回退。
+
+下载支持 HTTP Range（206/416）和 1-based offset/limit 行读取，二者互斥。字节读取
+复用 BedFS 的受限文件描述符并流式返回，mutation 不使用宿主读取回退。目录 depth=0
+返回空列表；列表保持字典序，symlink 仅作为条目返回，不递归跟随。
+
+后台启动返回 init + execution_complete，其中 complete 只确认成功启动；进程的最终
+结果通过 status 查询。日志为 stdout/stderr 合并文本，返回 EXECD-COMMANDS-TAIL-CURSOR。
+本地对照 OpenSandbox 57ea79511：规范文字写行游标，但 runtime/command_status.go 实际
+按字节偏移读取；本 adapter 对齐实际 execd 的字节游标，超出末尾时夹到真实 EOF。
+
+Execution 在 Bed 目录的私有 executions 子目录保存后台输出，不进入 BedFS、默认
+Store 快照或 64 KiB 片段缓存。运行中日志不清理；终态记录和文件至少保留 24 小时，
+每小时清理到期记录。Executor 替换保留历史；Bed evict/purge/Forget 结束该本地身份后
+清理，重用 Bed Name 不得读到旧历史。daemon 重启不恢复执行历史，启动准入前清理旧日志，不承诺跨 carrier 日志。
+磁盘日志的保留期与内存片段缓存独立：最多为 1024 条已完成 Execution 保留缓存，
+更早记录释放缓存，原生片段 API 显式返回 truncated；Execd 字节日志仍从磁盘读取。
+写入失败会停止执行并报告 output_failure，读取失败不会伪装为空日志。
+
+Session 复用持久 Shell。每次运行的环境准备、cwd 展开与命令执行在同一 run lock 内
+完成；cwd 支持 $NAME、${NAME} 和前导 ~，拒绝命令替换。准入回调的环境值作为受信任
+session 环境更新保留。超时/取消关闭当前 Shell，后续请求返回 session 不可用，不隐式
+创建新的 session。准备失败使用统一领域错误，报告 preparation_failed；命令未启动时
+没有进程退出结果，Shell 仍可继续使用。错误映射见 [错误契约](errors.md)。
 
 命令流使用 OpenSandbox 的 init、stdout、stderr、ping，以及成功时的
 execution_complete 或失败时的 error。CommandExecError.evalue 保留退出码；timeout
