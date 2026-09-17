@@ -19,22 +19,22 @@ func (s *Handler) registerExecd(r *gin.RouterGroup) {
 	r.GET("/ping", func(c *gin.Context) { c.Status(http.StatusOK) })
 	r.POST("/command", s.runCommand)
 	r.DELETE("/command", s.execdInterrupt)
-	r.GET("/files/download", s.execdFile(s.execdDownload))
-	r.POST("/files/upload", s.execdFile(s.execdUpload))
-	r.DELETE("/directories", s.execdFile(s.execdRemoveDirectories))
-	r.GET("/files/info", s.execdFile(s.execdInfo))
-	r.GET("/files/search", s.execdFile(s.execdSearch))
-	r.DELETE("/files", s.execdFile(s.filesDelete))
-	r.POST("/files/mv", s.execdFile(s.filesRename))
-	r.POST("/files/permissions", s.execdFile(s.execdPermissions))
-	r.POST("/files/replace", s.execdFile(s.filesReplace))
-	r.GET("/directories/list", s.execdFile(s.execdList))
-	r.POST("/directories", s.execdFile(s.execdMkdir))
-	r.POST("/session", s.execdFile(s.sessionCreate))
+	r.GET("/files/download", s.execdDownload)
+	r.POST("/files/upload", s.execdUpload)
+	r.DELETE("/directories", s.execdRemoveDirectories)
+	r.GET("/files/info", s.execdInfo)
+	r.GET("/files/search", s.execdSearch)
+	r.DELETE("/files", s.filesDelete)
+	r.POST("/files/mv", s.filesRename)
+	r.POST("/files/permissions", s.execdPermissions)
+	r.POST("/files/replace", s.filesReplace)
+	r.GET("/directories/list", s.execdList)
+	r.POST("/directories", s.execdMkdir)
+	r.POST("/session", s.sessionCreate)
 	r.POST("/session/:sessionId/run", s.sessionRun)
-	r.DELETE("/session/:sessionId", s.execdFile(s.withOp(bed.OpControl, s.sessionDelete)))
-	r.GET("/command/status/:id", s.execdFile(s.execdStatus))
-	r.GET("/command/:id/logs", s.execdFile(s.execdLogs))
+	r.DELETE("/session/:sessionId", s.withOp(bed.OpControl, s.sessionDelete))
+	r.GET("/command/status/:id", s.execdStatus)
+	r.GET("/command/:id/logs", s.execdLogs)
 	for _, route := range []string{"/code", "/code/context", "/code/contexts", "/code/contexts/:contextId"} {
 		r.Any(route, func(c *gin.Context) {
 			respondError(c, 501, apiview.ErrNotSupported, "code execution kernels are not supported")
@@ -72,24 +72,11 @@ func (s *Handler) bindExecdBed(c *gin.Context) {
 	c.Next()
 }
 
-func (s *Handler) execdFile(next gin.HandlerFunc) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		b := s.bedOf(c)
-		if b == nil || !s.prepareExecd(c, b, nil) {
-			return
-		}
-		next(c)
-	}
-}
-
 func (s *Handler) execdInterrupt(c *gin.Context) {
 	b := s.bedOf(c)
 	execution, ok := s.mgr.Executions().Get(c.Query("id"))
 	if !ok || execution.BedID != b.Name || execution.Mode == bed.ExecutionService {
 		respondError(c, 404, apiview.ErrCommandNotFound, "command not found")
-		return
-	}
-	if !s.prepareExecd(c, b, nil) {
 		return
 	}
 	execution.RequestStop(bed.CauseInterrupted)

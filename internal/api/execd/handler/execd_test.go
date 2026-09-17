@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/qiankunli/hostel/internal/api/execd/view"
@@ -155,9 +157,23 @@ func TestExecdFilesUseResolvedBed(t *testing.T) {
 	}
 }
 
-func TestExecdCredentialAndAdmission(t *testing.T) {
+func TestExecdLocalOperationsKeepAuthentication(t *testing.T) {
 	s := newTestServer(t)
-	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"secured","env":{"EXECD_ACCESS_TOKEN":"own-token","EXECD_CONTROL_URL":"http://127.0.0.1:1"}}`), nil)
+	var callbacks atomic.Int32
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callbacks.Add(1)
+		http.Error(w, "unexpected control-plane callback", http.StatusServiceUnavailable)
+	}))
+	defer control.Close()
+	// Persisted Bed declarations may retain old environment keys. They must not
+	// turn local Execd operations into control-plane requests.
+	raw, err := json.Marshal(map[string]any{"id": "secured", "env": map[string]string{
+		"EXECD_ACCESS_TOKEN": "own-token", "EXECD_CONTROL_URL": control.URL,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := do(t, s, http.MethodPost, "/v1/beds", bytes.NewReader(raw), nil)
 	if rec.Code != 202 && rec.Code != 201 && rec.Code != 200 {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
@@ -170,11 +186,40 @@ func TestExecdCredentialAndAdmission(t *testing.T) {
 			rec = do(t, s, "POST", base+"/command", strings.NewReader(`{"command":"true"}`), hdr)
 			want := 401
 			if token == "own-token" {
-				want = 503
+				want = 200
 			}
 			if rec.Code != want {
 				t.Fatal(rec.Code, want, rec.Body.String())
 			}
+			if token == "own-token" && !strings.Contains(rec.Body.String(), `"type":"execution_complete"`) {
+				t.Fatal("command did not complete", rec.Body.String())
+			}
 		}
+		hdr := map[string]string{BedHeader: "secured", "Authorization": "Bearer own-token"}
+		rec = do(t, s, "POST", base+"/directories", strings.NewReader(`{"/workspace/local":{"mode":755}}`), hdr)
+		if rec.Code != 200 {
+			t.Fatal("local file operation failed", rec.Code, rec.Body.String())
+		}
+		rec = do(t, s, "POST", base+"/session", strings.NewReader(`{}`), hdr)
+		if rec.Code != 200 {
+			t.Fatal("local session creation failed", rec.Code, rec.Body.String())
+		}
+		var session struct {
+			ID string `json:"session_id"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &session); err != nil || session.ID == "" {
+			t.Fatal("invalid session response", err, rec.Body.String())
+		}
+		rec = do(t, s, "POST", base+"/session/"+session.ID+"/run", strings.NewReader(`{"command":"printf local","timeout":3000}`), hdr)
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"text":"local"`) || !strings.Contains(rec.Body.String(), `"type":"execution_complete"`) {
+			t.Fatal("local session execution failed", rec.Code, rec.Body.String())
+		}
+		rec = do(t, s, "DELETE", base+"/session/"+session.ID, nil, hdr)
+		if rec.Code != 200 {
+			t.Fatal("local session deletion failed", rec.Code, rec.Body.String())
+		}
+	}
+	if got := callbacks.Load(); got != 0 {
+		t.Fatalf("Execd called the control plane %d times", got)
 	}
 }

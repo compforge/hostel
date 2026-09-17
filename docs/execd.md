@@ -40,10 +40,9 @@ Store 快照或 64 KiB 片段缓存。运行中日志不清理；终态记录和
 写入失败会停止执行并报告 output_failure，读取失败不会伪装为空日志。
 
 Session 复用持久 Shell。每次运行的环境准备、cwd 展开与命令执行在同一 run lock 内
-完成；cwd 支持 $NAME、${NAME} 和前导 ~，拒绝命令替换。准入回调的环境值作为受信任
-session 环境更新保留。超时/取消关闭当前 Shell，后续请求返回 session 不可用，不隐式
-创建新的 session。准备失败使用统一领域错误，报告 preparation_failed；命令未启动时
-没有进程退出结果，Shell 仍可继续使用。错误映射见 [错误契约](errors.md)。
+完成；cwd 支持 $NAME、${NAME} 和前导 ~，拒绝命令替换。超时/取消关闭当前 Shell，
+后续请求返回 session 不可用，不隐式创建新的 session。准备失败使用统一领域错误，报告
+preparation_failed；命令未启动时没有进程退出结果，Shell 仍可继续使用。错误映射见 [错误契约](errors.md)。
 
 命令流使用 OpenSandbox 的 init、stdout、stderr、ping，以及成功时的
 execution_complete 或失败时的 error。CommandExecError.evalue 保留退出码；timeout
@@ -54,11 +53,9 @@ Bed 创建者可在不可变 base env 中设置 `EXECD_ACCESS_TOKEN`。配置后
 `X-EXECD-ACCESS-TOKEN` 或 Bearer 凭据；未配置时沿用独立 Hostel 的可信调用方边界。
 Bed Name 仅用于寻址，不能代替凭据。原生管理 API 的网络访问仍须由部署方约束。
 
-可选 `EXECD_CONTROL_URL` 启用执行准入回调：在命令/文件操作前向
-`<URL>/execd/v1/sandboxes/<Bed Name>/prepare` POST `{command?: ...}`，携带本 Bed 的
-Bearer 凭据。返回 `{exit_code, stderr?, envs?}`，非零拒绝执行，回调不可用也拒绝。
-回调负责上游策略与续期，文件字节和命令输出始终由调用方直连 Hostel。
-配置来自已创建 Bed，命令请求中的 envs 和身份 header 不能改变回调目标或凭据。
+Execd 请求在本实例完成 Bed 绑定、鉴权和本地操作。上层控制面负责业务准入、租期与
+跨实例路由；需要逐请求策略时，由控制面代理 Execd 请求，Hostel 不反向调用控制面。
+命令、Session 和文件操作复用 Bed 自身的生命周期与运行时约束。
 
-凭据和回调配置面向可信 Bed 创建者；Bed base env 本身不是秘密存储。共享实例的
-隔离保证取决于所选房型和宿主能力，见 isolation.md。
+凭据配置面向可信 Bed 创建者；Bed base env 本身不是秘密存储。共享实例的隔离保证
+取决于所选房型和宿主能力，见 isolation.md。
