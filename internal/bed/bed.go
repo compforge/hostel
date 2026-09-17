@@ -33,6 +33,7 @@ type Bed struct {
 
 type Spec struct {
 	PathMappings []PathMapping
+	PortMappings []PortMappingSpec
 	// SyncPaths selects Store-managed BedFS data. nil defaults to /workspace; [] syncs metadata only.
 	SyncPaths []string
 	// Env is the immutable base environment for ordinary executions and session
@@ -70,6 +71,7 @@ func clonePolicy(p *NetworkPolicy) *NetworkPolicy {
 }
 func cloneSpec(s Spec) Spec {
 	s.PathMappings = slices.Clone(s.PathMappings)
+	s.PortMappings = slices.Clone(s.PortMappings)
 	s.SyncPaths = slices.Clone(s.SyncPaths)
 	s.Env = maps.Clone(s.Env)
 	s.EnvFiles = maps.Clone(s.EnvFiles)

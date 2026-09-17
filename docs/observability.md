@@ -171,13 +171,15 @@ Amenity Manager 只通过适配器参与 Bed 回收，其设施全局生命周�
 |---|---|---|
 | `host` | 宿主系统事实，不代表领域已启用某项能力 | 不重复返回 |
 | `components` | 各领域 Component Status | 各领域在此 Bed 上的实际状态 |
+| `services` | 不展开 | Service 运行、就绪及 execution 事实 |
+| `port_mappings` | 不展开 | Bed 内监听与 Carrier 发布映射 |
 | `amenities` | 各设施全局状态 | 已绑定 Tenant 的 ID 和设施自定义状态 |
 
 Bed 详情的 `status.lifecycle` 由 Bed Manager 提供；Tenant 状态由设施持有，查询时组合，
 不复制进 Bed。Tenant Status 的字段跟随设施领域：浏览器就绪和 MCP 连接池不是同一种状态。
 接口不根据 Status 推导更强的隔离保证，也不执行生命周期 hook、探测或远端 I/O。状态读取只读取已发布的内存状态，不持有慢操作的协调锁；Tenant 存在不代表设施提供强制隔离。
 
-`GET /v1/status` 的 `schema_version` 为 `8`。工具选择报告位于 `components.filesystem.tools`、`components.network.tools` 和 `components.resource.accounting.tools`；每项包含 Policy、Requirements、探测结果、是否选中及原因。`requirements.tools` 是该工具依赖的外部程序列表，与组件的工具状态映射分别解释。
+`GET /v1/status` 的 `schema_version` 为 `9`。工具选择报告位于 `components.filesystem.tools`、`components.network.tools` 和 `components.resource.accounting.tools`；每项包含 Policy、Requirements、探测结果、是否选中及原因。`requirements.tools` 是该工具依赖的外部程序列表，与组件的工具状态映射分别解释。
 
 Privilege 的 credential helper 诊断字段为 `helper`。Bed Service 的 `phase` 表达运行阶段，独立的 `ready` 表达当前可用性；readiness 变化不终止运行实例。`host.fact` 报告 runtime、process、security_modules、
 namespace_limits、kernel_features 与 ptrace 等启动事实；`host.status` 组合动态资源状态，

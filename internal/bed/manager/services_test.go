@@ -117,6 +117,7 @@ func testServiceManager(t *testing.T) (*Manager, []model.ServiceSpec, *hostnetwo
 	}
 	main, tools := serviceSpec, serviceSpec
 	main.Name, tools.Name = "main", "tools"
+	main.PortMapping, tools.PortMapping = "main", "tools"
 	return m, []model.ServiceSpec{main, tools}, ports
 }
 
@@ -137,7 +138,7 @@ func waitService(t *testing.T, m *Manager, b *Resident, name string, predicate f
 
 func TestBedServicesShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
 	m, specs, ports := testServiceManager(t)
-	if _, err := m.InitializeBedWithOptions(t.Context(), "with-services", CreateOptions{Services: specs}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "with-services", testServiceOptions(specs)); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "with-services")
@@ -163,7 +164,7 @@ func TestBedServicesShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
 	if _, err := m.InitializeBed(t.Context(), b.Name); !errors.Is(err, ErrServicesConflict) {
 		t.Fatalf("explicit empty create changed services: %v", err)
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, CreateOptions{Services: specs}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, testServiceOptions(specs)); err != nil {
 		t.Fatal(err)
 	}
 	plain, err := m.Ensure(t.Context(), "plain")
@@ -195,7 +196,7 @@ func TestBedServicesShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
 
 func TestBedServiceRestartChangesIdentityAndToken(t *testing.T) {
 	m, specs, _ := testServiceManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "restart", CreateOptions{Services: specs[:1]})
+	_, err := m.InitializeBedWithOptions(t.Context(), "restart", testServiceOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +239,7 @@ func TestBedServiceRestartChangesIdentityAndToken(t *testing.T) {
 
 func TestBedServiceExecutionsUseCommonRegistry(t *testing.T) {
 	m, specs, _ := testServiceManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "execution", CreateOptions{Services: specs[:1]})
+	_, err := m.InitializeBedWithOptions(t.Context(), "execution", testServiceOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +270,7 @@ func TestBedServiceNeverPublishesSquatterAndRetriesBinding(t *testing.T) {
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "foreign ready") })}
 	go srv.Serve(squatter)
 	defer srv.Close()
-	if _, err := m.InitializeBedWithOptions(t.Context(), "squatter", CreateOptions{Services: specs[:1]}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "squatter", testServiceOptions(specs[:1])); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "squatter")
@@ -284,7 +285,7 @@ func TestBedServiceNeverPublishesSquatterAndRetriesBinding(t *testing.T) {
 
 func TestBedServiceHoldCanBeReleasedEarly(t *testing.T) {
 	m, specs, _ := testServiceManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "hold", CreateOptions{Services: specs[:1]})
+	_, err := m.InitializeBedWithOptions(t.Context(), "hold", testServiceOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +314,7 @@ func TestBedServiceHoldCanBeReleasedEarly(t *testing.T) {
 
 func TestBedServiceLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
 	m, specs, ports := testServiceManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "recover", CreateOptions{Services: specs[:1]})
+	_, err := m.InitializeBedWithOptions(t.Context(), "recover", testServiceOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +347,18 @@ func TestBedServiceLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got := recovered.Spec().PortMappings; len(got) != 1 || got[0].Name != "main" || !got[0].Publish {
+		t.Fatalf("lost port declaration: %+v", got)
+	}
 	if got := recovered.Spec().Services; len(got) != 1 || got[0].Name != "main" || got[0].SpecDigest == "" {
 		t.Fatalf("recovery lost service declaration: %+v", got)
 	}
+}
+
+func testServiceOptions(specs []model.ServiceSpec) CreateOptions {
+	options := CreateOptions{Services: specs}
+	for _, s := range specs {
+		options.PortMappings = append(options.PortMappings, model.PortMappingSpec{Name: s.PortMapping, Protocol: "tcp", Publish: true})
+	}
+	return options
 }

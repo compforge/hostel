@@ -13,6 +13,7 @@ func (m *Manager) SetNetworkManager(manager *network.Manager) {
 		manager = network.WithProvider((*network.Manager)(nil), m.owners.Network)
 	}
 	manager.SetStatusWriter(m.owners.Network)
+	manager.SetPortMappings(m.portMappings)
 	m.network = manager
 }
 func (m *Manager) NetworkReport() network.Status { return m.network.Status() }

@@ -75,6 +75,22 @@ the Kubernetes permission profiles in [E2E environments](e2e-environments.md#roo
 make e2e E2E_ARGS='-run TestFilesystemPermissions -timeout 3m'
 ```
 
+## Verify Bed port mappings
+
+`TestBedPortMappings` starts two HTTP Services with the same preferred Bed port.
+For local and supervisor executors it checks per-Bed status and access agreement,
+external HTTP access, Bed-command access through `internal_endpoint`, restart
+identity, distinct Host ports, and allocation cleanup on eviction. It requires the
+binary profile and Python 3. The supervisor executor requires Linux. Shared networking with
+the local executor runs on macOS/Linux; private netns
+is opt-in and requires the disposable Linux network profile. Logical-scope unit
+tests do not substitute for that profile.
+
+```sh
+make e2e E2E_ARGS='-run TestBedPortMappings -timeout 3m'
+HOSTEL_E2E_REQUIRE_NETWORK=1 make e2e E2E_ARGS='-run TestBedPortMappings -timeout 3m'
+```
+
 ## Run native Bed root and Service cooperation
 
 `TestServiceExecutableUsesBedView` covers mount/PRoot × local/supervisor.
@@ -204,8 +220,10 @@ Do not run this privileged profile with the image fixture's host networking.
 backends. A test-owned TCP listener runs in the carrier, and a small subprocess
 of the compiled E2E runner connects from inside each Bed through the public
 command/session APIs. Keep the runner executable at a path readable inside the
-Bed (for example `/hostel-test/e2e.test` when mounting compiled binaries into a
-container). No curl, Python, external website or public Internet is required.
+Bed (for example `/usr/local/lib/hostel-e2e/e2e.test` when mounting compiled
+binaries into a container). The private root view inherits runtime directories
+such as `/usr`; an arbitrary carrier path such as `/hostel-test` is not visible
+inside the Bed without an explicit PathMapping. No curl, Python, external website or public Internet is required.
 
 The case verifies initial deny before Ready, explicit IP/CIDR allows, overlapping
 deny precedence, PATCH/DELETE changes, POST/PUT replacement, rejected updates

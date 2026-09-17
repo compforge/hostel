@@ -174,6 +174,11 @@ func (m *Manager) beginInitialization(
 		return nil, nil, pathsErr
 	}
 	options.PathMappings, options.SyncPaths = mappings, syncPaths
+	ports, err := model.NormalizePortMappings(options.PortMappings)
+	if err != nil {
+		return nil, nil, err
+	}
+	options.PortMappings = ports
 	if err := configuration.Validate(options.configuration()); err != nil {
 		return nil, nil, err
 	}
@@ -184,7 +189,7 @@ func (m *Manager) beginInitialization(
 	if err := m.Start(ctx); err != nil {
 		return nil, nil, err
 	}
-	resolvedServices, err := m.services.Resolve(options.Services)
+	resolvedServices, err := m.services.Resolve(options.Services, options.PortMappings)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -250,6 +255,7 @@ func (m *Manager) beginInitialization(
 			checkServices(options, actual.Services),
 			checkBedConfiguration(options, actual),
 			checkBedPaths(options, actual),
+			checkBedPorts(options, actual),
 		)
 	}
 	if current, ok := m.initializations[id]; ok && current.snapshot().Phase == PhaseInitializing {
@@ -261,6 +267,7 @@ func (m *Manager) beginInitialization(
 			checkServices(options, actual.Services),
 			checkBedConfiguration(options, actual),
 			checkBedPaths(options, actual),
+			checkBedPorts(options, actual),
 		)
 	}
 	if m.retirements[id] != nil {
@@ -273,16 +280,17 @@ func (m *Manager) beginInitialization(
 	}
 	if local := m.localIdentities[id]; local != nil {
 		actual := local.bed.Spec()
-		if err := errors.Join(checkServices(options, actual.Services), checkBedConfiguration(options, actual), checkBedPaths(options, actual)); err != nil {
+		if err := errors.Join(checkServices(options, actual.Services), checkBedConfiguration(options, actual), checkBedPaths(options, actual), checkBedPorts(options, actual)); err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
-		resolved, err := m.services.Resolve(actual.Services)
+		resolved, err := m.services.Resolve(actual.Services, actual.PortMappings)
 		if err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
 		options.Services = resolved
+		options.PortMappings = actual.PortMappings
 		if options.PathMappings == nil {
 			options.PathMappings = actual.PathMappings
 		}
@@ -321,6 +329,7 @@ func (m *Manager) beginInitialization(
 	spec := model.Spec{Dir: filepath.Join(m.root, id), Sync: selected, CreatedAt: localMeta.CreatedAt, LocalPresent: localPresent, LocalGeneration: localMeta.Generation}
 	spec.PathMappings, spec.SyncPaths = options.PathMappings, options.SyncPaths
 	spec.Services = options.Services
+	spec.PortMappings = options.PortMappings
 	spec.Env = options.Env
 	spec.EnvFiles, spec.EnvFrom, spec.EnvValueFrom = options.EnvFiles, options.EnvFrom, options.EnvValueFrom
 	if options.NetworkPolicy != nil {
@@ -561,6 +570,7 @@ func residentInitializationStatus(resident *managedBed) InitializationStatus {
 // empty). Native Ensure instead joins the existing declaration. After eviction,
 // callers must repeat overrides because the local identity has been removed.
 type CreateOptions struct {
+	PortMappings  []model.PortMappingSpec
 	PathMappings  []model.PathMapping
 	SyncPaths     []string
 	Env           map[string]string

@@ -54,6 +54,9 @@ func Normalize(specs []bed.ServiceSpec) ([]bed.ServiceSpec, error) {
 			return nil, err
 		}
 		if s.HTTP != nil {
+			if s.PortMapping == "" {
+				return nil, fmt.Errorf("HTTP service %s requires a port_mapping", s.Name)
+			}
 			if !strings.HasPrefix(s.HTTP.ReadyPath, "/") || strings.HasPrefix(s.HTTP.ReadyPath, "//") {
 				return nil, fmt.Errorf("HTTP service %s requires readiness path", s.Name)
 			}

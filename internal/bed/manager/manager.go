@@ -43,6 +43,7 @@ import (
 
 // Manager owns the set of beds and their lifecycle. Safe for concurrent use.
 type Manager struct {
+	portMappings        *network.PortMappings
 	configurations      *configuration.Manager
 	configurationConfig configuration.Config
 	ports               *hostnetwork.PortManager
@@ -195,13 +196,15 @@ func NewManager(host hostfacts.Snapshot, root, defaultBed, shellPath string, iso
 	}
 	m.configurations = configurations
 	if m.services == nil {
-		m.services = service.NewManager(nil, "", m.servicesChanged)
+		m.portMappings = network.NewPortMappings(nil, "")
+		m.services = service.NewManager(m.portMappings, m.servicesChanged)
 	}
 	m.services.SetConfigurationManager(configurations)
 	m.files = filesystem.NewManager(iso, m.owners.Filesystem)
 	m.executorManager = executor.NewManager(m.executorFactory, m.owners.Executor)
 	m.resourceManager = resource.NewManager(m.resources, m.owners.Resource)
 	m.network.SetStatusWriter(m.owners.Network)
+	m.network.SetPortMappings(m.portMappings)
 	m.store.SetStatusWriter(m.owners.Store)
 	var err error
 	policy := privilege.BedUserReport{Strategy: "fixed", UID: m.bedUser.UID(), GID: m.bedUser.GID()}

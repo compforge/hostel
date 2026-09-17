@@ -98,6 +98,10 @@ func (m *Manager) recoverLocalIdentities() error {
 				spec.Env = record.Env
 				spec.EnvFiles, spec.EnvFrom, spec.EnvValueFrom = record.EnvFiles, record.EnvFrom, record.EnvValueFrom
 				spec.Services = record.Services
+				spec.PortMappings, err = model.NormalizePortMappings(record.PortMappings)
+				if err != nil {
+					return fmt.Errorf("recover bed %s ports: %w", local.bed.Name, err)
+				}
 				spec.PathMappings, spec.SyncPaths, err = model.NormalizePaths(record.PathMappings, record.SyncPaths)
 				if err != nil {
 					return fmt.Errorf("recover bed %s paths: %w", local.bed.Name, err)
@@ -131,7 +135,7 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 		return err
 	}
 	spec := local.bed.Spec()
-	data, err := json.Marshal(localIdentityRecord{PathMappings: spec.PathMappings, SyncPaths: spec.SyncPaths, ID: local.bed.ID.String(), Env: spec.Env, EnvFiles: spec.EnvFiles, EnvFrom: spec.EnvFrom, EnvValueFrom: spec.EnvValueFrom, Services: spec.Services})
+	data, err := json.Marshal(localIdentityRecord{PortMappings: spec.PortMappings, PathMappings: spec.PathMappings, SyncPaths: spec.SyncPaths, ID: local.bed.ID.String(), Env: spec.Env, EnvFiles: spec.EnvFiles, EnvFrom: spec.EnvFrom, EnvValueFrom: spec.EnvValueFrom, Services: spec.Services})
 	if err != nil {
 		return err
 	}
@@ -139,6 +143,7 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 }
 
 type localIdentityRecord struct {
+	PortMappings []model.PortMappingSpec              `json:"port_mappings,omitempty"`
 	PathMappings []model.PathMapping                  `json:"path_mappings"`
 	SyncPaths    []string                             `json:"sync_paths"`
 	EnvFiles     map[string]string                    `json:"env_files,omitempty"`

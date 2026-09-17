@@ -22,7 +22,7 @@ func httpTestManager(t *testing.T) (*Manager, *hostnetwork.PortManager) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := NewManager(ports, "127.0.0.1", nil)
+	m := newTestManager(ports, "127.0.0.1", nil)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -40,7 +40,7 @@ func httpTestManager(t *testing.T) (*Manager, *hostnetwork.PortManager) {
 }
 
 func httpTestBed(name string) *bed.Bed {
-	return bed.New(name, "", bed.Spec{Services: []bed.ServiceSpec{{
+	return newServiceTestBed(name, "", bed.Spec{Services: []bed.ServiceSpec{{
 		Name: "web", Command: []string{"server"}, Env: map[string]string{"LISTEN": "${LISTEN_ADDR}"},
 		Required: true, Restart: "never", StartupSeconds: 1, StopSeconds: 1,
 		HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}},

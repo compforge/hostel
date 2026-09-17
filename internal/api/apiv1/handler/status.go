@@ -43,6 +43,7 @@ func (o statusObserver) BedStatus(b *bed.Bed, lifecycle manager.BedStatus) apivi
 	report.Components.Store = state.Store
 	report.Components.Executor = state.Executor
 	report.Components.Resource = state.Resource
-	report.Components.Services = o.beds.Services().Status(b)
+	report.Services = o.beds.Services().Status(b)
+	report.PortMappings = o.beds.PortMappings(b)
 	return report
 }

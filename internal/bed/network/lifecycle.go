@@ -60,7 +60,12 @@ func (m *Manager) allocation(b *bed.Bed) *bedAllocation {
 	defer m.hookMu.Unlock()
 	return m.allocations[b]
 }
+func (m *Manager) SetPortMappings(ports *PortMappings) { m.portMappings = ports }
+
 func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
+	if err := m.portMappings.CheckReleased(b); err != nil {
+		return err
+	}
 	a := m.allocation(b)
 	if a == nil {
 		return nil

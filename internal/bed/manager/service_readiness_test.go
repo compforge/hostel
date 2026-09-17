@@ -15,7 +15,7 @@ import (
 // +case:id=service_readiness_continuity,desc=`A real Service returns 200, then 503, then 200 during one HTTP task`,expect=`Same process, execution, credentials, allocation and hold; actual exit still restarts`,forbid=`Readiness loss interrupts the task`
 func TestServiceReadinessPreservesRunningTask(t *testing.T) {
 	m, specs, ports := testServiceManager(t)
-	if _, err := m.InitializeBedWithOptions(t.Context(), "readiness", CreateOptions{Services: specs[:1]}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "readiness", testServiceOptions(specs[:1])); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "readiness")

@@ -11,6 +11,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/configuration"
 	"github.com/qiankunli/hostel/internal/bed/executor"
+	"github.com/qiankunli/hostel/internal/bed/network"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
@@ -35,9 +36,11 @@ type Runtime interface {
 	Network() (scope, host string, err error)
 }
 type Status struct {
-	Name     string `json:"name"`
-	Required bool   `json:"required"`
-	Phase    string `json:"phase"`
+	PortMapping      string `json:"port_mapping,omitempty"`
+	InternalEndpoint string `json:"internal_endpoint,omitempty"`
+	Name             string `json:"name"`
+	Required         bool   `json:"required"`
+	Phase            string `json:"phase"`
 	// Ready is current availability, not a process-lifecycle phase.
 	Ready       bool                            `json:"ready"`
 	ExecutionID string                          `json:"execution_id,omitempty"`
@@ -51,15 +54,16 @@ type Status struct {
 
 // Access is a credential-bearing response, separate from diagnostic status.
 type Access struct {
-	Endpoint    string `json:"endpoint"`
-	ExecutionID string `json:"execution_id"`
-	Token       string `json:"token,omitempty"`
+	InternalEndpoint string `json:"internal_endpoint"`
+	PortMapping      string `json:"port_mapping"`
+	Endpoint         string `json:"endpoint"`
+	ExecutionID      string `json:"execution_id"`
+	Token            string `json:"token,omitempty"`
 }
 type Manager struct {
 	bed.Noop
 	configurations  *configuration.Manager
-	ports           *hostnetwork.PortManager
-	advertise       string
+	mappings        *network.PortMappings
 	mu              sync.Mutex
 	closed          bool
 	groups          map[*bed.Bed]*group
@@ -75,6 +79,7 @@ type group struct {
 	stopped bool
 }
 type record struct {
+	mapping *network.PortMapping
 	spec    bed.ServiceSpec
 	status  Status
 	token   string
@@ -83,28 +88,44 @@ type record struct {
 	done    chan struct{}
 }
 
-func NewManager(ports *hostnetwork.PortManager, advertise string, onChange func(*bed.Bed)) *Manager {
+func NewManager(mappings *network.PortMappings, onChange func(*bed.Bed)) *Manager {
 	configurations, _ := configuration.NewManager(configuration.Config{})
-	return &Manager{configurations: configurations, ports: ports, advertise: advertise, groups: make(map[*bed.Bed]*group), onChange: onChange, inspectListener: hostnetwork.InspectTCPListener}
+	return &Manager{configurations: configurations, mappings: mappings, groups: make(map[*bed.Bed]*group), onChange: onChange, inspectListener: hostnetwork.InspectTCPListener}
 }
 
 // SetConfigurationManager binds the shared configuration domain before Start.
 func (m *Manager) SetConfigurationManager(c *configuration.Manager) { m.configurations = c }
-func (m *Manager) Resolve(specs []bed.ServiceSpec) ([]bed.ServiceSpec, error) {
+func (m *Manager) Resolve(specs []bed.ServiceSpec, mappings []bed.PortMappingSpec) ([]bed.ServiceSpec, error) {
 	resolved, err := Normalize(specs)
 	if err != nil {
 		return nil, err
 	}
+	declarations := make(map[string]bed.PortMappingSpec)
+	for _, p := range mappings {
+		declarations[p.Name] = p
+	}
+	used := make(map[string]bool)
 	for _, s := range resolved {
-		if s.HTTP != nil && (m.ports == nil || m.advertise == "") {
-			return nil, fmt.Errorf("HTTP services require a port manager and advertised host")
+		if s.PortMapping == "" {
+			continue
+		}
+		p, ok := declarations[s.PortMapping]
+		if !ok {
+			return nil, fmt.Errorf("service %s references undeclared port mapping %s", s.Name, s.PortMapping)
+		}
+		if used[p.Name] {
+			return nil, fmt.Errorf("port mapping %s has multiple service consumers", p.Name)
+		}
+		used[p.Name] = true
+		if !m.mappings.Available(p.Publish) {
+			return nil, fmt.Errorf("service %s requires a port manager and published mappings require an advertised host", s.Name)
 		}
 	}
 	return resolved, nil
 }
 
 func (m *Manager) PrepareBed(ctx context.Context, b *bed.Bed, runtime Runtime) error {
-	specs, err := m.Resolve(b.Spec().Services)
+	specs, err := m.Resolve(b.Spec().Services, b.Spec().PortMappings)
 	if err != nil {
 		return err
 	}
@@ -119,7 +140,7 @@ func (m *Manager) PrepareBed(ctx context.Context, b *bed.Bed, runtime Runtime) e
 		return fmt.Errorf("services already prepared")
 	}
 	for _, spec := range specs {
-		r := &record{spec: spec, status: Status{Name: spec.Name, Required: spec.Required, Phase: "starting"}, restart: make(chan struct{}, 1), done: make(chan struct{})}
+		r := &record{spec: spec, status: Status{Name: spec.Name, PortMapping: spec.PortMapping, Required: spec.Required, Phase: "starting"}, restart: make(chan struct{}, 1), done: make(chan struct{})}
 		g.records = append(g.records, r)
 	}
 	m.groups[b] = g
@@ -181,6 +202,15 @@ func (m *Manager) Status(b *bed.Bed) []Status {
 	defer g.mu.Unlock()
 	for _, r := range g.records {
 		s := r.status
+		if r.mapping != nil {
+			mapping := r.mapping.Status()
+			if mapping.State == "listening" && r.spec.HTTP != nil {
+				s.InternalEndpoint = "http://" + mapping.InternalAddress
+				if mapping.ExternalAddress != "" {
+					s.Endpoint = "http://" + mapping.ExternalAddress
+				}
+			}
+		}
 		if s.Listener != nil {
 			v := *s.Listener
 			s.Listener = &v
@@ -202,8 +232,16 @@ func (m *Manager) Access(b *bed.Bed, name string) (Access, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for _, r := range g.records {
-		if r.spec.Name == name && !g.stopped && r.status.Ready && r.status.Endpoint != "" {
-			return Access{Endpoint: r.status.Endpoint, ExecutionID: r.status.ExecutionID, Token: r.token}, nil
+		if r.spec.Name == name && !g.stopped && r.status.Ready && r.mapping != nil && r.spec.HTTP != nil {
+			p := r.mapping.Status()
+			if p.State != "listening" || p.ExecutionID != r.status.ExecutionID {
+				continue
+			}
+			endpoint := ""
+			if p.ExternalAddress != "" {
+				endpoint = "http://" + p.ExternalAddress
+			}
+			return Access{Endpoint: endpoint, InternalEndpoint: "http://" + p.InternalAddress, PortMapping: p.Name, ExecutionID: p.ExecutionID, Token: r.token}, nil
 		}
 	}
 	return Access{}, fmt.Errorf("HTTP service unavailable")
