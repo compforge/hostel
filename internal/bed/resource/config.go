@@ -7,9 +7,16 @@ type Config struct {
 	Admission AdmissionConfig
 }
 type Options struct {
-	Cgroup                 *tool.Policy
-	CPUThresholdPercent    *int
-	MemoryThresholdPercent *int
+	Cgroup                         *tool.Policy
+	CPUPressureThresholdPercent    *int
+	MemoryPressureThresholdPercent *int
+	CPUThresholdPercent            *int
+	MemoryThresholdPercent         *int
 }
 
-func (c Config) Validate() error { return c.Cgroup.Validate() }
+func (c Config) Validate() error {
+	if err := c.Cgroup.Validate(); err != nil {
+		return err
+	}
+	return c.Admission.Validate()
+}

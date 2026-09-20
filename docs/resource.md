@@ -68,7 +68,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 
 同一份资源事实按受众投影，不要求调用方自己拼装结论：
 
-- `resource_admission`：在 `/healthz`、`GET /v1/beds` 和 capabilities 中报告有限 cgroup 配额、
+- `resource_admission`：在 `/healthz`、`GET /v1/status` 的 Resource Component 和 capabilities 中报告有限 cgroup 配额、
   最新 CPU/内存占比、配置水位、采样状态、reason 和 `accepting` verdict。
 - `resource_accounting`：报告 per-bed 精确记账是否可用及 backend；它与 carrier admission 的
   available 状态相互独立。
@@ -85,6 +85,8 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
   → occupied_beds / max_beds 达到高水位
     或 pinned_beds / max_pinned_beds 达到高水位
       └─ inventory 上报 bed_pressure=true（调度提示，不拒绝工作）
+  → CPU 或内存达到 pressure 软水位
+      └─ inventory 上报 cpu_pressure=true / memory_pressure=true（调度提示，不拒绝工作）
 新 Bed 初始化
   → occupied_beds 已达 max_beds
       └─ 数量已满 → 429 BED_LIMIT_EXCEEDED
@@ -107,8 +109,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 - 已接纳的 bed 不会因采样越线被暂停或杀死；default bed 也不参与资源准入。
 - 采集失败、无有限 limit 或非 Linux 环境均诚实上报 unavailable，并 fail-open 到数量策略。
 
-`--bed-pressure-threshold-percent`、`--admission-cpu-threshold` 与 `--admission-memory-threshold` 只表达策略水位；具体默认值和当前字段
-shape 以配置代码及 README 为准，避免设计文档随调参漂移。
+`--bed-pressure-threshold-percent`、`--cpu-pressure-threshold`、`--memory-pressure-threshold`、`--admission-cpu-threshold` 与 `--admission-memory-threshold` 只表达策略水位；具体默认值和当前字段 shape 以配置代码及 README 为准，避免设计文档随调参漂移。
 
 ### 容量状态口径
 
@@ -201,4 +202,6 @@ per-bed 配额，容易把高密度、强突发的 agent workload 错配成传�
 
 ### 调度压力信号
 
-`/v1/status` 与 `/v1/beds` 在 `instance` 并列报告 `bed_pressure`、`cpu_pressure`、`memory_pressure`，供上层分流和提前补充容量。资源压力与准入使用同一份缓存采样和现有阈值；禁用或不可测的维度不报告压力。`resource_admission.accepting` 保留为准入结论。
+容量控制中的硬边界与软水位成对表达：`max_beds` 是 Bed 数量的硬准入边界，`bed_pressure` 是更早出现的软信号；CPU、内存的 admission threshold 是资源硬准入边界，`cpu_pressure`、`memory_pressure` 是对应的软信号。软水位必须低于对应硬边界，让控制面在 Hostel 开始拒绝请求前完成新 Carrier 的准备、分流和补位；硬边界只负责最后的本实例保护，不能代替提前扩容信号。
+
+`/v1/status` 在 `instance` 中并列报告三类 pressure；`/v1/beds` 只保留由同一批 Bed inventory 推导的 `bed_pressure` 和容量计数。资源 pressure 与 admission 复用同一份缓存采样，但分别使用软硬阈值；CPU、内存软水位默认 80%，硬准入水位默认 90%。对应维度禁用或不可测时不报告 pressure，`components.resource.admission.accepting` 只表达硬准入结论。

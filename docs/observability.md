@@ -57,7 +57,8 @@ evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史�
 | 接口 | 回答的问题 |
 |------|-----------|
 | `POST /v1/beds` | 接受 Bed 初始化；新任务返回 `202` 与 initializing readiness，已 Ready 返回 `200` |
-| `GET /v1/beds` | hostel 什么状态（`instance.status`）+ 全部 bed 概要（含 initializing / failed / dormant） |
+| `GET /v1/status` | Hostel/Carrier 粒度的实例、组件、设施与资源状态，不返回 Bed 列表 |
+| `GET /v1/beds` | 全部 Bed 概要（含 initializing / failed / dormant）+ 与列表同快照的容量计数 |
 | `GET /v1/beds/:id` | `status.lifecycle` 表达 Bed 生命周期，`status.components` 与 `status.amenities` 分别表达 Bed 分域和关联 Tenant 状态 |
 | `GET /healthz` | 实例可服务性（探活/调度用） |
 
@@ -132,7 +133,7 @@ socket 实现细节；`GetFileMetadata` 等业务操作名由调用方 span 负�
 
 ## 接口
 
-`GET /v1/beds` 是调度 hint：实例容量、分别聚合的 phase/activity 数量、每个本机 bed（initializing /
+`GET /v1/beds` 是 Bed inventory 与调度 hint：实例容量、分别聚合的 phase/activity 数量、每个本机 bed（initializing /
 purging / failed / resident / dormant luggage）的当前事实，不承载 timeline。
 
 `GET /v1/beds/:id` 是单 bed 诊断入口。初始化期间先返回 phase/readiness；resident 后在基本视图之外返回：
@@ -179,7 +180,7 @@ Bed 详情的 `status.lifecycle` 由 Bed Manager 提供；Tenant 状态由设施
 不复制进 Bed。Tenant Status 的字段跟随设施领域：浏览器就绪和 MCP 连接池不是同一种状态。
 接口不根据 Status 推导更强的隔离保证，也不执行生命周期 hook、探测或远端 I/O。状态读取只读取已发布的内存状态，不持有慢操作的协调锁；Tenant 存在不代表设施提供强制隔离。
 
-`GET /v1/status` 的 `schema_version` 为 `10`。工具选择报告位于 `components.filesystem.tools`、`components.network.tools` 和 `components.resource.accounting.tools`；每项包含 Policy、Requirements、探测结果、是否选中及原因。`requirements.tools` 是该工具依赖的外部程序列表，与组件的工具状态映射分别解释。
+`GET /v1/status` 的 `schema_version` 为 `11`。该接口只组合 Hostel/Carrier 粒度状态，不携带 `beds` 列表；Bed inventory 由 `GET /v1/beds` 独立提供。工具选择报告位于 `components.filesystem.tools`、`components.network.tools` 和 `components.resource.accounting.tools`；每项包含 Policy、Requirements、探测结果、是否选中及原因。`requirements.tools` 是该工具依赖的外部程序列表，与组件的工具状态映射分别解释。
 
 Privilege 的 credential helper 诊断字段为 `helper`。Bed Service 的 `phase` 表达运行阶段，独立的 `ready` 表达当前可用性；readiness 变化不终止运行实例。`host.fact` 报告 runtime、process、security_modules、
 namespace_limits、kernel_features 与 ptrace 等启动事实；`host.status` 组合动态资源状态，

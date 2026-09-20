@@ -180,8 +180,9 @@ func main() {
 	}
 	admissionReport := resourceAdmission.Report()
 	if admissionReport.Enabled {
-		log.Printf("hostel: carrier resource admission enabled (cpu=%d%% memory=%d%% available=%v reason=%s)",
-			admissionReport.CPUThresholdPercent, admissionReport.MemoryThresholdPercent,
+		log.Printf("hostel: carrier resource pressure enabled (cpu_pressure=%d%% cpu_admission=%d%% memory_pressure=%d%% memory_admission=%d%% available=%v reason=%s)",
+			admissionReport.CPUPressureThresholdPercent, admissionReport.CPUThresholdPercent,
+			admissionReport.MemoryPressureThresholdPercent, admissionReport.MemoryThresholdPercent,
 			admissionReport.Available, admissionReport.Reason)
 	} else {
 		log.Printf("hostel: carrier resource admission disabled")

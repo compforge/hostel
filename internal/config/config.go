@@ -35,7 +35,7 @@ const DefaultAddr = ":8872"
 
 const defaultAdmissionThresholdPercent = 90
 
-const defaultBedPressureThresholdPercent = 80
+const defaultPressureThresholdPercent = 80
 
 const defaultAutoPackFileThreshold = 100
 
@@ -123,7 +123,9 @@ func Load(args []string, explicit Options) (*Config, error) {
 	idle := fs.Duration("bed-idle-timeout", osx.EnvDuration("HOSTEL_BED_IDLE_TIMEOUT", 30*time.Minute), "reap a bed after this idle duration (0=never)")
 	fs.IntVar(&c.MaxBeds, "max-beds", osx.EnvInt("HOSTEL_MAX_BEDS", 0), "max concurrent beds, 0=unlimited (default bed exempt)")
 	fs.IntVar(&c.MaxPinnedBeds, "max-pinned-beds", osx.EnvInt("HOSTEL_MAX_PINNED_BEDS", 0), "pinned-bed pressure reference, 0=inherit max-beds (default bed exempt)")
-	fs.IntVar(&c.BedPressureThresholdPercent, "bed-pressure-threshold-percent", osx.EnvInt("HOSTEL_BED_PRESSURE_THRESHOLD_PERCENT", defaultBedPressureThresholdPercent), "occupied/pinned bed pressure threshold percent, 0=disabled")
+	fs.IntVar(&c.BedPressureThresholdPercent, "bed-pressure-threshold-percent", osx.EnvInt("HOSTEL_BED_PRESSURE_THRESHOLD_PERCENT", defaultPressureThresholdPercent), "occupied/pinned bed pressure threshold percent, 0=disabled")
+	fs.IntVar(&c.Bed.Resource.Admission.CPUPressureThresholdPercent, "cpu-pressure-threshold", osx.EnvInt("HOSTEL_CPU_PRESSURE_THRESHOLD", defaultPressureThresholdPercent), "report carrier CPU pressure at this usage percent, 0=disabled")
+	fs.IntVar(&c.Bed.Resource.Admission.MemoryPressureThresholdPercent, "memory-pressure-threshold", osx.EnvInt("HOSTEL_MEMORY_PRESSURE_THRESHOLD", defaultPressureThresholdPercent), "report carrier memory pressure at this usage percent, 0=disabled")
 	fs.IntVar(&c.Bed.Resource.Admission.CPUThresholdPercent, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.Bed.Resource.Admission.MemoryThresholdPercent, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
 	fs.StringVar(&c.Bed.Executor.Backend, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")

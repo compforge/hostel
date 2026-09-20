@@ -143,8 +143,11 @@ func TestStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode diagnostics: %v", err)
 	}
-	if body["schema_version"] != float64(10) {
+	if body["schema_version"] != float64(11) {
 		t.Fatalf("diagnostics schema_version = %v", body["schema_version"])
+	}
+	if _, exists := body["beds"]; exists {
+		t.Fatal("/v1/status must not include the Bed inventory")
 	}
 	components, _ := body["components"].(map[string]any)
 	isolationFacts, _ := components["filesystem"].(map[string]any)

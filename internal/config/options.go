@@ -95,6 +95,8 @@ func (o Options) apply(c *Config) {
 	apply(&c.Bed.Filesystem.Pathshim, o.Bed.Filesystem.Pathshim)
 	apply(&c.Bed.Network.NetNS, o.Bed.Network.NetNS)
 	apply(&c.Bed.Resource.Cgroup, o.Bed.Resource.Cgroup)
+	apply(&c.Bed.Resource.Admission.CPUPressureThresholdPercent, o.Bed.Resource.CPUPressureThresholdPercent)
+	apply(&c.Bed.Resource.Admission.MemoryPressureThresholdPercent, o.Bed.Resource.MemoryPressureThresholdPercent)
 	apply(&c.Bed.Privilege.UID, o.Bed.Privilege.UID)
 	apply(&c.Bed.Privilege.GID, o.Bed.Privilege.GID)
 	apply(&c.Bed.Executor.Backend, o.Bed.Executor.Backend)

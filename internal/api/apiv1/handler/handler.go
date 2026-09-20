@@ -293,12 +293,14 @@ func (s *Handler) status(c *gin.Context) {
 
 func resourceAdmissionView(report resource.AdmissionReport) gin.H {
 	view := gin.H{
-		"enabled":                  report.Enabled,
-		"available":                report.Available,
-		"accepting":                report.Accepting,
-		"reason":                   report.Reason,
-		"cpu_threshold_percent":    report.CPUThresholdPercent,
-		"memory_threshold_percent": report.MemoryThresholdPercent,
+		"enabled":                           report.Enabled,
+		"available":                         report.Available,
+		"accepting":                         report.Accepting,
+		"reason":                            report.Reason,
+		"cpu_pressure_threshold_percent":    report.CPUPressureThresholdPercent,
+		"memory_pressure_threshold_percent": report.MemoryPressureThresholdPercent,
+		"cpu_threshold_percent":             report.CPUThresholdPercent,
+		"memory_threshold_percent":          report.MemoryThresholdPercent,
 	}
 	if report.CPUAvailable {
 		view["cpu_usage_percent"] = report.CPUUsagePercent

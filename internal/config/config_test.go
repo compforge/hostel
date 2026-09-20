@@ -66,24 +66,45 @@ func TestBedCapacityConfig(t *testing.T) {
 	t.Setenv("HOSTEL_MAX_BEDS", "12")
 	t.Setenv("HOSTEL_MAX_PINNED_BEDS", "4")
 	t.Setenv("HOSTEL_BED_PRESSURE_THRESHOLD_PERCENT", "75")
+	t.Setenv("HOSTEL_CPU_PRESSURE_THRESHOLD", "70")
+	t.Setenv("HOSTEL_MEMORY_PRESSURE_THRESHOLD", "65")
 	t.Setenv("HOSTEL_ADMISSION_CPU_THRESHOLD", "85")
 	t.Setenv("HOSTEL_ADMISSION_MEMORY_THRESHOLD", "80")
 	c := mustLoad(t, nil)
-	if c.MaxBeds != 12 || c.MaxPinnedBeds != 4 || c.BedPressureThresholdPercent != 75 || c.Bed.Resource.Admission.CPUThresholdPercent != 85 || c.Bed.Resource.Admission.MemoryThresholdPercent != 80 {
-		t.Fatalf("env capacity = %+v, want beds 12/4 and thresholds 75/85/80", c)
+	if c.MaxBeds != 12 || c.MaxPinnedBeds != 4 || c.BedPressureThresholdPercent != 75 ||
+		c.Bed.Resource.Admission.CPUPressureThresholdPercent != 70 || c.Bed.Resource.Admission.MemoryPressureThresholdPercent != 65 ||
+		c.Bed.Resource.Admission.CPUThresholdPercent != 85 || c.Bed.Resource.Admission.MemoryThresholdPercent != 80 {
+		t.Fatalf("env capacity = %+v, want beds 12/4 and thresholds 75/70/65/85/80", c)
 	}
 
-	c = mustLoad(t, []string{"-max-beds", "20", "-max-pinned-beds", "7", "-bed-pressure-threshold-percent", "60", "-admission-cpu-threshold", "75", "-admission-memory-threshold", "70"})
-	if c.MaxBeds != 20 || c.MaxPinnedBeds != 7 || c.BedPressureThresholdPercent != 60 || c.Bed.Resource.Admission.CPUThresholdPercent != 75 || c.Bed.Resource.Admission.MemoryThresholdPercent != 70 {
-		t.Fatalf("flag capacity = %+v, want beds 20/7 and thresholds 60/75/70", c)
+	c = mustLoad(t, []string{"-max-beds", "20", "-max-pinned-beds", "7", "-bed-pressure-threshold-percent", "60", "-cpu-pressure-threshold", "55", "-memory-pressure-threshold", "50", "-admission-cpu-threshold", "75", "-admission-memory-threshold", "70"})
+	if c.MaxBeds != 20 || c.MaxPinnedBeds != 7 || c.BedPressureThresholdPercent != 60 ||
+		c.Bed.Resource.Admission.CPUPressureThresholdPercent != 55 || c.Bed.Resource.Admission.MemoryPressureThresholdPercent != 50 ||
+		c.Bed.Resource.Admission.CPUThresholdPercent != 75 || c.Bed.Resource.Admission.MemoryThresholdPercent != 70 {
+		t.Fatalf("flag capacity = %+v, want beds 20/7 and thresholds 60/55/50/75/70", c)
 	}
 }
 
 func TestResourceAdmissionThresholdDefaults(t *testing.T) {
 	c := mustLoad(t, nil)
-	if c.BedPressureThresholdPercent != 80 || c.Bed.Resource.Admission.CPUThresholdPercent != 90 || c.Bed.Resource.Admission.MemoryThresholdPercent != 90 {
-		t.Fatalf("default thresholds = bed %d, resources %d/%d; want 80 and 90/90",
-			c.BedPressureThresholdPercent, c.Bed.Resource.Admission.CPUThresholdPercent, c.Bed.Resource.Admission.MemoryThresholdPercent)
+	if c.BedPressureThresholdPercent != 80 || c.Bed.Resource.Admission.CPUPressureThresholdPercent != 80 ||
+		c.Bed.Resource.Admission.MemoryPressureThresholdPercent != 80 || c.Bed.Resource.Admission.CPUThresholdPercent != 90 ||
+		c.Bed.Resource.Admission.MemoryThresholdPercent != 90 {
+		t.Fatalf("default thresholds = bed %d, pressure %d/%d, admission %d/%d; want 80, 80/80 and 90/90",
+			c.BedPressureThresholdPercent, c.Bed.Resource.Admission.CPUPressureThresholdPercent,
+			c.Bed.Resource.Admission.MemoryPressureThresholdPercent, c.Bed.Resource.Admission.CPUThresholdPercent,
+			c.Bed.Resource.Admission.MemoryThresholdPercent)
+	}
+}
+
+func TestResourcePressureMustPrecedeAdmission(t *testing.T) {
+	for _, args := range [][]string{
+		{"-cpu-pressure-threshold", "90", "-admission-cpu-threshold", "90"},
+		{"-memory-pressure-threshold", "95", "-admission-memory-threshold", "90"},
+	} {
+		if _, err := Load(args, Options{}); err == nil {
+			t.Fatalf("accepted pressure threshold that does not precede admission: %v", args)
+		}
 	}
 }
 
