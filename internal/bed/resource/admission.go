@@ -43,6 +43,9 @@ type AdmissionDecision struct {
 // is true when at least one configured dimension has a finite cgroup limit and
 // a usable sample.
 type AdmissionReport struct {
+	// Pressure signals and admission share one sample; disabled/unavailable dimensions stay false.
+	CPUPressure            bool      `json:"-"`
+	MemoryPressure         bool      `json:"-"`
 	Enabled                bool      `json:"enabled"`
 	Available              bool      `json:"available"`
 	Accepting              bool      `json:"accepting"`
@@ -184,6 +187,7 @@ func (a *pressureAdmission) sample(now time.Time) {
 		report.MemoryAvailable = true
 		report.MemoryUsagePercent = float64(snapshot.MemoryCurrentBytes) / float64(snapshot.MemoryLimitBytes) * 100
 		if report.MemoryUsagePercent >= float64(a.cfg.MemoryThresholdPercent) {
+			report.MemoryPressure = true
 			rejected = append(rejected, fmt.Sprintf("carrier memory usage %.1f%% reached %d%% admission threshold",
 				report.MemoryUsagePercent, a.cfg.MemoryThresholdPercent))
 		}
@@ -197,6 +201,7 @@ func (a *pressureAdmission) sample(now time.Time) {
 		elapsed := now.Sub(a.previousAt)
 		report.CPUUsagePercent = float64(used) / float64(elapsed) / snapshot.CPULimitCores * 100
 		if report.CPUUsagePercent >= float64(a.cfg.CPUThresholdPercent) {
+			report.CPUPressure = true
 			rejected = append(rejected, fmt.Sprintf("carrier CPU usage %.1f%% reached %d%% admission threshold",
 				report.CPUUsagePercent, a.cfg.CPUThresholdPercent))
 		}

@@ -34,7 +34,7 @@ func (rejectingResourceAdmission) Report() resource.AdmissionReport {
 	return resource.AdmissionReport{
 		Enabled: true, Available: true, Accepting: false,
 		MemoryThresholdPercent: 90, MemoryCurrentBytes: 950, MemoryLimitBytes: 1000,
-		MemoryUsagePercent: 95, MemoryAvailable: true,
+		MemoryUsagePercent: 95, MemoryAvailable: true, MemoryPressure: true,
 		Reason:    "carrier memory usage 95.0% reached 90% admission threshold",
 		SampledAt: time.Unix(100, 0),
 	}
@@ -70,5 +70,26 @@ func TestResourcePressureBackpressureAndReporting(t *testing.T) {
 		health.ResourceAdmission.Accepting || health.ResourceAdmission.MemoryUsagePercent != 95 ||
 		health.ResourceAdmission.MemoryLimitBytes != 1000 {
 		t.Fatalf("resource admission health = %+v", health.ResourceAdmission)
+	}
+}
+
+func TestStatusReportsResourcePressure(t *testing.T) {
+	s := newTestServer(t)
+	s.mgr.SetResourceAdmission(rejectingResourceAdmission{})
+	for _, path := range []string{"/v1/status", "/v1/beds"} {
+		rec := do(t, s, http.MethodGet, path, nil, nil)
+		var got struct {
+			Instance struct {
+				CPU       *bool                    `json:"cpu_pressure"`
+				Memory    *bool                    `json:"memory_pressure"`
+				Admission resource.AdmissionReport `json:"resource_admission"`
+			} `json:"instance"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != 200 || got.Instance.CPU == nil || *got.Instance.CPU || got.Instance.Memory == nil || !*got.Instance.Memory || got.Instance.Admission.Accepting {
+			t.Fatalf("%s: %s", path, rec.Body.String())
+		}
 	}
 }
