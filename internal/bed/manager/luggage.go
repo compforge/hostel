@@ -222,16 +222,15 @@ type InventoryBed struct {
 // +spec=`Scheduler inventory contains tenant beds only; the compatibility default bed never participates in placement or capacity projections.`
 // +case:id=default_bed_inventory,desc=`Use the default bed and then query scheduler inventory`,expect=`the default bed is absent and tenant capacity remains available while the instance remains retained`
 func (m *Manager) Inventory() []InventoryBed {
-	beds, _ := m.captureInventory()
+	beds, _, _ := m.captureInventory()
 	return beds
 }
 
-func (m *Manager) captureInventory() ([]InventoryBed, bool) {
-	// Cold disk hints are sampled outside the admission lock, then reconciled
-	// against one authoritative lifecycle inventory.
-	luggage := m.ListLuggage()
+func (m *Manager) captureInventory() ([]InventoryBed, bool, time.Time) {
+	// Disk estimates may lag; lifecycle ownership is always reconciled live.
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	luggage := m.luggageSnapshot
 	beds := m.beds
 	out := make([]InventoryBed, 0, len(beds))
 	for _, b := range beds {
@@ -257,7 +256,7 @@ func (m *Manager) captureInventory() ([]InventoryBed, bool) {
 		}
 		out = append(out, entry)
 	}
-	for _, initialization := range m.initializationStatusesLocked() {
+	for _, initialization := range m.transitionStatusesLocked() {
 		if initialization.ID == m.defaultBed {
 			continue
 		}
@@ -296,5 +295,15 @@ func (m *Manager) captureInventory() ([]InventoryBed, bool) {
 	if i := m.initializations[m.defaultBed]; i != nil && i.snapshot().Phase == PhaseInitializing {
 		defaultOccupied = true
 	}
-	return out, defaultOccupied
+	return out, defaultOccupied, m.luggageSampledAt
+}
+
+// sampleLuggage runs only at startup and in background maintenance. Requests
+// never walk tenant directories; stale disk estimates are affinity hints only.
+func (m *Manager) sampleLuggage() {
+	snapshot := m.ListLuggage()
+	m.mu.Lock()
+	m.luggageSnapshot = snapshot
+	m.luggageSampledAt = time.Now().UTC()
+	m.mu.Unlock()
 }

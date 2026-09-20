@@ -55,8 +55,9 @@ func statusOfInstance(beds []InventoryBed, defaultBedOccupied bool, now time.Tim
 
 // InventoryStatus is one captured inventory and all of its derived counts.
 type InventoryStatus struct {
-	Instance InstanceStatus `json:"instance"`
-	Beds     []InventoryBed `json:"beds"`
+	Instance         InstanceStatus `json:"instance"`
+	Beds             []InventoryBed `json:"beds"`
+	LuggageSampledAt time.Time      `json:"luggage_sampled_at"`
 }
 
 type InstanceStatus struct {
@@ -83,7 +84,7 @@ type InstanceStatus struct {
 }
 
 func (m *Manager) InventoryStatus() InventoryStatus {
-	beds, defaultOccupied := m.captureInventory()
+	beds, defaultOccupied, sampledAt := m.captureInventory()
 	instance := InstanceStatus{
 		Status: statusOfInstance(beds, defaultOccupied, time.Now()),
 		Sync:   m.SyncName(), BedSyncSelection: true, TransferSyncs: []string{"copy", "restic"},
@@ -125,5 +126,5 @@ func (m *Manager) InventoryStatus() InventoryStatus {
 	if instance.OccupiedBeds > 0 && retentionKnown {
 		instance.RetainedUntil = &retainUntil
 	}
-	return InventoryStatus{Instance: instance, Beds: beds}
+	return InventoryStatus{Instance: instance, Beds: beds, LuggageSampledAt: sampledAt}
 }

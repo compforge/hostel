@@ -59,6 +59,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.startErr = errors.Join(m.startErr, m.closeComponents(cleanup))
 		return m.startErr
 	}
+	m.sampleLuggage()
 	m.started = true
 	return nil
 }
@@ -140,6 +141,7 @@ func (m *Manager) runCollection(ctx context.Context) error {
 		case <-history.C:
 			m.executions.prune()
 		case <-luggage.C:
+			m.sampleLuggage()
 			if ids := m.CollectLuggage(ctx); len(ids) > 0 {
 				log.Printf("hostel: reaped luggage: %v", ids)
 			}

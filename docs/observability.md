@@ -223,3 +223,10 @@ sequence 的有界输出；游标落入已淘汰区间时显式返回 truncated�
 - timeline 有固定阶段和固定保留数量，读取返回副本。
 - stop cause 必须先于 kill 原子记录，多个 stop 请求只接受第一个；
 - `execution_start` 恰好对应一个携带 result 的 `execution_end`，输出 pipe 泄漏不能无限阻塞终态发布。
+
+### Inventory 采集边界
+
+实例状态和 Bed 清单在请求期间汇总内存中的生命周期事实。retirement、purge 和初始化
+统一进入 transition 状态采集，保持回收判断完整。dormant luggage 的目录大小仅在启动和
+后台维护期间扫描；响应中的 luggage_sampled_at 标记磁盘估算的新鲜度。磁盘估算只提供
+恢复成本与亲和提示，不替代实时生命周期和安全释放判断。

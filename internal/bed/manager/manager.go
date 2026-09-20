@@ -96,6 +96,9 @@ type Manager struct {
 	// via SetLuggageLimits — not synchronized.
 	luggageHigh int64
 	luggageLow  int64
+	// Disk estimates are sampled outside request handling; mu guards publication.
+	luggageSnapshot  []LuggageEntry
+	luggageSampledAt time.Time
 	// cdpAdvertise (loopback host:port) enables per-bed browser endpoint
 	// injection into bed env. Set once at startup via SetCDPAdvertise — not
 	// synchronized.

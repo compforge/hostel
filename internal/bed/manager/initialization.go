@@ -139,12 +139,12 @@ func (m *Manager) Initialization(id string) (InitializationStatus, bool) {
 	return initialization.snapshot(), true
 }
 
-func (m *Manager) initializationStatuses() []InitializationStatus {
+func (m *Manager) transitionStatuses() []InitializationStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.initializationStatusesLocked()
+	return m.transitionStatusesLocked()
 }
-func (m *Manager) initializationStatusesLocked() []InitializationStatus {
+func (m *Manager) transitionStatusesLocked() []InitializationStatus {
 	m.pruneFailedInitializationsLocked(time.Now())
 	statuses := make([]InitializationStatus, 0, len(m.initializations)+len(m.purges))
 	for id, initialization := range m.initializations {

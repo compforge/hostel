@@ -244,7 +244,7 @@ initialization 遇到遗留目录时仍会用 generation 与远端快照比对�
 相差多少。Hostel 因此在 inventory 中同时上报本地 generation、最近观测到的 durable generation、
 快照大小、本地目录大小和预计 Restore 字节数；resident 目录大小与 durable snapshot 事实由
 initialization / Store 同步循环在自己的节奏里刷新，`GET /v1/beds` 不为它们扫描 resident 目录或访问
-S3。异常退出/旧版 dormant luggage 仍沿用 inventory 的本地目录扫描。
+S3。异常退出/旧版 dormant luggage 由启动和后台维护扫描，inventory 读取最近一次采样。
 
 当前 Restore 仍是完整快照恢复：本地副本与 durable generation 一致时预计恢复量为 0；缺少本地副本
 或本地副本过期时，预计恢复量就是完整 `snapshot_bytes`。generation 只判断相等与新旧，不能作为版本
