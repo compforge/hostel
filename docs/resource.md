@@ -198,3 +198,7 @@ per-bed 配额，容易把高密度、强突发的 agent workload 错配成传�
 ## 组件生命周期
 
 构造阶段只组装依赖，Resource Manager.Start 才初始化 cgroup accounting，并报告真实可用性；无可用机制时按资源领域策略降级。Run 驱动采样，Bed hooks 管理单元归属，Close 释放所持资源。Bed Manager 在 Start 前登记清理责任，部分初始化失败也必须经过 Close；失败清理保留责任供重试。host/cgroup 提供操作机制，不决定 Bed 组织和准入策略。
+
+### 调度压力信号
+
+`/v1/status` 与 `/v1/beds` 在 `instance` 并列报告 `bed_pressure`、`cpu_pressure`、`memory_pressure`，供上层分流和提前补充容量。资源压力与准入使用同一份缓存采样和现有阈值；禁用或不可测的维度不报告压力。`resource_admission.accepting` 保留为准入结论。

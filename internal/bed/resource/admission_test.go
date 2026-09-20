@@ -53,12 +53,15 @@ func TestPressureAdmissionCPUAndMemory(t *testing.T) {
 	if decision := a.Check(); decision.Allowed || !strings.Contains(decision.Reason, "CPU usage 95.0%") {
 		t.Fatalf("CPU pressure decision = %+v", decision)
 	}
+	if report := a.Report(); !report.CPUPressure || report.MemoryPressure {
+		t.Fatalf("CPU signal: %+v", report)
+	}
 	a.sample(t0.Add(2 * time.Second))
 	if decision := a.Check(); decision.Allowed || !strings.Contains(decision.Reason, "memory usage 95.0%") {
 		t.Fatalf("memory pressure decision = %+v", decision)
 	}
 	report := a.Report()
-	if !report.Available || report.Accepting || !report.CPUAvailable || !report.MemoryAvailable {
+	if !report.Available || report.Accepting || !report.CPUAvailable || !report.MemoryAvailable || report.CPUPressure || !report.MemoryPressure {
 		t.Fatalf("report = %+v", report)
 	}
 }
@@ -92,5 +95,44 @@ func TestAdmissionThresholdValidation(t *testing.T) {
 		if err := validateThreshold("CPU", threshold); err == nil {
 			t.Fatalf("validateThreshold(%d): want error", threshold)
 		}
+	}
+}
+
+func TestPressureSignalsClearWhenUnavailableOrDisabled(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cfg    AdmissionConfig
+		limit  float64
+		memory uint64
+	}{
+		{"disabled", AdmissionConfig{}, 1, 100},
+		{"unlimited", AdmissionConfig{CPUThresholdPercent: 90, MemoryThresholdPercent: 90}, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &sequenceCarrier{snapshots: []CarrierSnapshot{
+				{CPULimitCores: tc.limit, MemoryLimitBytes: tc.memory, MemoryCurrentBytes: 100},
+				{CPULimitCores: tc.limit, CPUUsage: time.Second, MemoryLimitBytes: tc.memory, MemoryCurrentBytes: 100},
+			}}
+			a := newPressureAdmission(c, tc.cfg)
+			now := time.Unix(100, 0)
+			a.sample(now)
+			a.sample(now.Add(time.Second))
+			r := a.Report()
+			if r.CPUPressure || r.MemoryPressure || !r.Accepting {
+				t.Fatalf("report=%+v", r)
+			}
+		})
+	}
+	c := &sequenceCarrier{snapshots: []CarrierSnapshot{{MemoryLimitBytes: 100, MemoryCurrentBytes: 95}}}
+	a := newPressureAdmission(c, AdmissionConfig{MemoryThresholdPercent: 90})
+	now := time.Unix(100, 0)
+	a.sample(now)
+	if !a.Report().MemoryPressure {
+		t.Fatal("expected pressure")
+	}
+	c.err = errors.New("sample unavailable")
+	a.sample(now.Add(time.Second))
+	if r := a.Report(); r.CPUPressure || r.MemoryPressure || !r.Accepting {
+		t.Fatalf("stale pressure=%+v", r)
 	}
 }

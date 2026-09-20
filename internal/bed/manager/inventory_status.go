@@ -76,6 +76,8 @@ type InstanceStatus struct {
 	PinnedBeds                  int                      `json:"pinned_beds"`
 	MaxPinnedBeds               int                      `json:"max_pinned_beds"`
 	BedPressureThresholdPercent int                      `json:"bed_pressure_threshold_percent"`
+	CPUPressure                 bool                     `json:"cpu_pressure"`
+	MemoryPressure              bool                     `json:"memory_pressure"`
 	BedPressure                 bool                     `json:"bed_pressure"`
 	PhaseCounts                 map[string]int           `json:"phase_counts"`
 	ActivityCounts              map[string]int           `json:"activity_counts"`
@@ -97,6 +99,8 @@ func (m *Manager) InventoryStatus() InventoryStatus {
 		LuggageHighBytes: m.luggageHigh, LuggageLowBytes: m.luggageLow, ResourceAdmission: m.ResourceAdmissionReport(),
 		PhaseCounts: map[string]int{}, ActivityCounts: map[string]int{string(ActivityIdle): 0, string(ActivityActive): 0},
 	}
+	instance.CPUPressure = instance.ResourceAdmission.CPUPressure
+	instance.MemoryPressure = instance.ResourceAdmission.MemoryPressure
 	for _, phase := range []Phase{PhaseResident, PhaseEvicting, PhasePurging, PhaseDormant, PhaseInitializing, PhaseFailed} {
 		instance.PhaseCounts[string(phase)] = 0
 	}
