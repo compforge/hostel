@@ -228,9 +228,9 @@ func TestInventoryStatusCountsSameCapturedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer finish()
-	status := m.Status()
+	status := m.InventoryStatus()
 	if status.Instance.OccupiedBeds != len(status.Beds) || status.Instance.ResidentBeds != 2 || status.Instance.PinnedBeds != 1 || status.Instance.ActivityCounts["active"] != 1 || status.Instance.PhaseCounts["resident"] != 2 {
-		t.Fatalf("inconsistent inventory: %+v", status.InventoryStatus)
+		t.Fatalf("inconsistent inventory: %+v", status)
 	}
 	if status.Instance.Status != InstanceRetained {
 		t.Fatal(status.Instance.Status)

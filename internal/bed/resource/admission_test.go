@@ -15,6 +15,7 @@
 package resource
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -42,7 +43,10 @@ func TestPressureAdmissionCPUAndMemory(t *testing.T) {
 		{CPUUsage: 950 * time.Millisecond, CPULimitCores: 1, MemoryCurrentBytes: 50, MemoryLimitBytes: 100},
 		{CPUUsage: time.Second, CPULimitCores: 1, MemoryCurrentBytes: 95, MemoryLimitBytes: 100},
 	}}
-	a := newPressureAdmission(carrier, AdmissionConfig{CPUThresholdPercent: 90, MemoryThresholdPercent: 90})
+	a := newPressureAdmission(carrier, AdmissionConfig{
+		CPUPressureThresholdPercent: 80, MemoryPressureThresholdPercent: 80,
+		CPUThresholdPercent: 90, MemoryThresholdPercent: 90,
+	})
 	t0 := time.Unix(100, 0)
 
 	a.sample(t0)
@@ -63,6 +67,29 @@ func TestPressureAdmissionCPUAndMemory(t *testing.T) {
 	report := a.Report()
 	if !report.Available || report.Accepting || !report.CPUAvailable || !report.MemoryAvailable || report.CPUPressure || !report.MemoryPressure {
 		t.Fatalf("report = %+v", report)
+	}
+}
+
+func TestPressureSignalsPrecedeAdmission(t *testing.T) {
+	carrier := &sequenceCarrier{snapshots: []CarrierSnapshot{
+		{CPUUsage: 0, CPULimitCores: 1, MemoryCurrentBytes: 85, MemoryLimitBytes: 100},
+		{CPUUsage: 850 * time.Millisecond, CPULimitCores: 1, MemoryCurrentBytes: 85, MemoryLimitBytes: 100},
+	}}
+	a := newPressureAdmission(carrier, AdmissionConfig{
+		CPUPressureThresholdPercent: 80, MemoryPressureThresholdPercent: 80,
+		CPUThresholdPercent: 90, MemoryThresholdPercent: 90,
+	})
+	now := time.Unix(100, 0)
+	a.sample(now)
+	if report := a.Report(); !report.MemoryPressure || report.CPUPressure || !report.Accepting {
+		t.Fatalf("first soft-pressure report = %+v", report)
+	}
+	a.sample(now.Add(time.Second))
+	if report := a.Report(); !report.CPUPressure || !report.MemoryPressure || !report.Accepting {
+		t.Fatalf("soft pressure must precede admission = %+v", report)
+	}
+	if decision := a.Check(); !decision.Allowed {
+		t.Fatalf("soft pressure rejected work: %+v", decision)
 	}
 }
 
@@ -96,6 +123,28 @@ func TestAdmissionThresholdValidation(t *testing.T) {
 			t.Fatalf("validateThreshold(%d): want error", threshold)
 		}
 	}
+	for _, tc := range []struct {
+		pressure  int
+		admission int
+	}{
+		{80, 80},
+		{90, 80},
+	} {
+		if err := validatePressureBeforeAdmission("CPU", tc.pressure, tc.admission); err == nil {
+			t.Fatalf("validatePressureBeforeAdmission(%d, %d): want error", tc.pressure, tc.admission)
+		}
+	}
+}
+
+func TestNewAdmissionRejectsPressureThatDoesNotPrecedeAdmission(t *testing.T) {
+	for _, cfg := range []AdmissionConfig{
+		{CPUPressureThresholdPercent: 90, CPUThresholdPercent: 90},
+		{MemoryPressureThresholdPercent: 95, MemoryThresholdPercent: 90},
+	} {
+		if _, err := NewAdmission(context.Background(), &sequenceCarrier{}, cfg); err == nil {
+			t.Fatalf("NewAdmission(%+v): want soft-before-hard validation error", cfg)
+		}
+	}
 }
 
 func TestPressureSignalsClearWhenUnavailableOrDisabled(t *testing.T) {
@@ -106,7 +155,10 @@ func TestPressureSignalsClearWhenUnavailableOrDisabled(t *testing.T) {
 		memory uint64
 	}{
 		{"disabled", AdmissionConfig{}, 1, 100},
-		{"unlimited", AdmissionConfig{CPUThresholdPercent: 90, MemoryThresholdPercent: 90}, 0, 0},
+		{"unlimited", AdmissionConfig{
+			CPUPressureThresholdPercent: 80, MemoryPressureThresholdPercent: 80,
+			CPUThresholdPercent: 90, MemoryThresholdPercent: 90,
+		}, 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &sequenceCarrier{snapshots: []CarrierSnapshot{
@@ -124,7 +176,7 @@ func TestPressureSignalsClearWhenUnavailableOrDisabled(t *testing.T) {
 		})
 	}
 	c := &sequenceCarrier{snapshots: []CarrierSnapshot{{MemoryLimitBytes: 100, MemoryCurrentBytes: 95}}}
-	a := newPressureAdmission(c, AdmissionConfig{MemoryThresholdPercent: 90})
+	a := newPressureAdmission(c, AdmissionConfig{MemoryPressureThresholdPercent: 80, MemoryThresholdPercent: 90})
 	now := time.Unix(100, 0)
 	a.sample(now)
 	if !a.Report().MemoryPressure {

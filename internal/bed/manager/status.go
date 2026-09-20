@@ -31,9 +31,9 @@ import (
 // Status aggregates Bed inventory and domain-owned Component Status. Amenity
 // facilities are peers and are composed separately by the Hostel instance.
 type Status struct {
-	Isolation    model.RoomStatus     `json:"isolation"`
-	Combinations []CombinationAttempt `json:"combinations,omitempty"`
-	InventoryStatus
+	Isolation     model.RoomStatus     `json:"isolation"`
+	Combinations  []CombinationAttempt `json:"combinations,omitempty"`
+	Instance      StatusInstance       `json:"instance"`
 	LocalCleanups []LocalCleanupReport `json:"local_cleanups"`
 	Environment   EnvironmentReport    `json:"environment"`
 	Components    struct {
@@ -45,6 +45,16 @@ type Status struct {
 		Store         store.Status         `json:"store"`
 		Resource      resource.Status      `json:"resource"`
 	} `json:"components"`
+}
+
+// StatusInstance adds Hostel/Carrier signals to the Bed-derived instance
+// summary. Bed rows remain owned by GET /v1/beds.
+type StatusInstance struct {
+	InstanceStatus
+	BedPressureThresholdPercent int  `json:"bed_pressure_threshold_percent"`
+	BedPressure                 bool `json:"bed_pressure"`
+	CPUPressure                 bool `json:"cpu_pressure"`
+	MemoryPressure              bool `json:"memory_pressure"`
 }
 
 const (
@@ -71,7 +81,13 @@ func (m *Manager) Status() Status {
 	m.diagnosticsMu.RLock()
 	environment := m.environment
 	m.diagnosticsMu.RUnlock()
-	report := Status{InventoryStatus: m.InventoryStatus(), LocalCleanups: m.localCleanupReports(), Environment: environment,
+	inventory := m.InventoryStatus()
+	resourceStatus := m.resourceManager.Status()
+	report := Status{Instance: StatusInstance{InstanceStatus: inventory.Instance,
+		BedPressureThresholdPercent: m.pressurePercent,
+		BedPressure:                 m.bedPressureForCounts(int64(inventory.Instance.OccupiedBeds), int64(inventory.Instance.PinnedBeds)),
+		CPUPressure:                 resourceStatus.Admission.CPUPressure, MemoryPressure: resourceStatus.Admission.MemoryPressure},
+		LocalCleanups: m.localCleanupReports(), Environment: environment,
 		Isolation: m.RoomStatus(), Combinations: append([]CombinationAttempt(nil), m.combinationAttempts...)}
 	report.Components.Filesystem = m.files.Status()
 	report.Components.Configuration = m.configurations.Status()
@@ -79,7 +95,7 @@ func (m *Manager) Status() Status {
 	report.Components.Network = m.network.Status()
 	report.Components.Executor = m.executorManager.Status()
 	report.Components.Store = m.store.Status()
-	report.Components.Resource = m.resourceManager.Status()
+	report.Components.Resource = resourceStatus
 	return report
 }
 

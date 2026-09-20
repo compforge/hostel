@@ -143,8 +143,11 @@ func TestStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode diagnostics: %v", err)
 	}
-	if body["schema_version"] != float64(10) {
+	if body["schema_version"] != float64(11) {
 		t.Fatalf("diagnostics schema_version = %v", body["schema_version"])
+	}
+	if _, exists := body["beds"]; exists {
+		t.Fatal("/v1/status must not include the Bed inventory")
 	}
 	components, _ := body["components"].(map[string]any)
 	isolationFacts, _ := components["filesystem"].(map[string]any)
@@ -857,14 +860,14 @@ func TestMaxPinnedBedsReportsPressureWithoutBackpressure(t *testing.T) {
 	if health["pinned_beds"] != float64(1) || health["max_pinned_beds"] != float64(1) || health["bed_pressure"] != true {
 		t.Fatalf("health pinned capacity = %v", health)
 	}
-	rec = do(t, s, http.MethodGet, "/v1/beds", nil, nil)
-	var inventory struct {
+	rec = do(t, s, http.MethodGet, "/v1/status", nil, nil)
+	var status struct {
 		Instance struct {
 			BedPressure bool `json:"bed_pressure"`
 		} `json:"instance"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &inventory); err != nil || !inventory.Instance.BedPressure {
-		t.Fatalf("inventory bed pressure = %+v err=%v", inventory.Instance, err)
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil || !status.Instance.BedPressure {
+		t.Fatalf("Hostel bed pressure = %+v err=%v", status.Instance, err)
 	}
 
 	finish()
@@ -964,7 +967,6 @@ func TestBedListEndpoint(t *testing.T) {
 			MaxBeds          int            `json:"max_beds"`
 			PinnedBeds       int            `json:"pinned_beds"`
 			MaxPinnedBeds    int            `json:"max_pinned_beds"`
-			PressurePercent  int            `json:"bed_pressure_threshold_percent"`
 			PhaseCounts      map[string]int `json:"phase_counts"`
 			ActivityCounts   map[string]int `json:"activity_counts"`
 			RetainUntil      time.Time      `json:"retained_until"`
@@ -988,7 +990,6 @@ func TestBedListEndpoint(t *testing.T) {
 		t.Fatalf("instance status = %s, want retained (a bed is within its retention promise)", body.Instance.Status)
 	}
 	if body.Instance.Sync != "noop" || body.Instance.OccupiedBeds != 2 || body.Instance.ResidentBeds != 2 ||
-		body.Instance.PressurePercent != 80 ||
 		body.Instance.PinnedBeds != 1 ||
 		body.Instance.ActivityCounts["active"] != 1 || body.Instance.ActivityCounts["idle"] != 1 ||
 		body.Instance.PhaseCounts["resident"] != 2 || body.Instance.PhaseCounts["evicting"] != 0 ||

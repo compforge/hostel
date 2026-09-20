@@ -24,12 +24,14 @@ import (
 
 const defaultAdmissionSampleInterval = time.Second
 
-// AdmissionConfig controls carrier-pressure admission. A zero threshold
-// disables that dimension; values are percentages in [0, 100].
+// AdmissionConfig controls carrier soft-pressure reporting and hard admission.
+// A zero threshold disables that signal or gate; values are percentages in [0, 100].
 type AdmissionConfig struct {
-	CPUThresholdPercent    int
-	MemoryThresholdPercent int
-	SampleInterval         time.Duration
+	CPUPressureThresholdPercent    int
+	MemoryPressureThresholdPercent int
+	CPUThresholdPercent            int
+	MemoryThresholdPercent         int
+	SampleInterval                 time.Duration
 }
 
 // AdmissionDecision is the cached verdict used on an idle-to-active bed
@@ -43,23 +45,27 @@ type AdmissionDecision struct {
 // is true when at least one configured dimension has a finite cgroup limit and
 // a usable sample.
 type AdmissionReport struct {
-	// Pressure signals and admission share one sample; disabled/unavailable dimensions stay false.
-	CPUPressure            bool      `json:"-"`
-	MemoryPressure         bool      `json:"-"`
-	Enabled                bool      `json:"enabled"`
-	Available              bool      `json:"available"`
-	Accepting              bool      `json:"accepting"`
-	Reason                 string    `json:"reason,omitempty"`
-	CPUThresholdPercent    int       `json:"cpu_threshold_percent"`
-	MemoryThresholdPercent int       `json:"memory_threshold_percent"`
-	CPULimitCores          float64   `json:"cpu_limit_cores"`
-	CPUUsagePercent        float64   `json:"cpu_usage_percent"`
-	CPUAvailable           bool      `json:"cpu_available"`
-	MemoryCurrentBytes     uint64    `json:"memory_current_bytes"`
-	MemoryLimitBytes       uint64    `json:"memory_limit_bytes"`
-	MemoryUsagePercent     float64   `json:"memory_usage_percent"`
-	MemoryAvailable        bool      `json:"memory_available"`
-	SampledAt              time.Time `json:"sampled_at"`
+	// Pressure signals and admission share one sample, but pressure uses an
+	// earlier soft watermark so the control plane can add capacity before the
+	// hard admission boundary rejects work.
+	CPUPressure                    bool      `json:"-"`
+	MemoryPressure                 bool      `json:"-"`
+	Enabled                        bool      `json:"enabled"`
+	Available                      bool      `json:"available"`
+	Accepting                      bool      `json:"accepting"`
+	Reason                         string    `json:"reason,omitempty"`
+	CPUPressureThresholdPercent    int       `json:"cpu_pressure_threshold_percent"`
+	MemoryPressureThresholdPercent int       `json:"memory_pressure_threshold_percent"`
+	CPUThresholdPercent            int       `json:"cpu_threshold_percent"`
+	MemoryThresholdPercent         int       `json:"memory_threshold_percent"`
+	CPULimitCores                  float64   `json:"cpu_limit_cores"`
+	CPUUsagePercent                float64   `json:"cpu_usage_percent"`
+	CPUAvailable                   bool      `json:"cpu_available"`
+	MemoryCurrentBytes             uint64    `json:"memory_current_bytes"`
+	MemoryLimitBytes               uint64    `json:"memory_limit_bytes"`
+	MemoryUsagePercent             float64   `json:"memory_usage_percent"`
+	MemoryAvailable                bool      `json:"memory_available"`
+	SampledAt                      time.Time `json:"sampled_at"`
 }
 
 // Admitter answers whether carrier pressure allows a new tenant Bed or an
@@ -73,10 +79,7 @@ type Admitter interface {
 // NewAdmission starts a read-only cgroup sampler. Sampling is decoupled from
 // requests so CPU admission does not add a measurement delay to bed startup.
 func NewAdmission(_ context.Context, carrier Carrier, cfg AdmissionConfig) (Admitter, error) {
-	if err := validateThreshold("CPU", cfg.CPUThresholdPercent); err != nil {
-		return nil, err
-	}
-	if err := validateThreshold("memory", cfg.MemoryThresholdPercent); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	if cfg.SampleInterval <= 0 {
@@ -89,6 +92,35 @@ func NewAdmission(_ context.Context, carrier Carrier, cfg AdmissionConfig) (Admi
 	a.sample(time.Now())
 	// The daemon drives Run after recovery and capability verification.
 	return a, nil
+}
+
+func (cfg AdmissionConfig) Validate() error {
+	if err := validateThreshold("CPU pressure", cfg.CPUPressureThresholdPercent); err != nil {
+		return err
+	}
+	if err := validateThreshold("memory pressure", cfg.MemoryPressureThresholdPercent); err != nil {
+		return err
+	}
+	if err := validateThreshold("CPU", cfg.CPUThresholdPercent); err != nil {
+		return err
+	}
+	if err := validateThreshold("memory", cfg.MemoryThresholdPercent); err != nil {
+		return err
+	}
+	if err := validatePressureBeforeAdmission("CPU", cfg.CPUPressureThresholdPercent, cfg.CPUThresholdPercent); err != nil {
+		return err
+	}
+	if err := validatePressureBeforeAdmission("memory", cfg.MemoryPressureThresholdPercent, cfg.MemoryThresholdPercent); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePressureBeforeAdmission(name string, pressure, admission int) error {
+	if pressure > 0 && admission > 0 && pressure >= admission {
+		return fmt.Errorf("resource admission: %s pressure threshold %d must be lower than admission threshold %d", name, pressure, admission)
+	}
+	return nil
 }
 
 func validateThreshold(name string, threshold int) error {
@@ -123,7 +155,8 @@ type pressureAdmission struct {
 }
 
 func newPressureAdmission(carrier Carrier, cfg AdmissionConfig) *pressureAdmission {
-	enabled := cfg.CPUThresholdPercent > 0 || cfg.MemoryThresholdPercent > 0
+	enabled := cfg.CPUPressureThresholdPercent > 0 || cfg.MemoryPressureThresholdPercent > 0 ||
+		cfg.CPUThresholdPercent > 0 || cfg.MemoryThresholdPercent > 0
 	reason := ""
 	if !enabled {
 		reason = "resource admission disabled"
@@ -133,11 +166,13 @@ func newPressureAdmission(carrier Carrier, cfg AdmissionConfig) *pressureAdmissi
 		cfg:      cfg,
 		decision: AdmissionDecision{Allowed: true},
 		report: AdmissionReport{
-			Enabled:                enabled,
-			Accepting:              true,
-			Reason:                 reason,
-			CPUThresholdPercent:    cfg.CPUThresholdPercent,
-			MemoryThresholdPercent: cfg.MemoryThresholdPercent,
+			Enabled:                        enabled,
+			Accepting:                      true,
+			Reason:                         reason,
+			CPUPressureThresholdPercent:    cfg.CPUPressureThresholdPercent,
+			MemoryPressureThresholdPercent: cfg.MemoryPressureThresholdPercent,
+			CPUThresholdPercent:            cfg.CPUThresholdPercent,
+			MemoryThresholdPercent:         cfg.MemoryThresholdPercent,
 		},
 	}
 }
@@ -161,47 +196,55 @@ func (a *pressureAdmission) sample(now time.Time) {
 		a.mu.Lock()
 		a.decision = AdmissionDecision{Allowed: true}
 		a.report = AdmissionReport{
-			Enabled:                true,
-			Accepting:              true,
-			Reason:                 err.Error(),
-			CPUThresholdPercent:    a.cfg.CPUThresholdPercent,
-			MemoryThresholdPercent: a.cfg.MemoryThresholdPercent,
-			SampledAt:              now,
+			Enabled:                        true,
+			Accepting:                      true,
+			Reason:                         err.Error(),
+			CPUPressureThresholdPercent:    a.cfg.CPUPressureThresholdPercent,
+			MemoryPressureThresholdPercent: a.cfg.MemoryPressureThresholdPercent,
+			CPUThresholdPercent:            a.cfg.CPUThresholdPercent,
+			MemoryThresholdPercent:         a.cfg.MemoryThresholdPercent,
+			SampledAt:                      now,
 		}
 		a.mu.Unlock()
 		return
 	}
 
 	report := AdmissionReport{
-		Enabled:                true,
-		Accepting:              true,
-		CPUThresholdPercent:    a.cfg.CPUThresholdPercent,
-		MemoryThresholdPercent: a.cfg.MemoryThresholdPercent,
-		CPULimitCores:          snapshot.CPULimitCores,
-		MemoryCurrentBytes:     snapshot.MemoryCurrentBytes,
-		MemoryLimitBytes:       snapshot.MemoryLimitBytes,
-		SampledAt:              now,
+		Enabled:                        true,
+		Accepting:                      true,
+		CPUPressureThresholdPercent:    a.cfg.CPUPressureThresholdPercent,
+		MemoryPressureThresholdPercent: a.cfg.MemoryPressureThresholdPercent,
+		CPUThresholdPercent:            a.cfg.CPUThresholdPercent,
+		MemoryThresholdPercent:         a.cfg.MemoryThresholdPercent,
+		CPULimitCores:                  snapshot.CPULimitCores,
+		MemoryCurrentBytes:             snapshot.MemoryCurrentBytes,
+		MemoryLimitBytes:               snapshot.MemoryLimitBytes,
+		SampledAt:                      now,
 	}
 	var rejected []string
-	if a.cfg.MemoryThresholdPercent > 0 && snapshot.MemoryLimitBytes > 0 {
+	if (a.cfg.MemoryPressureThresholdPercent > 0 || a.cfg.MemoryThresholdPercent > 0) && snapshot.MemoryLimitBytes > 0 {
 		report.MemoryAvailable = true
 		report.MemoryUsagePercent = float64(snapshot.MemoryCurrentBytes) / float64(snapshot.MemoryLimitBytes) * 100
-		if report.MemoryUsagePercent >= float64(a.cfg.MemoryThresholdPercent) {
+		if a.cfg.MemoryPressureThresholdPercent > 0 && report.MemoryUsagePercent >= float64(a.cfg.MemoryPressureThresholdPercent) {
 			report.MemoryPressure = true
+		}
+		if a.cfg.MemoryThresholdPercent > 0 && report.MemoryUsagePercent >= float64(a.cfg.MemoryThresholdPercent) {
 			rejected = append(rejected, fmt.Sprintf("carrier memory usage %.1f%% reached %d%% admission threshold",
 				report.MemoryUsagePercent, a.cfg.MemoryThresholdPercent))
 		}
 	}
 
 	a.mu.Lock()
-	if a.cfg.CPUThresholdPercent > 0 && snapshot.CPULimitCores > 0 && a.hasPrevious &&
+	if (a.cfg.CPUPressureThresholdPercent > 0 || a.cfg.CPUThresholdPercent > 0) && snapshot.CPULimitCores > 0 && a.hasPrevious &&
 		snapshot.CPUUsage >= a.previous.CPUUsage && now.After(a.previousAt) {
 		report.CPUAvailable = true
 		used := snapshot.CPUUsage - a.previous.CPUUsage
 		elapsed := now.Sub(a.previousAt)
 		report.CPUUsagePercent = float64(used) / float64(elapsed) / snapshot.CPULimitCores * 100
-		if report.CPUUsagePercent >= float64(a.cfg.CPUThresholdPercent) {
+		if a.cfg.CPUPressureThresholdPercent > 0 && report.CPUUsagePercent >= float64(a.cfg.CPUPressureThresholdPercent) {
 			report.CPUPressure = true
+		}
+		if a.cfg.CPUThresholdPercent > 0 && report.CPUUsagePercent >= float64(a.cfg.CPUThresholdPercent) {
 			rejected = append(rejected, fmt.Sprintf("carrier CPU usage %.1f%% reached %d%% admission threshold",
 				report.CPUUsagePercent, a.cfg.CPUThresholdPercent))
 		}
@@ -225,10 +268,10 @@ func (a *pressureAdmission) sample(now time.Time) {
 }
 
 func unavailableReason(cfg AdmissionConfig, snapshot CarrierSnapshot) string {
-	if cfg.MemoryThresholdPercent > 0 && snapshot.MemoryLimitBytes > 0 {
+	if (cfg.MemoryPressureThresholdPercent > 0 || cfg.MemoryThresholdPercent > 0) && snapshot.MemoryLimitBytes > 0 {
 		return ""
 	}
-	if cfg.CPUThresholdPercent > 0 && snapshot.CPULimitCores > 0 {
+	if (cfg.CPUPressureThresholdPercent > 0 || cfg.CPUThresholdPercent > 0) && snapshot.CPULimitCores > 0 {
 		return "waiting for CPU sampling window"
 	}
 	return "configured cgroup dimensions have no finite limits"

@@ -2,7 +2,6 @@ package manager
 
 import (
 	"github.com/qiankunli/hostel/internal/bed/network"
-	"github.com/qiankunli/hostel/internal/bed/resource"
 	"time"
 )
 
@@ -61,31 +60,26 @@ type InventoryStatus struct {
 }
 
 type InstanceStatus struct {
-	Status                      InstanceState            `json:"status"`
-	Sync                        string                   `json:"sync"`
-	BedSyncSelection            bool                     `json:"bed_sync_selection"`
-	TransferSyncs               []string                 `json:"transfer_syncs"`
-	FileTransfers               bool                     `json:"file_transfers"`
-	TransferInstanceID          string                   `json:"transfer_instance_id"`
-	Network                     network.Status           `json:"network"`
-	NetworkPolicy               bool                     `json:"network_policy"`
-	Isolation                   string                   `json:"isolation"`
-	OccupiedBeds                int                      `json:"occupied_beds"`
-	ResidentBeds                int                      `json:"resident_beds"`
-	MaxBeds                     int                      `json:"max_beds"`
-	PinnedBeds                  int                      `json:"pinned_beds"`
-	MaxPinnedBeds               int                      `json:"max_pinned_beds"`
-	BedPressureThresholdPercent int                      `json:"bed_pressure_threshold_percent"`
-	CPUPressure                 bool                     `json:"cpu_pressure"`
-	MemoryPressure              bool                     `json:"memory_pressure"`
-	BedPressure                 bool                     `json:"bed_pressure"`
-	PhaseCounts                 map[string]int           `json:"phase_counts"`
-	ActivityCounts              map[string]int           `json:"activity_counts"`
-	RetainedUntil               *time.Time               `json:"retained_until"`
-	LuggageBytes                int64                    `json:"luggage_bytes"`
-	LuggageHighBytes            int64                    `json:"luggage_high_bytes"`
-	LuggageLowBytes             int64                    `json:"luggage_low_bytes"`
-	ResourceAdmission           resource.AdmissionReport `json:"resource_admission"`
+	Status             InstanceState  `json:"status"`
+	Sync               string         `json:"sync"`
+	BedSyncSelection   bool           `json:"bed_sync_selection"`
+	TransferSyncs      []string       `json:"transfer_syncs"`
+	FileTransfers      bool           `json:"file_transfers"`
+	TransferInstanceID string         `json:"transfer_instance_id"`
+	Network            network.Status `json:"network"`
+	NetworkPolicy      bool           `json:"network_policy"`
+	Isolation          string         `json:"isolation"`
+	OccupiedBeds       int            `json:"occupied_beds"`
+	ResidentBeds       int            `json:"resident_beds"`
+	MaxBeds            int            `json:"max_beds"`
+	PinnedBeds         int            `json:"pinned_beds"`
+	MaxPinnedBeds      int            `json:"max_pinned_beds"`
+	PhaseCounts        map[string]int `json:"phase_counts"`
+	ActivityCounts     map[string]int `json:"activity_counts"`
+	RetainedUntil      *time.Time     `json:"retained_until"`
+	LuggageBytes       int64          `json:"luggage_bytes"`
+	LuggageHighBytes   int64          `json:"luggage_high_bytes"`
+	LuggageLowBytes    int64          `json:"luggage_low_bytes"`
 }
 
 func (m *Manager) InventoryStatus() InventoryStatus {
@@ -95,12 +89,10 @@ func (m *Manager) InventoryStatus() InventoryStatus {
 		Sync:   m.SyncName(), BedSyncSelection: true, TransferSyncs: []string{"copy", "restic"},
 		FileTransfers: m.TransfersConfigured(), TransferInstanceID: m.TransferInstanceID(),
 		Network: m.NetworkReport(), NetworkPolicy: true, Isolation: string(m.RoomStatus().Effective),
-		MaxBeds: m.maxBeds, MaxPinnedBeds: m.maxPinnedBeds, BedPressureThresholdPercent: m.pressurePercent,
-		LuggageHighBytes: m.luggageHigh, LuggageLowBytes: m.luggageLow, ResourceAdmission: m.ResourceAdmissionReport(),
+		MaxBeds: m.maxBeds, MaxPinnedBeds: m.maxPinnedBeds,
+		LuggageHighBytes: m.luggageHigh, LuggageLowBytes: m.luggageLow,
 		PhaseCounts: map[string]int{}, ActivityCounts: map[string]int{string(ActivityIdle): 0, string(ActivityActive): 0},
 	}
-	instance.CPUPressure = instance.ResourceAdmission.CPUPressure
-	instance.MemoryPressure = instance.ResourceAdmission.MemoryPressure
 	for _, phase := range []Phase{PhaseResident, PhaseEvicting, PhasePurging, PhaseDormant, PhaseInitializing, PhaseFailed} {
 		instance.PhaseCounts[string(phase)] = 0
 	}
@@ -133,8 +125,5 @@ func (m *Manager) InventoryStatus() InventoryStatus {
 	if instance.OccupiedBeds > 0 && retentionKnown {
 		instance.RetainedUntil = &retainUntil
 	}
-	occupiedThreshold := bedPressureThreshold(m.maxBeds, m.pressurePercent)
-	pinnedThreshold := bedPressureThreshold(m.maxPinnedBeds, m.pressurePercent)
-	instance.BedPressure = (occupiedThreshold > 0 && int64(instance.OccupiedBeds) >= occupiedThreshold) || (pinnedThreshold > 0 && int64(instance.PinnedBeds) >= pinnedThreshold)
 	return InventoryStatus{Instance: instance, Beds: beds}
 }
