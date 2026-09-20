@@ -51,8 +51,10 @@ type Status struct {
 // summary. Bed rows remain owned by GET /v1/beds.
 type StatusInstance struct {
 	InstanceStatus
-	CPUPressure    bool `json:"cpu_pressure"`
-	MemoryPressure bool `json:"memory_pressure"`
+	BedPressureThresholdPercent int  `json:"bed_pressure_threshold_percent"`
+	BedPressure                 bool `json:"bed_pressure"`
+	CPUPressure                 bool `json:"cpu_pressure"`
+	MemoryPressure              bool `json:"memory_pressure"`
 }
 
 const (
@@ -82,7 +84,9 @@ func (m *Manager) Status() Status {
 	inventory := m.InventoryStatus()
 	resourceStatus := m.resourceManager.Status()
 	report := Status{Instance: StatusInstance{InstanceStatus: inventory.Instance,
-		CPUPressure: resourceStatus.Admission.CPUPressure, MemoryPressure: resourceStatus.Admission.MemoryPressure},
+		BedPressureThresholdPercent: m.pressurePercent,
+		BedPressure:                 m.bedPressureForCounts(int64(inventory.Instance.OccupiedBeds), int64(inventory.Instance.PinnedBeds)),
+		CPUPressure:                 resourceStatus.Admission.CPUPressure, MemoryPressure: resourceStatus.Admission.MemoryPressure},
 		LocalCleanups: m.localCleanupReports(), Environment: environment,
 		Isolation: m.RoomStatus(), Combinations: append([]CombinationAttempt(nil), m.combinationAttempts...)}
 	report.Components.Filesystem = m.files.Status()

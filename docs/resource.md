@@ -84,7 +84,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 容量事实更新
   → occupied_beds / max_beds 达到高水位
     或 pinned_beds / max_pinned_beds 达到高水位
-      └─ inventory 上报 bed_pressure=true（调度提示，不拒绝工作）
+      └─ Hostel status 上报 bed_pressure=true（调度提示，不拒绝工作）
   → CPU 或内存达到 pressure 软水位
       └─ inventory 上报 cpu_pressure=true / memory_pressure=true（调度提示，不拒绝工作）
 新 Bed 初始化
@@ -204,4 +204,4 @@ per-bed 配额，容易把高密度、强突发的 agent workload 错配成传�
 
 容量控制中的硬边界与软水位成对表达：`max_beds` 是 Bed 数量的硬准入边界，`bed_pressure` 是更早出现的软信号；CPU、内存的 admission threshold 是资源硬准入边界，`cpu_pressure`、`memory_pressure` 是对应的软信号。软水位必须低于对应硬边界，让控制面在 Hostel 开始拒绝请求前完成新 Carrier 的准备、分流和补位；硬边界只负责最后的本实例保护，不能代替提前扩容信号。
 
-`/v1/status` 在 `instance` 中并列报告三类 pressure；`/v1/beds` 只保留由同一批 Bed inventory 推导的 `bed_pressure` 和容量计数。资源 pressure 与 admission 复用同一份缓存采样，但分别使用软硬阈值；CPU、内存软水位默认 80%，硬准入水位默认 90%。对应维度禁用或不可测时不报告 pressure，`components.resource.admission.accepting` 只表达硬准入结论。
+`/v1/status` 在 `instance` 中并列报告 `bed_pressure`、`cpu_pressure` 和 `memory_pressure`；`/v1/beds` 只保留 Bed 列表及由同一批 inventory 推导的原始容量计数，不输出 pressure verdict。资源 pressure 与 admission 复用同一份缓存采样，但分别使用软硬阈值；CPU、内存软水位默认 80%，硬准入水位默认 90%。对应维度禁用或不可测时不报告 pressure，`components.resource.admission.accepting` 只表达硬准入结论。

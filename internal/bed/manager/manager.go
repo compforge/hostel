@@ -336,15 +336,19 @@ func (m *Manager) PinnedBedCount() int64 { return m.pinnedBeds.Load() }
 //
 // +spec=`bed_pressure is true when occupied_beds/max_beds or pinned_beds/max_pinned_beds reaches the configured watermark; pressure never rejects Bed work.`
 func (m *Manager) BedPressure() bool {
+	return m.bedPressureForCounts(int64(m.OccupiedBedCount()), m.pinnedBeds.Load())
+}
+
+func (m *Manager) bedPressureForCounts(occupied, pinned int64) bool {
 	if m.pressurePercent <= 0 {
 		return false
 	}
 	pinnedThreshold := bedPressureThreshold(m.maxPinnedBeds, m.pressurePercent)
-	if pinnedThreshold > 0 && m.pinnedBeds.Load() >= pinnedThreshold {
+	if pinnedThreshold > 0 && pinned >= pinnedThreshold {
 		return true
 	}
 	occupiedThreshold := bedPressureThreshold(m.maxBeds, m.pressurePercent)
-	return occupiedThreshold > 0 && int64(m.OccupiedBedCount()) >= occupiedThreshold
+	return occupiedThreshold > 0 && occupied >= occupiedThreshold
 }
 
 func bedPressureThreshold(limit, percent int) int64 {

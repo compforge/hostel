@@ -80,6 +80,7 @@ func TestStatusReportsResourcePressure(t *testing.T) {
 	rec := do(t, s, http.MethodGet, "/v1/status", nil, nil)
 	var status struct {
 		Instance struct {
+			Bed    *bool `json:"bed_pressure"`
 			CPU    *bool `json:"cpu_pressure"`
 			Memory *bool `json:"memory_pressure"`
 		} `json:"instance"`
@@ -92,7 +93,7 @@ func TestStatusReportsResourcePressure(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != 200 || status.Instance.CPU == nil || *status.Instance.CPU || status.Instance.Memory == nil || !*status.Instance.Memory || status.Components.Resource.Admission.Accepting {
+	if rec.Code != 200 || status.Instance.Bed == nil || *status.Instance.Bed || status.Instance.CPU == nil || *status.Instance.CPU || status.Instance.Memory == nil || !*status.Instance.Memory || status.Components.Resource.Admission.Accepting {
 		t.Fatalf("/v1/status: %s", rec.Body.String())
 	}
 
@@ -103,7 +104,7 @@ func TestStatusReportsResourcePressure(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &inventory); err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"cpu_pressure", "memory_pressure", "resource_admission"} {
+	for _, field := range []string{"bed_pressure", "bed_pressure_threshold_percent", "cpu_pressure", "memory_pressure", "resource_admission"} {
 		if _, exists := inventory.Instance[field]; exists {
 			t.Fatalf("/v1/beds instance contains Hostel resource field %q: %s", field, rec.Body.String())
 		}

@@ -57,8 +57,8 @@ evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史�
 | 接口 | 回答的问题 |
 |------|-----------|
 | `POST /v1/beds` | 接受 Bed 初始化；新任务返回 `202` 与 initializing readiness，已 Ready 返回 `200` |
-| `GET /v1/status` | Hostel/Carrier 粒度的实例、组件、设施与资源状态，不返回 Bed 列表 |
-| `GET /v1/beds` | 全部 Bed 概要（含 initializing / failed / dormant）+ 与列表同快照的容量计数 |
+| `GET /v1/status` | Hostel/Carrier 粒度的实例、组件、设施、容量 pressure 与资源状态，不返回 Bed 列表 |
+| `GET /v1/beds` | 全部 Bed 概要（含 initializing / failed / dormant）+ 与列表同快照的原始容量计数，不返回 pressure verdict |
 | `GET /v1/beds/:id` | `status.lifecycle` 表达 Bed 生命周期，`status.components` 与 `status.amenities` 分别表达 Bed 分域和关联 Tenant 状态 |
 | `GET /healthz` | 实例可服务性（探活/调度用） |
 
