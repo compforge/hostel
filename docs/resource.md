@@ -54,7 +54,11 @@ request / limit 注入 env，也不访问 Kubernetes API。
 | 内存上限 | `memory.max` | 字节数；`max` 表示不限 |
 | 内存用量 | `memory.current` | 读取时刻的当前 charge，包含可回收 cache |
 
-CPU 利用率必须用两个时点的累计值计算：
+Carrier CPU 利用率使用最近 10 秒滑动窗口内的累计值差计算；展示、pressure 和 admission 共用
+这一平滑值，避免短时尖峰直接触发拒绝。默认每秒采样，启动不足 10 秒时按实际有效时长计算，
+不补零；窗口边界落在两次采样之间时线性插值。计数器回退、CPU 配额变化或采样失败后重新建立窗口。
+
+计算口径：
 
 ```text
 CPU usage ratio = Δusage_usec / Δwall_time / cpu_limit_cores
@@ -180,7 +184,7 @@ per-bed 配额，容易把高密度、强突发的 agent workload 错配成传�
 
 ### 4. 演进方向与测试
 
-当前 CPU 使用短窗口利用率，内存使用 `memory.current / memory.max`。后续若真实负载表明单阈值
+当前 CPU 使用 10 秒滑动平均利用率，内存使用 `memory.current / memory.max`。后续若真实负载表明单阈值
 抖动或误判，再引入 headroom、hysteresis、CPU throttling、PSI 或基于历史 per-bed 成本的预测；
 在有证据前保持策略简单，不把 admission 演化成用户态调度器。
 
