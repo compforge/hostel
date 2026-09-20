@@ -146,12 +146,10 @@ type pressureAdmission struct {
 	carrier Carrier
 	cfg     AdmissionConfig
 
-	mu          sync.RWMutex
-	previous    CarrierSnapshot
-	previousAt  time.Time
-	hasPrevious bool
-	decision    AdmissionDecision
-	report      AdmissionReport
+	mu        sync.RWMutex
+	cpuWindow cpuUsageWindow
+	decision  AdmissionDecision
+	report    AdmissionReport
 }
 
 func newPressureAdmission(carrier Carrier, cfg AdmissionConfig) *pressureAdmission {
@@ -194,6 +192,7 @@ func (a *pressureAdmission) sample(now time.Time) {
 	snapshot, err := a.carrier.Snapshot()
 	if err != nil {
 		a.mu.Lock()
+		a.cpuWindow = cpuUsageWindow{}
 		a.decision = AdmissionDecision{Allowed: true}
 		a.report = AdmissionReport{
 			Enabled:                        true,
@@ -235,12 +234,10 @@ func (a *pressureAdmission) sample(now time.Time) {
 	}
 
 	a.mu.Lock()
-	if (a.cfg.CPUPressureThresholdPercent > 0 || a.cfg.CPUThresholdPercent > 0) && snapshot.CPULimitCores > 0 && a.hasPrevious &&
-		snapshot.CPUUsage >= a.previous.CPUUsage && now.After(a.previousAt) {
+	usage, available := a.cpuWindow.add(now, snapshot.CPUUsage, snapshot.CPULimitCores)
+	if (a.cfg.CPUPressureThresholdPercent > 0 || a.cfg.CPUThresholdPercent > 0) && available {
 		report.CPUAvailable = true
-		used := snapshot.CPUUsage - a.previous.CPUUsage
-		elapsed := now.Sub(a.previousAt)
-		report.CPUUsagePercent = float64(used) / float64(elapsed) / snapshot.CPULimitCores * 100
+		report.CPUUsagePercent = usage
 		if a.cfg.CPUPressureThresholdPercent > 0 && report.CPUUsagePercent >= float64(a.cfg.CPUPressureThresholdPercent) {
 			report.CPUPressure = true
 		}
@@ -249,9 +246,6 @@ func (a *pressureAdmission) sample(now time.Time) {
 				report.CPUUsagePercent, a.cfg.CPUThresholdPercent))
 		}
 	}
-	a.previous = snapshot
-	a.previousAt = now
-	a.hasPrevious = true
 	report.Available = report.CPUAvailable || report.MemoryAvailable
 	if !report.Available {
 		report.Reason = unavailableReason(a.cfg, snapshot)
