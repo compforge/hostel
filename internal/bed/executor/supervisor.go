@@ -258,6 +258,13 @@ func (e *supervisedExecutor) start(ctx context.Context, processID string, cmd *e
 		if errors.As(err, &remoteErr) {
 			return nil, err
 		}
+		var requestErr *supervisor.RequestError
+		if errors.As(err, &requestErr) {
+			// A locally rejected Start says nothing about supervisor health.
+			// Retrying the same specification or replacing the shared Executor
+			// would only disrupt its unrelated commands and services.
+			return nil, err
+		}
 		select {
 		case <-e.done:
 			e.recordTransportFailure(ctx, "start", processID, attempt, maxAttempts, false, err)

@@ -14,6 +14,7 @@ const (
 	ErrConflict          ErrorKind = "conflict"
 	ErrUnavailable       ErrorKind = "unavailable"
 	ErrPreparationFailed ErrorKind = "preparation failed"
+	ErrLimitExceeded     ErrorKind = "limit exceeded"
 )
 
 func (k ErrorKind) Error() string { return string(k) }

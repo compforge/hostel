@@ -15,6 +15,7 @@
 package supervisor
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -112,6 +113,52 @@ func TestSpawnExitCodeAndOutput(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "hi from supervisor") {
 		t.Fatalf("output = %q", data)
+	}
+}
+
+func TestLargeStartSpecificationUsesFD(t *testing.T) {
+	_, _, client := startSupervisor(t)
+	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devnull.Close()
+	stdin, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	if _, err := io.WriteString(writer, "payload\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	argv := []string{"/bin/sh", "-c", `read -r line && test "$line" = payload && test "${#HOSTEL_START_0}" -eq 20000`}
+	env := append([]string(nil), os.Environ()...)
+	for i := range 8 {
+		env = append(env, fmt.Sprintf("HOSTEL_START_%d=%s", i, strings.Repeat("x", 20000)))
+	}
+	inline, err := json.Marshal(request{Operation: opStart, ExecutorID: testExecutorID, ProcessID: "process-large-spec", SpecHash: specHash(argv, "", env), Argv: argv, Env: env})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inline) <= maxMessageSize {
+		t.Fatalf("test start frame = %d bytes, want more than %d", len(inline), maxMessageSize)
+	}
+	pid, err := client.Start("process-large-spec", argv, "", env, stdin, devnull, devnull)
+	if err != nil {
+		t.Fatalf("large Start: %v", err)
+	}
+	if status, err := client.Wait("process-large-spec"); err != nil || status.Kind != ExitStatusExited || status.ExitCode != 0 {
+		t.Fatalf("large Start status = %+v, err = %v", status, err)
+	}
+	retriedPID, err := client.Start("process-large-spec", argv, "", env, devnull, devnull, devnull)
+	if err != nil || retriedPID != pid {
+		t.Fatalf("idempotent large Start pid = %d, err = %v, want %d", retriedPID, err, pid)
+	}
+	if err := client.Describe(); err != nil {
+		t.Fatalf("supervisor after large Start: %v", err)
 	}
 }
 

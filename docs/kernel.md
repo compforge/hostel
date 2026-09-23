@@ -305,6 +305,8 @@ hostel daemon
 ```
 
 Linux supervisor 负责派生、收尸与整域回收，可重连 IPC 和幂等 Start 避免重试重复执行。
+Start 的大进程配置经匿名文件描述符传递，标准输入保持独立；配置超限或进程拒绝启动
+只终结本次 Execution，不表示共享 Executor 丢失。
 local backend 由 daemon 直接派生并管理进程组，不承诺清理已脱离进程组的后代。
 两种 backend 都通过同一 Executor/Process 契约提供终态；容器内 tini 是进程收尸的额外兜底。
 
