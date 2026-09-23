@@ -16,6 +16,7 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"syscall"
@@ -88,6 +89,24 @@ func TestSupervisorForegroundExec(t *testing.T) {
 	}
 	if result, err := m.RunForeground(ctx, b, "true", "", nil, 0, nil); err != nil || result.Process.ExitCode != 0 {
 		t.Fatalf("bed unusable after failure: result=%+v err=%v", result, err)
+	}
+}
+
+func TestSupervisorLargeCommandSpecificationKeepsBedUsable(t *testing.T) {
+	m := newSupervisorManager(t)
+	b := resolveSupervisedBed(t, m, "conv-large-start")
+	ctx := context.Background()
+	env := make(map[string]string)
+	for i := range 5 {
+		env[fmt.Sprintf("BULK_%d", i)] = strings.Repeat("v", 20000)
+	}
+	command := "true #" + strings.Repeat("x", 40000)
+	result, err := m.RunForeground(ctx, b, command, "", env, 0, nil)
+	if err != nil || result.Process.ExitCode != 0 {
+		t.Fatalf("large command specification: result=%+v err=%v", result, err)
+	}
+	if result, err := m.RunForeground(ctx, b, "true", "", nil, 0, nil); err != nil || result.Process.ExitCode != 0 {
+		t.Fatalf("next command after large specification: result=%+v err=%v", result, err)
 	}
 }
 

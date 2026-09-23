@@ -15,6 +15,7 @@
 package supervisor
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"log"
@@ -25,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
+	hostel "github.com/qiankunli/hostel/internal"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -261,11 +264,38 @@ func (s *server) serve(conn *net.UnixConn) {
 
 func (s *server) start(req request, fds []int) reply {
 	base := reply{ExecutorID: s.executorID, ProcessID: req.ProcessID}
-	if req.ProcessID == "" || len(req.Argv) == 0 || len(fds) != 3 {
-		base.Error = "start needs process_id, argv and exactly 3 fds"
+	if req.ProcessID == "" {
+		base.Error = "start needs process_id"
 		return base
 	}
-	if req.SpecHash != specHash(req.Argv, req.Dir, req.Env) {
+	spec := startSpec{Argv: req.Argv, Dir: req.Dir, Env: req.Env}
+	if req.SpecInFD {
+		if len(fds) != 4 || len(req.Argv) != 0 || req.Dir != "" || len(req.Env) != 0 {
+			base.Error = "start with specification fd needs exactly 4 fds and no inline specification"
+			return base
+		}
+		var err error
+		spec, err = readStartSpec(fds[3])
+		if err != nil {
+			base.Error = "invalid start specification fd: " + err.Error()
+			var tooLarge *MessageTooLargeError
+			if errors.As(err, &tooLarge) {
+				base.ErrorKind = hostel.ErrLimitExceeded
+			}
+			return base
+		}
+		// The fourth descriptor is control data, never a child process file.
+		_ = syscall.Close(fds[3])
+		fds[3] = -1
+	} else if len(fds) != 3 {
+		base.Error = "start needs exactly 3 stdio fds"
+		return base
+	}
+	if len(spec.Argv) == 0 {
+		base.Error = "start needs argv"
+		return base
+	}
+	if req.SpecHash != specHash(spec.Argv, spec.Dir, spec.Env) {
 		base.Error = "invalid process specification fingerprint"
 		return base
 	}
@@ -282,9 +312,9 @@ func (s *server) start(req request, fds []int) reply {
 		base.Error = "executor is draining"
 		return base
 	}
-	pid, err := syscall.ForkExec(req.Argv[0], req.Argv, &syscall.ProcAttr{
-		Dir:   req.Dir,
-		Env:   req.Env,
+	pid, err := syscall.ForkExec(spec.Argv[0], spec.Argv, &syscall.ProcAttr{
+		Dir:   spec.Dir,
+		Env:   spec.Env,
 		Files: []uintptr{uintptr(fds[0]), uintptr(fds[1]), uintptr(fds[2])},
 		Sys: &syscall.SysProcAttr{
 			Setpgid:   true,
@@ -293,12 +323,43 @@ func (s *server) start(req request, fds []int) reply {
 	})
 	if err != nil {
 		base.Error = "fork: " + err.Error()
+		if errors.Is(err, syscall.E2BIG) {
+			base.ErrorKind = hostel.ErrLimitExceeded
+		}
 		return base
 	}
 	process := &processRecord{id: req.ProcessID, specHash: req.SpecHash, pid: pid, done: make(chan struct{}), drainGroup: req.DrainGroup}
 	s.processes[process.id] = process
 	s.byPID[pid] = process
 	return s.replyForLocked(process)
+}
+
+func readStartSpec(fd int) (startSpec, error) {
+	// pread leaves the sender's file offset untouched. Read one extra byte to reject an
+	// over-limit payload without trusting a size supplied by the caller.
+	data := make([]byte, maxStartSpecSize+1)
+	nread := 0
+	for nread < len(data) {
+		n, err := syscall.Pread(fd, data[nread:], int64(nread))
+		if errors.Is(err, syscall.EINTR) {
+			continue
+		}
+		if err != nil {
+			return startSpec{}, err
+		}
+		if n == 0 {
+			break
+		}
+		nread += n
+	}
+	if nread > maxStartSpecSize {
+		return startSpec{}, &MessageTooLargeError{Size: nread, Limit: maxStartSpecSize}
+	}
+	var spec startSpec
+	if err := json.Unmarshal(data[:nread], &spec); err != nil {
+		return startSpec{}, err
+	}
+	return spec, nil
 }
 
 func (s *server) get(processID string) reply {

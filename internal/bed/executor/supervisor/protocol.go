@@ -35,6 +35,7 @@ import (
 	"net"
 	"syscall"
 
+	hostel "github.com/qiankunli/hostel/internal"
 	"golang.org/x/sys/unix"
 )
 
@@ -45,6 +46,9 @@ const Arg = "__supervisor"
 const (
 	socketNetwork  = "unixpacket"
 	maxMessageSize = 128 << 10
+	// Start specifications larger than one IPC frame travel in a sealed memfd.
+	// Bound the out-of-band data independently of the control frame.
+	maxStartSpecSize = 4 << 20
 )
 
 type operation string
@@ -74,10 +78,28 @@ type request struct {
 	ExecutorID string    `json:"executor_id"`
 	ProcessID  string    `json:"process_id,omitempty"`
 	SpecHash   string    `json:"spec_hash,omitempty"`
+	SpecInFD   bool      `json:"spec_in_fd,omitempty"`
 	Argv       []string  `json:"argv,omitempty"`
 	Dir        string    `json:"dir,omitempty"`
 	Env        []string  `json:"env,omitempty"`
 	Signal     int       `json:"signal,omitempty"`
+}
+
+type startSpec struct {
+	Argv []string `json:"argv"`
+	Dir  string   `json:"dir"`
+	Env  []string `json:"env"`
+}
+
+// MessageTooLargeError is a local protocol rejection, not evidence that the
+// supervisor or its Executor has been lost.
+type MessageTooLargeError struct {
+	Size  int
+	Limit int
+}
+
+func (e *MessageTooLargeError) Error() string {
+	return fmt.Sprintf("supervisor: message too large: %d bytes (limit %d)", e.Size, e.Limit)
 }
 
 // ExitStatus is the kernel-level terminal fact observed by the supervisor. Keeping
@@ -100,12 +122,13 @@ type ExitStatus struct {
 // reply is one RPC result. A terminal status is retained by the executor, so a
 // waiter that lost its socket can reconnect without losing the process fact.
 type reply struct {
-	ExecutorID string       `json:"executor_id,omitempty"`
-	ProcessID  string       `json:"process_id,omitempty"`
-	State      processState `json:"state,omitempty"`
-	Pid        int          `json:"pid,omitempty"`
-	Exit       *ExitStatus  `json:"exit,omitempty"`
-	Error      string       `json:"error,omitempty"`
+	ExecutorID string           `json:"executor_id,omitempty"`
+	ProcessID  string           `json:"process_id,omitempty"`
+	State      processState     `json:"state,omitempty"`
+	Pid        int              `json:"pid,omitempty"`
+	Exit       *ExitStatus      `json:"exit,omitempty"`
+	Error      string           `json:"error,omitempty"`
+	ErrorKind  hostel.ErrorKind `json:"error_kind,omitempty"`
 }
 
 func specHash(argv []string, dir string, env []string) string {
@@ -125,7 +148,7 @@ func writeMsg(conn *net.UnixConn, v any, fds []int) error {
 		return err
 	}
 	if len(payload) > maxMessageSize {
-		return fmt.Errorf("supervisor: message too large: %d bytes", len(payload))
+		return &MessageTooLargeError{Size: len(payload), Limit: maxMessageSize}
 	}
 	buf := make([]byte, 4+len(payload))
 	binary.BigEndian.PutUint32(buf, uint32(len(payload)))
@@ -202,6 +225,8 @@ func parseRights(oob []byte) ([]int, error) {
 
 func closeFDs(fds []int) {
 	for _, fd := range fds {
-		_ = syscall.Close(fd)
+		if fd >= 0 {
+			_ = syscall.Close(fd)
+		}
 	}
 }

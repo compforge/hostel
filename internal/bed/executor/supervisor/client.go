@@ -15,10 +15,15 @@
 package supervisor
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"syscall"
+
+	hostel "github.com/qiankunli/hostel/internal"
 )
 
 // Client addresses one executor instance. Every operation uses a fresh socket;
@@ -38,6 +43,19 @@ type RemoteError struct {
 func (e *RemoteError) Error() string {
 	return fmt.Sprintf("supervisor: %s: %s", e.Operation, e.Message)
 }
+
+// RequestError means the caller could not prepare or send this request. It
+// must not be treated as a broken supervisor connection or Executor loss.
+type RequestError struct {
+	Operation string
+	Err       error
+}
+
+func (e *RequestError) Error() string {
+	return fmt.Sprintf("supervisor: %s request: %v", e.Operation, e.Err)
+}
+
+func (e *RequestError) Unwrap() error { return e.Err }
 
 func NewClient(socket, executorID string) *Client {
 	return &Client{socket: socket, executorID: executorID}
@@ -59,6 +77,7 @@ func (c *Client) StartService(processID string, argv []string, dir string, env [
 }
 
 func (c *Client) start(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File, drainGroup bool) (int, error) {
+	spec := startSpec{Argv: argv, Dir: dir, Env: env}
 	req := request{
 		DrainGroup: drainGroup,
 		Operation:  opStart,
@@ -70,6 +89,30 @@ func (c *Client) start(processID string, argv []string, dir string, env []string
 		Env:        env,
 	}
 	fds := []int{int(stdin.Fd()), int(stdout.Fd()), int(stderr.Fd())}
+	inline, err := json.Marshal(req)
+	if err != nil {
+		return 0, &RequestError{Operation: string(opStart), Err: err}
+	}
+	if len(inline) > maxMessageSize {
+		payload, err := json.Marshal(spec)
+		if err != nil {
+			return 0, &RequestError{Operation: string(opStart), Err: err}
+		}
+		if len(payload) > maxStartSpecSize {
+			return 0, &RequestError{Operation: string(opStart), Err: hostel.WrapError(hostel.ErrLimitExceeded, "process specification", &MessageTooLargeError{Size: len(payload), Limit: maxStartSpecSize})}
+		}
+		file, err := newStartSpecFile(payload)
+		if err != nil {
+			return 0, &RequestError{Operation: string(opStart), Err: fmt.Errorf("prepare specification fd: %w", err)}
+		}
+		defer file.Close()
+		log.Printf("supervisor: start specification offloaded: executor=%s process=%s frame_bytes=%d spec_bytes=%d", c.executorID, processID, len(inline), len(payload))
+		// Keep the control frame small. The fourth right carries the complete
+		// specification; stdin remains the caller's separate first right.
+		req.SpecInFD = true
+		req.Argv, req.Dir, req.Env = nil, "", nil
+		fds = append(fds, int(file.Fd()))
+	}
 	rep, err := c.call(req, fds)
 	if err != nil {
 		return 0, err
@@ -126,6 +169,10 @@ func (c *Client) call(req request, fds []int) (reply, error) {
 	}
 	defer conn.Close()
 	if err := writeMsg(conn, req, fds); err != nil {
+		var tooLarge *MessageTooLargeError
+		if errors.As(err, &tooLarge) || errors.Is(err, syscall.EMSGSIZE) {
+			return reply{}, &RequestError{Operation: string(req.Operation), Err: hostel.WrapError(hostel.ErrLimitExceeded, "supervisor request", err)}
+		}
 		return reply{}, fmt.Errorf("supervisor: send %s: %w", req.Operation, err)
 	}
 	var rep reply
@@ -136,7 +183,11 @@ func (c *Client) call(req request, fds []int) (reply, error) {
 		return reply{}, fmt.Errorf("supervisor: executor mismatch: got %q want %q", rep.ExecutorID, c.executorID)
 	}
 	if rep.Error != "" {
-		return reply{}, &RemoteError{Operation: string(req.Operation), Message: rep.Error}
+		remoteErr := &RemoteError{Operation: string(req.Operation), Message: rep.Error}
+		if rep.ErrorKind == hostel.ErrLimitExceeded {
+			return reply{}, hostel.WrapError(hostel.ErrLimitExceeded, "process specification", remoteErr)
+		}
+		return reply{}, remoteErr
 	}
 	return rep, nil
 }

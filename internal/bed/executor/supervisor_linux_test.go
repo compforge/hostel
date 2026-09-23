@@ -18,13 +18,16 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	hostel "github.com/qiankunli/hostel/internal"
 	"github.com/qiankunli/hostel/internal/bed/executor/supervisor"
 	"github.com/qiankunli/hostel/internal/bed/resource"
 )
@@ -92,6 +95,73 @@ func TestSupervisorStartIsIdempotentAndTerminalStatusReconnects(t *testing.T) {
 	concrete := bedExecutor.(*supervisedExecutor)
 	if err := supervisor.NewClient(concrete.socket, "executor-stale").Describe(); err == nil || !strings.Contains(err.Error(), "executor mismatch") {
 		t.Fatalf("stale executor fencing error = %v", err)
+	}
+}
+
+func TestRejectedLargeStartsKeepServiceAndExecutor(t *testing.T) {
+	factory, err := NewSupervisorFactory(os.Args[0], resource.Noop("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer factory.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	bedExecutor, err := factory.Create(ctx, "bed-large-start")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bedExecutor.Shutdown(ctx)
+	serviceCmd, serviceOutput := testCommand(t, "sleep 30")
+	service, err := bedExecutor.(*supervisedExecutor).StartService(ctx, "service-stays-up", serviceCmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeCommandOutput(t, serviceCmd)
+	defer serviceOutput.Close()
+
+	for _, tc := range []struct {
+		name    string
+		command string
+		local   bool
+	}{
+		{name: "execve E2BIG", command: strings.Repeat("x", 150<<10)},
+		{name: "specification cap", command: strings.Repeat("x", 4<<20), local: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, output := testCommand(t, tc.command)
+			defer output.Close()
+			_, err := bedExecutor.Start(ctx, "process-"+tc.name, cmd)
+			closeCommandOutput(t, cmd)
+			if err == nil {
+				t.Fatal("oversized Start succeeded")
+			}
+			if !errors.Is(err, hostel.ErrLimitExceeded) {
+				t.Fatalf("Start error = %v, want limit exceeded", err)
+			}
+			var requestErr *supervisor.RequestError
+			if tc.local != errors.As(err, &requestErr) {
+				t.Fatalf("Start error = %v, local rejection = %t", err, tc.local)
+			}
+			if bedExecutor.State() != StateReady {
+				t.Fatalf("Executor state after rejected Start = %s", bedExecutor.State())
+			}
+			if err := syscall.Kill(service.PID(), 0); err != nil {
+				t.Fatalf("service lost after rejected Start: %v", err)
+			}
+		})
+	}
+
+	cmd, output := testCommand(t, "printf healthy")
+	process, err := bedExecutor.Start(ctx, "process-after-rejection", cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeCommandOutput(t, cmd)
+	if status, err := process.Wait(ctx); err != nil || status.Kind != ProcessExited || status.ExitCode != 0 {
+		t.Fatalf("next execution = %+v, err = %v", status, err)
+	}
+	if got := readOutput(t, output); got != "healthy" {
+		t.Fatalf("next execution output = %q", got)
 	}
 }
 
