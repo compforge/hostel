@@ -4,6 +4,8 @@ package filesystem
 
 import "fmt"
 
+const DeriveMountArg = "__mount_derive"
+
 const CaptureArg = "__mount_capture"
 const BedInitMountArg = "__bedinit_mount"
 

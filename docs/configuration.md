@@ -74,3 +74,24 @@ E2E 通过内部 Options 在同一台机器上控制功能组合，仍启动真�
 
 配置限制验证选择和降级；真实容器权限、系统调用拒绝、只读挂载验证实际探测和失败处理，两者不能互相替代。
 运行与覆盖边界见 [E2E 说明](../tests/e2e/README.md)。
+
+## Executor 进程命名空间
+
+`--executor-pid-namespace=off|auto|required` / `HOSTEL_EXECUTOR_PID_NAMESPACE`
+控制 Executor 的 PID namespace Tool，默认 `off`。`auto` 在启动时尝试独立进程域，
+不支持或无法与文件视图组合时允许回退；`required` 必须实际采用，否则启动失败。
+前提包括 Linux supervisor、PID/mount namespace 创建权限和 procfs 挂载权限。
+这一策略与文件、网络隔离分别配置；选定后，live Bed 和替换 Executor 不重新降级。
+
+一个 Executor 的 command、session 和 Service 共享 PID namespace 和最终文件挂载视图。
+Supervisor 是域内 PID 1，负责收尸与终止；Executor 丢失会结束该域。替换时保留 BedFS，
+重新创建进程域和对应文件视图，旧资源清理成功前不发布新 Executor。
+对 daemon 返回的 PID 仍属于 daemon 可见的命名空间，供 Service 监听端口归属检查使用。
+
+Component 的 `tools.pidns` 报告 policy、requirements、probe、selected 和 reason；
+Bed 的 `executor.private_pid_namespace` 报告所属进程域是否实际隔离。启动组合回退
+保留原始 Policy 和探测证据，不通过改写 Policy 来伪装成调用方关闭了隔离。
+
+共享控制目录仍使用通用 `PathMapping`。需要真实挂载点的调用方必须选择已兑现 mount
+视图的文件机制；PRoot/pathshim 路径投影不能作为内核挂载能力的证明。Hostel 不解释
+目录中的上层控制协议或迁移资格标记。

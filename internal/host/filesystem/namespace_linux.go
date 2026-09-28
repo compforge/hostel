@@ -21,13 +21,13 @@ import (
 const (
 	CaptureArg      = "__mount_capture"
 	BedInitMountArg = "__bedinit_mount"
+	DeriveMountArg  = "__mount_derive"
 )
 
 // MountNamespace owns a prepared mount view and root, not an Executor process.
 // Keeping the descriptors open pins the view after the preparation helper exits.
 type MountNamespace struct {
-	mount, root, uts, ipc *os.File
-	helper                string
+	mount, root, uts, ipc, executable *os.File
 }
 
 // StaticBootstrap verifies that the trusted re-exec cannot load libraries from
@@ -94,8 +94,11 @@ func PrepareMountNamespace(ctx context.Context, bwrap, helper string, args []str
 	err = json.NewDecoder(ready).Decode(&pid)
 	var ns *MountNamespace
 	if err == nil {
-		ns = &MountNamespace{helper: helper}
-		ns.mount, err = os.Open(fmt.Sprintf("/proc/%d/ns/mnt", pid))
+		ns = &MountNamespace{}
+		ns.executable, err = os.Open(helper)
+		if err == nil {
+			ns.mount, err = os.Open(fmt.Sprintf("/proc/%d/ns/mnt", pid))
+		}
 		if err == nil {
 			ns.root, err = os.Open(fmt.Sprintf("/proc/%d/root", pid))
 		}
@@ -130,8 +133,8 @@ func PrepareMountNamespace(ctx context.Context, bwrap, helper string, args []str
 
 func (n *MountNamespace) Close() error {
 	var result error
-	files := []*os.File{n.root, n.mount, n.uts, n.ipc}
-	n.root, n.mount, n.uts, n.ipc = nil, nil, nil, nil
+	files := []*os.File{n.root, n.mount, n.uts, n.ipc, n.executable}
+	n.root, n.mount, n.uts, n.ipc, n.executable = nil, nil, nil, nil, nil
 	for _, file := range files {
 		if file != nil {
 			if err := file.Close(); err != nil && result == nil {
@@ -145,15 +148,17 @@ func (n *MountNamespace) Close() error {
 // Wrap enters already-prepared resources. Descriptor paths are owned by the
 // daemon and stay live until Bed Manager has drained all executions and Services.
 func (n *MountNamespace) Wrap(cmd *exec.Cmd) {
-	var namespaces []string
-	for _, file := range []*os.File{n.mount, n.uts, n.ipc} {
-		namespaces = append(namespaces, fmt.Sprintf("/proc/%d/fd/%d", os.Getpid(), file.Fd()))
+	inherited := func(file *os.File) string {
+		path := fmt.Sprintf("/proc/self/fd/%d", 3+len(cmd.ExtraFiles))
+		cmd.ExtraFiles = append(cmd.ExtraFiles, file)
+		return path
 	}
-	args := []string{n.helper, BedInitMountArg,
-		strings.Join(namespaces, ","),
-		fmt.Sprintf("/proc/%d/fd/%d", os.Getpid(), n.root.Fd()), "--", cmd.Path}
+	executable := inherited(n.executable)
+	namespaces := []string{inherited(n.mount), inherited(n.uts), inherited(n.ipc)}
+	root := inherited(n.root)
+	args := []string{executable, BedInitMountArg, strings.Join(namespaces, ","), root, "--", executable}
 	cmd.Args = append(args, cmd.Args[1:]...)
-	cmd.Path, cmd.Dir = n.helper, "/"
+	cmd.Path, cmd.Dir = executable, "/"
 }
 
 // RunMountHelper dispatches only trusted internal re-exec operations.
@@ -169,20 +174,57 @@ func RunMountHelper(args []string) error {
 		_, err := io.Copy(io.Discard, wait)
 		return err
 	}
-	if len(args) < 5 || args[0] != BedInitMountArg || args[3] != "--" {
+	if len(args) < 5 || (args[0] != BedInitMountArg && args[0] != DeriveMountArg) || args[3] != "--" {
 		return fmt.Errorf("invalid mount helper arguments")
 	}
-	// The next trusted entry must be opened in the host view. A Bed can rename
-	// directories in its data root; a read-only executable bind alone does not
-	// make its pathname safe for privileged execution.
+	if args[0] == DeriveMountArg {
+		if len(args) != 5 {
+			return fmt.Errorf("invalid derived mount arguments")
+		}
+		var socket int
+		if _, err := fmt.Sscanf(args[4], "/proc/self/fd/%d", &socket); err != nil {
+			return err
+		}
+		if err := enterMount(args[1], args[2]); err != nil {
+			return err
+		}
+		// Chroot precedes unshare so the root is remapped into the copied tree.
+		if err := unix.Unshare(unix.CLONE_NEWNS); err != nil {
+			return err
+		}
+		if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
+			return err
+		}
+		if err := unix.Mount("proc", "/proc", "proc", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
+			return fmt.Errorf("mount Executor procfs: %w", err)
+		}
+		// setns/unshare are thread-local. Send the actual handles from this locked
+		// thread, rather than asking the daemon to inspect the thread-group leader.
+		return sendMountHandles(socket)
+	}
+
+	// Pin the next trusted executable before entering a workload-controlled root.
 	next, err := os.Open(args[4])
 	if err != nil {
 		return err
 	}
 	defer next.Close()
-	// Open all handles in the host view; never look up a privileged helper or
-	// library through caller-controlled rootfs paths. setns affects this thread.
-	paths := strings.Split(args[1], ",")
+	inherited := append(strings.Split(args[1], ","), args[2], args[4])
+	for _, path := range inherited {
+		var fd int
+		if _, err := fmt.Sscanf(path, "/proc/self/fd/%d", &fd); err == nil {
+			unix.CloseOnExec(fd)
+		}
+	}
+	if err := enterMount(args[1], args[2]); err != nil {
+		return err
+	}
+	return syscall.Exec(fmt.Sprintf("/proc/self/fd/%d", next.Fd()), args[4:], os.Environ())
+}
+
+// enterMount only enters a prepared view; it never creates namespace resources.
+func enterMount(namespaces, rootPath string) error {
+	paths := strings.Split(namespaces, ",")
 	if len(paths) != 3 {
 		return fmt.Errorf("incomplete prepared namespace handles")
 	}
@@ -199,11 +241,12 @@ func RunMountHelper(args []string) error {
 		}
 		handles = append(handles, handle)
 	}
-	root, err := os.Open(args[2])
+	root, err := os.Open(rootPath)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
+	// Namespace entry affects this thread; it must stay locked through exec/exit.
 	runtime.LockOSThread()
 	if err := unix.Unshare(unix.CLONE_FS); err != nil {
 		return err
@@ -216,12 +259,5 @@ func RunMountHelper(args []string) error {
 	if err := unix.Fchdir(int(root.Fd())); err != nil {
 		return err
 	}
-	if err := unix.Chroot("."); err != nil {
-		return err
-	}
-	for _, handle := range handles {
-		_ = handle.Close()
-	}
-	root.Close()
-	return syscall.Exec(fmt.Sprintf("/proc/self/fd/%d", next.Fd()), args[4:], os.Environ())
+	return unix.Chroot(".")
 }

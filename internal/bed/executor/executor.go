@@ -114,6 +114,7 @@ type Executor interface {
 
 // Factory creates a fresh Executor identity for a Bed.
 type Factory interface {
+	Status() Status
 	Backend() string
 	Create(context.Context, string) (Executor, error)
 	Close() error

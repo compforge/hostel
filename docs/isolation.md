@@ -67,7 +67,7 @@ PRoot/pathshim 只改善路径兼容性，不提高 Level。`auto/off/required` 
 | 维度 | 理想状态 | 当前能力与缺口 |
 |---|---|---|
 | 文件与路径 | 每个 Bed 使用自己的文件空间，不能读写邻居数据 | BedFS 统一结构化路径；Filesystem Level 决定进程侧的访问屏障；用户态投影只改善路径体验 |
-| 进程与身份 | 执行独立、可完整回收，不能观察或干扰邻居进程 | daemon 保留管理权限，BedUser 统一约束命令身份；Executor/supervisor 管理进程归属与回收；当前 suite 没有私有 PID namespace |
+| 进程与身份 | 执行独立、可完整回收，不能观察或干扰邻居进程 | daemon 保留管理权限，BedUser 统一约束命令身份；Executor/supervisor 管理进程归属与回收；可独立要求 Executor 私有 PID namespace/procfs；未要求时共享 carrier 进程视图，suite 本身不承诺进程不可见 |
 | 网络 | 每个 Bed 有独立网络空间，并受自己的出站约束 | 可选 netns 与按 Bed 配置的出站策略覆盖命令和 shell；不可用时共享 Carrier；共享设施出站尚未纳入该边界 |
 | CPU / 内存 | 一个 Bed 的失控负载不挤占或拖垮邻居 | Carrier 准入与可选 per-bed cgroup 记账已有；per-bed 硬限额尚未实现 |
 | 环境与凭据 | Bed 只接触属于自己或明确共享的配置、凭据 | 过滤 Hostel 保留命名空间；其余 Carrier 环境默认继承，部署方负责其中的敏感信息 |
@@ -99,7 +99,7 @@ Resource 管资源记账与准入。各领域持有并清理自己的资源。
 
 `manager.Environment` 绑定一个 resident Bed 的文件视图、具体网络 allocation 和最终
 `BedUser`，命令、shell 和 Service 都通过它组装。Bed Manager 协调资源准备；rootful 文件视图在 Bed
-初始化时建立，执行时只进入已准备的网络和文件环境，再切换身份、清除 capability 并运行用户程序。
+初始化时建立，启用私有 PID namespace 时由每个 Executor 派生并持有最终文件视图；执行时只进入已准备的网络和文件环境，再切换身份、清除 capability 并运行用户程序。
 无特权文件机制在 Bed 身份下应用；Executor 不负责选择、准备或降级资源。BedUser 的选择、UID
 租约、capability 要求与回收契约由 [privilege.md](privilege.md) 统一定义。Store、Network 和
 Executor 仍各自提供能力，Bed 协调其生命周期。共享 Chromium 位于 Bed 进程树之外，不从某个

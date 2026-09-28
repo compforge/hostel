@@ -68,15 +68,15 @@ func (c *Client) Describe() error {
 
 // Start is idempotent by processID + spec fingerprint. If the first response
 // is lost after fork, retrying cannot launch a duplicate command.
-func (c *Client) Start(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File) (int, error) {
-	return c.start(processID, argv, dir, env, stdin, stdout, stderr, false)
+func (c *Client) Start(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File, extraFiles ...*os.File) (int, error) {
+	return c.start(processID, argv, dir, env, stdin, stdout, stderr, false, extraFiles)
 }
 
-func (c *Client) StartService(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File) (int, error) {
-	return c.start(processID, argv, dir, env, stdin, stdout, stderr, true)
+func (c *Client) StartService(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File, extraFiles ...*os.File) (int, error) {
+	return c.start(processID, argv, dir, env, stdin, stdout, stderr, true, extraFiles)
 }
 
-func (c *Client) start(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File, drainGroup bool) (int, error) {
+func (c *Client) start(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File, drainGroup bool, extraFiles []*os.File) (int, error) {
 	spec := startSpec{Argv: argv, Dir: dir, Env: env}
 	req := request{
 		DrainGroup: drainGroup,
@@ -89,6 +89,21 @@ func (c *Client) start(processID string, argv []string, dir string, env []string
 		Env:        env,
 	}
 	fds := []int{int(stdin.Fd()), int(stdout.Fd()), int(stderr.Fd())}
+	if len(extraFiles) > maxExtraFiles {
+		return 0, &RequestError{Operation: string(opStart), Err: fmt.Errorf("too many extra files: %d", len(extraFiles))}
+	}
+	for _, file := range extraFiles {
+		if file == nil {
+			return 0, &RequestError{Operation: string(opStart), Err: fmt.Errorf("nil extra file")}
+		}
+		fds = append(fds, int(file.Fd()))
+	}
+	req.ExtraFileCount = len(extraFiles)
+	var err error
+	req.ExtraFileHash, err = extraFileHash(fds[3:])
+	if err != nil {
+		return 0, &RequestError{Operation: string(opStart), Err: err}
+	}
 	inline, err := json.Marshal(req)
 	if err != nil {
 		return 0, &RequestError{Operation: string(opStart), Err: err}
@@ -107,7 +122,7 @@ func (c *Client) start(processID string, argv []string, dir string, env []string
 		}
 		defer file.Close()
 		log.Printf("supervisor: start specification offloaded: executor=%s process=%s frame_bytes=%d spec_bytes=%d", c.executorID, processID, len(inline), len(payload))
-		// Keep the control frame small. The fourth right carries the complete
+		// Keep the control frame small. The last right carries the complete
 		// specification; stdin remains the caller's separate first right.
 		req.SpecInFD = true
 		req.Argv, req.Dir, req.Env = nil, "", nil

@@ -294,3 +294,20 @@ persistent session state, preparation-failure classification without losing the 
 response closes, byte-cursor polling, cancellation and explicit unsupported code kernels.
 Run with `make e2e E2E_ARGS='-run TestOpenSandbox -timeout 3m'`. File Range, metadata, permissions,
 large log retention and cleanup also have protocol/domain regression tests in the regular suite.
+
+## Verify private process namespaces
+
+On a Linux runner permitted to create PID/mount namespaces and mount procfs:
+
+```sh
+HOSTEL_E2E_REQUIRE_PID_NAMESPACE=1 make e2e E2E_ARGS='-run TestPrivatePIDNamespace -timeout 3m'
+```
+
+The cases require the supervisor, bwrap and Python 3. They check two distinct
+Bed PID namespaces, matching procfs, one retained mount namespace shared by
+commands/sessions/Services, real control-path bind mounts, and HTTP Service
+listener ownership. The recovery case observes its own API-issued Executor ID,
+kills only that supervisor, verifies the old process tree is dead, then checks
+replacement namespace identity, retained Bed data and reuse of the new view. Missing prerequisites fail
+this explicit run. No upper-layer migration protocol or application-specific
+path is built into Hostel.

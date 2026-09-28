@@ -49,6 +49,7 @@ const (
 	// Start specifications larger than one IPC frame travel in a sealed memfd.
 	// Bound the out-of-band data independently of the control frame.
 	maxStartSpecSize = 4 << 20
+	maxExtraFiles    = 12
 )
 
 type operation string
@@ -73,16 +74,18 @@ const (
 // the connection: callers may redial Get/Wait after an EOF, and Start is
 // idempotent for the same process id and specification fingerprint.
 type request struct {
-	DrainGroup bool      `json:"drain_group,omitempty"`
-	Operation  operation `json:"operation"`
-	ExecutorID string    `json:"executor_id"`
-	ProcessID  string    `json:"process_id,omitempty"`
-	SpecHash   string    `json:"spec_hash,omitempty"`
-	SpecInFD   bool      `json:"spec_in_fd,omitempty"`
-	Argv       []string  `json:"argv,omitempty"`
-	Dir        string    `json:"dir,omitempty"`
-	Env        []string  `json:"env,omitempty"`
-	Signal     int       `json:"signal,omitempty"`
+	ExtraFileCount int       `json:"extra_file_count,omitempty"`
+	ExtraFileHash  string    `json:"extra_file_hash,omitempty"`
+	DrainGroup     bool      `json:"drain_group,omitempty"`
+	Operation      operation `json:"operation"`
+	ExecutorID     string    `json:"executor_id"`
+	ProcessID      string    `json:"process_id,omitempty"`
+	SpecHash       string    `json:"spec_hash,omitempty"`
+	SpecInFD       bool      `json:"spec_in_fd,omitempty"`
+	Argv           []string  `json:"argv,omitempty"`
+	Dir            string    `json:"dir,omitempty"`
+	Env            []string  `json:"env,omitempty"`
+	Signal         int       `json:"signal,omitempty"`
 }
 
 type startSpec struct {

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	"os"
 	"testing"
 )
@@ -200,5 +201,21 @@ func TestBedsRootConfigPrecedence(t *testing.T) {
 	}
 	if c.BedsRoot != "/carrier/option" {
 		t.Fatalf("explicit beds root = %q", c.BedsRoot)
+	}
+}
+
+func TestPIDNamespacePolicyConfig(t *testing.T) {
+	if got := mustLoad(t, nil).Bed.Executor.PIDNS; got != tool.Off {
+		t.Fatalf("default policy=%s", got)
+	}
+	t.Setenv("HOSTEL_EXECUTOR_PID_NAMESPACE", "required")
+	if got := mustLoad(t, nil).Bed.Executor.PIDNS; got != tool.Required {
+		t.Fatalf("env policy=%s", got)
+	}
+	if got := mustLoad(t, []string{"-executor-pid-namespace=auto"}).Bed.Executor.PIDNS; got != tool.Auto {
+		t.Fatalf("flag policy=%s", got)
+	}
+	if _, err := Load([]string{"-executor-pid-namespace=true"}, Options{}); err == nil {
+		t.Fatal("invalid policy accepted")
 	}
 }

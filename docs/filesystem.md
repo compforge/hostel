@@ -136,8 +136,12 @@ PRoot/pathshim 尽量让命令中的工作区路径也指向 BedFS，但它们�
 `/tmp` 来自同一 BedFS，跨临时命令、session 和 Service 共享，但不因此自动进入 Store 快照。
 
 bwrap 优先使用 Hostel 已有的管理权限准备挂载，权限不足时再尝试无特权 user namespace。
-两条路径均绑定已有 `/proc`，以适应容器内受限的 procfs。
-当前没有私有 PID namespace，因此私有文件视图不等于完整的进程不可见性。机制及参数顺序
+两条路径默认绑定已有 `/proc`，以适应容器内受限的 procfs。要求 Executor 私有 PID
+namespace 时，Bed 保留 rootful 文件视图模板；Bed Manager 在每个 Executor 创建后，
+由 Filesystem 在该进程域中派生一次 mount namespace 并挂载匹配的 procfs。可信 helper
+传回实际 namespace/root 句柄，command、session 和 Service 只进入这份最终视图。
+Executor 退出后释放派生视图，替换时重新派生；Bed 模板与数据保持不变。
+进程隔离由 Executor 单独要求，私有文件视图本身不等于完整的进程不可见性。机制及参数顺序
 锚点在 `internal/bed/filesystem/isolation/bwrap_args.go`；部署权限示例见
 [deploy/k8s/README.md](../deploy/k8s/README.md)。
 
@@ -218,7 +222,7 @@ PRoot 与 pathshim 将 Bed 的映射目录接入声明路径，没有 COW、whit
 ### private 文件
 
 bwrap 以同一 BedFS 构造 mount 视图。rootful 路径在 Bed Manager 初始化期间创建并持有，
-Executor、session 和 Service 共用；无特权路径在执行时通过 bwrap 建立同形视图：
+未启用私有 PID namespace 时直接共用；启用时按 Executor 派生最终视图。无特权路径在执行时通过 bwrap 建立同形视图：
 
 - 整个 `bed_home` bind 到 `/`，原生数据路径和结构化路径使用相同拼写；
 - 只读接入现存系统运行依赖，保留共享软件目录的可写性，并遮蔽被这些覆盖重新暴露的敏感路径；

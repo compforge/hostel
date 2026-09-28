@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	"log"
 	"os"
 	"time"
@@ -36,6 +37,7 @@ type RuntimeSelection struct {
 	Attempts []CombinationAttempt
 }
 type CombinationAttempt struct {
+	PIDNS       tool.Status     `json:"pidns"`
 	Filesystem  string          `json:"filesystem"`
 	ProcessView string          `json:"process_view"`
 	Network     string          `json:"network"`
@@ -103,7 +105,8 @@ func resolveRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell st
 			return selection, fmt.Errorf("runtime probe: %w", fatalErr)
 		}
 		if attempt.Error == "" {
-			selection.Executor = executor.Config{Backend: attempt.Executor}
+			selection.Executor = cfg.Executor.WithPIDNSSelection(attempt.PIDNS)
+			selection.Executor.Backend = attempt.Executor
 			if attempt.Network == string(network.Shared) && netConfig.Level == network.Private {
 				if next, ok := netConfig.WithoutOptionalNamespace("private network unavailable"); ok {
 					selection.Network = next
@@ -112,6 +115,10 @@ func resolveRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell st
 			return selection, nil
 		}
 		log.Printf("hostel: runtime combination rejected filesystem=%s view=%s network=%s reason=%q", attempt.Filesystem, attempt.ProcessView, attempt.Network, attempt.Error)
+		if next, ok := cfg.Executor.WithoutOptionalPIDNS(attempt.PIDNS, attempt.Error); ok {
+			cfg.Executor = next
+			continue
+		}
 		if next, ok := isolation.NextCombination(files, iso, attempt.Error); ok {
 			files = next
 			continue
@@ -172,6 +179,7 @@ func probeRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell stri
 	}
 	m.SetExecutorFactory(factory)
 	attempt.Executor = factory.Backend()
+	attempt.PIDNS = factory.Status().Tools["pidns"]
 	if err := m.Start(ctx); err != nil {
 		return attempt, err
 	}
