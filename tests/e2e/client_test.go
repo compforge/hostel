@@ -120,6 +120,7 @@ type processView struct {
 }
 
 type executionView struct {
+	ExecutorID      string      `json:"executor_id"`
 	ExecutionID     string      `json:"execution_id"`
 	BedID           string      `json:"bed_id"`
 	ExecutorBackend string      `json:"executor_backend"`

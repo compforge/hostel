@@ -108,9 +108,7 @@ func (r serviceRuntime) Start(ctx context.Context, launch service.Launch) (servi
 	if err != nil {
 		return nil, err
 	}
-	if err := b.environment.Wrap(cmd, cwd); err != nil {
-		return nil, err
-	}
+	cmd.Dir = cwd
 	outR, outW, err := os.Pipe()
 	if err != nil {
 		return nil, err

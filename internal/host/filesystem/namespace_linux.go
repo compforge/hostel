@@ -21,6 +21,7 @@ import (
 const (
 	CaptureArg      = "__mount_capture"
 	BedInitMountArg = "__bedinit_mount"
+	DeriveMountArg  = "__mount_derive"
 )
 
 // MountNamespace owns a prepared mount view and root, not an Executor process.
@@ -173,12 +174,36 @@ func RunMountHelper(args []string) error {
 		_, err := io.Copy(io.Discard, wait)
 		return err
 	}
-	if len(args) < 5 || args[0] != BedInitMountArg || args[3] != "--" {
+	if len(args) < 5 || (args[0] != BedInitMountArg && args[0] != DeriveMountArg) || args[3] != "--" {
 		return fmt.Errorf("invalid mount helper arguments")
 	}
-	// The next trusted entry must be opened in the host view. A Bed can rename
-	// directories in its data root; a read-only executable bind alone does not
-	// make its pathname safe for privileged execution.
+	if args[0] == DeriveMountArg {
+		if len(args) != 5 {
+			return fmt.Errorf("invalid derived mount arguments")
+		}
+		var socket int
+		if _, err := fmt.Sscanf(args[4], "/proc/self/fd/%d", &socket); err != nil {
+			return err
+		}
+		if err := enterMount(args[1], args[2]); err != nil {
+			return err
+		}
+		// Chroot precedes unshare so the root is remapped into the copied tree.
+		if err := unix.Unshare(unix.CLONE_NEWNS); err != nil {
+			return err
+		}
+		if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
+			return err
+		}
+		if err := unix.Mount("proc", "/proc", "proc", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
+			return fmt.Errorf("mount Executor procfs: %w", err)
+		}
+		// setns/unshare are thread-local. Send the actual handles from this locked
+		// thread, rather than asking the daemon to inspect the thread-group leader.
+		return sendMountHandles(socket)
+	}
+
+	// Pin the next trusted executable before entering a workload-controlled root.
 	next, err := os.Open(args[4])
 	if err != nil {
 		return err
@@ -191,9 +216,15 @@ func RunMountHelper(args []string) error {
 			unix.CloseOnExec(fd)
 		}
 	}
-	// Open all handles in the host view; never look up a privileged helper or
-	// library through caller-controlled rootfs paths. setns affects this thread.
-	paths := strings.Split(args[1], ",")
+	if err := enterMount(args[1], args[2]); err != nil {
+		return err
+	}
+	return syscall.Exec(fmt.Sprintf("/proc/self/fd/%d", next.Fd()), args[4:], os.Environ())
+}
+
+// enterMount only enters a prepared view; it never creates namespace resources.
+func enterMount(namespaces, rootPath string) error {
+	paths := strings.Split(namespaces, ",")
 	if len(paths) != 3 {
 		return fmt.Errorf("incomplete prepared namespace handles")
 	}
@@ -210,18 +241,12 @@ func RunMountHelper(args []string) error {
 		}
 		handles = append(handles, handle)
 	}
-	root, err := os.Open(args[2])
+	root, err := os.Open(rootPath)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	// Keep the entering Executor's procfs. The retained Bed mount view was
-	// prepared by the daemon and may expose a different PID namespace.
-	proc, err := os.Open("/proc")
-	if err != nil {
-		return err
-	}
-	defer proc.Close()
+	// Namespace entry affects this thread; it must stay locked through exec/exit.
 	runtime.LockOSThread()
 	if err := unix.Unshare(unix.CLONE_FS); err != nil {
 		return err
@@ -231,42 +256,8 @@ func RunMountHelper(args []string) error {
 			return err
 		}
 	}
-	// Enter the retained root before cloning its namespace: unshare then
-	// remaps this process root into the copy. A root FD opened beforehand still
-	// pins the original mount and cannot be used as the new mount's target.
 	if err := unix.Fchdir(int(root.Fd())); err != nil {
 		return err
 	}
-	if err := unix.Chroot("."); err != nil {
-		return err
-	}
-	const procTarget = "/proc"
-	incoming, err := proc.Stat()
-	if err != nil {
-		return err
-	}
-	prepared, err := os.Stat(procTarget)
-	if err != nil {
-		return err
-	}
-	if !os.SameFile(incoming, prepared) {
-		// Clone only when the incoming procfs differs; leave the retained Bed view
-		// unchanged for concurrent commands and future Executor replacements.
-		if err := unix.Unshare(unix.CLONE_NEWNS); err != nil {
-			return err
-		}
-		if err := unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, ""); err != nil {
-			return err
-		}
-		// A new procfs mount uses this process's PID namespace. Binding the
-		// incoming FD across unrelated mount views is rejected by the kernel.
-		if err := unix.Mount("proc", procTarget, "proc", unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, ""); err != nil {
-			return fmt.Errorf("mount Executor procfs: %w", err)
-		}
-	}
-	for _, handle := range handles {
-		_ = handle.Close()
-	}
-	root.Close()
-	return syscall.Exec(fmt.Sprintf("/proc/self/fd/%d", next.Fd()), args[4:], os.Environ())
+	return unix.Chroot(".")
 }

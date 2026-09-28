@@ -110,14 +110,54 @@ func TestRuntimeFailureDoesNotLoopOnBaseline(t *testing.T) {
 
 func TestRuntimeSelectionPreservesExecutorRequirements(t *testing.T) {
 	cfg := baselineRuntimeConfig()
-	cfg.Executor = executor.Config{Backend: "auto", PrivatePIDNamespace: true}
+	cfg.Executor = executor.Config{Backend: "auto", PIDNS: tool.Required}
 	facts := hostfacts.Collect()
 	facts.EffectiveCaps = 0
 	probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, _ RuntimeConfig, _ RuntimeSelection, _ *hostnetwork.PortManager) (CombinationAttempt, error) {
 		return CombinationAttempt{Executor: "supervisor", Network: "shared"}, nil
 	}
 	selected, err := resolveRuntime(t.Context(), facts, t.TempDir(), "/bin/bash", cfg, nil, probe)
-	if err != nil || selected.Executor.Backend != "supervisor" || !selected.Executor.PrivatePIDNamespace {
+	if err != nil || selected.Executor.Backend != "supervisor" || selected.Executor.PIDNS != tool.Required {
 		t.Fatalf("resolved Executor lost requirements: %+v %v", selected.Executor, err)
+	}
+}
+
+func TestRuntimePIDNSFallbackPreservesPolicyAndRequiresCleanup(t *testing.T) {
+	for _, policy := range []tool.Policy{tool.Auto, tool.Required} {
+		for _, cleanupFailed := range []bool{false, true} {
+			cfg := baselineRuntimeConfig()
+			cfg.Executor.PIDNS = policy
+			facts := hostfacts.Collect()
+			facts.EffectiveCaps = 0
+			calls := 0
+			probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, c RuntimeConfig, _ RuntimeSelection, _ *hostnetwork.PortManager) (CombinationAttempt, error) {
+				calls++
+				if calls == 1 {
+					a := CombinationAttempt{Executor: "supervisor", Network: "shared", PIDNS: tool.Describe(policy, tool.Requirements{}, true, true, true, ""), Error: "view composition failed"}
+					if cleanupFailed {
+						return a, &ProbeCleanupError{Err: errors.New("cleanup pending")}
+					}
+					return a, nil
+				}
+				f, err := executor.ResolveFactory(t.Context(), c.Executor, nil)
+				if err != nil {
+					return CombinationAttempt{}, err
+				}
+				defer f.Close()
+				return CombinationAttempt{Executor: "local", Network: "shared", PIDNS: f.Status().Tools["pidns"]}, nil
+			}
+			selected, err := resolveRuntime(t.Context(), facts, t.TempDir(), "/bin/bash", cfg, nil, probe)
+			if policy == tool.Auto && !cleanupFailed {
+				if err != nil || calls != 2 {
+					t.Fatalf("auto fallback: calls=%d error=%v", calls, err)
+				}
+				status := selected.Attempts[1].PIDNS
+				if status.Policy != tool.Auto || status.Selected || status.Probe != "available" || status.Reason != "view composition failed" {
+					t.Fatalf("lost evidence: %+v", status)
+				}
+			} else if err == nil || calls != 1 {
+				t.Fatalf("required/cleanup failure retried: calls=%d error=%v", calls, err)
+			}
+		}
 	}
 }

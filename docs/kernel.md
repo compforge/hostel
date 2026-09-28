@@ -200,6 +200,9 @@ Amenity 的全局启停直属 daemon；Bed Manager 通过薄生命周期适配�
 用户程序。它使用 Hostel 自身二进制的内部入口，不是用户镜像的 ENTRYPOINT，
 也不是 Bed 生命周期的 Prepare hook、常驻服务或 PID 1。Executor 只负责启动和监督；
 资源分配、机制选择与降级仍由 Bed Manager 及领域组件完成。
+Bed Manager 为新 Executor 绑定执行环境后才发布它：Filesystem 可从 Bed 模板派生
+与该进程域匹配的最终视图，command/session/Service 共用，Executor 退出后释放。
+准备失败的 Executor 保留清理责任，清理成功前不得复用或替换。
 
 每个 Bed hook 接收同一个 `*bed.Bed`，资源按具体 allocation 归属。组件还提供类型化
 `Status() S`，由 Bed Manager 聚合，API handler 组合领域报告与设施状态，view 只定义响应结构及纯转换。报告契约见 [observability.md](observability.md)。

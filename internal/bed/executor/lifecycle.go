@@ -2,19 +2,22 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	"golang.org/x/sync/semaphore"
 	"sync"
+	"time"
 )
 
 type Status struct {
-	Backend             string `json:"backend"`
-	PrivatePIDNamespace bool   `json:"private_pid_namespace"`
+	Backend string                 `json:"backend"`
+	Tools   map[string]tool.Status `json:"tools"`
 }
 
 func Describe(factory Factory) Status {
-	return Status{Backend: factory.Backend(), PrivatePIDNamespace: factory.PrivatePIDNamespace()}
+	return factory.Status()
 }
 
 // Manager owns the replaceable process realm for each Bed allocation.
@@ -26,6 +29,7 @@ type Manager struct {
 	status  bed.StatusWriter[bed.ExecutorStatus]
 }
 type realm struct {
+	bind      func(context.Context, Executor) (Executor, error)
 	mu        *semaphore.Weighted
 	executor  Executor
 	stopped   bool
@@ -43,6 +47,23 @@ func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
 	}
 	return nil
 }
+
+// Bind installs the composite owner's preparation step before this Bed serves.
+// It runs once for every new Executor, including replacements, under the realm lock.
+func (m *Manager) Bind(b *bed.Bed, bind func(context.Context, Executor) (Executor, error)) error {
+	r := m.slot(b)
+	if r == nil {
+		return fmt.Errorf("executor: Bed %s is not prepared", b.ID.String())
+	}
+	_ = r.mu.Acquire(context.Background(), 1)
+	defer r.mu.Release(1)
+	if r.executor != nil || r.stopped {
+		return fmt.Errorf("executor: Bed %s already started", b.ID.String())
+	}
+	r.bind = bind
+	return nil
+}
+
 func (m *Manager) slot(b *bed.Bed) *realm { m.mu.Lock(); defer m.mu.Unlock(); return m.realms[b] }
 func (m *Manager) Current(b *bed.Bed) Executor {
 	r := m.slot(b)
@@ -79,7 +100,19 @@ func (m *Manager) For(ctx context.Context, b *bed.Bed) (Executor, error) {
 		return nil, err
 	}
 	r.executor = created
-	m.status.Set(b, bed.ExecutorStatus{ID: created.ID(), Backend: created.Backend(), PrivatePIDNamespace: m.factory.PrivatePIDNamespace(), State: string(created.State())})
+	if r.bind != nil {
+		bound, bindErr := r.bind(ctx, created)
+		if bindErr != nil {
+			// Retain the failed allocation until its cleanup succeeds; a ready raw
+			// Executor must never bypass composition on the next request.
+			r.executor = &unpreparedExecutor{Executor: created}
+			cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			return nil, errors.Join(bindErr, created.Shutdown(cleanup))
+		}
+		created, r.executor = bound, bound
+	}
+	m.status.Set(b, bed.ExecutorStatus{ID: created.ID(), Backend: created.Backend(), PrivatePIDNamespace: m.factory.Status().Tools["pidns"].Selected, State: string(created.State())})
 	pending := r.observers[:0]
 	for _, observed := range r.observers {
 		select {
@@ -99,7 +132,7 @@ func (m *Manager) For(ctx context.Context, b *bed.Bed) (Executor, error) {
 		// An old realm may exit after replacement. Publish only for its exact
 		// allocation, never into the new executor's status.
 		if r.executor == created {
-			m.status.Set(b, bed.ExecutorStatus{ID: created.ID(), Backend: created.Backend(), PrivatePIDNamespace: m.factory.PrivatePIDNamespace(), State: string(created.Exit().State)})
+			m.status.Set(b, bed.ExecutorStatus{ID: created.ID(), Backend: created.Backend(), PrivatePIDNamespace: m.factory.Status().Tools["pidns"].Selected, State: string(created.Exit().State)})
 		}
 	}()
 	return created, nil
@@ -153,3 +186,8 @@ func (m *Manager) Status() Status              { return Describe(m.factory) }
 func (m *Manager) LevelStatus() bed.LevelStatus { return bed.LevelStatus{} }
 
 var _ bed.Component[Status] = (*Manager)(nil)
+
+// Failed preparation cannot be returned as a runnable Executor on retry.
+type unpreparedExecutor struct{ Executor }
+
+func (*unpreparedExecutor) State() State { return StateLost }

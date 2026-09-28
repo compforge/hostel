@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	"log"
 	"os/exec"
 	"sync"
@@ -32,6 +33,7 @@ import (
 // LocalFactory creates Executors whose processes are direct Hostel children.
 // It is the portable backend and the honest fallback when supervisor is absent.
 type LocalFactory struct {
+	pidns     tool.Status
 	resources resource.Tracker
 }
 
@@ -39,12 +41,14 @@ func NewLocalFactory(resources resource.Tracker) *LocalFactory {
 	if resources == nil {
 		resources = resource.Noop("resource tracker not configured")
 	}
-	return &LocalFactory{resources: resources}
+	return &LocalFactory{resources: resources, pidns: pidnsStatus(tool.Off, false, false, "")}
 }
 
-func (*LocalFactory) PrivatePIDNamespace() bool { return false }
-func (*LocalFactory) Backend() string           { return "local" }
-func (*LocalFactory) Close() error              { return nil }
+func (f *LocalFactory) Status() Status {
+	return Status{Backend: f.Backend(), Tools: map[string]tool.Status{"pidns": f.pidns}}
+}
+func (*LocalFactory) Backend() string { return "local" }
+func (*LocalFactory) Close() error    { return nil }
 
 func (f *LocalFactory) Create(_ context.Context, bedID string) (Executor, error) {
 	id := "executor-" + randx.Hex(8)

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +32,7 @@ import (
 )
 
 type SupervisorFactory struct {
+	pidns               tool.Status
 	privatePIDNamespace bool
 	exe                 string
 	socketDir           string
@@ -45,17 +47,19 @@ func NewSupervisorFactory(exe string, resources resource.Tracker) (*SupervisorFa
 	if resources == nil {
 		resources = resource.Noop("resource tracker not configured")
 	}
-	return &SupervisorFactory{exe: exe, socketDir: dir, resources: resources}, nil
+	return &SupervisorFactory{exe: exe, socketDir: dir, resources: resources, pidns: pidnsStatus(tool.Off, false, false, "")}, nil
 }
 
-func (*SupervisorFactory) Backend() string             { return "supervisor" }
-func (f *SupervisorFactory) PrivatePIDNamespace() bool { return f.privatePIDNamespace }
+func (*SupervisorFactory) Backend() string { return "supervisor" }
+func (f *SupervisorFactory) Status() Status {
+	return Status{Backend: f.Backend(), Tools: map[string]tool.Status{"pidns": f.pidns}}
+}
 
 func (f *SupervisorFactory) Close() error {
 	return os.RemoveAll(f.socketDir)
 }
 
-func (f *SupervisorFactory) Create(ctx context.Context, bedID string) (Executor, error) {
+func (f *SupervisorFactory) Create(ctx context.Context, bedID string) (_ Executor, retErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -109,6 +113,17 @@ func (f *SupervisorFactory) Create(ctx context.Context, bedID string) (Executor,
 		done:   make(chan struct{}),
 	}
 	go e.watch()
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		e.forceLoss(retErr)
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := e.Shutdown(cleanup); err != nil {
+			retErr = errors.Join(retErr, &ProbeCleanupError{Err: err})
+		}
+	}()
 
 	for range 100 {
 		if err := e.client.Describe(); err == nil {
@@ -132,15 +147,36 @@ func (f *SupervisorFactory) Create(ctx context.Context, bedID string) (Executor,
 	return nil, fmt.Errorf("executor: supervisor %s never became ready", executorID)
 }
 
-// Probe verifies the complete create/start/wait/shutdown path before the
-// factory is selected for request traffic.
-func (f *SupervisorFactory) Probe(ctx context.Context) error {
+// ProbeCleanupError prevents startup fallback while a candidate still owns resources.
+type ProbeCleanupError struct{ Err error }
+
+func (e *ProbeCleanupError) Error() string { return "executor probe cleanup: " + e.Err.Error() }
+func (e *ProbeCleanupError) Unwrap() error { return e.Err }
+
+// Probe verifies the complete create/start/wait/shutdown path before selection.
+func (f *SupervisorFactory) Probe(ctx context.Context) (retErr error) {
 	const bedID = "executor-probe"
 	executor, err := f.Create(ctx, bedID)
 	if err != nil {
+		var cleanup *ProbeCleanupError
+		if !errors.As(err, &cleanup) {
+			if releaseErr := f.resources.Release(bedID); releaseErr != nil {
+				err = errors.Join(err, &ProbeCleanupError{Err: releaseErr})
+			}
+		}
 		return err
 	}
-	defer func() { _ = f.resources.Release(bedID) }()
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := executor.Shutdown(cleanup); err != nil {
+			retErr = errors.Join(retErr, &ProbeCleanupError{Err: err})
+			return
+		}
+		if err := f.resources.Release(bedID); err != nil {
+			retErr = errors.Join(retErr, &ProbeCleanupError{Err: err})
+		}
+	}()
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
 		return err
@@ -156,15 +192,13 @@ func (f *SupervisorFactory) Probe(ctx context.Context) error {
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devnull, sink, sink
 	process, err := executor.Start(ctx, "process-probe", cmd)
 	if err != nil {
-		_ = executor.Shutdown(ctx)
 		return err
 	}
 	outcome, err := process.Wait(ctx)
 	if err != nil || outcome.Kind != ProcessExited || outcome.ExitCode != 0 {
-		_ = executor.Shutdown(ctx)
 		return fmt.Errorf("executor probe: outcome=%+v err=%v", outcome, err)
 	}
-	return executor.Shutdown(ctx)
+	return nil
 }
 
 type supervisedExecutor struct {

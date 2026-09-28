@@ -101,9 +101,7 @@ type Shell struct {
 func startShell(bedExecutor executor.Executor, shellPath string, env []string, environment *Environment, cwdInBed string) (*Shell, error) {
 	cmd := exec.Command(shellPath, shellInteractiveArgs(shellPath)...)
 	cmd.Env = env
-	if err := environment.Wrap(cmd, cwdInBed); err != nil {
-		return nil, err
-	}
+	cmd.Dir = cwdInBed
 	inR, inW, err := os.Pipe()
 	if err != nil {
 		return nil, err

@@ -128,7 +128,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs.IntVar(&c.Bed.Resource.Admission.MemoryPressureThresholdPercent, "memory-pressure-threshold", osx.EnvInt("HOSTEL_MEMORY_PRESSURE_THRESHOLD", defaultPressureThresholdPercent), "report carrier memory pressure at this usage percent, 0=disabled")
 	fs.IntVar(&c.Bed.Resource.Admission.CPUThresholdPercent, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.Bed.Resource.Admission.MemoryThresholdPercent, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
-	fs.BoolVar(&c.Bed.Executor.PrivatePIDNamespace, "executor-pid-namespace", osx.EnvBool("HOSTEL_EXECUTOR_PID_NAMESPACE", false), "require a private PID namespace and procfs per Executor (Linux supervisor)")
+	fs.StringVar((*string)(&c.Bed.Executor.PIDNS), "executor-pid-namespace", osx.EnvStr("HOSTEL_EXECUTOR_PID_NAMESPACE", "off"), "Executor PID namespace policy: auto | off | required")
 	fs.StringVar(&c.Bed.Executor.Backend, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
 	fs.IntVar(&c.Bed.Privilege.UID, "bed-uid", osx.EnvInt("HOSTEL_BED_UID", bedUID), "preferred non-root uid for Bed processes")
 	fs.IntVar(&c.Bed.Privilege.GID, "bed-gid", osx.EnvInt("HOSTEL_BED_GID", bedGID), "preferred non-root gid for Bed processes")
@@ -183,13 +183,16 @@ func Load(args []string, explicit Options) (*Config, error) {
 	}
 	c.Bed.Filesystem = c.Bed.Filesystem.ForRoom(room)
 	c.Bed.Network = c.Bed.Network.ForRoom(room)
-	for _, p := range []*tool.Policy{&c.Bed.Filesystem.Bwrap, &c.Bed.Filesystem.Landlock, &c.Bed.Filesystem.UID, &c.Bed.Filesystem.PRoot, &c.Bed.Filesystem.Pathshim, &c.Bed.Network.NetNS, &c.Bed.Resource.Cgroup} {
+	for _, p := range []*tool.Policy{&c.Bed.Filesystem.Bwrap, &c.Bed.Filesystem.Landlock, &c.Bed.Filesystem.UID, &c.Bed.Filesystem.PRoot, &c.Bed.Filesystem.Pathshim, &c.Bed.Network.NetNS, &c.Bed.Resource.Cgroup, &c.Bed.Executor.PIDNS} {
 		*p = p.Effective()
 	}
 	// Low defaults to 80% of high so a bare --luggage-high-bytes works; a low
 	// above high would make GC loop uselessly, so clamp it.
 	if c.LuggageHighBytes > 0 && (c.LuggageLowBytes <= 0 || c.LuggageLowBytes > c.LuggageHighBytes) {
 		c.LuggageLowBytes = c.LuggageHighBytes * 8 / 10
+	}
+	if err := c.Bed.Executor.PIDNS.Validate(); err != nil {
+		return nil, err
 	}
 	if err := c.Bed.Configuration.Validate(); err != nil {
 		return nil, err

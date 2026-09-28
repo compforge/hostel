@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/qiankunli/hostel/internal/bed/tool"
 	"os"
 	"testing"
 )
@@ -203,15 +204,18 @@ func TestBedsRootConfigPrecedence(t *testing.T) {
 	}
 }
 
-func TestPrivatePIDNamespaceConfig(t *testing.T) {
-	if mustLoad(t, nil).Bed.Executor.PrivatePIDNamespace {
-		t.Fatal("PID namespace enabled by default")
+func TestPIDNamespacePolicyConfig(t *testing.T) {
+	if got := mustLoad(t, nil).Bed.Executor.PIDNS; got != tool.Off {
+		t.Fatalf("default policy=%s", got)
 	}
-	t.Setenv("HOSTEL_EXECUTOR_PID_NAMESPACE", "true")
-	if !mustLoad(t, nil).Bed.Executor.PrivatePIDNamespace {
-		t.Fatal("env ignored")
+	t.Setenv("HOSTEL_EXECUTOR_PID_NAMESPACE", "required")
+	if got := mustLoad(t, nil).Bed.Executor.PIDNS; got != tool.Required {
+		t.Fatalf("env policy=%s", got)
 	}
-	if mustLoad(t, []string{"-executor-pid-namespace=false"}).Bed.Executor.PrivatePIDNamespace {
-		t.Fatal("flag did not override env")
+	if got := mustLoad(t, []string{"-executor-pid-namespace=auto"}).Bed.Executor.PIDNS; got != tool.Auto {
+		t.Fatalf("flag policy=%s", got)
+	}
+	if _, err := Load([]string{"-executor-pid-namespace=true"}, Options{}); err == nil {
+		t.Fatal("invalid policy accepted")
 	}
 }

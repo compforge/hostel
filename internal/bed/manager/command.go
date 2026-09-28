@@ -41,9 +41,7 @@ func (m *Manager) buildCommand(b *managedBed, command, cwd string, envs map[stri
 		return nil, err
 	}
 	cmd.Env = env
-	if err := b.environment.Wrap(cmd, cwd); err != nil {
-		return nil, err
-	}
+	cmd.Dir = cwd
 	return cmd, nil
 }
 

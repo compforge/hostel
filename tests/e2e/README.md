@@ -303,8 +303,11 @@ On a Linux runner permitted to create PID/mount namespaces and mount procfs:
 HOSTEL_E2E_REQUIRE_PID_NAMESPACE=1 make e2e E2E_ARGS='-run TestPrivatePIDNamespace -timeout 3m'
 ```
 
-The case requires the supervisor and bwrap, creates two Beds, and checks distinct
-PID namespaces, matching procfs, command/session/Service agreement, and actual
-per-Bed control-path bind mounts through public APIs. Missing prerequisites fail
+The cases require the supervisor, bwrap and Python 3. They check two distinct
+Bed PID namespaces, matching procfs, one retained mount namespace shared by
+commands/sessions/Services, real control-path bind mounts, and HTTP Service
+listener ownership. The recovery case observes its own API-issued Executor ID,
+kills only that supervisor, verifies the old process tree is dead, then checks
+replacement namespace identity, retained Bed data and reuse of the new view. Missing prerequisites fail
 this explicit run. No upper-layer migration protocol or application-specific
 path is built into Hostel.

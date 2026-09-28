@@ -5,6 +5,7 @@ package isolation
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -133,4 +134,22 @@ func (b *bwrap) rootfulSmoke() hostfacts.ProbeReport {
 		report.Error = fmt.Sprintf("rootful probe cleanup: %v", err)
 	}
 	return report
+}
+
+func (b *bwrap) bindExecutorView(ctx context.Context, fs *bedfs.FS, start func(*exec.Cmd) error) (func(*exec.Cmd), io.Closer, error) {
+	if b.rootful == nil {
+		return nil, nil, nil
+	}
+	b.rootful.mu.Lock()
+	template := b.rootful.views[fs]
+	b.rootful.mu.Unlock()
+	if template == nil {
+		return nil, nil, fmt.Errorf("rootful filesystem: Bed view is not prepared")
+	}
+	view, err := template.Derive(ctx, start)
+	if err != nil {
+		return nil, nil, err
+	}
+	log.Printf("filesystem: prepared Executor mount namespace")
+	return view.Wrap, view, nil
 }
