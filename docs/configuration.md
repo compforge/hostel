@@ -74,3 +74,19 @@ E2E 通过内部 Options 在同一台机器上控制功能组合，仍启动真�
 
 配置限制验证选择和降级；真实容器权限、系统调用拒绝、只读挂载验证实际探测和失败处理，两者不能互相替代。
 运行与覆盖边界见 [E2E 说明](../tests/e2e/README.md)。
+
+## Executor 进程命名空间
+
+`--executor-pid-namespace` / `HOSTEL_EXECUTOR_PID_NAMESPACE=true` 显式要求每个
+Executor 使用独立 Linux PID namespace 和匹配的 procfs，默认关闭。它要求 supervisor
+backend，以及宿主允许创建 PID/mount namespace、挂载 procfs；权限、seccomp 或内核
+前提不满足时启动失败，不降级为共享进程视图。该要求与文件、网络隔离分别配置。
+
+一个 Executor 的 command、session 和 Service 共享进程域。Supervisor 是域内 PID 1，
+负责收尸与终止；Executor 丢失会结束该域，替换后使用新 namespace。对 daemon 返回的
+PID 仍属于 daemon 可见的命名空间，使 Service 监听端口归属检查保持有效。
+Component 与 Bed 的 Executor 状态通过 `private_pid_namespace` 披露实际结果。
+
+共享控制目录仍使用通用 `PathMapping`。需要真实挂载点的调用方必须选择已兑现 mount
+视图的文件机制；PRoot/pathshim 路径投影不能作为内核挂载能力的证明。Hostel 不解释
+目录中的上层控制协议或迁移资格标记。

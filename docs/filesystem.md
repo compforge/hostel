@@ -136,8 +136,10 @@ PRoot/pathshim 尽量让命令中的工作区路径也指向 BedFS，但它们�
 `/tmp` 来自同一 BedFS，跨临时命令、session 和 Service 共享，但不因此自动进入 Store 快照。
 
 bwrap 优先使用 Hostel 已有的管理权限准备挂载，权限不足时再尝试无特权 user namespace。
-两条路径均绑定已有 `/proc`，以适应容器内受限的 procfs。
-当前没有私有 PID namespace，因此私有文件视图不等于完整的进程不可见性。机制及参数顺序
+两条路径默认绑定已有 `/proc`，以适应容器内受限的 procfs。要求 Executor 私有 PID
+namespace 时保留该 Executor 的 procfs；rootful 入口通过继承句柄进入准备好的文件视图，
+仅在 procfs 不同时复制 mount namespace 并覆盖 `/proc`，不修改 Bed 持有的原始视图。
+进程隔离由 Executor 单独要求，私有文件视图本身不等于完整的进程不可见性。机制及参数顺序
 锚点在 `internal/bed/filesystem/isolation/bwrap_args.go`；部署权限示例见
 [deploy/k8s/README.md](../deploy/k8s/README.md)。
 

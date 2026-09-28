@@ -31,9 +31,10 @@ import (
 )
 
 type SupervisorFactory struct {
-	exe       string
-	socketDir string
-	resources resource.Tracker
+	privatePIDNamespace bool
+	exe                 string
+	socketDir           string
+	resources           resource.Tracker
 }
 
 func NewSupervisorFactory(exe string, resources resource.Tracker) (*SupervisorFactory, error) {
@@ -47,7 +48,8 @@ func NewSupervisorFactory(exe string, resources resource.Tracker) (*SupervisorFa
 	return &SupervisorFactory{exe: exe, socketDir: dir, resources: resources}, nil
 }
 
-func (*SupervisorFactory) Backend() string { return "supervisor" }
+func (*SupervisorFactory) Backend() string             { return "supervisor" }
+func (f *SupervisorFactory) PrivatePIDNamespace() bool { return f.privatePIDNamespace }
 
 func (f *SupervisorFactory) Close() error {
 	return os.RemoveAll(f.socketDir)
@@ -74,6 +76,13 @@ func (f *SupervisorFactory) Create(ctx context.Context, bedID string) (Executor,
 		"--bed", bedID,
 		"--executor", executorID,
 	)
+	if f.privatePIDNamespace {
+		releaseNamespace, err := preparePIDNamespace(cmd)
+		if err != nil {
+			return nil, err
+		}
+		defer releaseNamespace()
+	}
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	// SIGTERM lets the supervisor run its graceful Shutdown path and publish child
@@ -244,9 +253,9 @@ func (e *supervisedExecutor) start(ctx context.Context, processID string, cmd *e
 	var pid int
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if drainGroup {
-			pid, err = e.client.StartService(processID, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr)
+			pid, err = e.client.StartService(processID, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr, cmd.ExtraFiles...)
 		} else {
-			pid, err = e.client.Start(processID, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr)
+			pid, err = e.client.Start(processID, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr, cmd.ExtraFiles...)
 		}
 		if err == nil {
 			if attempt > 1 {

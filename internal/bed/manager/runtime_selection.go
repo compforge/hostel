@@ -103,7 +103,8 @@ func resolveRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell st
 			return selection, fmt.Errorf("runtime probe: %w", fatalErr)
 		}
 		if attempt.Error == "" {
-			selection.Executor = executor.Config{Backend: attempt.Executor}
+			selection.Executor = cfg.Executor
+			selection.Executor.Backend = attempt.Executor
 			if attempt.Network == string(network.Shared) && netConfig.Level == network.Private {
 				if next, ok := netConfig.WithoutOptionalNamespace("private network unavailable"); ok {
 					selection.Network = next

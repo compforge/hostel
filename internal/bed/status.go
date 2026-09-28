@@ -58,9 +58,10 @@ type StoreStatus struct {
 	LocalBytes         int64  `json:"local_bytes"`
 }
 type ExecutorStatus struct {
-	ID      string `json:"id"`
-	Backend string `json:"backend"`
-	State   string `json:"state"`
+	PrivatePIDNamespace bool   `json:"private_pid_namespace"`
+	ID                  string `json:"id"`
+	Backend             string `json:"backend"`
+	State               string `json:"state"`
 }
 type ResourceStatus struct {
 	Accounting bool `json:"accounting"`

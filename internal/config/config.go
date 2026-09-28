@@ -128,6 +128,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs.IntVar(&c.Bed.Resource.Admission.MemoryPressureThresholdPercent, "memory-pressure-threshold", osx.EnvInt("HOSTEL_MEMORY_PRESSURE_THRESHOLD", defaultPressureThresholdPercent), "report carrier memory pressure at this usage percent, 0=disabled")
 	fs.IntVar(&c.Bed.Resource.Admission.CPUThresholdPercent, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.Bed.Resource.Admission.MemoryThresholdPercent, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
+	fs.BoolVar(&c.Bed.Executor.PrivatePIDNamespace, "executor-pid-namespace", osx.EnvBool("HOSTEL_EXECUTOR_PID_NAMESPACE", false), "require a private PID namespace and procfs per Executor (Linux supervisor)")
 	fs.StringVar(&c.Bed.Executor.Backend, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
 	fs.IntVar(&c.Bed.Privilege.UID, "bed-uid", osx.EnvInt("HOSTEL_BED_UID", bedUID), "preferred non-root uid for Bed processes")
 	fs.IntVar(&c.Bed.Privilege.GID, "bed-gid", osx.EnvInt("HOSTEL_BED_GID", bedGID), "preferred non-root gid for Bed processes")

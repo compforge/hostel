@@ -55,9 +55,10 @@ type Activity struct {
 }
 
 type Executor struct {
-	ID      string `json:"id"`
-	Backend string `json:"backend"`
-	State   string `json:"state"`
+	PrivatePIDNamespace bool   `json:"private_pid_namespace"`
+	ID                  string `json:"id"`
+	Backend             string `json:"backend"`
+	State               string `json:"state"`
 }
 
 type BedDetail struct {
@@ -81,7 +82,7 @@ func ExecutorFromStatus(status *bed.ExecutorStatus) *Executor {
 	if status == nil {
 		return nil
 	}
-	return &Executor{ID: status.ID, Backend: status.Backend, State: string(status.State)}
+	return &Executor{ID: status.ID, Backend: status.Backend, PrivatePIDNamespace: status.PrivatePIDNamespace, State: string(status.State)}
 }
 
 func LifecycleRecordFrom(record *bed.LifecycleRecord) *LifecycleRecord {

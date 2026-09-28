@@ -19,6 +19,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -242,5 +243,115 @@ func closeCommandOutput(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
 	if err := cmd.Stdout.(*os.File).Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSupervisorExtraFilesReachChildAndRejectChangedRetry(t *testing.T) {
+	factory, err := NewSupervisorFactory(os.Args[0], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer factory.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ex, err := factory.Create(ctx, "files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ex.Shutdown(ctx)
+	file, err := os.CreateTemp(t.TempDir(), "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if _, err := file.WriteString("inherited-file"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	cmd, out := testCommand(t, "cat <&3")
+	// Force specification offloading alongside inherited setup descriptors.
+	cmd.Env = append(cmd.Env, "LARGE_A="+strings.Repeat("x", 70000), "LARGE_B="+strings.Repeat("y", 70000))
+	cmd.ExtraFiles = []*os.File{file}
+	p, err := ex.Start(ctx, "fd-command", cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeCommandOutput(t, cmd)
+	result, err := p.Wait(ctx)
+	if err != nil || result.ExitCode != 0 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if got := readOutput(t, out); got != "inherited-file" {
+		t.Fatalf("output=%q", got)
+	}
+	other, err := os.CreateTemp(t.TempDir(), "different")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	retry, retryOut := testCommand(t, "cat <&3")
+	defer retryOut.Close()
+	defer closeCommandOutput(t, retry)
+	retry.Env = cmd.Env
+	retry.ExtraFiles = []*os.File{other}
+	if _, err := ex.Start(ctx, "fd-command", retry); err == nil {
+		t.Fatal("changed extra descriptor accepted on retry")
+	}
+	if ex.State() != StateReady {
+		t.Fatal("semantic rejection replaced Executor")
+	}
+}
+
+func TestPrivatePIDNamespaceSupervisor(t *testing.T) {
+	if os.Getenv("HOSTEL_TEST_PID_NAMESPACE") != "1" {
+		t.Skip("set HOSTEL_TEST_PID_NAMESPACE=1 on a Linux runner with namespace privileges")
+	}
+	factory, err := NewSupervisorFactory(os.Args[0], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory.privatePIDNamespace = true
+	defer factory.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ex, err := factory.Create(ctx, "private-processes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ex.Shutdown(ctx)
+	cmd, out := testCommand(t, `test "$(readlink /proc/1/ns/pid)" = "$(readlink /proc/self/ns/pid)" && test "$(awk '/^NSpid:/ { print NF }' /proc/self/status)" = 2 && printf private-procfs`)
+	p, err := ex.Start(ctx, "procfs", cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeCommandOutput(t, cmd)
+	result, err := p.Wait(ctx)
+	if err != nil || result.Kind != ProcessExited || result.ExitCode != 0 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if got := readOutput(t, out); got != "private-procfs" {
+		t.Fatalf("output=%q", got)
+	}
+	long, longOut := testCommand(t, "exec sleep 60")
+	long.Path, long.Args = "/bin/sleep", []string{"sleep", "60"}
+	defer longOut.Close()
+	process, err := ex.Start(ctx, "long-running", long)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeCommandOutput(t, long)
+	if err := syscall.Kill(process.PID(), 0); err != nil {
+		t.Fatalf("PID is not caller-visible: %d %v", process.PID(), err)
+	}
+	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", process.PID()))
+	if err != nil || string(cmdline) != "/bin/sleep\x0060\x00" {
+		t.Fatalf("caller-visible PID identifies wrong process: %q %v", cmdline, err)
+	}
+	process.Kill()
+	result, err = process.Wait(ctx)
+	if err != nil || result.Kind != ProcessSignaled {
+		t.Fatalf("kill result=%+v err=%v", result, err)
 	}
 }

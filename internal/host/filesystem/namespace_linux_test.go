@@ -16,14 +16,22 @@ func TestMountEntryDefersWorkloadEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	ns := &MountNamespace{mount: f, root: f, uts: f, ipc: f, helper: "/trusted/hostel"}
+	ns := &MountNamespace{mount: f, root: f, uts: f, ipc: f, executable: f}
 	cmd := exec.Command("/bin/sh", "-c", "echo ok")
 	cmd.Env = []string{"LD_PRELOAD=/mnt/plugin.so", "GODEBUG=inittrace=1", "PATH=/mnt/tools", "TOKEN=private"}
 	want := append([]string(nil), cmd.Env...)
 	hostprocess.WrapBedInit(cmd, hostprocess.BedInitPath, "/mnt/work")
 	ns.Wrap(cmd)
-	if cmd.Path != "/trusted/hostel" || cmd.Dir != "/" {
+	if cmd.Path != "/proc/self/fd/3" || cmd.Dir != "/" {
 		t.Fatalf("unsafe bootstrap: %+v", cmd)
+	}
+	if len(cmd.ExtraFiles) != 5 {
+		t.Fatalf("missing inherited namespace handles: %d", len(cmd.ExtraFiles))
+	}
+	for _, file := range cmd.ExtraFiles {
+		if file != f {
+			t.Fatal("wrong namespace handle")
+		}
 	}
 	for _, entry := range cmd.Env {
 		if !strings.HasPrefix(entry, "HOSTEL_WORKLOAD_ENV_") && entry != "PATH=/usr/bin:/bin" {
@@ -36,7 +44,7 @@ func TestMountEntryDefersWorkloadEnvironment(t *testing.T) {
 			t.Fatalf("entry changed: got %q want %q", got, entry)
 		}
 	}
-	if cmd.Args[4] != "--" || cmd.Args[5] != hostprocess.BedInitPath {
+	if cmd.Args[4] != "--" || cmd.Args[5] != "/proc/self/fd/3" {
 		t.Fatalf("namespace entry must preserve the sealed workload: %v", cmd.Args)
 	}
 }

@@ -107,3 +107,17 @@ func TestRuntimeFailureDoesNotLoopOnBaseline(t *testing.T) {
 		t.Fatalf("repeated baseline attempt %d times", calls)
 	}
 }
+
+func TestRuntimeSelectionPreservesExecutorRequirements(t *testing.T) {
+	cfg := baselineRuntimeConfig()
+	cfg.Executor = executor.Config{Backend: "auto", PrivatePIDNamespace: true}
+	facts := hostfacts.Collect()
+	facts.EffectiveCaps = 0
+	probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, _ RuntimeConfig, _ RuntimeSelection, _ *hostnetwork.PortManager) (CombinationAttempt, error) {
+		return CombinationAttempt{Executor: "supervisor", Network: "shared"}, nil
+	}
+	selected, err := resolveRuntime(t.Context(), facts, t.TempDir(), "/bin/bash", cfg, nil, probe)
+	if err != nil || selected.Executor.Backend != "supervisor" || !selected.Executor.PrivatePIDNamespace {
+		t.Fatalf("resolved Executor lost requirements: %+v %v", selected.Executor, err)
+	}
+}

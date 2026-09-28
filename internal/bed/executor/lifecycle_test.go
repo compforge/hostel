@@ -23,6 +23,7 @@ type replacementFactory struct {
 	next    Executor
 }
 
+func (*replacementFactory) PrivatePIDNamespace() bool { return false }
 func (f *replacementFactory) Create(context.Context, string) (Executor, error) {
 	f.created++
 	return f.next, nil

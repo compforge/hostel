@@ -14,6 +14,9 @@ import (
 func ResolveFactory(ctx context.Context, cfg Config, resources resource.Tracker) (Factory, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	if cfg.Backend == "local" && cfg.PrivatePIDNamespace {
+		return nil, fmt.Errorf("private PID namespace requires the supervisor executor")
+	}
 	if cfg.Backend == "local" {
 		return NewLocalFactory(resources), nil
 	}
@@ -26,6 +29,7 @@ func ResolveFactory(ctx context.Context, cfg Config, resources resource.Tracker)
 		factory, err = NewSupervisorFactory(exe, resources)
 	}
 	if err == nil {
+		factory.privatePIDNamespace = cfg.PrivatePIDNamespace
 		err = factory.Probe(ctx)
 	}
 	if err == nil {
@@ -36,7 +40,7 @@ func ResolveFactory(ctx context.Context, cfg Config, resources resource.Tracker)
 			return nil, fmt.Errorf("supervisor probe cleanup after %v: %w", err, cleanupErr)
 		}
 	}
-	if cfg.Backend == "supervisor" {
+	if cfg.Backend == "supervisor" || cfg.PrivatePIDNamespace {
 		return nil, fmt.Errorf("required supervisor executor: %w", err)
 	}
 	log.Printf("hostel: executor backend=local reason=%q", err)

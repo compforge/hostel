@@ -202,3 +202,16 @@ func TestBedsRootConfigPrecedence(t *testing.T) {
 		t.Fatalf("explicit beds root = %q", c.BedsRoot)
 	}
 }
+
+func TestPrivatePIDNamespaceConfig(t *testing.T) {
+	if mustLoad(t, nil).Bed.Executor.PrivatePIDNamespace {
+		t.Fatal("PID namespace enabled by default")
+	}
+	t.Setenv("HOSTEL_EXECUTOR_PID_NAMESPACE", "true")
+	if !mustLoad(t, nil).Bed.Executor.PrivatePIDNamespace {
+		t.Fatal("env ignored")
+	}
+	if mustLoad(t, []string{"-executor-pid-namespace=false"}).Bed.Executor.PrivatePIDNamespace {
+		t.Fatal("flag did not override env")
+	}
+}

@@ -294,3 +294,17 @@ persistent session state, preparation-failure classification without losing the 
 response closes, byte-cursor polling, cancellation and explicit unsupported code kernels.
 Run with `make e2e E2E_ARGS='-run TestOpenSandbox -timeout 3m'`. File Range, metadata, permissions,
 large log retention and cleanup also have protocol/domain regression tests in the regular suite.
+
+## Verify private process namespaces
+
+On a Linux runner permitted to create PID/mount namespaces and mount procfs:
+
+```sh
+HOSTEL_E2E_REQUIRE_PID_NAMESPACE=1 make e2e E2E_ARGS='-run TestPrivatePIDNamespace -timeout 3m'
+```
+
+The case requires the supervisor and bwrap, creates two Beds, and checks distinct
+PID namespaces, matching procfs, command/session/Service agreement, and actual
+per-Bed control-path bind mounts through public APIs. Missing prerequisites fail
+this explicit run. No upper-layer migration protocol or application-specific
+path is built into Hostel.

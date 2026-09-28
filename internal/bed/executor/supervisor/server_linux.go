@@ -43,9 +43,21 @@ func Run(args []string) int {
 	socket := fs.String("socket", "", "unix socket to serve spawn requests on")
 	bed := fs.String("bed", "", "bed id (ps visibility only)")
 	executorID := fs.String("executor", "", "executor id")
+	privatePIDNamespace := fs.Bool("private-pid-namespace", false, "private Executor PID namespace")
 	if err := fs.Parse(args); err != nil || *socket == "" || *executorID == "" {
 		log.Printf("supervisor: bad args (need --socket and --executor): %v", err)
 		return 2
+	}
+
+	var parentProc *os.File
+	if *privatePIDNamespace {
+		var err error
+		parentProc, err = initializePIDNamespace()
+		if err != nil {
+			log.Printf("supervisor: initialize PID namespace: %v", err)
+			return 1
+		}
+		defer parentProc.Close()
 	}
 
 	// Subreaper: every descendant orphaned anywhere below us reparents HERE,
@@ -66,7 +78,7 @@ func Run(args []string) int {
 	}
 	defer os.Remove(*socket)
 
-	s := &server{
+	s := &server{parentProc: parentProc,
 		bed:             *bed,
 		executorID:      *executorID,
 		state:           executorReady,
@@ -128,6 +140,7 @@ const (
 )
 
 type server struct {
+	parentProc *os.File
 	bed        string
 	executorID string
 	listener   *net.UnixListener
@@ -144,13 +157,15 @@ type server struct {
 }
 
 type processRecord struct {
-	drainGroup bool
-	cleaning   bool
-	id         string
-	specHash   string
-	pid        int
-	done       chan struct{}
-	status     *ExitStatus
+	extraFileHash string
+	parentPID     int
+	drainGroup    bool
+	cleaning      bool
+	id            string
+	specHash      string
+	pid           int
+	done          chan struct{}
+	status        *ExitStatus
 }
 
 // reap dispatches exit codes and collects adopted orphans. A service leader's
@@ -268,14 +283,19 @@ func (s *server) start(req request, fds []int) reply {
 		base.Error = "start needs process_id"
 		return base
 	}
+	if req.ExtraFileCount < 0 || req.ExtraFileCount > maxExtraFiles {
+		base.Error = "invalid extra file count"
+		return base
+	}
+	childFileCount := 3 + req.ExtraFileCount
 	spec := startSpec{Argv: req.Argv, Dir: req.Dir, Env: req.Env}
 	if req.SpecInFD {
-		if len(fds) != 4 || len(req.Argv) != 0 || req.Dir != "" || len(req.Env) != 0 {
-			base.Error = "start with specification fd needs exactly 4 fds and no inline specification"
+		if len(fds) != childFileCount+1 || len(req.Argv) != 0 || req.Dir != "" || len(req.Env) != 0 {
+			base.Error = "start specification fd count mismatch or conflicting inline specification"
 			return base
 		}
 		var err error
-		spec, err = readStartSpec(fds[3])
+		spec, err = readStartSpec(fds[childFileCount])
 		if err != nil {
 			base.Error = "invalid start specification fd: " + err.Error()
 			var tooLarge *MessageTooLargeError
@@ -284,11 +304,16 @@ func (s *server) start(req request, fds []int) reply {
 			}
 			return base
 		}
-		// The fourth descriptor is control data, never a child process file.
-		_ = syscall.Close(fds[3])
-		fds[3] = -1
-	} else if len(fds) != 3 {
-		base.Error = "start needs exactly 3 stdio fds"
+		// The last descriptor is control data, never a child process file.
+		_ = syscall.Close(fds[childFileCount])
+		fds[childFileCount] = -1
+	} else if len(fds) != childFileCount {
+		base.Error = "start file descriptor count mismatch"
+		return base
+	}
+	fileHash, err := extraFileHash(fds[3:childFileCount])
+	if err != nil || fileHash != req.ExtraFileHash {
+		base.Error = "invalid extra file fingerprint"
 		return base
 	}
 	if len(spec.Argv) == 0 {
@@ -302,7 +327,7 @@ func (s *server) start(req request, fds []int) reply {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.processes[req.ProcessID]; ok {
-		if existing.specHash != req.SpecHash || existing.drainGroup != req.DrainGroup {
+		if existing.specHash != req.SpecHash || existing.drainGroup != req.DrainGroup || existing.extraFileHash != fileHash {
 			base.Error = "process id reused with different specification"
 			return base
 		}
@@ -312,10 +337,14 @@ func (s *server) start(req request, fds []int) reply {
 		base.Error = "executor is draining"
 		return base
 	}
+	files := make([]uintptr, childFileCount)
+	for i, fd := range fds[:childFileCount] {
+		files[i] = uintptr(fd)
+	}
 	pid, err := syscall.ForkExec(spec.Argv[0], spec.Argv, &syscall.ProcAttr{
 		Dir:   spec.Dir,
 		Env:   spec.Env,
-		Files: []uintptr{uintptr(fds[0]), uintptr(fds[1]), uintptr(fds[2])},
+		Files: files,
 		Sys: &syscall.SysProcAttr{
 			Setpgid:   true,
 			Pdeathsig: syscall.SIGKILL,
@@ -328,7 +357,13 @@ func (s *server) start(req request, fds []int) reply {
 		}
 		return base
 	}
-	process := &processRecord{id: req.ProcessID, specHash: req.SpecHash, pid: pid, done: make(chan struct{}), drainGroup: req.DrainGroup}
+	hostPID, err := parentPID(s.parentProc, pid)
+	if err != nil {
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		base.Error = "resolve child PID: " + err.Error()
+		return base
+	}
+	process := &processRecord{extraFileHash: fileHash, parentPID: hostPID, id: req.ProcessID, specHash: req.SpecHash, pid: pid, done: make(chan struct{}), drainGroup: req.DrainGroup}
 	s.processes[process.id] = process
 	s.byPID[pid] = process
 	return s.replyForLocked(process)
@@ -405,7 +440,11 @@ func (s *server) signal(processID string, signal int) reply {
 }
 
 func (s *server) replyForLocked(process *processRecord) reply {
-	rep := reply{ExecutorID: s.executorID, ProcessID: process.id, Pid: process.pid}
+	pid := process.parentPID
+	if pid == 0 {
+		pid = process.pid
+	}
+	rep := reply{ExecutorID: s.executorID, ProcessID: process.id, Pid: pid}
 	if process.status == nil {
 		rep.State = processRunning
 		return rep

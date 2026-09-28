@@ -118,9 +118,10 @@ type ResidentStatus struct {
 // ExecutorStatus is the current process realm attached to a resident Bed.
 // It is ephemeral and never persisted with workspace metadata.
 type ExecutorStatus struct {
-	ID      string
-	Backend string
-	State   executor.State
+	PrivatePIDNamespace bool
+	ID                  string
+	Backend             string
+	State               executor.State
 }
 
 // RestoreBytes estimates how much durable data this carrier must download
@@ -195,7 +196,7 @@ func (b *managedBed) Status() ResidentStatus {
 	b.mu.Unlock()
 	if shared.Executor.ID != "" {
 		status.Executor = &ExecutorStatus{
-			ID: shared.Executor.ID, Backend: shared.Executor.Backend, State: executor.State(shared.Executor.State),
+			ID: shared.Executor.ID, Backend: shared.Executor.Backend, PrivatePIDNamespace: shared.Executor.PrivatePIDNamespace, State: executor.State(shared.Executor.State),
 		}
 	}
 	return status

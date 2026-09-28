@@ -100,6 +100,7 @@ func (o Options) apply(c *Config) {
 	apply(&c.Bed.Privilege.UID, o.Bed.Privilege.UID)
 	apply(&c.Bed.Privilege.GID, o.Bed.Privilege.GID)
 	apply(&c.Bed.Executor.Backend, o.Bed.Executor.Backend)
+	apply(&c.Bed.Executor.PrivatePIDNamespace, o.Bed.Executor.PrivatePIDNamespace)
 	apply(&c.Bed.Store.Sync, o.Bed.Store.Sync)
 	apply(&c.Bed.Store.ResticBinary, o.Bed.Store.ResticBinary)
 	apply(&c.Bed.Store.ResticPassword, o.Bed.Store.ResticPassword)

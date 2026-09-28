@@ -42,8 +42,9 @@ func NewLocalFactory(resources resource.Tracker) *LocalFactory {
 	return &LocalFactory{resources: resources}
 }
 
-func (*LocalFactory) Backend() string { return "local" }
-func (*LocalFactory) Close() error    { return nil }
+func (*LocalFactory) PrivatePIDNamespace() bool { return false }
+func (*LocalFactory) Backend() string           { return "local" }
+func (*LocalFactory) Close() error              { return nil }
 
 func (f *LocalFactory) Create(_ context.Context, bedID string) (Executor, error) {
 	id := "executor-" + randx.Hex(8)

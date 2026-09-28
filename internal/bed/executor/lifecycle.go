@@ -9,10 +9,13 @@ import (
 )
 
 type Status struct {
-	Backend string `json:"backend"`
+	Backend             string `json:"backend"`
+	PrivatePIDNamespace bool   `json:"private_pid_namespace"`
 }
 
-func Describe(factory Factory) Status { return Status{Backend: factory.Backend()} }
+func Describe(factory Factory) Status {
+	return Status{Backend: factory.Backend(), PrivatePIDNamespace: factory.PrivatePIDNamespace()}
+}
 
 // Manager owns the replaceable process realm for each Bed allocation.
 type Manager struct {
@@ -76,7 +79,7 @@ func (m *Manager) For(ctx context.Context, b *bed.Bed) (Executor, error) {
 		return nil, err
 	}
 	r.executor = created
-	m.status.Set(b, bed.ExecutorStatus{ID: created.ID(), Backend: created.Backend(), State: string(created.State())})
+	m.status.Set(b, bed.ExecutorStatus{ID: created.ID(), Backend: created.Backend(), PrivatePIDNamespace: m.factory.PrivatePIDNamespace(), State: string(created.State())})
 	pending := r.observers[:0]
 	for _, observed := range r.observers {
 		select {
@@ -96,7 +99,7 @@ func (m *Manager) For(ctx context.Context, b *bed.Bed) (Executor, error) {
 		// An old realm may exit after replacement. Publish only for its exact
 		// allocation, never into the new executor's status.
 		if r.executor == created {
-			m.status.Set(b, bed.ExecutorStatus{ID: created.ID(), Backend: created.Backend(), State: string(created.Exit().State)})
+			m.status.Set(b, bed.ExecutorStatus{ID: created.ID(), Backend: created.Backend(), PrivatePIDNamespace: m.factory.PrivatePIDNamespace(), State: string(created.Exit().State)})
 		}
 	}()
 	return created, nil
@@ -145,8 +148,8 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 func (m *Manager) Close(context.Context) error { return m.factory.Close() }
 func (m *Manager) Status() Status              { return Describe(m.factory) }
 
-// Executor backends apply the selected Environment; they do not add a separate
-// isolation guarantee merely by supervising processes.
+// PID namespace isolation is reported independently of the cross-domain room
+// level. Supervising processes alone does not imply a private process view.
 func (m *Manager) LevelStatus() bed.LevelStatus { return bed.LevelStatus{} }
 
 var _ bed.Component[Status] = (*Manager)(nil)
