@@ -104,13 +104,7 @@ func (m *Manager) RoomStatus() model.RoomStatus {
 	if requested == "" {
 		requested = m.iso.Level().Room()
 	}
-	identity := privilege.Shared
-	if m.identitySelection != nil {
-		identity = m.identitySelection.Effective
-	}
-	return model.SummarizeRoom(requested, map[string]model.Level{
-		"filesystem": m.iso.Level(), "privilege": identity, "network": m.network.Status().Effective,
-	})
+	return model.SummarizeRoom(requested, m.iso.Level().Room())
 }
 
 func (m *Manager) startEnvironmentProbe(started time.Time) {

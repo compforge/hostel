@@ -12,7 +12,7 @@ Bed 的每次命令和常驻 shell 使用相同 netns，Executor 替换不改变
 当前覆盖 `bed_processes`：共享 Chromium/MCP 等 amenity 的出站仍走 carrier 网络。
 
 Network 定义 shared/private 两级：dorm/room 预期 shared，suite/auto 预期 private。它按实际探测与配置选择，
-不从文件 backend 推导；shared 满足到 room 的网络要求，private 满足 suite。没有默认要求部署提权的开关。网络候选探测失败不影响服务启动；普通 Bed
+不从文件 backend 推导，也不参与房型评级。没有默认要求部署提权的开关。auto 网络候选探测失败不影响服务启动；普通 Bed
 继续共享 carrier 网络。探测成功后，单个 Bed 创建网络失败会使该次初始化失败，不能在
 同一实例中静默改成共享网络。运行中权限撤销也不会自动放开已隔离 Bed。
 

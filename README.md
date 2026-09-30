@@ -68,10 +68,14 @@ without Chromium. Available isolation depends on host and container permissions.
 
 | Profile | Requested boundaries |
 |---|---|
-| `dorm` | Shared filesystem access, identity and network |
-| `room` | Restricted cross-bed file access, dedicated bed identities, shared network |
-| `suite` | Private filesystem views, dedicated bed identities and private bed networks |
+| `dorm` | Files organized per bed, with shared process-side access |
+| `room` | Restricted cross-bed file access |
+| `suite` | Private filesystem views and restricted cross-bed file access |
 | `auto` | Request suite and allow degradation to supported mechanisms |
+
+Room types summarize file isolation. Network, identity, PID namespaces and resource
+controls are additional capabilities, reported independently; shared networking does
+not lower a suite. Explicit requirements must be fulfilled.
 
 Check `/healthz` and `/v1/status` for actual capabilities. Profiles depend on the
 host; shared Chromium/MCP traffic uses the carrier network, and per-bed resource

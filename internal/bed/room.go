@@ -2,12 +2,10 @@ package bed
 
 import (
 	"fmt"
-	"maps"
-	"slices"
 )
 
-// RoomType is the user-facing profile. Domains own its translation to their
-// levels; it is never a filesystem backend name.
+// RoomType is the user-facing file isolation guarantee. Profiles may prefer
+// additional capabilities, whose availability does not change this guarantee.
 type RoomType string
 
 const (
@@ -36,21 +34,13 @@ type RoomStatus struct {
 	Reasons   []string `json:"reasons,omitempty"`
 }
 
-// SummarizeRoom compares profile satisfaction, not incomparable domain levels.
-// +spec=`A room requires confined files and dedicated identity; a suite additionally requires private files and network. Downgrading the summary never downgrades allocations.`
-func SummarizeRoom(requested RoomType, selected map[string]Level) RoomStatus {
+// SummarizeRoom reports the attained file guarantee within the requested profile.
+// +spec=`Room requires confined files; suite requires a private file view. Additional network, identity and process capabilities are reported by their owners.`
+func SummarizeRoom(requested, files RoomType) RoomStatus {
 	r := RoomStatus{Requested: requested, Effective: requested}
-	if len(selected) == 0 {
-		r.Effective = Dorm
-	}
-	for _, domain := range slices.Sorted(maps.Keys(selected)) {
-		room := selected[domain].Room()
-		if room.rank() < r.Effective.rank() {
-			r.Effective = room
-		}
-		if room.rank() < requested.rank() {
-			r.Reasons = append(r.Reasons, domain+" below requested profile")
-		}
+	if files.rank() < requested.rank() {
+		r.Effective = files
+		r.Reasons = []string{"filesystem below requested profile"}
 	}
 	return r
 }

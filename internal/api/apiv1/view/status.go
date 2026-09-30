@@ -11,7 +11,7 @@ import (
 )
 
 // StatusSchemaVersion identifies the instance diagnostics wire contract.
-const StatusSchemaVersion = 11
+const StatusSchemaVersion = 12
 
 // InstanceStatus separates host observations from domain and facility status.
 // Inventory contains summaries, never tenant details.

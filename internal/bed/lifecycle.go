@@ -20,7 +20,7 @@ type BedLifecycle interface {
 }
 
 // Noop supplies only hooks a component does not participate in. A component
-// must still explicitly provide Status and LevelStatus to satisfy Component.
+// must still explicitly provide Status to satisfy Component.
 type Noop struct{}
 
 func (Noop) Recover(context.Context, *Bed) error { return nil }

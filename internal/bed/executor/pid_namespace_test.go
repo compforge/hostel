@@ -28,7 +28,7 @@ func TestLocalPIDNSPolicyEvidence(t *testing.T) {
 	}
 	// A previously selected private domain must not silently turn into local.
 	selected := pidnsStatus(tool.Auto, true, true, "")
-	if _, err := ResolveFactory(t.Context(), (Config{Backend: "local", PIDNS: tool.Auto}).WithPIDNSSelection(selected), nil); err == nil {
+	if _, err := ResolveFactory(t.Context(), (Config{Backend: "local", PIDNS: tool.Auto}).WithSelection(map[string]tool.Status{"pidns": selected}), nil); err == nil {
 		t.Fatal("frozen private namespace downgraded")
 	}
 }

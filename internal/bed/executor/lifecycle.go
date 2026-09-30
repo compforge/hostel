@@ -179,11 +179,10 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 	return nil
 }
 func (m *Manager) Close(context.Context) error { return m.factory.Close() }
-func (m *Manager) Status() Status              { return Describe(m.factory) }
 
-// PID namespace isolation is reported independently of the cross-domain room
-// level. Supervising processes alone does not imply a private process view.
-func (m *Manager) LevelStatus() bed.LevelStatus { return bed.LevelStatus{} }
+// Status reports process capabilities independently of the file room guarantee.
+// Supervising processes alone does not imply a private process view.
+func (m *Manager) Status() Status { return Describe(m.factory) }
 
 var _ bed.Component[Status] = (*Manager)(nil)
 

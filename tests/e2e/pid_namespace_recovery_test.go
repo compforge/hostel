@@ -180,5 +180,6 @@ func TestPrivatePIDNamespaceRecovery(t *testing.T) {
 	if third.Stdout != second.Stdout {
 		t.Fatalf("Executor did not retain its view: %q != %q", third.Stdout, second.Stdout)
 	}
+	assertSuiteStatus(t, c, bed)
 	t.Logf("Executor %s replaced by %s; %d old processes terminated; data retained", before.Executor.ID, second.Result.ExecutorID, len(oldProcesses))
 }
