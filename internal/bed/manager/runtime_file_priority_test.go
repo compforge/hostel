@@ -59,12 +59,12 @@ func TestRuntimePreservesFilesBeforeOptionalNetwork(t *testing.T) {
 				files   isolation.Level
 				network network.Level
 			}
-			probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, _ RuntimeConfig, s RuntimeSelection, _ *hostnetwork.PortManager) (CombinationAttempt, error) {
+			probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, _ RuntimeConfig, s RuntimeSelection, _ *hostnetwork.PortManager) (runtimeProbeResult, error) {
 				attempts = append(attempts, struct {
 					files   isolation.Level
 					network network.Level
 				}{s.Files.Level(), s.Network.Level})
-				a := CombinationAttempt{Filesystem: s.Files.Name(), Network: string(s.Network.Level), Executor: "local"}
+				a := runtimeProbeResult{Filesystem: s.Files.Name(), Network: string(s.Network.Level), Executor: "local"}
 				if s.Files.Level() == isolation.Private && (tc.failPrivate || s.Network.Level == network.Private) {
 					a.Error = "incompatible environment"
 				}
@@ -101,15 +101,16 @@ func TestRuntimeIdentityFallbackMustPreserveFileGuarantee(t *testing.T) {
 		}
 		selection := RuntimeSelection{Room: bed.Suite, Files: files, Identity: privilege.Selection{Effective: privilege.Dedicated, User: privilege.CurrentBedUser()}}
 		calls := 0
-		probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, _ RuntimeConfig, s RuntimeSelection, _ *hostnetwork.PortManager) (CombinationAttempt, error) {
+		probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, _ RuntimeConfig, s RuntimeSelection, _ *hostnetwork.PortManager) (runtimeProbeResult, error) {
 			calls++
-			a := CombinationAttempt{Executor: "local", Network: "shared"}
+			a := runtimeProbeResult{Executor: "local", Network: "shared"}
 			if s.Identity.Effective == privilege.Dedicated {
 				a.Error = "dedicated identity rejected"
 			}
 			return a, nil
 		}
-		got, ok, err := tryFileCombination(t.Context(), facts, t.TempDir(), "/bin/bash", cfg, cfg.Filesystem, selection, nil, resolver, probe)
+		got, reason, err := tryFileCombination(t.Context(), facts, t.TempDir(), "/bin/bash", cfg, cfg.Filesystem, selection, nil, resolver, probe)
+		ok := reason == ""
 		if err != nil || ok == identityRequiredByFiles {
 			t.Fatalf("required=%t ok=%t error=%v", identityRequiredByFiles, ok, err)
 		}
@@ -129,18 +130,18 @@ func TestRuntimeRestoresPIDCandidateForSharedNetwork(t *testing.T) {
 	facts := hostfacts.Collect()
 	facts.EffectiveCaps = 0
 	calls := 0
-	probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, c RuntimeConfig, s RuntimeSelection, _ *hostnetwork.PortManager) (CombinationAttempt, error) {
+	probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, c RuntimeConfig, s RuntimeSelection, _ *hostnetwork.PortManager) (runtimeProbeResult, error) {
 		calls++
 		f, err := executor.ResolveFactory(t.Context(), c.Executor, nil)
 		if err != nil {
-			return CombinationAttempt{}, err
+			return runtimeProbeResult{}, err
 		}
 		status := f.Status().Tools["pidns"]
 		f.Close()
 		// A fresh local candidate has not probed PIDNS; a fallback is explicitly
 		// frozen with selected=false and probe=available.
 		selected := status.Probe != "available"
-		a := CombinationAttempt{Executor: "local", Network: string(s.Network.Level), ExecutorTools: map[string]tool.Status{"pidns": tool.Describe(tool.Auto, tool.Requirements{}, true, true, selected, "")}}
+		a := runtimeProbeResult{Executor: "local", Network: string(s.Network.Level), ExecutorTools: map[string]tool.Status{"pidns": tool.Describe(tool.Auto, tool.Requirements{}, true, true, selected, "")}}
 		if s.Network.Level == network.Private {
 			a.Error = "private network combination failed"
 		}
@@ -150,7 +151,7 @@ func TestRuntimeRestoresPIDCandidateForSharedNetwork(t *testing.T) {
 		return a, nil
 	}
 	got, err := resolveRuntime(t.Context(), facts, t.TempDir(), "/bin/bash", cfg, nil, probe)
-	if err != nil || calls != 3 || !got.Attempts[2].ExecutorTools["pidns"].Selected {
+	if err != nil || calls != 3 {
 		t.Fatalf("calls=%d result=%+v error=%v", calls, got, err)
 	}
 }

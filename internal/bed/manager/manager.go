@@ -72,7 +72,6 @@ type Manager struct {
 	bedUser             privilege.BedUser
 	roomType            model.RoomType
 	identitySelection   *privilege.Selection
-	combinationAttempts []CombinationAttempt
 	privileges          *privilege.Manager
 	diagnosticsMu       sync.RWMutex
 	environment         EnvironmentReport

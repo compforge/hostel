@@ -32,7 +32,6 @@ import (
 // facilities are peers and are composed separately by the Hostel instance.
 type Status struct {
 	Isolation     model.RoomStatus     `json:"isolation"`
-	Combinations  []CombinationAttempt `json:"combinations,omitempty"`
 	Instance      StatusInstance       `json:"instance"`
 	LocalCleanups []LocalCleanupReport `json:"local_cleanups"`
 	Environment   EnvironmentReport    `json:"environment"`
@@ -88,7 +87,7 @@ func (m *Manager) Status() Status {
 		BedPressure:                 m.bedPressureForCounts(int64(inventory.Instance.OccupiedBeds), int64(inventory.Instance.PinnedBeds)),
 		CPUPressure:                 resourceStatus.Admission.CPUPressure, MemoryPressure: resourceStatus.Admission.MemoryPressure},
 		LocalCleanups: m.localCleanupReports(), Environment: environment,
-		Isolation: m.RoomStatus(), Combinations: append([]CombinationAttempt(nil), m.combinationAttempts...)}
+		Isolation: m.RoomStatus()}
 	report.Components.Filesystem = m.files.Status()
 	report.Components.Configuration = m.configurations.Status()
 	report.Components.Privilege = m.privileges.Status()

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bed"
@@ -34,16 +35,15 @@ type RuntimeSelection struct {
 	Identity privilege.Selection
 	Network  network.Config
 	Executor executor.Config
-	Attempts []CombinationAttempt
 }
-type CombinationAttempt struct {
-	ExecutorTools map[string]tool.Status `json:"executor_tools"`
-	Filesystem    string                 `json:"filesystem"`
-	ProcessView   string                 `json:"process_view"`
-	Network       string                 `json:"network"`
-	Identity      privilege.Level        `json:"identity"`
-	Executor      string                 `json:"executor"`
-	Error         string                 `json:"error,omitempty"`
+type runtimeProbeResult struct {
+	ExecutorTools map[string]tool.Status
+	Filesystem    string
+	ProcessView   string
+	Network       string
+	Identity      privilege.Level
+	Executor      string
+	Error         string
 }
 
 func WithRuntimeSelection(s RuntimeSelection) ManagerOption {
@@ -52,7 +52,6 @@ func WithRuntimeSelection(s RuntimeSelection) ManagerOption {
 		identity := s.Identity
 		m.identitySelection = &identity
 		m.bedUser = identity.User
-		m.combinationAttempts = append([]CombinationAttempt(nil), s.Attempts...)
 	}
 }
 
@@ -64,7 +63,7 @@ func ResolveRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell st
 	return resolveRuntime(ctx, host, root, shell, cfg, ports, probeRuntime)
 }
 
-type runtimeProbe func(context.Context, hostfacts.Snapshot, string, string, RuntimeConfig, RuntimeSelection, *hostnetwork.PortManager) (CombinationAttempt, error)
+type runtimeProbe func(context.Context, hostfacts.Snapshot, string, string, RuntimeConfig, RuntimeSelection, *hostnetwork.PortManager) (runtimeProbeResult, error)
 
 func resolveRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell string, cfg RuntimeConfig, ports *hostnetwork.PortManager, probe runtimeProbe) (RuntimeSelection, error) {
 	return selectRuntime(ctx, host, root, shell, cfg, ports, isolation.Resolve, probe)
@@ -103,40 +102,40 @@ func selectRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell str
 		selection.Files, selection.Identity = iso, identity
 		// Exhaust optional enhancements for this file boundary before excluding
 		// it. Each new file candidate gets the original enhancement preferences.
-		selected, ok, err := tryFileCombination(ctx, host, root, shell, cfg, files, selection, ports, resolveFiles, probe)
+		selected, reason, err := tryFileCombination(ctx, host, root, shell, cfg, files, selection, ports, resolveFiles, probe)
 		selection = selected
-		if err != nil || ok {
+		if err != nil || reason == "" {
 			return selection, err
 		}
-		last := selection.Attempts[len(selection.Attempts)-1]
-		if next, ok := isolation.NextCombination(files, iso, last.Error); ok {
+		if next, ok := isolation.NextCombination(files, iso, reason); ok {
 			files = next
 			continue
 		}
-		return selection, fmt.Errorf("no executable Bed combination: %s", last.Error)
+		return selection, fmt.Errorf("no executable Bed combination: %s", reason)
 	}
 }
 
 // tryFileCombination orders process, network and identity alternatives inside
 // one file guarantee. Domain owners provide fallbacks and retain required tools;
 // the coordinator only orders attempts and requires successful cleanup.
-func tryFileCombination(ctx context.Context, host hostfacts.Snapshot, root, shell string, cfg RuntimeConfig, files isolation.Config, selection RuntimeSelection, ports *hostnetwork.PortManager, resolveFiles fileResolver, probe runtimeProbe) (RuntimeSelection, bool, error) {
+// A nonempty reason means this file candidate was exhausted; errors are fatal.
+// Attempt details are logged, while only the final component selection is retained.
+func tryFileCombination(ctx context.Context, host hostfacts.Snapshot, root, shell string, cfg RuntimeConfig, files isolation.Config, selection RuntimeSelection, ports *hostnetwork.PortManager, resolveFiles fileResolver, probe runtimeProbe) (RuntimeSelection, string, error) {
 	fileLevel := selection.Files.Level()
 	for {
 		netConfig := cfg.Network.ForRoom(cfg.Room)
 		executorConfig := cfg.Executor
-		var last CombinationAttempt
+		var reason string
 		for {
 			if err := ctx.Err(); err != nil {
-				return selection, false, err
+				return selection, "", err
 			}
 			selection.Network = netConfig
 			attemptConfig := cfg
 			attemptConfig.Executor = executorConfig
 			attempt, fatalErr := probe(ctx, host, root, shell, attemptConfig, selection, ports)
-			selection.Attempts = append(selection.Attempts, attempt)
 			if fatalErr != nil {
-				return selection, false, fmt.Errorf("runtime probe: %w", fatalErr)
+				return selection, "", fmt.Errorf("runtime probe: %w", fatalErr)
 			}
 			if attempt.Error == "" {
 				selection.Executor = executorConfig.WithSelection(attempt.ExecutorTools)
@@ -146,10 +145,17 @@ func tryFileCombination(ctx context.Context, host hostfacts.Snapshot, root, shel
 						selection.Network = next
 					}
 				}
-				return selection, true, nil
+				return selection, "", nil
 			}
-			last = attempt
-			log.Printf("hostel: runtime combination rejected filesystem=%s view=%s network=%s identity=%s reason=%q", attempt.Filesystem, attempt.ProcessView, attempt.Network, attempt.Identity, attempt.Error)
+			reason = attempt.Error
+			selectedTools := []string{}
+			for name, status := range attempt.ExecutorTools {
+				if status.Selected {
+					selectedTools = append(selectedTools, name)
+				}
+			}
+			slices.Sort(selectedTools)
+			log.Printf("hostel: runtime combination rejected filesystem=%s view=%s network=%s identity=%s executor=%s executor_tools=%v reason=%q", attempt.Filesystem, attempt.ProcessView, attempt.Network, attempt.Identity, attempt.Executor, selectedTools, attempt.Error)
 			if next, ok := executorConfig.NextCombination(attempt.ExecutorTools, attempt.Error); ok {
 				executorConfig = next
 				continue
@@ -160,22 +166,22 @@ func tryFileCombination(ctx context.Context, host hostfacts.Snapshot, root, shel
 			}
 			break
 		}
-		identity, ok := selection.Identity.WithoutDedicatedIdentity(last.Error)
+		identity, ok := selection.Identity.WithoutDedicatedIdentity(reason)
 		if !ok {
-			return selection, false, nil
+			return selection, reason, nil
 		}
 		// Identity can be a prerequisite of the file boundary (UID/DAC). Re-resolve
 		// it before probing, and never trade away files to obtain shared identity.
 		files.DedicatedIdentity = false
 		iso, err := resolveFiles(host, files, root)
 		if err != nil || iso.Level() < fileLevel {
-			return selection, false, nil
+			return selection, reason, nil
 		}
 		selection.Identity, selection.Files = identity, iso
 	}
 }
 
-func probeRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell string, cfg RuntimeConfig, selection RuntimeSelection, ports *hostnetwork.PortManager) (attempt CombinationAttempt, fatalErr error) {
+func probeRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell string, cfg RuntimeConfig, selection RuntimeSelection, ports *hostnetwork.PortManager) (attempt runtimeProbeResult, fatalErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	attempt.Filesystem = selection.Files.Name()

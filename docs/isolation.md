@@ -160,7 +160,7 @@ capability 当成隔离成功。不同机制分别通过，还需要检验它们
 
 `/healthz.isolation` 和 `/v1/status.isolation` 报告文件保证对应的房型的 requested/effective/reasons；
 `/v1/status.components.filesystem` 报告 shared/confined/private 文件等级、上限、机制及视图；
-Privilege 与 Network 分别报告自己的 supported 和选择结果，`combinations` 保留启动组合尝试及失败原因。
+Privilege 与 Network 分别报告自己的 supported 和最终选择结果；启动组合失败原因通过日志排查。
 状态 schema 见 [observability.md](observability.md)；文件机制从 `components.filesystem` 查询。
 诊断接口还报告 workspace 进程视图和网络作用域；
 health / capabilities 还报告资源记账、准入与设施可用性。各投影的边界见
