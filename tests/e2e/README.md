@@ -237,6 +237,19 @@ These traffic assertions cover new IPv4 TCP connections. DNS/domain rules,
 TTL expiry, existing established flows and injected nft transaction failures are
 not covered by this E2E case; component tests cover parts of those behaviors.
 
+`TestNetworkNAT` uses the same disposable Linux binary profile. It creates an
+external fixture namespace on `192.0.2.0/30` after rejecting overlapping carrier
+routes. The fixture has only its connected route, so Bed replies require
+masquerade. For both executors and two Beds, the service must observe the
+carrier-side source address. No public network or DNS is needed. Fixture
+processes, veth and namespace are removed after the run. Run this case on actual
+Linux 4.19 and a newer kernel to verify the IPv4 NAT compatibility boundary;
+a container image alone does not change the host kernel.
+
+```sh
+HOSTEL_E2E_REQUIRE_NETWORK=1 make e2e E2E_ARGS='-run ^TestNetworkNAT$ -timeout 2m'
+```
+
 `TestRootfulNetworkResolver` requires both rootful and network profiles. It checks
 that command and Service see the same Bed gateway resolver and can resolve
 `example.com`. Unlike the local policy traffic case, this requires working

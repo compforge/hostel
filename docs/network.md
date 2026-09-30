@@ -130,6 +130,9 @@ Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspac
   工具，自定义镜像缺工具会在诊断中显示具体缺项。
 - 从 `198.18.0.0/15` 选择与现有非默认路由不重叠的 `/30`，每 Bed 一对 veth。nft 规则
   只作用于分配的网络，拒绝跨 Bed 转发和 IPv6 转发；现有 CNI/防火墙限制仍然生效。
+- IPv4 NAT 使用 `ip` family，过滤使用 `inet` family，并在同一 nft transaction 中创建和回收。
+  这样在 Linux 4.19 上无需依赖 Linux 5.2 才提供的 inet NAT，同时保留 IPv6 阻断；
+  内核模块、权限与工具是否可用仍由真实启动探测决定。
 - DNS 由有界的 UDP/TCP 转发器使用 carrier resolver，兼容 carrier 内的 loopback DNS。
 - Bed 内的 CDP 地址使用 gateway 访问共享 Hostel API；使用该能力时 API 需监听可从
   veth 访问的地址（默认 `:8872`），不是仅监听 carrier loopback。
