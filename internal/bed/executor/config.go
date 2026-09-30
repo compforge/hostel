@@ -1,30 +1,37 @@
 package executor
 
-import "github.com/qiankunli/hostel/internal/bed/tool"
+import (
+	"maps"
+
+	"github.com/qiankunli/hostel/internal/bed/tool"
+)
 
 type Config struct {
 	Backend   string
 	PIDNS     tool.Policy
-	selection *tool.Status
+	selection map[string]tool.Status
 }
 type Options struct {
 	Backend *string
 	PIDNS   *tool.Policy
 }
 
-// WithPIDNSSelection freezes the tested startup combination without losing the
-// requested policy or its probe evidence. Live factories may not reselect it.
-func (c Config) WithPIDNSSelection(s tool.Status) Config {
-	c.selection = &s
+// WithSelection freezes the tested tool choices without losing their policies
+// or probe evidence. Live factories must recreate this selection exactly.
+func (c Config) WithSelection(tools map[string]tool.Status) Config {
+	c.selection = maps.Clone(tools)
 	return c
 }
 
-// WithoutOptionalPIDNS retains policy/probe evidence while excluding a failed
-// composition. It is used only by the startup combination selector.
-func (c Config) WithoutOptionalPIDNS(s tool.Status, reason string) (Config, bool) {
+// NextCombination owns optional process-domain fallback. New namespace tools
+// extend this policy here, without adding mechanism branches to Bed Manager.
+func (c Config) NextCombination(tools map[string]tool.Status, reason string) (Config, bool) {
+	s := tools["pidns"]
 	if c.PIDNS.Effective() != tool.Auto || !s.Selected {
 		return c, false
 	}
+	tools = maps.Clone(tools)
 	s.Selected, s.Reason = false, reason
-	return c.WithPIDNSSelection(s), true
+	tools["pidns"] = s
+	return c.WithSelection(tools), true
 }

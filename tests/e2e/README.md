@@ -324,3 +324,11 @@ kills only that supervisor, verifies the old process tree is dead, then checks
 replacement namespace identity, retained Bed data and reuse of the new view. Missing prerequisites fail
 this explicit run. No upper-layer migration protocol or application-specific
 path is built into Hostel.
+
+### 文件房型与增强能力
+
+`TestSuiteWithSharedCapabilities` 在 rootful binary profile 下验证私有文件视图配合共享身份、
+网络和 PID namespace 仍为 suite；通过 run-owned nft 失败验证真实网络探测降级，检查命令、
+session、Service 与 file API 的一致性、跨 Bed 文件拒绝访问，以及显式 NetworkPolicy 不被忽略。
+该用例与 `TestPrivatePIDNamespaceRecovery` 共同覆盖静态组合和 Executor 替换后的房型保证。
+`TestFeatureRequiredStartupFailure/missing-network` 验证缺少网络组件时 required 拒绝启动。

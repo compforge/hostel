@@ -396,7 +396,9 @@ func TestEvictProtectsAndTeardownKillsInflightForeground(t *testing.T) {
 	started := make(chan struct{})
 	done := make(chan ExecutionResult, 1)
 	go func() {
-		result, _ := m.RunForeground(context.Background(), b, `sleep 30 & child=$!; echo up; wait "$child"`, "", nil, 0, func(ExecutionOutput) {
+		// Group signal delivery can kill the child before the shell. Keep the
+		// shell alive after wait so its exit status proves it was killed too.
+		result, _ := m.RunForeground(context.Background(), b, `sleep 30 & child=$!; echo up; wait "$child"; while :; do :; done`, "", nil, 0, func(ExecutionOutput) {
 			select {
 			case <-started:
 			default:

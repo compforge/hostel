@@ -30,12 +30,6 @@ func ExpectedLevel(room bed.RoomType) Level {
 	}
 	return Dedicated
 }
-func (l Level) Room() bed.RoomType {
-	if l == Dedicated {
-		return bed.Suite
-	}
-	return bed.Dorm
-}
 
 type Selection struct {
 	Expected  Level                 `json:"expected"`

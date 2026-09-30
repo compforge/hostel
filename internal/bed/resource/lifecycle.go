@@ -73,7 +73,6 @@ func (m *Manager) Status() Status {
 }
 
 // Accounting and carrier admission do not enforce per-Bed resource limits.
-func (m *Manager) LevelStatus() bed.LevelStatus { return bed.LevelStatus{} }
 
 var _ bed.Component[Status] = (*Manager)(nil)
 

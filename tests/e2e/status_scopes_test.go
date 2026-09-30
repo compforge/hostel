@@ -87,8 +87,9 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 		t.Fatal("observation changed identity or activity")
 	}
 	var global struct {
-		Schema int `json:"schema_version"`
-		Host   struct {
+		Schema       int             `json:"schema_version"`
+		Combinations json.RawMessage `json:"combinations"`
+		Host         struct {
 			Fact   map[string]json.RawMessage `json:"fact"`
 			Status struct {
 				Ports []json.RawMessage `json:"ports"`
@@ -110,7 +111,10 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 	if global.Host.Fact["runtime"] == nil || global.Host.Fact["process"] == nil || global.Host.Status.Ports == nil {
 		t.Fatalf("missing host facts: %+v", global.Host)
 	}
-	if global.Schema != 10 || global.Amenities["mcp"].Tenants != 1 {
+	if global.Combinations != nil {
+		t.Fatal("status must report final components, not startup attempt history")
+	}
+	if global.Schema != 11 || global.Amenities["mcp"].Tenants != 1 {
 		t.Fatalf("global status: %+v", global)
 	}
 	assertComponents("instance", global.Components,

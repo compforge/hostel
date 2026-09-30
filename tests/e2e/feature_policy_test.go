@@ -94,12 +94,15 @@ func TestFeaturePoliciesOff(t *testing.T) {
 }
 func TestFeatureRequiredStartupFailure(t *testing.T) {
 	binary := requireTestBinary(t)
-	for _, scenario := range []string{"missing-pathshim", "conflicting-boundaries"} {
+	for _, scenario := range []string{"missing-pathshim", "missing-network", "conflicting-boundaries"} {
 		t.Run(scenario, func(t *testing.T) {
 			options := restrictedOptions()
 			expected := "filesystem.pathshim required"
 			if scenario == "missing-pathshim" {
 				options.Bed.Filesystem.Pathshim = value(tool.Required)
+			} else if scenario == "missing-network" {
+				options.Bed.Network.NetNS = value(tool.Required)
+				expected = "network.netns required"
 			} else {
 				options.Bed.RoomType = value("room")
 				options.Bed.Filesystem.Bwrap = value(tool.Required)

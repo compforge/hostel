@@ -111,7 +111,7 @@ isolation 根据环境能力尽量兑现进程侧的访问屏障。shared 没有
 ## 二、文件隔离档位与机制
 
 Filesystem 定义 `shared < confined < private`。外部 dorm/room/suite 分别映射为这三个文件等级的预期，
-但外部房型还需结合 Privilege 和 Network；文件 private 不等于整个 Bed 达到 suite。请求档位与已知支持集合
+实际文件等级决定房型；共享身份和网络不降低已经成立的文件保证。请求档位与已知支持集合
 共同决定候选档位，再经运行环境组合验证。文件档位不替网络、PID 或 CPU/内存边界作保证。
 
 | 文件 Level | 进程侧的文件边界 | 当前机制 |

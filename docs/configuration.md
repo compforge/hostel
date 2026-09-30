@@ -21,11 +21,11 @@ Bed Service 的完整声明、Pod IP 发布地址及 daemon 统一 TCP 端口池
 内部配置完整不意味着全部对外开放。组件只读取解析后的 Config，状态接口也不输出包含凭据的完整配置。
 环境 PATH 等操作系统执行上下文仍由真实运行环境提供，不伪装成组件配置。
 
-## Component、Level 与 Tool
+## Component 与 Tool
 
 - Component 拥有领域行为、生命周期、配置和状态。
-- Level 表达该领域提供的隔离保证；等级排序与选择归 domain，公共接口只提供 `Room()`。
-- `LevelStatus.Supported` 是已确认的能力列表，不含用户期望或 Effective。domain 将 Config 与能力列表结合选择实际等级。
+- 组件拥有自己的能力类型与支持集合，结合 Config 选择机制，并在类型化 Status 中报告实际结果。
+- 房型由文件隔离保证决定，其他组件的能力分别报告。
 - Tool 是组件为兑现 Bed 能力而选择、组合的工具，既包括外部程序，也包括内核机制和身份技术，例如 Filesystem 的 Bwrap、Landlock、UID、PRoot、Pathshim，
   Network 的 NetNS，以及 Resource 的 cgroup accounting。
 - Requirements 是使用该 Tool 的环境前提，包含 Linux Capabilities、外部程序和系统条件。
@@ -39,9 +39,10 @@ Tool 使用统一的 Policy：
 | off | 排除该工具，不执行其运行探测，不创建其运行资源 |
 | required | 必须可用且实际采用，不允许其他工具替代 |
 
-`--isolation` / `HOSTEL_ISOLATION` 和内部 `BedOptions.RoomType` 设置实例的房型预期；各 domain 将它映射为自己的预期等级。
+`--isolation` / `HOSTEL_ISOLATION` 和内部 `BedOptions.RoomType` 设置实例的文件房型目标和默认增强偏好。
 这是实例级配置，Filesystem 的内部预期等级由房型推导。dorm 请求 shared 文件、shared 身份、shared 网络；
-room 请求 confined 文件、dedicated 身份、shared 网络；suite/auto 请求 private 文件、dedicated 身份、private 网络。
+room 请求 confined 文件，偏好 dedicated 身份、shared 网络；suite/auto 请求 private 文件，偏好 dedicated 身份、private 网络。
+房型是否达标只取决于文件保证；身份和网络偏好未兑现时由各组件解释原因。
 Tool Policy 控制采用哪个实现。例如 room、UID=required 要求使用 UID/DAC 文件机制。互斥功能同时 required，
 或房型与 required 实现冲突，在探测前拒绝配置。Required process path helper 会排除互斥的 Bwrap 挂载视图。
 
@@ -53,7 +54,7 @@ Requirements 由实现声明，caller 不给环境前提设置 Policy；实际�
 ## 启动、失败与观测
 
 启动入口合并配置并校验冲突，各组件按策略探测、选择和准备，再以临时 Bed 验证 command/session/Service 的组合。
-组合失败时先尝试其他可选文件边界及路径视图，再尝试共享网络、共享身份；每次回退重新组合，保留可工作的更强组件。
+组合失败时先保留文件保证，依次尝试可选进程、网络和身份组合；耗尽后才更换文件候选，并恢复原始增强偏好重新探测。
 整体选择、单次组合执行与清理都有独立的有界预算；候选耗尽或选择预算耗尽则失败。
 Required 功能启动时无法满足就启动失败；清理失败也终止回退，保留资源 owner 和错误，不继续尝试下一组。
 启动后具体 Bed 准备失败则该 Bed 不进入 Ready。已经采用的隔离实现执行失败，不能静默降级或放开边界。
@@ -95,3 +96,14 @@ Bed 的 `executor.private_pid_namespace` 报告所属进程域是否实际隔离
 共享控制目录仍使用通用 `PathMapping`。需要真实挂载点的调用方必须选择已兑现 mount
 视图的文件机制；PRoot/pathshim 路径投影不能作为内核挂载能力的证明。Hostel 不解释
 目录中的上层控制协议或迁移资格标记。
+
+### 扩展能力与降级
+
+新 namespace 或可选组件归入实际拥有资源的领域。该领域声明 Tool 的策略、依赖与探测，
+提供有限且单向推进的组合回退，并负责资源准备、回收和实际状态。内核版本、权限和程序存在性
+可用于前置排除，是否可用以真实执行探测为准，Bed Manager 不维护按内核版本分叉的规则。
+
+进程 namespace 的选择与冻结由 Executor 拥有；新增进程工具接入它的组合候选入口和工具状态，
+文件组合入口无需识别新 namespace 名称。跨领域依赖由 Bed Manager 协调，在同一文件保证内
+先尝试可选增强组合，之后才更换文件机制。Required 成员始终保留，清理失败停止后续尝试。
+选定组合用于所有命令、session、Service 和替换 Executor；运行时失败明确返回错误。

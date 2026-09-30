@@ -136,27 +136,27 @@ func (m *Manager) Status() Status {
 		view.Probes = details.Probes
 		view.Tools = details.Tools
 	}
-	for _, level := range m.LevelStatus().Supported {
-		view.Supported = append(view.Supported, level.(isolation.Level).String())
+	for _, level := range m.supportedLevels() {
+		view.Supported = append(view.Supported, level.String())
 	}
 	return view
 }
 
-func (m *Manager) LevelStatus() bed.LevelStatus {
+func (m *Manager) supportedLevels() []isolation.Level {
 	confined, private := m.isolator.Level() == isolation.Confined, m.isolator.Level() == isolation.Private
 	if report, ok := m.isolator.(isolation.Report); ok {
 		tools := report.Diagnostics().Tools
 		confined = confined || tools["landlock"].Probe == "available" || tools["uid"].Probe == "available"
 		private = private || tools["bwrap"].Probe == "available"
 	}
-	levels := []bed.Level{isolation.Shared}
+	levels := []isolation.Level{isolation.Shared}
 	if confined {
 		levels = append(levels, isolation.Confined)
 	}
 	if private {
 		levels = append(levels, isolation.Private)
 	}
-	return bed.LevelStatus{Supported: levels}
+	return levels
 }
 
 var _ bed.Component[Status] = (*Manager)(nil)

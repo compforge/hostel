@@ -116,7 +116,7 @@ daemon 与 BedUser 相同时，这组身份切换要求为空，子进程凭据�
 | per-Bed netns | named netns 创建/进入、veth、route、nft 可用；`ip`、`nft` 可执行且 IPv4 forwarding 已开启 | 当前 backend 需要 `CAP_SYS_ADMIN`、`CAP_NET_ADMIN`，seccomp/LSM 也须允许相关操作 | 启动探测失败时使用共享 Carrier 网络 |
 
 `CAP_NET_ADMIN` 单独不能完成当前 named netns backend；bwrap 可使用宿主已有权限或 user namespace
-完成 mount 准备，不统一要求部署授予宿主级 `CAP_SYS_ADMIN`；suite 的 private 网络另有 named netns 的权限要求。各机制的隔离语义分别见
+完成 mount 准备，不统一要求部署授予宿主级 `CAP_SYS_ADMIN`；可选 private 网络另有 named netns 的权限要求。各机制的隔离语义分别见
 [isolation.md](isolation.md)、[filesystem.md](filesystem.md) 和 [network.md](network.md)。
 
 Kubernetes Pod Security Standards 只约束准入，不代表节点实际能力。当前 root daemon 加 Bed identity

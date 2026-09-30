@@ -109,14 +109,6 @@ func (m *Manager) Status() Status {
 	}
 	return m.describe(Status{Enabled: report.Available, Backend: report.Backend, Scope: scope, Reason: report.Reason, Probe: report.Probe})
 }
-func (m *Manager) LevelStatus() bed.LevelStatus {
-	status := m.Status()
-	levels := make([]bed.Level, len(status.Supported))
-	for i, level := range status.Supported {
-		levels[i] = level
-	}
-	return bed.LevelStatus{Supported: levels}
-}
 
 func (m *Manager) describe(s Status) Status {
 	available := s.Enabled

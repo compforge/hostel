@@ -32,7 +32,8 @@ func ResolveFactory(ctx context.Context, cfg Config, resources resource.Tracker)
 	status := pidnsStatus(policy, false, false, "")
 	private := policy != tool.Off
 	if cfg.selection != nil {
-		status, private = *cfg.selection, cfg.selection.Selected
+		status = cfg.selection["pidns"]
+		private = status.Selected
 	}
 	if cfg.Backend == "local" {
 		if policy == tool.Required || private && cfg.selection != nil {

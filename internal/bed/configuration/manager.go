@@ -130,8 +130,6 @@ func (m *Manager) Status() Report {
 	return Report{Sources: sources, PreparedBeds: len(m.main)}
 }
 
-func (*Manager) LevelStatus() bed.LevelStatus { return bed.LevelStatus{} }
-
 var _ bed.Component[Report] = (*Manager)(nil)
 
 // Resolve imports directories in declaration order, then explicit variables.

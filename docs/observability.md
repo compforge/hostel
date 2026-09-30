@@ -188,7 +188,8 @@ namespace_limits、kernel_features 与 ptrace 等启动事实；`host.status` �
 `components.filesystem` 报告文件隔离和
 启动探测，`components.privilege` 报告 daemon/Bed 用户前置条件；Network、Executor、Store、
 Resource 分别拥有网络、执行、同步和资源报告。`environment` 保留实例组合探测结果，
-`combinations` 记录启动尝试的边界、视图、身份、网络、Executor 及失败原因；`isolation` 汇总跨领域房型。
+状态接口只报告各组件最终采用的能力、探测结果与原因，`isolation` 汇总文件房型。
+启动组合尝试及失败原因写入日志，不在实例内保存历史数组，也不进入 `/v1/status`。
 文件等级使用 shared/confined/private，与 dorm/room/suite 房型分别报告。
 与各组件独立前置条件区分。Bed inventory 与容量是摘要，不展开 Bed 或 Tenant 详情。
 状态报告不披露凭据、远端存储地址或可操作其他 Tenant 的资源句柄。
