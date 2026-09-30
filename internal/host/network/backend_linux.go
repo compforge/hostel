@@ -220,7 +220,7 @@ func (e *linuxEndpoint) create(ctx context.Context) error {
 		}
 	}
 	if _, err := run(ctx, e.rules(), b.nft, "-f", "-"); err != nil {
-		return err
+		return fmt.Errorf("install network filter and IPv4 NAT: %w", err)
 	}
 	e.table = true
 	if err := e.applyPolicy(ctx, e.policy.current); err != nil {
@@ -233,7 +233,8 @@ func (e *linuxEndpoint) create(ctx context.Context) error {
 }
 
 // Scope every host rule to this veth. Existing CNI/firewall policy remains in
-// force; this table cannot override a drop in another base chain.
+// force; these tables cannot override a drop in another base chain.
+// +why=`IPv4 NAT uses the ip family so Linux 4.19 does not need inet NAT (added in 5.2). Keep inet filtering to block IPv6 on the same veth; install both tables in one nft transaction.`
 func (e *linuxEndpoint) rules() string {
 	return fmt.Sprintf(`table inet %s {
  chain forward { type filter hook forward priority -10; policy accept;
@@ -244,11 +245,13 @@ func (e *linuxEndpoint) rules() string {
   oifname "%s" ct state established,related accept
   oifname "%s" drop
  }
+}
+table ip %s {
  chain nat { type nat hook postrouting priority srcnat; policy accept;
   ip saddr %s oifname != "%s" masquerade
  }
 }
-`, e.name, e.link, e.link, e.link, e.address, e.link, e.link, e.link, e.address, e.link)
+`, e.name, e.link, e.link, e.link, e.address, e.link, e.link, e.link, e.name, e.address, e.link)
 }
 
 func (e *linuxEndpoint) Wrap(cmd *exec.Cmd) {
@@ -285,8 +288,10 @@ func (e *linuxEndpoint) Close(ctx context.Context) error {
 		}
 	}
 	if e.table {
-		if _, x := run(ctx, "", e.owner.nft, "delete", "table", "inet", e.name); x != nil {
-			err = errors.Join(err, x)
+		// Delete the pair atomically so a failed cleanup can retry both tables.
+		rules := fmt.Sprintf("delete table inet %s\ndelete table ip %s\n", e.name, e.name)
+		if _, x := run(ctx, rules, e.owner.nft, "-f", "-"); x != nil {
+			err = errors.Join(err, fmt.Errorf("remove network filter and IPv4 NAT: %w", x))
 		} else {
 			e.table = false
 		}

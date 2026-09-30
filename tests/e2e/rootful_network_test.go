@@ -42,9 +42,11 @@ func TestRootfulNetworkResolver(t *testing.T) {
 			c.waitBed(t, bed, func(b bedView) bool { return b.Status.Readiness.Ready }, "network Service ready")
 			var detail struct {
 				Status struct {
-					Network struct {
-						Gateway string `json:"gateway"`
-					} `json:"network"`
+					Components struct {
+						Network struct {
+							Gateway string `json:"gateway"`
+						} `json:"network"`
+					} `json:"components"`
 				} `json:"status"`
 			}
 			ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
@@ -54,13 +56,13 @@ func TestRootfulNetworkResolver(t *testing.T) {
 				t.Fatal(err)
 			}
 			must2xx(t, "Bed network status", response)
-			if net.ParseIP(detail.Status.Network.Gateway) == nil {
+			if net.ParseIP(detail.Status.Components.Network.Gateway) == nil {
 				t.Fatal("missing Bed gateway")
 			}
 			result, response := c.command(t, bed, map[string]any{"command": "set -eu; for i in 1 2 3 4 5; do test -s /workspace/service-dns && break; sleep 1; done; cmp /etc/resolv.conf /workspace/service-resolver; test -s /workspace/service-dns; getent ahostsv4 example.com >/dev/null; cat /etc/resolv.conf", "timeout": 15000})
 			must2xx(t, "Bed DNS query", response)
 			assertCommandExit(t, result, 0)
-			if !strings.Contains(result.Stdout, "nameserver "+detail.Status.Network.Gateway+"\n") {
+			if !strings.Contains(result.Stdout, "nameserver "+detail.Status.Components.Network.Gateway+"\n") {
 				t.Fatalf("wrong resolver: %q", result.Stdout)
 			}
 		})
