@@ -25,7 +25,7 @@
 - **bed_home（data 目录）**：BedFS 的宿主根 `{bed 目录}/data`——**Bed 自身数据根**；未命中外部映射的客户端路径解析到它下面，回显保持 Bed 路径。它不整体持久化，也不表示进程已有独立的 `/`。
 - **Workdir**：Bed 默认工作目录，当前为 `/workspace`（`bedfs.DefaultWorkdir`），也是 API 相对路径的解析基准；具体进程的 cwd 可以覆盖。Rootfs、Workdir 与 PathMappings 的关系见 `docs/filesystem.md`。
 - **PathMapping**：Bed 声明的 `HostPath → BedPath` 共享数据接入；文件 API 与进程映射的兑现程度分别报告。`SyncPaths` 独立声明 Store 自动同步范围，详见 `docs/filesystem.md`。
-- **房型（dorm / room / suite）**：Bed 文件隔离最低保证的用户分档；其他领域能力独立报告，默认增强偏好不参与房型评级（见 `docs/isolation.md`）。
+- **房型（dorm / room / suite）**：以 Bed 文件隔离保证为代表特征的用户分档；其他领域能力独立报告，默认增强偏好不参与房型评级（见 `docs/isolation.md`）。
 - **luggage**：非正常生命周期状态，只表达异常退出或旧版 Hostel 遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
 - **amenity**：bed 外由 hostel 统一管理、按 bed 分配状态的共享设施（Chromium / Jupyter / MCP 连接池）。
 - **bed service**：Bed 定义中的可选托管服务，与用户命令共用 Bed Environment/Executor；创建者提交通用完整 `ServiceSpec`，Carrier 镜像提供程序与依赖，Hostel 不依赖具体业务服务。端口通过 daemon 级 Port Manager 统一申请，见 `docs/bed-service.md`。
