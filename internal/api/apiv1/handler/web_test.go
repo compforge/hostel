@@ -31,12 +31,15 @@ import (
 	"testing"
 	"time"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
+	"github.com/qiankunli/hostel/protocol"
 
 	"github.com/gin-gonic/gin"
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
+
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
@@ -85,7 +88,7 @@ func waitBedReady(t *testing.T, s *testServer, id string) *httptest.ResponseReco
 		if rec.Code != http.StatusOK {
 			t.Fatalf("get bed %s = %d %s", id, rec.Code, rec.Body.String())
 		}
-		var view apiview.BedDetail
+		var view protocol.BedDetail
 		if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil {
 			t.Fatalf("decode bed %s: %v", id, err)
 		}
@@ -920,7 +923,7 @@ func TestBedListDefaultBedRetainsInstanceWithoutInventoryRow(t *testing.T) {
 		Instance struct {
 			Status string `json:"status"`
 		} `json:"instance"`
-		Beds []apiview.Bed `json:"beds"`
+		Beds []protocol.Bed `json:"beds"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -972,16 +975,7 @@ func TestBedListEndpoint(t *testing.T) {
 			RetainUntil      time.Time      `json:"retained_until"`
 			LuggageHighBytes int64          `json:"luggage_high_bytes"`
 		} `json:"instance"`
-		Beds []struct {
-			ID     string `json:"id"`
-			Status struct {
-				Phase    string `json:"phase"`
-				Activity string `json:"activity"`
-			} `json:"status"`
-			Pinned       bool      `json:"pinned"`
-			LastActiveAt time.Time `json:"last_active_at"`
-			RetainUntil  time.Time `json:"retained_until"`
-		} `json:"beds"`
+		Beds []protocol.Bed `json:"beds"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -1003,11 +997,11 @@ func TestBedListEndpoint(t *testing.T) {
 	}
 	statuses := map[string]string{}
 	for _, b := range body.Beds {
-		statuses[b.ID] = b.Status.Phase + "/" + b.Status.Activity
-		if b.ID == "inv-live" && (b.LastActiveAt.IsZero() || b.RetainUntil.IsZero()) {
+		statuses[b.Name] = string(b.Status.Phase) + "/" + string(b.Status.Activity)
+		if b.Name == "inv-live" && (b.LastActiveAt.IsZero() || b.RetainUntil.IsZero()) {
 			t.Fatalf("inv-live lifecycle fields = %+v", b)
 		}
-		if b.ID == "inv-live" && !b.Pinned {
+		if b.Name == "inv-live" && !b.Pinned {
 			t.Fatalf("active inventory bed should be pinned: %+v", b)
 		}
 	}
@@ -1031,7 +1025,7 @@ func TestBedListEndpoint(t *testing.T) {
 		Instance struct {
 			Status string `json:"status"`
 		} `json:"instance"`
-		Beds []apiview.Bed `json:"beds"`
+		Beds []protocol.Bed `json:"beds"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &released); err != nil {
 		t.Fatalf("unmarshal released: %v", err)

@@ -20,10 +20,12 @@ import (
 	"io"
 	"net/http"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
+	"github.com/qiankunli/hostel/protocol"
 
 	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/go-stdx/randx"
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
+
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 
@@ -31,13 +33,14 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/network"
 )
 
-func (s *Handler) viewOf(b *bed.Resident) apiview.Bed {
+func (s *Handler) viewOf(b *bed.Resident) protocol.Bed {
 	return s.viewFromStatus(b, b.Status())
 }
 
-func (s *Handler) viewFromStatus(b *bed.Resident, status bed.ResidentStatus) apiview.Bed {
-	return apiview.Bed{
-		ID:           b.Name,
+func (s *Handler) viewFromStatus(b *bed.Resident, status bed.ResidentStatus) protocol.Bed {
+	return protocol.Bed{
+		ID:           b.ID,
+		Name:         b.Name,
 		Sync:         string(b.Spec().Sync),
 		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
@@ -125,7 +128,7 @@ func (s *Handler) bedGet(c *gin.Context) {
 	b, ok := s.mgr.Get(c.Param("bedId"))
 	if !ok {
 		if initialization, initializing := s.mgr.Initialization(c.Param("bedId")); initializing {
-			c.JSON(http.StatusOK, apiview.BedDetail{Bed: apiview.BedInitialization(initialization), Status: s.observer.BedStatus(s.mgr.BedModel(initialization.ID), initialization.BedStatus)})
+			c.JSON(http.StatusOK, protocol.BedDetail{Bed: apiview.BedInitialization(initialization), Status: s.observer.BedStatus(s.mgr.BedModel(initialization.Name), initialization.BedStatus)})
 			return
 		}
 		respondError(c, http.StatusNotFound, apiview.ErrBedInvalid, "bed not found")
@@ -133,7 +136,7 @@ func (s *Handler) bedGet(c *gin.Context) {
 	}
 	status := b.Status()
 	lifecycle := b.Lifecycle()
-	c.JSON(http.StatusOK, apiview.BedDetail{
+	c.JSON(http.StatusOK, protocol.BedDetail{
 		Bed:                s.viewFromStatus(b, status),
 		Status:             s.observer.BedStatus(b.Bed, status.BedStatus),
 		Generation:         status.Generation,
@@ -141,11 +144,11 @@ func (s *Handler) bedGet(c *gin.Context) {
 		SnapshotBytes:      status.SnapshotBytes,
 		LocalBytes:         status.LocalBytes,
 		RestoreBytes:       status.RestoreBytes(),
-		Activity: apiview.Activity{
+		Activity: protocol.Activity{
 			Operations: status.Operations,
 			Sessions:   status.Sessions,
 		},
-		Lifecycle: &apiview.Lifecycle{
+		Lifecycle: &protocol.Lifecycle{
 			LastInitialization: apiview.LifecycleRecordFrom(lifecycle.LastInitialization),
 			LastPersist:        apiview.LifecycleRecordFrom(lifecycle.LastPersist),
 		},

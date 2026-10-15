@@ -17,7 +17,7 @@
 以下名词全仓（代码 / 注释 / 文档）统一使用，避免同物多名、一名多物：
 
 - **bed**：隔离执行单元，对外即一个 sandbox（独立文件空间 + 执行环境，状态跨命令保持）。
-- **bed name**：调用方给定的不透明路由标识，支持中文；HTTP 现有的 bed/id 参数及 `BED_ID` 都表达 Name，缺省为 `default`。Hostel 不解释其上层业务语义。
+- **bed name**：调用方给定的不透明路由标识，支持中文；HTTP 请求的 bed/id 参数及 `BED_ID` 都表达 Name；管理响应同时返回 `name` 与本地生命周期 `id`，缺省为 `default`。Hostel 不解释其上层业务语义。
 - **bed id**：Hostel 生成的本地身份；本地数据保留期间跨重启恢复，Forget 后同名创建换 ID。领域资源以 ID 归属，远端快照以 Name/快照引用定位。
 - **beds-root**：所有 bed 目录的**父目录**，**可配、不写死**（`--beds-root` / `HOSTEL_BEDS_ROOT`，默认 `/workspace`）；**daemon 启动时创建一次**。
 - **bed 目录**：`{beds-root}/{bed name}`，含 `meta.json`（可移植身份）+ `data/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面首次请求通过 `Ensure` 加入同一初始化并等待，详见 `docs/kernel.md`。
@@ -75,6 +75,7 @@ Bed 的理想语义是独立执行空间，文件、进程、网络和资源按�
 deploy/
 ├── docker/Dockerfile  多阶段多架构镜像(amd64/arm64,builder 原生交叉编译免 QEMU)：静态 hostel + debian-slim（内置 bwrap/PRoot/pathshim + 可选 chromium）；tini PID1；hostel --health 做 HEALTHCHECK
 └── k8s/              Kubernetes 部署示例；AppArmor 的 PSA 豁免申请见 pod-security-admission-exemption.yaml
+protocol/             公开 Bed 管理数据契约；server 与 caller 共用，只有数据类型、枚举及标准库依赖
 cmd/hostel/main.go     daemon 入口：配置、组件组装、启动探测、Web 与信号；驱动 Manager 启停
 tests/e2e/             真实进程/镜像 E2E：同一 suite 可在 Host 或 K8s Pod 内运行；环境配置与事实入口，见 tests/e2e/e2e-environments.md
 internal/
@@ -112,7 +113,7 @@ internal/
 └── api/               HTTP server、中间件与路由组装
     ├── apiv1/         Hostel 原生协议（保留现有 URL）
     │   ├── handler/   请求适配与状态查询
-    │   └── view/      原生响应与纯转换
+    │   └── view/      原生响应适配与纯转换；公开 Bed 结构定义在 protocol/
     └── execd/         OpenSandbox Execd 协议，双入口共用 adapter
         ├── handler/   请求适配与本地鉴权
         └── view/      OpenSandbox 响应、权限与 SSE 编码
@@ -165,6 +166,7 @@ internal/
 
 - 网络管理与 Bed PortMapping：`docs/network.md`（命名 TCP 需求、private/shared 内外地址、资源回收；共享 Chromium 代理待支持）
 
+- 公开 Bed 数据契约、内部组合与兼容边界：`docs/protocol.md`
 - 核心架构（定位、Bed 模型、请求与状态、组件契约及生命周期主流程）：`docs/kernel.md`
 - 待办清单（尚未交付的演进项）：`docs/backlog.md`
 - Filesystem（BedFS、路径空间、进程视图与文件隔离机制）：`docs/filesystem.md`

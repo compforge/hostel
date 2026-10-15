@@ -2,8 +2,11 @@ package handler
 
 import (
 	"github.com/qiankunli/hostel/internal/amenity"
+	"github.com/qiankunli/hostel/protocol"
+
 	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	"github.com/qiankunli/hostel/internal/bed"
+
 	manager "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/host/facts"
 )
@@ -30,20 +33,25 @@ func (o statusObserver) Status() apiview.InstanceStatus {
 	}
 }
 
-func (o statusObserver) BedStatus(b *bed.Bed, lifecycle manager.BedStatus) apiview.BedStatus {
-	report := apiview.BedStatus{Lifecycle: lifecycle, Isolation: o.beds.RoomStatus(), Amenities: make(map[string]amenity.BindingStatus)}
+func (o statusObserver) BedStatus(b *bed.Bed, lifecycle manager.BedStatus) protocol.BedStatus {
+	report := protocol.BedStatus{Lifecycle: lifecycle, Isolation: o.beds.RoomStatus(), Amenities: make(map[string]protocol.AmenityBinding)}
 	if b == nil {
 		return report
 	}
-	report.Amenities = o.amenities.BedStatus(b.ID)
+	for name, binding := range o.amenities.BedStatus(b.ID) {
+		report.Amenities[name] = protocol.AmenityBinding{TenantID: string(binding.TenantID), Status: binding.Status}
+	}
 	state := b.Status()
-	report.Components.Filesystem = state.Filesystem
+	report.Components.Filesystem = state.Filesystem.FilesystemStatus
 	report.Components.Privilege = state.Privilege
 	report.Components.Network = state.Network
 	report.Components.Store = state.Store
 	report.Components.Executor = state.Executor
 	report.Components.Resource = state.Resource
-	report.Services = o.beds.Services().Status(b)
+	report.Services = []protocol.ServiceStatus{}
+	for _, status := range o.beds.Services().Status(b) {
+		report.Services = append(report.Services, apiview.ServiceStatusFrom(status))
+	}
 	report.PortMappings = o.beds.PortMappings(b)
 	return report
 }

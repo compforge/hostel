@@ -12,6 +12,8 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/configuration"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/network"
+	"github.com/qiankunli/hostel/protocol"
+
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
@@ -38,18 +40,9 @@ type Runtime interface {
 
 // Status references its PortMapping; network owns all allocated port facts.
 type Status struct {
-	PortMapping string `json:"port_mapping,omitempty"`
-	Name        string `json:"name"`
-	Required    bool   `json:"required"`
-	Phase       string `json:"phase"`
-	// Ready is current availability, not a process-lifecycle phase.
-	Ready       bool                            `json:"ready"`
-	ExecutionID string                          `json:"execution_id,omitempty"`
-	ExecutorID  string                          `json:"executor_id,omitempty"`
-	Restarts    int                             `json:"restarts"`
-	Reason      string                          `json:"reason,omitempty"`
-	Outcome     *executor.ProcessOutcome        `json:"outcome,omitempty"`
-	Listener    *hostnetwork.ListenerInspection `json:"listener,omitempty"`
+	protocol.ServiceStatus
+	// The internal outcome retains executor diagnostics. Public snapshots clear Detail.
+	Outcome *executor.ProcessOutcome `json:"outcome,omitempty"`
 }
 
 // Access snapshots the current mapping and credential under the Service lock.
@@ -139,7 +132,7 @@ func (m *Manager) PrepareBed(ctx context.Context, b *bed.Bed, runtime Runtime) e
 		return fmt.Errorf("services already prepared")
 	}
 	for _, spec := range specs {
-		r := &record{spec: spec, status: Status{Name: spec.Name, PortMapping: spec.PortMapping, Required: spec.Required, Phase: "starting"}, restart: make(chan struct{}, 1), done: make(chan struct{})}
+		r := &record{spec: spec, status: Status{ServiceStatus: protocol.ServiceStatus{Name: spec.Name, PortMapping: spec.PortMapping, Required: spec.Required, Phase: "starting"}}, restart: make(chan struct{}, 1), done: make(chan struct{})}
 		g.records = append(g.records, r)
 	}
 	m.groups[b] = g

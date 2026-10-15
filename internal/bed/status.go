@@ -1,16 +1,20 @@
 package bed
 
-import "time"
+import (
+	"time"
 
-type LifecyclePhase string
+	"github.com/qiankunli/hostel/protocol"
+)
+
+type LifecyclePhase = protocol.LifecyclePhase
 
 const (
-	PhaseInitializing LifecyclePhase = "initializing"
-	PhaseResident     LifecyclePhase = "resident"
-	PhaseEvicting     LifecyclePhase = "evicting"
-	PhasePurging      LifecyclePhase = "purging"
-	PhaseDormant      LifecyclePhase = "dormant"
-	PhaseFailed       LifecyclePhase = "failed"
+	PhaseInitializing = protocol.PhaseInitializing
+	PhaseResident     = protocol.PhaseResident
+	PhaseEvicting     = protocol.PhaseEvicting
+	PhasePurging      = protocol.PhasePurging
+	PhaseDormant      = protocol.PhaseDormant
+	PhaseFailed       = protocol.PhaseFailed
 )
 
 // Status contains observations for one Bed, never live resources, clients or
@@ -36,36 +40,15 @@ type LifecycleStatus struct {
 	UpdatedAt   time.Time      `json:"updated_at"`
 }
 type FilesystemStatus struct {
-	Rootfs   string `json:"-"`
-	Workdir  string `json:"-"`
-	Prepared bool   `json:"prepared"`
+	protocol.FilesystemStatus
+	Rootfs  string `json:"-"`
+	Workdir string `json:"-"`
 }
-type PrivilegeStatus struct {
-	UID      uint32 `json:"uid"`
-	GID      uint32 `json:"gid"`
-	Assigned bool   `json:"assigned"`
-}
-type NetworkStatus struct {
-	Enabled bool           `json:"enabled"`
-	Gateway string         `json:"gateway"`
-	Policy  *NetworkPolicy `json:"policy"`
-}
-type StoreStatus struct {
-	Source             string `json:"source"`
-	Restored           bool   `json:"restored"`
-	SnapshotGeneration int64  `json:"snapshot_generation"`
-	SnapshotBytes      int64  `json:"snapshot_bytes"`
-	LocalBytes         int64  `json:"local_bytes"`
-}
-type ExecutorStatus struct {
-	PrivatePIDNamespace bool   `json:"private_pid_namespace"`
-	ID                  string `json:"id"`
-	Backend             string `json:"backend"`
-	State               string `json:"state"`
-}
-type ResourceStatus struct {
-	Accounting bool `json:"accounting"`
-}
+type PrivilegeStatus = protocol.PrivilegeStatus
+type NetworkStatus = protocol.NetworkStatus
+type StoreStatus = protocol.StoreStatus
+type ExecutorStatus = protocol.ExecutorStatus
+type ResourceStatus = protocol.ResourceStatus
 
 func cloneStatus(s Status) Status { s.Network.Policy = clonePolicy(s.Network.Policy); return s }
 

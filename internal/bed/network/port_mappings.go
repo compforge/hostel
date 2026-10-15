@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	"github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/protocol"
+
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
@@ -26,17 +28,7 @@ type PortMappings struct {
 // loopback plus BedPort; external clients use their carrier host plus HostPort.
 // Shared networking uses the same port for both. Addresses and application URLs
 // are derived by callers, never stored alongside these port facts.
-type PortMappingStatus struct {
-	Name        string `json:"name"`
-	Protocol    string `json:"protocol"`
-	Service     string `json:"service"`
-	ExecutionID string `json:"execution_id,omitempty"`
-	Network     string `json:"network"`
-	State       string `json:"state"`
-	BedPort     int    `json:"bed_port"`
-	HostPort    int    `json:"host_port,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-}
+type PortMappingStatus = protocol.PortMappingStatus
 
 // PortMapping is an exact allocation handle; release never addresses resources
 // by reusable Bed name, port number or Service name alone.

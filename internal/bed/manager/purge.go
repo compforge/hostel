@@ -84,7 +84,7 @@ func (m *Manager) beginPurge(id string) (*bedPurge, bool) {
 	now := time.Now()
 	purge := &bedPurge{
 		status: InitializationStatus{
-			ID: id,
+			Name: id,
 			BedStatus: BedStatus{
 				Phase:     PhasePurging,
 				Readiness: Readiness{Reason: "Purging", UpdatedAt: now},
@@ -92,6 +92,9 @@ func (m *Manager) beginPurge(id string) (*bedPurge, bool) {
 			StartedAt: now,
 		},
 		done: make(chan struct{}),
+	}
+	if local := m.localIdentities[id]; local != nil {
+		purge.status.ID = local.bed.ID
 	}
 	m.purges[id] = purge
 	return purge, true

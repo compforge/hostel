@@ -20,16 +20,17 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 // SessionKind distinguishes the stateful holds a client can open on a bed
 // (docs/kernel.md): the client opens and closes them explicitly — possibly
 // never — so evict cannot wait them out and must be able to revoke them.
-type SessionKind string
+type SessionKind = protocol.SessionKind
 
 const (
-	SessionKindShell SessionKind = "shell"
-	SessionKindCDP   SessionKind = "cdp"
+	SessionKindShell = protocol.SessionKindShell
+	SessionKindCDP   = protocol.SessionKindCDP
 )
 
 // sessionRevokeWait bounds how long evict waits for revoked session handlers

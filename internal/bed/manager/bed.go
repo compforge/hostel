@@ -20,15 +20,16 @@
 package manager
 
 import (
-	model "github.com/qiankunli/hostel/internal/bed"
-	"golang.org/x/sync/semaphore"
+	"github.com/qiankunli/hostel/protocol"
+
 	"sync"
 	"time"
 
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
-
 	"github.com/qiankunli/hostel/internal/bed/store"
+	"golang.org/x/sync/semaphore"
 )
 
 // ShortID derives a display-only short form of a bed id for log lines. Caller
@@ -80,19 +81,15 @@ type managedBed struct {
 // Activity is the derived operation activity of a resident Bed. Lifecycle
 // location belongs to Phase; evicting and dormant are therefore not activity
 // values.
-type Activity string
+type Activity = protocol.OperationActivity
 
 const (
-	ActivityActive Activity = "active"
-	ActivityIdle   Activity = "idle"
+	ActivityActive = protocol.ActivityActive
+	ActivityIdle   = protocol.ActivityIdle
 )
 
 // BedStatus is the lifecycle status shared by management detail and inventory.
-type BedStatus struct {
-	Phase     Phase     `json:"phase"`
-	Readiness Readiness `json:"readiness"`
-	Activity  Activity  `json:"activity,omitempty"`
-}
+type BedStatus = protocol.BedLifecycle
 
 // Status is one atomic view of a resident bed's scheduler-facing facts.
 type ResidentStatus struct {

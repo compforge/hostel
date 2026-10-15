@@ -1,0 +1,47 @@
+# 公开 Bed 数据契约
+
+`github.com/qiankunli/hostel/protocol` 是服务端和 Go 调用方共用的 Bed 管理数据定义。
+本包目前覆盖 Bed 摘要、详情、生命周期、服务、端口映射及 Bed 级组件状态；不代表所有
+Hostel API 都已迁入。本包只依赖标准库，不包含 client、资源操作、运行时对象或上游发布策略。
+
+## 模型归属
+
+公开字段和 JSON tag 由 `protocol` 定义。纯数据类型由内部 owner 直接复用；内部确有
+额外字段时组合公开结构，例如 FilesystemStatus 组合公开 preparation 状态并保留内部路径，
+Service 状态组合公开字段并保留内部执行结果。不为内外两侧另造 DTO/View 名称或重复字段表。
+
+Bed 的 `id` 与 `name` 沿用 Hostel 内部语义：调用方通过 Name 标记和寻址 Bed，
+Hostel 自行生成 ID 唯一标识本地生命周期，避免调用方标识与内部资源归属冲突。
+同一个 Name 在销毁后重建时会对应不同 ID；保留本地数据的 daemon 重启恢复沿用 ID。
+上游自行维护业务标识与 Name/ID 的映射，Hostel 不解释上游业务身份。
+
+内部 `bed` 组合 `protocol.Bed`，保留锁、Spec 和分域状态；`Bed` alias 仅供仓内组件共享。
+组合的公开部分保存身份，API 快照从各 owner 读取其它字段，不增加第二套可变状态写权。
+
+## HTTP 身份迁移
+
+从 v0.1.39 开始，创建响应、详情和 inventory 中 `id` 表示 Hostel 本地生命周期 ID，
+新增 `name` 表示原先响应 `id` 中的调用方标识。caller 必须改用 `name` 做路由和业务关联，
+通过 `id` 判断本地生命周期是否更替，不应继续把响应 `id` 直接拼入请求路径。
+现有请求中的 `id` 参数、Bed 路径和 `X-Hostel-Bed` 仍接受 Name；本次不改变请求寻址。
+仅扫描到磁盘残留、尚未恢复本地身份的记录，以及只有远端数据的 purge，`id` 为空；
+只读 inventory 不生成身份，也不会用 Name 冒充 ID。
+
+## 其它 HTTP 字段
+
+保持 `status.lifecycle`、`status.services`、`status.port_mappings` 等现有路径，
+以及 JSON tag、omitempty/omitzero、空集合和数值类型。生命周期 readiness 使用
+`readiness.status`，Service readiness 使用 `ready`。
+
+Service 的 outcome 保留既有诊断 JSON；底层 executor 类型不成为公开依赖，私有 Detail
+继续清空。Amenity 的 status 是设施拥有的可扩展 JSON 值；公开契约不暴露内部 sealed Tenant
+接口。路径、资源句柄、锁和发布策略留在内部实现。
+
+服务端先取得领域快照再构建响应，不通过协议对象改变资源状态。`protocol` 的字段分组也不
+表达调用方的即时/延迟落库要求；这些规则由调用方维护。
+
+## 验证
+
+`protocol` 的外部包测试使用既有 wire shape 验证解析和往返；API 测试使用公开类型读取实际
+Bed 和 Service 响应，检查 readiness 与执行身份。构建时可用 `go list -deps ./protocol`
+检查依赖，本包的传递依赖应全部为标准库。

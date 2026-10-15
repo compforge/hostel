@@ -100,7 +100,7 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range m.Inventory() {
-		if entry.ID == b.Name && entry.Sync != "noop" {
+		if entry.Name == b.Name && entry.Sync != "noop" {
 			t.Fatalf("inventory=%+v", entry)
 		}
 	}

@@ -17,19 +17,21 @@ package manager
 import (
 	"sync"
 	"time"
+
+	"github.com/qiankunli/hostel/protocol"
 )
 
 // OperationKind classifies stateless bed operations (docs/kernel.md).
-type OperationKind string
+type OperationKind = protocol.OperationKind
 
 const (
-	OpExec       OperationKind = "exec"
-	OpFile       OperationKind = "file"
-	OpBrowser    OperationKind = "browser"
-	OpMCP        OperationKind = "mcp"
-	OpCheckpoint OperationKind = "checkpoint"
-	OpControl    OperationKind = "control"
-	OpService    OperationKind = "service"
+	OpExec       = protocol.OpExec
+	OpFile       = protocol.OpFile
+	OpBrowser    = protocol.OpBrowser
+	OpMCP        = protocol.OpMCP
+	OpCheckpoint = protocol.OpCheckpoint
+	OpControl    = protocol.OpControl
+	OpService    = protocol.OpService
 )
 
 // Operation timeout policy: every operation is bounded so eviction's

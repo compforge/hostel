@@ -90,12 +90,14 @@ type bedLifecycleView struct {
 type bedView struct {
 	Sync    string           `json:"sync"`
 	ID      string           `json:"id"`
+	Name    string           `json:"name"`
 	Workdir string           `json:"workdir"`
 	Status  bedLifecycleView `json:"status"`
 }
 type bedDetailView struct {
 	Sync    string `json:"sync"`
 	ID      string `json:"id"`
+	Name    string `json:"name"`
 	Workdir string `json:"workdir"`
 	Status  struct {
 		Lifecycle bedLifecycleView `json:"lifecycle"`
@@ -312,8 +314,8 @@ func (c *apiClient) waitBed(t *testing.T, id string, predicate func(bedView) boo
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		result, err := c.json(ctx, "GET", "/v1/beds/"+url.PathEscape(id), "", nil, &last)
 		cancel()
-		if err == nil && result.Status == http.StatusOK && predicate(bedView{Sync: last.Sync, ID: last.ID, Workdir: last.Workdir, Status: last.Status.Lifecycle}) {
-			return bedView{Sync: last.Sync, ID: last.ID, Workdir: last.Workdir, Status: last.Status.Lifecycle}
+		if err == nil && result.Status == http.StatusOK && predicate(bedView{Sync: last.Sync, ID: last.ID, Name: last.Name, Workdir: last.Workdir, Status: last.Status.Lifecycle}) {
+			return bedView{Sync: last.Sync, ID: last.ID, Name: last.Name, Workdir: last.Workdir, Status: last.Status.Lifecycle}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
