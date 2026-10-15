@@ -34,6 +34,7 @@ ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=${GOPROXY}
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY protocol/go.mod ./protocol/
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go mod download

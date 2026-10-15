@@ -75,7 +75,7 @@ Bed 的理想语义是独立执行空间，文件、进程、网络和资源按�
 deploy/
 ├── docker/Dockerfile  多阶段多架构镜像(amd64/arm64,builder 原生交叉编译免 QEMU)：静态 hostel + debian-slim（内置 bwrap/PRoot/pathshim + 可选 chromium）；tini PID1；hostel --health 做 HEALTHCHECK
 └── k8s/              Kubernetes 部署示例；AppArmor 的 PSA 豁免申请见 pod-security-admission-exemption.yaml
-protocol/             公开 Bed 管理数据契约；server 与 caller 共用，只有数据类型、枚举及标准库依赖
+protocol/             独立 Go module（最低 Go 1.25）；server 与 caller 共用的 Bed 数据契约，仅依赖标准库
 cmd/hostel/main.go     daemon 入口：配置、组件组装、启动探测、Web 与信号；驱动 Manager 启停
 tests/e2e/             真实进程/镜像 E2E：同一 suite 可在 Host 或 K8s Pod 内运行；环境配置与事实入口，见 tests/e2e/e2e-environments.md
 internal/
