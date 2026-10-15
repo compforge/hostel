@@ -56,7 +56,7 @@ func TestServiceManagementRoutesAndDeclarationConflict(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
 		t.Fatal(err)
 	}
-	if w.Code != http.StatusOK || detail.ID != "service-bed" || !detail.Status.Lifecycle.Readiness.Ready || len(detail.Status.Services) != 1 {
+	if w.Code != http.StatusOK || detail.Name != "service-bed" || detail.ID == "" || detail.ID.String() == detail.Name || !detail.Status.Lifecycle.Readiness.Ready || len(detail.Status.Services) != 1 {
 		t.Fatalf("public Bed detail contract: %d %s", w.Code, w.Body)
 	}
 	observed := detail.Status.Services[0]

@@ -1847,17 +1847,17 @@ func TestInventory(t *testing.T) {
 		t.Fatalf("evict: ok=%v err=%v", ok, err)
 	}
 
-	byID := map[string]InventoryBed{}
+	byName := map[string]InventoryBed{}
 	for _, e := range m.Inventory() {
-		byID[e.ID] = e
+		byName[e.Name] = e
 	}
-	if _, ok := byID["default"]; ok {
+	if _, ok := byName["default"]; ok {
 		t.Fatal("default bed must not appear in scheduler inventory")
 	}
-	if e := byID["conv-live"]; e.Status.Phase != PhaseResident || e.Status.Activity != ActivityIdle || e.Generation != 0 {
+	if e := byName["conv-live"]; e.Status.Phase != PhaseResident || e.Status.Activity != ActivityIdle || e.Generation != 0 {
 		t.Fatalf("conv-live = %+v, want idle gen 0", e)
 	}
-	if cold, ok := byID["conv-cold"]; ok {
+	if cold, ok := byName["conv-cold"]; ok {
 		t.Fatalf("durably evicted bed remained in local inventory: %+v", cold)
 	}
 }

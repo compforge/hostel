@@ -4,11 +4,22 @@ import (
 	"time"
 )
 
-// Bed is the management API summary. ID is the caller-owned Bed name used
-// in request paths, not the daemon-local lifetime ID.
+// ID identifies a Hostel-owned local Bed lifetime.
+type ID string
+
+func (id ID) String() string { return string(id) }
+
+// Bed is the management API summary, sharing Hostel's identity semantics.
+// Callers identify and address a Bed by Name. Hostel generates ID so caller
+// identifiers cannot collide with internal resource ownership. A name may refer
+// to different lifetimes after destruction and recreation; recovery with retained
+// local data preserves ID, while recreation after Forget gets a new ID.
+// +spec=`Name is caller-owned; ID uniquely identifies a local Bed lifetime and is never replaced by Name in responses.`
+// +link:doc=docs/protocol.md
 type Bed struct {
 	Sync         string       `json:"sync"`
-	ID           string       `json:"id"`
+	ID           ID           `json:"id"`
+	Name         string       `json:"name"`
 	Status       BedLifecycle `json:"status"`
 	DataSynced   bool         `json:"data_synced"`
 	Pinned       bool         `json:"pinned"`

@@ -12,11 +12,8 @@ import (
 	"github.com/qiankunli/hostel/protocol"
 )
 
-// ID identifies a local Bed lifetime. Names are caller-owned routing keys;
-// IDs survive daemon restart with local data, but never travel in snapshots.
-type ID string
-
-func (id ID) String() string { return string(id) }
+// ID shares the public local-lifetime identity; it never travels in snapshots.
+type ID = protocol.ID
 
 // Bed is the shared identity seen by every domain manager. Resource handles
 // belong to those managers, not to this model.
@@ -24,9 +21,13 @@ func (id ID) String() string { return string(id) }
 // (analogous to PodSpec) and a Status that reports what the domain managers
 // realize under the host's constraints.
 // +spec=`Spec is desired state; each Status section has exactly one domain writer.`
-type Bed struct {
-	ID     ID
-	Name   string
+type Bed = bed
+
+// bed composes the public fields with private synchronization and domain state.
+// Only identity is stored in the public portion; API snapshots derive the other
+// fields from their owning domains under the existing locks.
+type bed struct {
+	protocol.Bed
 	mu     sync.RWMutex
 	spec   Spec
 	status Status
@@ -84,7 +85,7 @@ func New(name string, id ID, spec Spec) *Bed {
 	if id == "" {
 		id = ID("bed-" + randx.Hex(16))
 	}
-	return &Bed{ID: id, Name: name, spec: cloneSpec(spec)}
+	return &bed{Bed: protocol.Bed{ID: id, Name: name}, spec: cloneSpec(spec)}
 }
 func (b *Bed) Spec() Spec     { b.mu.RLock(); defer b.mu.RUnlock(); return cloneSpec(b.spec) }
 func (b *Bed) Status() Status { b.mu.RLock(); defer b.mu.RUnlock(); return cloneStatus(b.status) }

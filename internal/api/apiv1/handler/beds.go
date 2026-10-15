@@ -39,7 +39,8 @@ func (s *Handler) viewOf(b *bed.Resident) protocol.Bed {
 
 func (s *Handler) viewFromStatus(b *bed.Resident, status bed.ResidentStatus) protocol.Bed {
 	return protocol.Bed{
-		ID:           b.Name,
+		ID:           b.ID,
+		Name:         b.Name,
 		Sync:         string(b.Spec().Sync),
 		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
@@ -127,7 +128,7 @@ func (s *Handler) bedGet(c *gin.Context) {
 	b, ok := s.mgr.Get(c.Param("bedId"))
 	if !ok {
 		if initialization, initializing := s.mgr.Initialization(c.Param("bedId")); initializing {
-			c.JSON(http.StatusOK, protocol.BedDetail{Bed: apiview.BedInitialization(initialization), Status: s.observer.BedStatus(s.mgr.BedModel(initialization.ID), initialization.BedStatus)})
+			c.JSON(http.StatusOK, protocol.BedDetail{Bed: apiview.BedInitialization(initialization), Status: s.observer.BedStatus(s.mgr.BedModel(initialization.Name), initialization.BedStatus)})
 			return
 		}
 		respondError(c, http.StatusNotFound, apiview.ErrBedInvalid, "bed not found")

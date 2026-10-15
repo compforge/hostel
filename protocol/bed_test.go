@@ -10,7 +10,7 @@ import (
 	"github.com/qiankunli/hostel/protocol"
 )
 
-// +case:id=public_bed_contract,desc=`A caller imports only protocol and reads an existing Bed detail`,expect=`Lifecycle, services, ports and diagnostic JSON survive without changing field paths or integer precision`
+// +case:id=public_bed_contract,desc=`A caller imports only protocol and reads a Bed detail with separate ID and Name`,expect=`Lifecycle, services, ports and diagnostic JSON survive without changing field paths or integer precision`
 func TestBedDetailWireContract(t *testing.T) {
 	wire, err := os.ReadFile("testdata/bed.json")
 	if err != nil {
@@ -20,7 +20,7 @@ func TestBedDetailWireContract(t *testing.T) {
 	if err := json.Unmarshal(wire, &bed); err != nil {
 		t.Fatal(err)
 	}
-	if bed.ID != "caller-bed" || bed.Status.Lifecycle.Phase != protocol.PhaseResident || !bed.Status.Lifecycle.Readiness.Ready {
+	if bed.ID != "bed-00000000000000000000000000000001" || bed.Name != "caller-bed" || bed.Status.Lifecycle.Phase != protocol.PhaseResident || !bed.Status.Lifecycle.Readiness.Ready {
 		t.Fatalf("Bed identity/readiness: %+v", bed)
 	}
 	if bed.Generation != 9007199254740993 || bed.Status.Components.Store.SnapshotGeneration != 9007199254740992 {

@@ -139,7 +139,7 @@ func assertCommandExit(t *testing.T, result commandResult, expected int) {
 
 func bedMatches(inventory inventoryView, id, phase, activity string) bool {
 	for _, bed := range inventory.Beds {
-		if bed.ID == id && bed.Status.Phase == phase && bed.Status.Activity == activity {
+		if bed.Name == id && bed.Status.Phase == phase && bed.Status.Activity == activity {
 			return true
 		}
 	}
@@ -148,7 +148,7 @@ func bedMatches(inventory inventoryView, id, phase, activity string) bool {
 
 func hasBed(inventory inventoryView, id string) bool {
 	for _, bed := range inventory.Beds {
-		if bed.ID == id {
+		if bed.Name == id {
 			return true
 		}
 	}

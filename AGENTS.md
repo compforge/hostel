@@ -17,7 +17,7 @@
 以下名词全仓（代码 / 注释 / 文档）统一使用，避免同物多名、一名多物：
 
 - **bed**：隔离执行单元，对外即一个 sandbox（独立文件空间 + 执行环境，状态跨命令保持）。
-- **bed name**：调用方给定的不透明路由标识，支持中文；HTTP 现有的 bed/id 参数及 `BED_ID` 都表达 Name，缺省为 `default`。Hostel 不解释其上层业务语义。
+- **bed name**：调用方给定的不透明路由标识，支持中文；HTTP 请求的 bed/id 参数及 `BED_ID` 都表达 Name；管理响应同时返回 `name` 与本地生命周期 `id`，缺省为 `default`。Hostel 不解释其上层业务语义。
 - **bed id**：Hostel 生成的本地身份；本地数据保留期间跨重启恢复，Forget 后同名创建换 ID。领域资源以 ID 归属，远端快照以 Name/快照引用定位。
 - **beds-root**：所有 bed 目录的**父目录**，**可配、不写死**（`--beds-root` / `HOSTEL_BEDS_ROOT`，默认 `/workspace`）；**daemon 启动时创建一次**。
 - **bed 目录**：`{beds-root}/{bed name}`，含 `meta.json`（可移植身份）+ `data/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面首次请求通过 `Ensure` 加入同一初始化并等待，详见 `docs/kernel.md`。

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/filepathx"
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
@@ -195,7 +196,8 @@ func (m *Manager) removeLuggage(id string) bool {
 // which is exactly what "the authoritative copy is here" means.
 type InventoryBed struct {
 	Sync               store.SyncKind `json:"sync"`
-	ID                 string         `json:"id"`
+	ID                 model.ID       `json:"id"`
+	Name               string         `json:"name"`
 	Status             BedStatus      `json:"status"`
 	Generation         int64          `json:"generation"`
 	SnapshotGeneration int64          `json:"snapshot_generation,omitempty"`
@@ -240,7 +242,8 @@ func (m *Manager) captureInventory() ([]InventoryBed, bool) {
 		}
 		status := b.Status()
 		entry := InventoryBed{
-			ID:                 b.Name,
+			ID:                 b.ID,
+			Name:               b.Name,
 			Sync:               b.Spec().Sync,
 			Status:             status.BedStatus,
 			Generation:         status.Generation,
@@ -258,11 +261,12 @@ func (m *Manager) captureInventory() ([]InventoryBed, bool) {
 		out = append(out, entry)
 	}
 	for _, initialization := range m.initializationStatusesLocked() {
-		if initialization.ID == m.defaultBed {
+		if initialization.Name == m.defaultBed {
 			continue
 		}
 		out = append(out, InventoryBed{
 			ID:           initialization.ID,
+			Name:         initialization.Name,
 			Sync:         initialization.Sync,
 			Status:       initialization.BedStatus,
 			LastActiveAt: initialization.StartedAt,
@@ -275,8 +279,12 @@ func (m *Manager) captureInventory() ([]InventoryBed, bool) {
 		if local := m.localIdentities[l.BedID]; local != nil && local.cleanup != nil {
 			continue
 		}
+		var id model.ID
+		if local := m.localIdentities[l.BedID]; local != nil {
+			id = local.bed.ID
+		}
 		out = append(out, InventoryBed{
-			ID: l.BedID, Sync: l.Sync,
+			ID: id, Name: l.BedID, Sync: l.Sync,
 			Status: BedStatus{
 				Phase:     PhaseDormant,
 				Readiness: Readiness{Reason: "NotResident", UpdatedAt: l.LastActiveAt},
@@ -291,7 +299,7 @@ func (m *Manager) captureInventory() ([]InventoryBed, bool) {
 			Usage:              l.Usage,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	defaultOccupied := m.beds[m.defaultBed] != nil || m.retirements[m.defaultBed] != nil || m.purges[m.defaultBed] != nil
 	if i := m.initializations[m.defaultBed]; i != nil && i.snapshot().Phase == PhaseInitializing {
 		defaultOccupied = true

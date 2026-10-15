@@ -8,7 +8,7 @@ import (
 )
 
 func BedInitialization(status bed.InitializationStatus) protocol.Bed {
-	return protocol.Bed{ID: status.ID, Sync: string(status.Sync), Workdir: bedfs.DefaultWorkdir, Status: status.BedStatus}
+	return protocol.Bed{ID: status.ID, Name: status.Name, Sync: string(status.Sync), Workdir: bedfs.DefaultWorkdir, Status: status.BedStatus}
 }
 
 func ExecutorFromStatus(status *bed.ExecutorStatus) *protocol.Executor {

@@ -10,11 +10,24 @@ Hostel API 都已迁入。本包只依赖标准库，不包含 client、资源�
 额外字段时组合公开结构，例如 FilesystemStatus 组合公开 preparation 状态并保留内部路径，
 Service 状态组合公开字段并保留内部执行结果。不为内外两侧另造 DTO/View 名称或重复字段表。
 
-Bed 的管理 API `id` 仍表示调用方提供的 name；内部 Bed.ID 表示本地生命周期身份。
-本次提取不改变这一历史 HTTP 契约，也不把两个身份合并。Bed 详情由多个 owner 的快照组成，
-完整 API Bed 结构不替代内部 Bed 的锁、Spec、分域写权和资源生命周期。
+Bed 的 `id` 与 `name` 沿用 Hostel 内部语义：调用方通过 Name 标记和寻址 Bed，
+Hostel 自行生成 ID 唯一标识本地生命周期，避免调用方标识与内部资源归属冲突。
+同一个 Name 在销毁后重建时会对应不同 ID；保留本地数据的 daemon 重启恢复沿用 ID。
+上游自行维护业务标识与 Name/ID 的映射，Hostel 不解释上游业务身份。
 
-## HTTP 兼容
+内部 `bed` 组合 `protocol.Bed`，保留锁、Spec 和分域状态；`Bed` alias 仅供仓内组件共享。
+组合的公开部分保存身份，API 快照从各 owner 读取其它字段，不增加第二套可变状态写权。
+
+## HTTP 身份迁移
+
+从 v0.1.39 开始，创建响应、详情和 inventory 中 `id` 表示 Hostel 本地生命周期 ID，
+新增 `name` 表示原先响应 `id` 中的调用方标识。caller 必须改用 `name` 做路由和业务关联，
+通过 `id` 判断本地生命周期是否更替，不应继续把响应 `id` 直接拼入请求路径。
+现有请求中的 `id` 参数、Bed 路径和 `X-Hostel-Bed` 仍接受 Name；本次不改变请求寻址。
+仅扫描到磁盘残留、尚未恢复本地身份的记录，以及只有远端数据的 purge，`id` 为空；
+只读 inventory 不生成身份，也不会用 Name 冒充 ID。
+
+## 其它 HTTP 字段
 
 保持 `status.lifecycle`、`status.services`、`status.port_mappings` 等现有路径，
 以及 JSON tag、omitempty/omitzero、空集合和数值类型。生命周期 readiness 使用

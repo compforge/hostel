@@ -1,5 +1,5 @@
 {
-  "id": "caller-bed", "sync": "noop", "data_synced": true, "pinned": false, "workdir": "/workspace",
+  "id": "bed-00000000000000000000000000000001", "name": "caller-bed", "sync": "noop", "data_synced": true, "pinned": false, "workdir": "/workspace",
   "generation": 9007199254740993,
   "snapshot_generation": 9007199254740992,
   "snapshot_bytes": 4096, "local_bytes": 8192, "restore_bytes": 4096,

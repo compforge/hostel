@@ -54,7 +54,8 @@ type Readiness = protocol.Readiness
 // Bed is returned with PhaseResident and Ready=true; an accepted asynchronous
 // initialization returns PhaseInitializing.
 type InitializationStatus struct {
-	ID   string
+	ID   model.ID
+	Name string
 	Sync store.SyncKind
 	BedStatus
 	StartedAt time.Time
@@ -347,7 +348,7 @@ func (m *Manager) beginInitialization(
 }
 
 func (m *Manager) runInitialization(ctx context.Context, initialization *bedInitialization) {
-	bedID := initialization.snapshot().ID
+	bedID := initialization.snapshot().Name
 	if err := m.saveLocalIdentity(initialization.local); err != nil {
 		m.finishInitialization(initialization, nil, fmt.Errorf("save local bed identity: %w", err))
 		return
@@ -397,7 +398,7 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 func (m *Manager) publishInitializedBed(initialization *bedInitialization, resident *managedBed) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	current, ok := m.initializations[initialization.snapshot().ID]
+	current, ok := m.initializations[initialization.snapshot().Name]
 	if m.closed || !ok || current != initialization || current.snapshot().Phase != PhaseInitializing {
 		return context.Canceled
 	}
@@ -428,7 +429,7 @@ func (m *Manager) finishInitialization(initialization *bedInitialization, reside
 	failedReason := failedReadinessReason(initialization.snapshot().Readiness.Reason)
 	if err != nil {
 		m.mu.Lock()
-		retiring := m.retirements[initialization.snapshot().ID] != nil
+		retiring := m.retirements[initialization.snapshot().Name] != nil
 		m.mu.Unlock()
 		if !retiring {
 			// A failed Stage-in may never create local data. Forget that empty
@@ -442,10 +443,10 @@ func (m *Manager) finishInitialization(initialization *bedInitialization, reside
 	initialization.bed = resident
 	initialization.err = err
 
-	current, currentExists := m.initializations[initialization.snapshot().ID]
+	current, currentExists := m.initializations[initialization.snapshot().Name]
 	if currentExists && current == initialization {
 		if err == nil {
-			delete(m.initializations, initialization.snapshot().ID)
+			delete(m.initializations, initialization.snapshot().Name)
 		} else if m.retirements[initialization.model.Name] != nil {
 			m.setLifecycle(initialization.model, model.LifecycleStatus{Phase: PhaseEvicting, Reason: "CleanupPending", Message: err.Error(), UpdatedAt: time.Now()})
 			delete(m.initializations, initialization.model.Name)
@@ -453,7 +454,7 @@ func (m *Manager) finishInitialization(initialization *bedInitialization, reside
 			now := time.Now()
 			m.setLifecycle(initialization.model, model.LifecycleStatus{Phase: PhaseFailed, Reason: failedReason, Message: err.Error(), UpdatedAt: now})
 		} else {
-			delete(m.initializations, initialization.snapshot().ID)
+			delete(m.initializations, initialization.snapshot().Name)
 		}
 	}
 	m.mu.Unlock()
@@ -482,7 +483,7 @@ func failedReadinessReason(current string) string {
 func (m *Manager) updateInitialization(initialization *bedInitialization, reason, message string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	current, ok := m.initializations[initialization.snapshot().ID]
+	current, ok := m.initializations[initialization.snapshot().Name]
 	if !ok || current != initialization || current.snapshot().Phase != PhaseInitializing {
 		return
 	}
@@ -557,7 +558,8 @@ func (m *Manager) pruneFailedInitializationsLocked(now time.Time) {
 func residentInitializationStatus(resident *managedBed) InitializationStatus {
 	status := resident.Status()
 	return InitializationStatus{
-		ID:        resident.Name,
+		ID:        resident.ID,
+		Name:      resident.Name,
 		Sync:      resident.Spec().Sync,
 		BedStatus: status.BedStatus,
 	}
@@ -609,7 +611,7 @@ func checkBedSync(requested string, selected, current store.SyncKind) error {
 }
 
 func retirementStatus(b *managedBed) InitializationStatus {
-	return InitializationStatus{ID: b.Name, Sync: b.Spec().Sync, BedStatus: lifecycleView(b.Bed.Status().Lifecycle)}
+	return InitializationStatus{ID: b.ID, Name: b.Name, Sync: b.Spec().Sync, BedStatus: lifecycleView(b.Bed.Status().Lifecycle)}
 }
 
 func checkInitialPolicy(requested *network.Policy, initial *model.NetworkPolicy) error {
@@ -621,7 +623,7 @@ func checkInitialPolicy(requested *network.Policy, initial *model.NetworkPolicy)
 
 // snapshot projects lifecycle from the single shared model, including progress.
 func (i *bedInitialization) snapshot() InitializationStatus {
-	return InitializationStatus{ID: i.model.Name, Sync: i.model.Spec().Sync, BedStatus: lifecycleView(i.model.Status().Lifecycle), StartedAt: i.startedAt}
+	return InitializationStatus{ID: i.model.ID, Name: i.model.Name, Sync: i.model.Spec().Sync, BedStatus: lifecycleView(i.model.Status().Lifecycle), StartedAt: i.startedAt}
 }
 func lifecycleView(s model.LifecycleStatus) BedStatus {
 	return BedStatus{Phase: s.Phase, Readiness: Readiness{Ready: s.Ready, Reason: s.Reason, Message: s.Message, UpdatedAt: s.UpdatedAt}}
