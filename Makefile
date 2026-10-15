@@ -34,6 +34,7 @@ build: ## Build the hostel binary for the current platform
 # concurrent; -count=1 keeps the detector from being skipped by the test cache.
 test: ## Run all tests with the race detector
 	go test $(TEST_TAGS) -race -count=1 $(TEST_PACKAGES)
+	$(MAKE) -C protocol test
 
 e2e: ## Run the single-machine runtime contract against a real hostel test build
 	CGO_ENABLED=0 go build -tags=e2e -ldflags "$(LDFLAGS)" -o bin/hostel-e2e ./cmd/hostel
@@ -49,6 +50,7 @@ e2e-image: ## Run the full contract, including PyPI/npm/Chromium (set E2E_IMAGE)
 
 vet: ## Run go vet
 	go vet ./...
+	$(MAKE) -C protocol lint
 
 fmt: ## Format all Go sources
 	gofmt -w .

@@ -4,6 +4,17 @@
 本包目前覆盖 Bed 摘要、详情、生命周期、服务、端口映射及 Bed 级组件状态；不代表所有
 Hostel API 都已迁入。本包只依赖标准库，不包含 client、资源操作、运行时对象或上游发布策略。
 
+## 模块与工具链边界
+
+`protocol/` 是独立 Go module，自己的 `go.mod` 声明最低 Go 1.25，不依赖 Hostel 主模块。
+调用方只引入 `github.com/qiankunli/hostel/protocol`，不会继承 Hostel daemon 的 Go 版本或
+Chromium 等运行时依赖。协议模块可按仓库提交或 `protocol/vX.Y.Z` tag 独立选择版本。
+
+Hostel 主模块通过本地 replace 复用同一份协议源码，继续使用自己的工具链和运行时依赖。
+构建镜像在下载主模块依赖前须复制 `protocol/go.mod`；源码复制后，协议与服务端一起编译。
+根目录的 lint/test 入口也校验协议模块；可在 `protocol/` 独立运行 make lint/test，
+并用 Go 1.25 验证调用方兼容性。
+
 ## 模型归属
 
 公开字段和 JSON tag 由 `protocol` 定义。纯数据类型由内部 owner 直接复用；内部确有
