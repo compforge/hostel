@@ -1,23 +1,23 @@
 package network
 
-import "net/netip"
+import (
+	"net/netip"
 
-type ListenerState string
+	"github.com/qiankunli/hostel/protocol"
+)
+
+type ListenerState = protocol.ListenerState
 
 const (
-	ListenerOwned       ListenerState = "owned"
-	ListenerForeign     ListenerState = "foreign"
-	ListenerAbsent      ListenerState = "not_listening"
-	ListenerUnavailable ListenerState = "unavailable"
+	ListenerOwned       = protocol.ListenerOwned
+	ListenerForeign     = protocol.ListenerForeign
+	ListenerAbsent      = protocol.ListenerAbsent
+	ListenerUnavailable = protocol.ListenerUnavailable
 )
 
 // ListenerInspection is evidence about one address, not a readiness verdict.
 // Inability to inspect must never be interpreted as evidence of a foreign owner.
-type ListenerInspection struct {
-	State  ListenerState `json:"state"`
-	Method string        `json:"method"`
-	Reason string        `json:"reason,omitempty"`
-}
+type ListenerInspection = protocol.ListenerInspection
 
 func listenerMatches(local, target netip.AddrPort) bool {
 	l, t := local.Addr().Unmap(), target.Addr().Unmap()

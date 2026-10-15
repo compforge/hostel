@@ -18,16 +18,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	model "github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bed/configuration"
+
+	"github.com/qiankunli/hostel/protocol"
+
 	"log"
 	"maps"
 	"path/filepath"
+	"reflect"
 	"time"
 
+	model "github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/configuration"
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/store"
-	"reflect"
 )
 
 // Phase is the coarse local lifecycle of a Bed identity. Activity
@@ -45,12 +48,7 @@ const (
 
 // Readiness reports whether a Bed may receive data-plane operations. Reason is
 // stable machine-readable context; Message is diagnostic detail.
-type Readiness struct {
-	Ready     bool      `json:"status"`
-	Reason    string    `json:"reason"`
-	Message   string    `json:"message,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
+type Readiness = protocol.Readiness
 
 // InitializationStatus is the observable result of InitializeBed. A resident
 // Bed is returned with PhaseResident and Ready=true; an accepted asynchronous

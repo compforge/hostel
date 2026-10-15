@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/qiankunli/hostel/protocol"
+
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
@@ -45,12 +47,21 @@ func TestServiceManagementRoutesAndDeclarationConflict(t *testing.T) {
 		}
 	}
 	w = request(http.MethodGet, "/v1/beds/service-bed/services/worker", "")
-	var status struct {
-		Phase string `json:"phase"`
-		Ready bool   `json:"ready"`
-	}
+	var status protocol.ServiceStatus
 	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Phase != "running" || !status.Ready {
 		t.Fatalf("service lifecycle/readiness contract: %s %v", w.Body, err)
+	}
+	w = request(http.MethodGet, "/v1/beds/service-bed", "")
+	var detail protocol.BedDetail
+	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || detail.ID != "service-bed" || !detail.Status.Lifecycle.Readiness.Ready || len(detail.Status.Services) != 1 {
+		t.Fatalf("public Bed detail contract: %d %s", w.Code, w.Body)
+	}
+	observed := detail.Status.Services[0]
+	if observed.Name != "worker" || !observed.Ready || observed.ExecutionID == "" || observed.ExecutionID != status.ExecutionID {
+		t.Fatalf("public service observation = %+v, endpoint = %+v", observed, status)
 	}
 	if !b.Status().LastActiveAt.Equal(before) {
 		t.Fatal("service diagnostics renewed activity")

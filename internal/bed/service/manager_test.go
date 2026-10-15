@@ -11,6 +11,8 @@ import (
 
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
+	"github.com/qiankunli/hostel/protocol"
+
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
@@ -212,7 +214,7 @@ func TestReadinessIsIndependentFromRunningPhase(t *testing.T) {
 	for _, required := range []bool{false, true} {
 		m := newTestManager(nil, nil)
 		g := &group{bed: newServiceTestBed("status", "", bed.Spec{}), changed: make(chan struct{})}
-		r := &record{spec: bed.ServiceSpec{Required: required}, status: Status{Phase: "running"}}
+		r := &record{spec: bed.ServiceSpec{Required: required}, status: Status{ServiceStatus: protocol.ServiceStatus{Phase: "running"}}}
 		g.records = []*record{r}
 		ready, failed := groupReadiness(g)
 		if ready == required || failed != "" {

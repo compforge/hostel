@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 func TestBedRenewExpirationHTTP(t *testing.T) {
@@ -20,7 +20,7 @@ func TestBedRenewExpirationHTTP(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
-	var response apiview.BedExpiration
+	var response protocol.BedExpiration
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestBedRenewExpirationWithoutTimestampHTTP(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("body=%q: %d %s", body, rec.Code, rec.Body.String())
 		}
-		var response apiview.BedExpiration
+		var response protocol.BedExpiration
 		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 			t.Fatal(err)
 		}

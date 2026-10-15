@@ -1,0 +1,24 @@
+{
+  "id": "caller-bed", "sync": "noop", "data_synced": true, "pinned": false, "workdir": "/workspace",
+  "generation": 9007199254740993,
+  "snapshot_generation": 9007199254740992,
+  "snapshot_bytes": 4096, "local_bytes": 8192, "restore_bytes": 4096,
+  "activity": {"operations": {"exec": 1}, "sessions": {"cdp": 1}},
+  "status": {
+    "lifecycle": {"phase": "resident", "readiness": {"status": true, "reason": "Initialized", "updated_at": "2026-10-15T00:00:00Z"}, "activity": "active"},
+    "services": [{"name": "http", "required": true, "phase": "running", "ready": true, "execution_id": "exec-1", "executor_id": "executor-1", "port_mapping": "web", "restarts": 0,
+      "outcome": {"Kind": "exited", "ExitCode": 0, "Signal": 0, "CoreDumped": false, "Error": "", "Detail": ""},
+      "listener": {"state": "owned", "method": "proc"}}],
+    "port_mappings": [{"name": "web", "protocol": "tcp", "service": "http", "execution_id": "exec-1", "network": "private", "state": "listening", "bed_port": 8080, "host_port": 24000}],
+    "isolation": {"requested": "dorm", "effective": "dorm"},
+    "components": {
+      "filesystem": {"prepared": true},
+      "privilege": {"uid": 1000, "gid": 1000, "assigned": true},
+      "network": {"enabled": false, "gateway": "", "policy": null},
+      "store": {"source": "noop", "restored": false, "snapshot_generation": 9007199254740992, "snapshot_bytes": 4096, "local_bytes": 8192},
+      "executor": {"private_pid_namespace": false, "id": "executor-1", "backend": "local", "state": "ready"},
+      "resource": {"accounting": false}
+    },
+    "amenities": {"chromium": {"tenant_id": "tenant-1", "status": {"browser_ready": true, "cleanup_pending": false, "closed": false}}}
+  }
+}

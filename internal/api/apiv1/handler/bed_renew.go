@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"time"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
+	"github.com/qiankunli/hostel/protocol"
 
 	"github.com/gin-gonic/gin"
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
+
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
 
@@ -35,7 +37,7 @@ func (s *Handler) bedRenewExpiration(c *gin.Context) {
 		respondError(c, http.StatusConflict, apiview.ErrBedBusy, "bed is no longer resident or is being reclaimed")
 		return
 	}
-	response := apiview.BedExpiration{}
+	response := protocol.BedExpiration{}
 	if !until.IsZero() {
 		response.ExpiresAt = &until
 	}

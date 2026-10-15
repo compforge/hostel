@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 // ID identifies a local Bed lifetime. Names are caller-owned routing keys;
@@ -52,14 +53,8 @@ type Spec struct {
 	LocalGeneration int64
 }
 
-type NetworkRule struct {
-	Action string `json:"action"`
-	Target string `json:"target"`
-}
-type NetworkPolicy struct {
-	DefaultAction string        `json:"defaultAction"`
-	Egress        []NetworkRule `json:"egress"`
-}
+type NetworkRule = protocol.NetworkRule
+type NetworkPolicy = protocol.NetworkPolicy
 
 func clonePolicy(p *NetworkPolicy) *NetworkPolicy {
 	if p == nil {

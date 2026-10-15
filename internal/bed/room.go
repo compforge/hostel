@@ -2,16 +2,18 @@ package bed
 
 import (
 	"fmt"
+
+	"github.com/qiankunli/hostel/protocol"
 )
 
 // RoomType is the user-facing file isolation guarantee. Profiles may prefer
 // additional capabilities, whose availability does not change this guarantee.
-type RoomType string
+type RoomType = protocol.RoomType
 
 const (
-	Dorm  RoomType = "dorm"
-	Room  RoomType = "room"
-	Suite RoomType = "suite"
+	Dorm  = protocol.Dorm
+	Room  = protocol.Room
+	Suite = protocol.Suite
 )
 
 func ParseRoomType(value string) (RoomType, error) {
@@ -28,24 +30,20 @@ func ParseRoomType(value string) (RoomType, error) {
 }
 
 // RoomStatus summarizes guarantees without removing stronger domain features.
-type RoomStatus struct {
-	Requested RoomType `json:"requested"`
-	Effective RoomType `json:"effective"`
-	Reasons   []string `json:"reasons,omitempty"`
-}
+type RoomStatus = protocol.RoomStatus
 
 // SummarizeRoom reports the attained file guarantee within the requested profile.
 // +spec=`Room requires confined files; suite requires a private file view. Additional network, identity and process capabilities are reported by their owners.`
 func SummarizeRoom(requested, files RoomType) RoomStatus {
 	r := RoomStatus{Requested: requested, Effective: requested}
-	if files.rank() < requested.rank() {
+	if roomRank(files) < roomRank(requested) {
 		r.Effective = files
 		r.Reasons = []string{"filesystem below requested profile"}
 	}
 	return r
 }
 
-func (r RoomType) rank() int {
+func roomRank(r RoomType) int {
 	switch r {
 	case Suite:
 		return 2

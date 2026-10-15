@@ -75,6 +75,7 @@ Bed 的理想语义是独立执行空间，文件、进程、网络和资源按�
 deploy/
 ├── docker/Dockerfile  多阶段多架构镜像(amd64/arm64,builder 原生交叉编译免 QEMU)：静态 hostel + debian-slim（内置 bwrap/PRoot/pathshim + 可选 chromium）；tini PID1；hostel --health 做 HEALTHCHECK
 └── k8s/              Kubernetes 部署示例；AppArmor 的 PSA 豁免申请见 pod-security-admission-exemption.yaml
+protocol/             公开 Bed 管理数据契约；server 与 caller 共用，只有数据类型、枚举及标准库依赖
 cmd/hostel/main.go     daemon 入口：配置、组件组装、启动探测、Web 与信号；驱动 Manager 启停
 tests/e2e/             真实进程/镜像 E2E：同一 suite 可在 Host 或 K8s Pod 内运行；环境配置与事实入口，见 tests/e2e/e2e-environments.md
 internal/
@@ -112,7 +113,7 @@ internal/
 └── api/               HTTP server、中间件与路由组装
     ├── apiv1/         Hostel 原生协议（保留现有 URL）
     │   ├── handler/   请求适配与状态查询
-    │   └── view/      原生响应与纯转换
+    │   └── view/      原生响应适配与纯转换；公开 Bed 结构定义在 protocol/
     └── execd/         OpenSandbox Execd 协议，双入口共用 adapter
         ├── handler/   请求适配与本地鉴权
         └── view/      OpenSandbox 响应、权限与 SSE 编码
@@ -165,6 +166,7 @@ internal/
 
 - 网络管理与 Bed PortMapping：`docs/network.md`（命名 TCP 需求、private/shared 内外地址、资源回收；共享 Chromium 代理待支持）
 
+- 公开 Bed 数据契约、内部组合与兼容边界：`docs/protocol.md`
 - 核心架构（定位、Bed 模型、请求与状态、组件契约及生命周期主流程）：`docs/kernel.md`
 - 待办清单（尚未交付的演进项）：`docs/backlog.md`
 - Filesystem（BedFS、路径空间、进程视图与文件隔离机制）：`docs/filesystem.md`
