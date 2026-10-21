@@ -16,11 +16,11 @@ import (
 func TestPillowExecutionOwnership(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
-	options := CreateOptions{Volumes: []model.VolumeSpec{{Name: "shared", EmptyDir: &model.EmptyDirVolume{}}}, Pillows: []model.PillowSpec{
+	options := CreateOptions{Volumes: []model.VolumeSpec{{Name: "shared", Managed: &model.ManagedVolume{Persistence: "none"}}}, Pillows: []model.PillowSpec{
 		{Name: "z-default", Workdir: "/work/default", Env: map[string]string{"VALUE": "default"}, Mounts: []model.VolumeMount{{Volume: "shared", Path: "/reader"}}},
 		{Name: "a-worker", Workdir: "/writer", Env: map[string]string{"VALUE": "worker"}, Mounts: []model.VolumeMount{{Volume: "shared", Path: "/writer"}}, Command: []string{"/bin/sleep"}, Args: []string{"300"}, Required: true, StopSeconds: 1},
 	}}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "pillow-ownership", options); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "pillow-ownership", options); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "pillow-ownership")
@@ -80,7 +80,7 @@ func TestPillowExecutionOwnership(t *testing.T) {
 		t.Fatalf("restart lost volume %q %v", got, err)
 	}
 	options.Pillows[0], options.Pillows[1] = options.Pillows[1], options.Pillows[0]
-	if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, options); err == nil {
+	if _, err := m.InitializeBed(t.Context(), b.Name, options); err == nil {
 		t.Fatal("reordering silently changed default")
 	}
 	if _, err := m.PillowFiles(b, "missing"); err == nil {

@@ -35,7 +35,7 @@ func TestConfigurationLifecycleAndProcessConsumers(t *testing.T) {
 		Pillows: append([]model.PillowSpec{{Name: "workspace", EnvValueFrom: map[string]model.ConfigurationKeyRef{"MAIN_VALUE": {Source: "runtime", Key: "MAIN_VALUE"}}}}, []model.PillowSpec{{Name: "worker", Command: []string{"/bin/sh", "-c", "test -z \"$MAIN_VALUE\" && printf '%s' \"$SERVICE_VALUE\" > pillow-config; exec sleep 60"},
 			EnvValueFrom: map[string]model.ConfigurationKeyRef{"SERVICE_VALUE": {Source: "runtime", Key: "SERVICE_VALUE"}}, Required: true}}...),
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "configured", request); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "configured", request); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "configured")
@@ -58,7 +58,7 @@ func TestConfigurationLifecycleAndProcessConsumers(t *testing.T) {
 	if err != nil || result.Process.ExitCode != 0 || out.String() != "main-private/" {
 		t.Fatalf("main configuration: %q %v", out.String(), err)
 	}
-	other, err := m.Ensure(t.Context(), "plain")
+	other, err := declareTestBed(m, t.Context(), "plain")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestConfigurationLifecycleAndProcessConsumers(t *testing.T) {
 	if err != nil || envMap(env)["MAIN_VALUE"] != "" || envMap(env)["SERVICE_VALUE"] != "" {
 		t.Fatal("configuration leaked to plain Bed")
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "configured", CreateOptions{Pillows: model.ClonePillows(request.Pillows[1:])}); !errors.Is(err, ErrPillowsConflict) {
+	if _, err := m.InitializeBed(t.Context(), "configured", CreateOptions{Pillows: model.ClonePillows(request.Pillows[1:])}); !errors.Is(err, ErrPillowsConflict) {
 		t.Fatalf("source declaration mutation: %v", err)
 	}
 	data, err := os.ReadFile(m.identityPath("configured"))

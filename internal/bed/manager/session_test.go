@@ -26,7 +26,7 @@ import (
 func TestSessionStatusAndClose(t *testing.T) {
 	m := newTestManager(t)
 	m.SetBedIdleTTL(time.Minute)
-	b, err := m.Ensure(context.Background(), "sess-bed")
+	b, err := declareTestBed(m, context.Background(), "sess-bed")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestSessionStatusAndClose(t *testing.T) {
 // gone refuses new sessions.
 func TestOpenSessionOnEvictedBedRefused(t *testing.T) {
 	m := newTestManager(t)
-	b, err := m.Ensure(context.Background(), "sess-gone")
+	b, err := declareTestBed(m, context.Background(), "sess-gone")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestOpenSessionOnEvictedBedRefused(t *testing.T) {
 // session's context is canceled and its kill switch fired.
 func TestEvictRevokesSessions(t *testing.T) {
 	m := newTestManager(t)
-	b, err := m.Ensure(context.Background(), "sess-evict")
+	b, err := declareTestBed(m, context.Background(), "sess-evict")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestEvictRevokesSessions(t *testing.T) {
 func TestBeginOperationTimeoutClamp(t *testing.T) {
 	m := newTestManager(t)
 	m.SetBedIdleTTL(time.Minute)
-	b, err := m.Ensure(context.Background(), "clamp-bed")
+	b, err := declareTestBed(m, context.Background(), "clamp-bed")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestBeginOperationTimeoutClamp(t *testing.T) {
 
 func TestSessionExecutionEnforcesTimeout(t *testing.T) {
 	m := newTestManager(t)
-	b, err := m.Ensure(context.Background(), "session-timeout")
+	b, err := declareTestBed(m, context.Background(), "session-timeout")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestSessionExecutionEnforcesTimeout(t *testing.T) {
 // Status.Operations breaks inflight down by kind and drops zeroed kinds.
 func TestStatusOperationsByKind(t *testing.T) {
 	m := newTestManager(t)
-	b, err := m.Ensure(context.Background(), "kind-bed")
+	b, err := declareTestBed(m, context.Background(), "kind-bed")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}

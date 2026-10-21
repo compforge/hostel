@@ -57,6 +57,9 @@ func newTestServer(t *testing.T) *testServer {
 			t.Errorf("close manager: %v", err)
 		}
 	})
+	if _, err := declareTestBed(mgr, t.Context(), "default"); err != nil {
+		t.Fatal(err)
+	}
 	return NewServer(mgr)
 }
 
@@ -73,7 +76,7 @@ func do(t *testing.T, s *testServer, method, path string, body io.Reader, hdr ma
 
 func createBedAndWait(t *testing.T, s *testServer, id string) *httptest.ResponseRecorder {
 	t.Helper()
-	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"`+id+`"}`), map[string]string{"Content-Type": "application/json"})
+	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"`+id+`","pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`), map[string]string{"Content-Type": "application/json"})
 	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 		t.Fatalf("create bed %s = %d %s", id, rec.Code, rec.Body.String())
 	}
@@ -653,6 +656,8 @@ func TestSessionStatePersistsAcrossRuns(t *testing.T) {
 
 func TestBedIsolationAcrossHeader(t *testing.T) {
 	s := newTestServer(t)
+	createBedAndWait(t, s, "alice")
+	createBedAndWait(t, s, "bob")
 	// Write a file into bed "alice".
 	up := func(bedID, path, content string) {
 		var buf bytes.Buffer
@@ -791,22 +796,26 @@ func TestMaxBedsBackpressure(t *testing.T) {
 	}
 	s := NewServer(mgr)
 
+	defer mgr.Close(t.Context())
 	// First bed fills the only slot.
-	rec := do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"one"}`), map[string]string{"Content-Type": "application/json"})
+	rec := do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"one","pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`), map[string]string{"Content-Type": "application/json"})
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("create one = %d %s", rec.Code, rec.Body.String())
 	}
 	// Second bed → 429 BED_LIMIT_EXCEEDED, whether via management API...
-	rec = do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"two"}`), map[string]string{"Content-Type": "application/json"})
+	rec = do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"two","pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`), map[string]string{"Content-Type": "application/json"})
 	if rec.Code != 429 || !strings.Contains(rec.Body.String(), "BED_LIMIT_EXCEEDED") {
 		t.Fatalf("create two = %d %s (want 429 BED_LIMIT_EXCEEDED)", rec.Code, rec.Body.String())
 	}
-	// ...or via implicit creation on any endpoint.
+	// Data access never attempts admission or creates a Bed.
 	rec = do(t, s, "GET", "/files/info?path=/workspace", nil, map[string]string{BedHeader: "three"})
-	if rec.Code != 429 {
-		t.Fatalf("implicit create three = %d (want 429)", rec.Code)
+	if rec.Code != 404 {
+		t.Fatalf("undeclared Bed access = %d (want 404)", rec.Code)
 	}
-	// Default bed still works on a full instance.
+	// Default bed can be explicitly declared on a full instance.
+	if _, err := declareTestBed(mgr, t.Context(), "default"); err != nil {
+		t.Fatal(err)
+	}
 	rec = do(t, s, "GET", "/files/info?path=/workspace", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("default bed on full instance = %d %s", rec.Code, rec.Body.String())
@@ -831,8 +840,8 @@ func TestMaxPinnedBedsReportsPressureWithoutBackpressure(t *testing.T) {
 		t.Fatalf("SetMaxPinnedBeds: %v", err)
 	}
 	s := NewServer(mgr)
-	one, _ := mgr.Ensure(context.Background(), "one")
-	_, _ = mgr.Ensure(context.Background(), "two")
+	one, _ := declareTestBed(mgr, context.Background(), "one")
+	_, _ = declareTestBed(mgr, context.Background(), "two")
 	finish, err := mgr.BeginOperation(one, bed.OpExec, time.Minute)
 	if err != nil {
 		t.Fatalf("initialize one: %v", err)
@@ -852,6 +861,9 @@ func TestMaxPinnedBedsReportsPressureWithoutBackpressure(t *testing.T) {
 		t.Fatalf("checkpoint two = %d %s", rec.Code, rec.Body.String())
 	}
 	// The default bed bypasses both limits and does not affect the pinned count.
+	if _, err := declareTestBed(mgr, t.Context(), "default"); err != nil {
+		t.Fatal(err)
+	}
 	rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, nil)
 	if rec.Code != http.StatusOK || mgr.PinnedBedCount() != 1 {
 		t.Fatalf("default during pinned cap = %d pinned=%d body=%s", rec.Code, mgr.PinnedBedCount(), rec.Body.String())
@@ -911,7 +923,7 @@ func TestCheckpointEndpointAndPersistenceReporting(t *testing.T) {
 // every local Bed — managed in-memory Beds and orphaned/legacy luggage.
 func TestBedListDefaultBedRetainsInstanceWithoutInventoryRow(t *testing.T) {
 	s := newTestServer(t)
-	if _, err := s.mgr.Ensure(context.Background(), ""); err != nil {
+	if _, err := declareTestBed(s.mgr, context.Background(), ""); err != nil {
 		t.Fatalf("ensure default bed: %v", err)
 	}
 
@@ -1030,8 +1042,8 @@ func TestBedListEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &released); err != nil {
 		t.Fatalf("unmarshal released: %v", err)
 	}
-	if released.Instance.Status != "releasable" || len(released.Beds) != 0 {
-		t.Fatalf("instance after evicting all = status:%s beds:%+v, want releasable and empty",
+	if released.Instance.Status != "retained" || len(released.Beds) != 0 {
+		t.Fatalf("instance after evicting all = status:%s beds:%+v, want retained by the daemon default and empty tenant inventory",
 			released.Instance.Status, released.Beds)
 	}
 }

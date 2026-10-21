@@ -14,7 +14,7 @@ import (
 func TestSessionPreparationFailurePreservesRuntime(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
-	b, err := m.Ensure(t.Context(), "default")
+	b, err := declareTestBed(m, t.Context(), "default")
 	if err != nil {
 		t.Fatal(err)
 	}

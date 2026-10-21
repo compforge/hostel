@@ -9,7 +9,7 @@ import (
 func TestBedWorkdirUsesBedPath(t *testing.T) {
 	s := newTestServer(t)
 	for _, name := range []string{"one", "two"} {
-		b, err := s.mgr.Ensure(t.Context(), name)
+		b, err := declareTestBed(s.mgr, t.Context(), name)
 		if err != nil {
 			t.Fatal(err)
 		}

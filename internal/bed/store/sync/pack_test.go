@@ -65,7 +65,7 @@ func TestPackObjectLayoutAndRoundtrip(t *testing.T) {
 	if err := s.Restore(ctx, "bed1", dst); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	for _, name := range []string{"meta.json", "data/workspace/big.bin", "data/workspace/src/b/b.go", "data/workspace/note.local"} {
+	for _, name := range []string{"meta.json", "volumes/workspace/big.bin", "volumes/workspace/src/b/b.go", "volumes/workspace/note.local"} {
 		want, err := os.ReadFile(filepath.Join(src, filepath.FromSlash(name)))
 		if err != nil {
 			t.Fatal(err)
@@ -97,7 +97,7 @@ func TestPackIncrementalAndUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	beforeChange := obj.puts
-	if err := os.WriteFile(filepath.Join(src, "data/workspace/src/a.go"), []byte("package a // changed\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "volumes/workspace/src/a.go"), []byte("package a // changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Persist(ctx, "bed1", src, 2, nil); err != nil {

@@ -43,7 +43,7 @@ func TestLifecycleSpanUsesRequestParentAndStageEvents(t *testing.T) {
 	provider, recorder := installSpanRecorder(t)
 	ctx, parent := provider.Tracer("test").Start(context.Background(), "request")
 	m := newTestManager(t)
-	if _, err := m.Ensure(ctx, "traced-bed"); err != nil {
+	if _, err := declareTestBed(m, ctx, "traced-bed"); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 	parent.End()
@@ -64,7 +64,7 @@ func TestExecutionSpanRecordsOutcomeWithoutCommandContent(t *testing.T) {
 	provider, recorder := installSpanRecorder(t)
 	ctx, parent := provider.Tracer("test").Start(context.Background(), "request")
 	m := newTestManager(t)
-	b, err := m.Ensure(ctx, "execution-bed")
+	b, err := declareTestBed(m, ctx, "execution-bed")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}

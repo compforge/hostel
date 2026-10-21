@@ -21,25 +21,25 @@ func TestSnapshotFilterDefaultsToWorkspaceAndSupportsMultiplePaths(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{".", "meta.json", "data", "data/workspace", "data/workspace/a.txt"} {
+	for _, rel := range []string{".", "meta.json", "volumes", "volumes/workspace", "volumes/workspace/a.txt"} {
 		if filter.excluded(rel) {
 			t.Errorf("default filter excluded %q", rel)
 		}
 	}
-	for _, rel := range []string{"runtime.json", "data/memory", "data/cache/a.txt"} {
+	for _, rel := range []string{"runtime.json", "volumes/memory", "data/cache/a.txt"} {
 		if !filter.excluded(rel) {
 			t.Errorf("default filter persisted %q", rel)
 		}
 	}
 
-	filter, err = newSnapshotFilter([]string{"/workspace", "/memory"})
+	filter, err = newSnapshotFilter([]string{"volumes/workspace", "volumes/memory"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filter.excluded("data/memory/MEMORY.md") {
+	if filter.excluded("volumes/memory/MEMORY.md") {
 		t.Fatal("explicit /memory persist path was excluded")
 	}
-	if _, err := newSnapshotFilter([]string{"/workspace", "/workspace/cache"}); err == nil {
+	if _, err := newSnapshotFilter([]string{"volumes/workspace", "volumes/workspace/cache"}); err == nil {
 		t.Fatal("overlapping persist paths were accepted")
 	}
 }

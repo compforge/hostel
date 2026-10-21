@@ -29,7 +29,7 @@ import (
 )
 
 // bwrap confines each command under bubblewrap. Mount view per
-// docs/filesystem.md: Bed data at / with shared runtime overlays, writable
+// docs/volumes.md: Bed data at / with shared runtime overlays, writable
 // carrier software at /usr/local, and no inherited carrier data root. Environment
 // ownership is enforced before this boundary by bed's process-env builder.
 type bwrap struct {

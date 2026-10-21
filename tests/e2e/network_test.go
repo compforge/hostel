@@ -59,6 +59,8 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 		t.Fatalf("required %s degraded: %+v", level, health.Isolation)
 	}
 	t.Logf("executor=%s room=%s files=%+v", backend, health.Isolation.Effective, c.filesystemStatus(t))
+	must2xx(t, "declare Bed", c.createBed(t, "network-a"))
+	must2xx(t, "declare Bed", c.createBed(t, "network-b"))
 	check, response := c.command(t, "network-a", map[string]any{"command": "grep -E '^(CapEff|CapPrm|CapInh|CapAmb|CapBnd|NoNewPrivs):' /proc/self/status", "timeout": 30000})
 	must2xx(t, "privilege probe", response)
 	assertCommandExit(t, check, 0)
@@ -108,6 +110,7 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 		t.Fatal(err)
 	}
 	must2xx(t, "purge network", response)
+	must2xx(t, "declare Bed", c.createBed(t, "network-a"))
 	run, response = c.command(t, "network-a", map[string]any{"command": "echo recreated", "timeout": 30000})
 	must2xx(t, "recreate network", response)
 	assertCommandExit(t, run, 0)

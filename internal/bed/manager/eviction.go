@@ -8,10 +8,10 @@ import (
 	model "github.com/qiankunli/hostel/internal/bed"
 )
 
-// Pillow Beds have background writers even when operation count is zero.
+// Bed processes can have background writers even when operation count is zero.
 // Their final snapshot therefore uses a closed admission fence and quiesces
 // supervision. The cleanup gate serializes this with daemon shutdown/retries.
-func (m *Manager) evictPillowBed(ctx context.Context, b *Resident, cutoff *time.Time) (evicted bool, retErr error) {
+func (m *Manager) evictResidentBed(ctx context.Context, b *Resident, cutoff *time.Time) (evicted bool, retErr error) {
 	if err := b.cleanupMu.Acquire(ctx, 1); err != nil {
 		return false, err
 	}
@@ -60,7 +60,16 @@ func (m *Manager) evictPillowBed(ctx context.Context, b *Resident, cutoff *time.
 		return false, err
 	}
 	quiesced = true
+	m.executions.killBed(b.Name, CauseBedTeardown)
 	m.revokeSessions(ctx, b)
+	if err := m.store.StopTransfers(ctx, b.Name); err != nil {
+		return false, err
+	}
+	if current := m.executorManager.Current(b.Bed); current != nil {
+		if err := current.Shutdown(ctx); err != nil {
+			return false, err
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}

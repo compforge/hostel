@@ -49,7 +49,7 @@ func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 	if !slices.Equal(filtered, wantFiltered) {
 		t.Fatalf("filtered = %v, want %v", filtered, wantFiltered)
 	}
-	b, err := m.Ensure(context.Background(), "alice")
+	b, err := declareTestBed(m, context.Background(), "alice")
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
@@ -150,7 +150,7 @@ func envMap(environ []string) map[string]string {
 func TestTemporaryEnvironmentOverrides(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
-	b, err := m.Ensure(t.Context(), "temporary-env")
+	b, err := declareTestBed(m, t.Context(), "temporary-env")
 	if err != nil {
 		t.Fatal(err)
 	}

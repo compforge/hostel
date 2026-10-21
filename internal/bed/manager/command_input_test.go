@@ -52,7 +52,7 @@ func testCommandInput(t *testing.T, m *Manager, backend string) {
 		{name: "cancel", command: "sleep 30", input: large, mode: ExecutionForeground, cancelOnStart: true, cause: CauseClientCanceled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b, err := m.Ensure(context.Background(), "stdin-"+tc.name)
+			b, err := declareTestBed(m, context.Background(), "stdin-"+tc.name)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -93,7 +93,7 @@ func testCommandInput(t *testing.T, m *Manager, backend string) {
 		})
 	}
 	t.Run("start_failure", func(t *testing.T) {
-		b, err := m.Ensure(context.Background(), "stdin-start-failure")
+		b, err := declareTestBed(m, context.Background(), "stdin-start-failure")
 		if err != nil {
 			t.Fatal(err)
 		}

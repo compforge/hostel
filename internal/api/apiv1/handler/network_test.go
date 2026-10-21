@@ -49,7 +49,7 @@ func TestNetworkPolicyUnavailableDoesNotPretendSuccess(t *testing.T) {
 			t.Fatalf("%s missing bed: %d %s", method, rec.Code, rec.Body)
 		}
 	}
-	if _, err := s.mgr.Ensure(t.Context(), "default"); err != nil {
+	if _, err := declareTestBed(s.mgr, t.Context(), "default"); err != nil {
 		t.Fatal(err)
 	}
 	rec := do(t, s, http.MethodPut, "/v1/beds/default/network/policy", strings.NewReader(`{"defaultAction":"deny"}`), nil)

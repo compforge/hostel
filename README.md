@@ -22,7 +22,7 @@ an upstream control plane owns instance placement, cross-instance routing and AP
 - Read, write and transfer files within a bed's workspace.
 - Declare Pillow main processes with readiness checks and restart policies.
 - Share bed volumes through explicit mounts in each pillow.
-- Persist selected paths to S3-compatible storage and restore them when a bed is recreated.
+- Persist managed volumes to S3-compatible storage and restore them when a bed is recreated.
 - Share Chromium and remote MCP connections with application state scoped to beds.
 
 A bed's workspace survives replacement of its execution processes. Persistence
@@ -37,9 +37,13 @@ make build
 ./bin/hostel --isolation dorm --beds-root ./.workspace --addr 127.0.0.1:8872
 ```
 
-In another terminal, run a command and download its output file:
+In another terminal, declare a Bed, run a command and download its output file:
 
 ```bash
+curl -fsS http://localhost:8872/v1/beds \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"agent-1","pillows":[{"name":"agent","mounts":[{"volume":"workspace","path":"/workspace"}]}]}'
+
 curl -fsSN http://localhost:8872/command \
   -H 'Content-Type: application/json' \
   -H 'X-Hostel-Bed: agent-1' \
@@ -49,17 +53,17 @@ curl -fsS 'http://localhost:8872/files/download?path=/workspace/hello.txt' \
   -H 'X-Hostel-Bed: agent-1'
 ```
 
-The first command creates the bed on demand. Use the same `X-Hostel-Bed` header
-for subsequent commands and file requests; omitting it selects the `default` bed.
+Create a Bed with at least one explicit Pillow before accessing it. Data requests
+wait for initialization and return 404 for undeclared Beds. Use the same
+`X-Hostel-Bed` header for subsequent requests; omitting it selects the daemon-declared `default` bed.
 Ordinary commands run in fresh processes; `/session` creates a persistent shell.
 Use `cwd` and relative paths in commands: file API paths are bed-relative, while
 absolute paths inside shell text follow the selected process environment.
 
 Bed management responses expose Hostel's generated local lifetime `id` and the
 caller-owned routing `name`. Recreating a destroyed Bed changes its ID; restarting
-with retained local data preserves it. Existing request `id` parameters and Bed
-paths still accept Name. Callers upgrading from the old response must route using
-`name` instead of `id`; see [the public Bed contract](docs/protocol.md).
+with retained local data preserves it. Request `id` parameters and Bed
+paths accept Name. Route using the response `name`; see [the public Bed contract](docs/protocol.md).
 
 For a local container build:
 

@@ -15,7 +15,7 @@ func TestBedPublicIdentity(t *testing.T) {
 	const name = "caller-bed"
 	create := func() protocol.Bed {
 		t.Helper()
-		rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"`+name+`"}`), map[string]string{"Content-Type": "application/json"})
+		rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"`+name+`","pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`), map[string]string{"Content-Type": "application/json"})
 		if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 			t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 		}

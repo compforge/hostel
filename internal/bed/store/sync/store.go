@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package sync persists bed workspaces beyond the life of the process/pod
-// (docs/store.md): the durable identity of a bed is a snapshot in object
+// (docs/volumes.md): the durable identity of a bed is a snapshot in object
 // storage; the local workspace is just its working copy, synced at lifecycle
 // boundaries (create/resume ← restore, idle/delete/checkpoint → persist).
 // hostel does not solve multi-writer coordination — "one bedID live in one
@@ -35,7 +35,7 @@ import (
 // single-writer guarantee was violated). First writer wins: overwriting would
 // silently drop the other instance's data, which is strictly worse than
 // failing loudly. Callers must not blindly retry; the bed needs re-initialization
-// from the newer snapshot (docs/store.md §3.5).
+// from the newer snapshot (docs/volumes.md#快照完整性与单写者).
 var ErrConflict = errors.New("snapshot conflict: concurrent writer detected")
 
 // SnapshotInfo describes a bed's durable snapshot without downloading it.
@@ -63,10 +63,10 @@ type Store interface {
 	Restore(ctx context.Context, bedID, dir string) error
 	// Persist snapshots dir as the bed's durable copy, replacing any previous
 	// snapshot. Called on evict, explicit checkpoint, and the periodic safety
-	// net. dir is the bed dir; meta.json and the selected syncPaths are durable.
-	// nil paths defaults to /workspace; an empty slice persists metadata only.
+	// net. dir is the bed dir; meta.json and the selected volumeRoots are durable.
+	// nil roots defaults to volumes/workspace; an empty slice persists metadata only.
 	// generation is the meta's persist counter, surfaced back through Stat.
-	Persist(ctx context.Context, bedID, dir string, generation int64, syncPaths []string) error
+	Persist(ctx context.Context, bedID, dir string, generation int64, volumeRoots []string) error
 	// Delete removes the bed's snapshot — the purge path: after this the bed
 	// identity no longer exists anywhere. Deleting a missing snapshot is not
 	// an error.
@@ -74,23 +74,23 @@ type Store interface {
 }
 
 type snapshotFilter struct {
-	roots []string // paths relative to the Bed directory, e.g. data/workspace
+	roots []string // paths relative to the Bed directory, e.g. volumes/workspace
 }
 
-func newSnapshotFilter(persistedPaths []string) (snapshotFilter, error) {
-	if persistedPaths == nil {
-		persistedPaths = []string{"/workspace"}
+// Roots are daemon-selected allocation paths relative to the Bed directory.
+// Client paths and Pillow mount points never enter this boundary.
+func newSnapshotFilter(roots []string) (snapshotFilter, error) {
+	if roots == nil {
+		roots = []string{"volumes/workspace"}
 	}
-	filter := snapshotFilter{roots: make([]string, 0, len(persistedPaths))}
-	for _, configured := range persistedPaths {
-		clean := path.Clean(strings.TrimSpace(configured))
-		if !path.IsAbs(clean) || clean == "/" {
-			return snapshotFilter{}, fmt.Errorf("store: persist path %q must be absolute and non-root", configured)
+	filter := snapshotFilter{roots: make([]string, 0, len(roots))}
+	for _, root := range roots {
+		if !strings.HasPrefix(root, "volumes/") || path.Clean(root) != root || strings.Contains(strings.TrimPrefix(root, "volumes/"), "/") || root == "volumes/" {
+			return snapshotFilter{}, fmt.Errorf("store: invalid managed volume root %q", root)
 		}
-		root := filepath.ToSlash(filepath.Join("data", filepath.FromSlash(strings.TrimPrefix(clean, "/"))))
 		for _, previous := range filter.roots {
-			if pathWithin(root, previous) || pathWithin(previous, root) {
-				return snapshotFilter{}, fmt.Errorf("store: persist paths %q and %q overlap", previous, root)
+			if previous == root {
+				return snapshotFilter{}, fmt.Errorf("store: duplicate volume root %q", root)
 			}
 		}
 		filter.roots = append(filter.roots, root)

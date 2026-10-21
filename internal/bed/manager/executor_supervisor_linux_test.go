@@ -58,7 +58,7 @@ func newSupervisorManager(t *testing.T) *Manager {
 // but orderly cleanup keeps `go test` from waiting on the inherited fd.
 func resolveSupervisedBed(t *testing.T, m *Manager, id string) *managedBed {
 	t.Helper()
-	b, err := m.Ensure(context.Background(), id)
+	b, err := declareTestBed(m, context.Background(), id)
 	if err != nil {
 		t.Fatalf("Resolve(%s): %v", id, err)
 	}

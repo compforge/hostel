@@ -105,7 +105,7 @@ netns、veth、路由、nft 表与 DNS 转发入口，执行真实的 namespace 
 Bed 初始化完成数据准备后获取具体 `Attachment`，保存到 resident Bed 的
 `manager.Environment`，准备完成后才发布 Ready。命令和 shell 共用这个组合入口：
 网络进入发生在最终降权之前；Network Manager 只负责进入所分配的 netns，完整的身份切换、
-文件视图与用户程序启动顺序由 [权限模型](privilege.md#特权操作顺序) 统一定义。
+文件视图与用户程序启动顺序由 [权限模型](isolation.md#特权操作顺序) 统一定义。
 实例在 HTTP 启动前还会实测选中的完整 command/session/Pillow 主进程组合；自动候选可在完整清理后有限回退，required 或清理失败则阻止启动。
 
 网络分配提供 Bed resolver 文件，Bed Manager 在组装 mount 视图前交给 Filesystem，
@@ -124,7 +124,7 @@ Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspac
 ## 实现约束与诊断
 
 - 当前 Linux backend 使用 iproute2 的 named netns，要求 namespace 管理和网络管理能力，以及
-  相应 mount/seccomp/LSM 操作；完整权限矩阵见 [privilege.md](privilege.md)。单独
+  相应 mount/seccomp/LSM 操作；完整权限矩阵见 [isolation.md](isolation.md)。单独
   `NET_ADMIN` 不等于可用；当前 backend 不实现 userns 辅助创建路径。
 - 需要 carrier 已开启 IPv4 forwarding；Hostel 不修改全局转发 sysctl。官方镜像包含所需
   工具，自定义镜像缺工具会在诊断中显示具体缺项。

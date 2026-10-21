@@ -239,6 +239,13 @@ func main() {
 		iso.Name(), networks.Status().Backend, mgr.ExecutorBackend(), userReport.Strategy,
 		userReport.UID, userReport.GID, userReport.UIDMin, userReport.UIDMax)
 
+	// The standalone default is a daemon-owned declaration, never a data-plane side effect.
+	if _, err := mgr.InitializeBed(context.Background(), cfg.DefaultBed, bed.CreateOptions{
+		Pillows: []bedmodel.PillowSpec{{Name: "main", Mounts: []bedmodel.VolumeMount{{Volume: "workspace", Path: "/workspace"}}}},
+	}); err != nil {
+		log.Fatalf("hostel: declare default bed: %v", err)
+	}
+
 	// Carrier pressure gates tenant work, not the startup capability probe.
 	mgr.SetResourceAdmission(resourceAdmission)
 

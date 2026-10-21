@@ -21,7 +21,7 @@ import (
 func TestBedNameLocalLifetimeAndRecovery(t *testing.T) {
 	ctx := t.Context()
 	m := newTestManager(t)
-	b, err := m.Ensure(ctx, "中文客户-1")
+	b, err := declareTestBed(m, ctx, "中文客户-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestBedNameLocalLifetimeAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m2.Close(context.Background())
-	recovered, err := m2.Ensure(ctx, b.Name)
+	recovered, err := declareTestBed(m2, ctx, b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestBedNameLocalLifetimeAndRecovery(t *testing.T) {
 	if _, err := os.Stat(m2.identityPath(recovered.Name)); !os.IsNotExist(err) {
 		t.Fatalf("forgotten record retained: %v", err)
 	}
-	next, err := m2.Ensure(ctx, recovered.Name)
+	next, err := declareTestBed(m2, ctx, recovered.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestBedNameLocalLifetimeAndRecovery(t *testing.T) {
 
 func TestRetainedBedReinitializationReusesModel(t *testing.T) {
 	m := newTestManager(t)
-	b, err := m.Ensure(t.Context(), "retry")
+	b, err := declareTestBed(m, t.Context(), "retry")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestRetainedBedReinitializationReusesModel(t *testing.T) {
 	delete(m.beds, b.Name)
 	m.residentBeds.Add(-1)
 	m.mu.Unlock()
-	next, err := m.Ensure(t.Context(), b.Name)
+	next, err := declareTestBed(m, t.Context(), b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestRetainedBedReinitializationReusesModel(t *testing.T) {
 func TestExecutorExitPublishesSharedStatus(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
-	b, err := m.Ensure(t.Context(), "executor-status")
+	b, err := declareTestBed(m, t.Context(), "executor-status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestCloseUsesOneDeadlineAndRetainsCleanupOwners(t *testing.T) {
 	n := &deadlineNetwork{}
 	m.SetNetworkManager(network.WithProvider(n, m.owners.Network))
 	for i := range 3 {
-		if _, err := m.Ensure(t.Context(), fmt.Sprint("bed-", i)); err != nil {
+		if _, err := declareTestBed(m, t.Context(), fmt.Sprint("bed-", i)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -196,7 +196,7 @@ func TestCloseUsesOneDeadlineAndRetainsCleanupOwners(t *testing.T) {
 
 func TestCloseDeadlineWhileAnotherCleanupOwnsBed(t *testing.T) {
 	m := newTestManager(t)
-	b, err := m.Ensure(t.Context(), "owned")
+	b, err := declareTestBed(m, t.Context(), "owned")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestInventoryStatusCountsSameCapturedRows(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
 	for _, name := range []string{"a", "b"} {
-		if _, err := m.Ensure(t.Context(), name); err != nil {
+		if _, err := declareTestBed(m, t.Context(), name); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -240,7 +240,7 @@ func TestInventoryStatusCountsSameCapturedRows(t *testing.T) {
 func TestLocalIDIsNotInsidePortableBedTree(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
-	b, err := m.Ensure(t.Context(), "portable")
+	b, err := declareTestBed(m, t.Context(), "portable")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -153,8 +153,8 @@ func (s *Auto) Restore(ctx context.Context, bedID, dir string) error {
 	return state.selected.store.Restore(ctx, bedID, dir)
 }
 
-func (s *Auto) Persist(ctx context.Context, bedID, dir string, generation int64, syncPaths []string) error {
-	filter, err := newSnapshotFilter(syncPaths)
+func (s *Auto) Persist(ctx context.Context, bedID, dir string, generation int64, volumeRoots []string) error {
+	filter, err := newSnapshotFilter(volumeRoots)
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func (s *Auto) Persist(ctx context.Context, bedID, dir string, generation int64,
 	case KindTar:
 		target = routedBackend{layout: layoutTar, store: s.tar}
 	}
-	return target.store.Persist(ctx, bedID, dir, generation, syncPaths)
+	return target.store.Persist(ctx, bedID, dir, generation, volumeRoots)
 }
 
 func (s *Auto) Delete(ctx context.Context, bedID string) error {

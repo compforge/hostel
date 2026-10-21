@@ -27,7 +27,7 @@ import (
 	"github.com/folbricht/desync"
 )
 
-// casStore implements content-addressed synchronization to S3 (docs/store.md §3.3): the bed dir is
+// casStore implements content-addressed synchronization to S3 (docs/volumes.md#格式与回收): the bed dir is
 // serialized to a catar stream (desync, the casync model), CDC-chunked, and
 // only chunks absent from the bed's previous snapshot are uploaded. The index
 // object is the commit point and carries the generation, so one small PUT
@@ -108,12 +108,12 @@ func (s *casStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error
 	return info, nil
 }
 
-func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation int64, syncPaths []string) error {
-	filter, err := newSnapshotFilter(syncPaths)
+func (s *casStore) Persist(ctx context.Context, bedID, dir string, generation int64, volumeRoots []string) error {
+	filter, err := newSnapshotFilter(volumeRoots)
 	if err != nil {
 		return err
 	}
-	// Fencing guard (docs/store.md §3.5): remote generation >= ours
+	// Fencing guard (docs/volumes.md#快照完整性与单写者): remote generation >= ours
 	// means another instance persisted this bed after our initialization —
 	// refuse rather than silently overwrite.
 	prevMeta, _, prevExists, err := s.obj.Head(ctx, s.indexKey(bedID))

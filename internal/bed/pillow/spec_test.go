@@ -36,6 +36,11 @@ func TestNormalizePinsCompletePillowSpec(t *testing.T) {
 }
 
 func TestNormalizeRejectsInvalidPillowSpecs(t *testing.T) {
+	for _, specs := range [][]bed.PillowSpec{nil, {}} {
+		if _, err := Normalize(specs); err == nil {
+			t.Fatal("accepted missing Pillows")
+		}
+	}
 	tests := []bed.PillowSpec{
 		{Name: "", Command: []string{"worker"}},
 		{Name: "worker", Args: []string{"orphan"}},

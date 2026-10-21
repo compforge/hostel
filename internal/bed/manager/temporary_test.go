@@ -10,7 +10,7 @@ import (
 func TestTemporaryDirectorySurvivesExecutorReplacement(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
-	b, err := m.Ensure(t.Context(), "temporary")
+	b, err := declareTestBed(m, t.Context(), "temporary")
 	if err != nil {
 		t.Fatal(err)
 	}

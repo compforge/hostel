@@ -50,7 +50,7 @@ func testNetworkPolicyTraffic(t *testing.T, executor string) {
 	}()
 	c := startTarget(t, targetOptions{executor: executor, isolation: "suite"}).client
 	deny := map[string]any{"defaultAction": "deny", "egress": []any{}}
-	policyRequest(t, c, "POST", "/v1/beds", map[string]any{"id": "policy-a", "networkPolicy": deny}, http.StatusAccepted)
+	policyRequest(t, c, "POST", "/v1/beds", map[string]any{"id": "policy-a", "networkPolicy": deny, "pillows": workspacePillows()}, http.StatusAccepted)
 	c.waitBed(t, "policy-a", func(b bedView) bool { return b.Status.Readiness.Ready }, "initial deny policy installed")
 	must2xx(t, "create control Bed", c.createBed(t, "policy-b"))
 	c.waitBed(t, "policy-b", func(b bedView) bool { return b.Status.Readiness.Ready }, "control Bed ready")

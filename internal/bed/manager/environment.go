@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/pillow"
-	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
 // ProbeCleanupError prevents startup fallback from abandoning an allocation.
@@ -28,7 +28,7 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	m.startEnvironmentProbe(started)
 	defer func() { m.finishEnvironmentProbe(started, retErr) }()
 	id := "environment-probe-" + randx.Hex(6)
-	initialization, _, err := m.beginInitialization(ctx, id, CreateOptions{Sync: string(store.SyncNoop)})
+	initialization, _, err := m.beginInitialization(ctx, id, CreateOptions{Pillows: []model.PillowSpec{{Name: "probe", Mounts: []model.VolumeMount{{Volume: "workspace", Path: "/workspace"}}}}, Volumes: []model.VolumeSpec{{Name: "workspace", Managed: &model.ManagedVolume{Persistence: "none"}}}})
 	if err != nil {
 		return err
 	}

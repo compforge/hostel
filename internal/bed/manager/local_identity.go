@@ -36,9 +36,8 @@ func (m *Manager) localIdentityLocked(id string) *localIdentity {
 	if local := m.localIdentities[id]; local != nil {
 		return local
 	}
-	pillows, _ := pillow.Normalize(nil)
-	local := &localIdentity{bed: model.New(id, "", model.Spec{Pillows: pillows, Dir: filepath.Join(m.root, id), RecoveryDirs: []string{
-		filepath.Join(m.root, id, "data"), filepath.Join(m.root, gcTmpPrefix+id, "data"),
+	local := &localIdentity{bed: model.New(id, "", model.Spec{Dir: filepath.Join(m.root, id), RecoveryDirs: []string{
+		filepath.Join(m.root, id, "rootfs"), filepath.Join(m.root, gcTmpPrefix+id, "rootfs"),
 	}})}
 	m.localIdentities[id] = local
 	return local
@@ -85,30 +84,27 @@ func (m *Manager) recoverLocalIdentities() error {
 			return fmt.Errorf("read bed %s identity: %w", local.bed.Name, err)
 		}
 		if err == nil {
-			id := strings.TrimSpace(string(data))
 			spec := local.bed.Spec()
-			if strings.HasPrefix(id, "{") {
-				var record localIdentityRecord
-				if err := json.Unmarshal(data, &record); err != nil {
-					return fmt.Errorf("read bed %s identity: %w", local.bed.Name, err)
-				}
-				if err := record.upgrade(); err != nil {
-					return fmt.Errorf("recover bed %s paths: %w", local.bed.Name, err)
-				}
-				id = record.ID
-				spec.Pillows = record.Pillows
-				spec.Volumes, err = model.NormalizeVolumes(record.Volumes)
+			var record localIdentityRecord
+			if err := json.Unmarshal(data, &record); err != nil {
+				return fmt.Errorf("read bed %s identity: %w", local.bed.Name, err)
+			}
+			// A directory without a declaration is only a cleanup identity.
+			if len(record.Pillows) > 0 {
+				record.Pillows, err = pillow.Normalize(record.Pillows)
 				if err != nil {
-					return fmt.Errorf("recover bed %s volumes: %w", local.bed.Name, err)
+					return fmt.Errorf("recover bed %s pillows: %w", local.bed.Name, err)
 				}
-				spec.PortMappings, err = model.NormalizePortMappings(record.PortMappings)
-				if err != nil {
-					return fmt.Errorf("recover bed %s ports: %w", local.bed.Name, err)
-				}
-				spec.SyncPaths, err = model.NormalizeSyncPaths(record.SyncPaths)
-				if err != nil {
-					return fmt.Errorf("recover bed %s paths: %w", local.bed.Name, err)
-				}
+			}
+			id := record.ID
+			spec.Pillows = record.Pillows
+			spec.Volumes, err = model.NormalizeVolumes(record.Volumes)
+			if err != nil {
+				return fmt.Errorf("recover bed %s volumes: %w", local.bed.Name, err)
+			}
+			spec.PortMappings, err = model.NormalizePortMappings(record.PortMappings)
+			if err != nil {
+				return fmt.Errorf("recover bed %s ports: %w", local.bed.Name, err)
 			}
 			if !strings.HasPrefix(id, "bed-") || len(id) != 36 {
 				return fmt.Errorf("invalid local identity for bed %s", local.bed.Name)
@@ -138,7 +134,7 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 		return err
 	}
 	spec := local.bed.Spec()
-	data, err := json.Marshal(localIdentityRecord{Volumes: spec.Volumes, PortMappings: spec.PortMappings, SyncPaths: spec.SyncPaths, ID: local.bed.ID.String(), Pillows: spec.Pillows})
+	data, err := json.Marshal(localIdentityRecord{Volumes: spec.Volumes, PortMappings: spec.PortMappings, ID: local.bed.ID.String(), Pillows: spec.Pillows})
 	if err != nil {
 		return err
 	}
@@ -146,18 +142,10 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 }
 
 type localIdentityRecord struct {
-	Services     []legacyServiceSpec                  `json:"services,omitempty"`
-	Volumes      []model.VolumeSpec                   `json:"volumes,omitempty"`
-	Mounts       []model.VolumeMount                  `json:"mounts,omitempty"`
-	PortMappings []model.PortMappingSpec              `json:"port_mappings,omitempty"`
-	PathMappings []legacyPathMapping                  `json:"path_mappings,omitempty"`
-	SyncPaths    []string                             `json:"sync_paths"`
-	EnvFiles     map[string]string                    `json:"env_files,omitempty"`
-	EnvFrom      []string                             `json:"env_from,omitempty"`
-	EnvValueFrom map[string]model.ConfigurationKeyRef `json:"env_value_from,omitempty"`
-	Env          map[string]string                    `json:"env,omitempty"`
-	ID           string                               `json:"id"`
-	Pillows      []model.PillowSpec                   `json:"pillows,omitempty"`
+	ID           string                  `json:"id"`
+	Volumes      []model.VolumeSpec      `json:"volumes"`
+	Pillows      []model.PillowSpec      `json:"pillows"`
+	PortMappings []model.PortMappingSpec `json:"port_mappings,omitempty"`
 }
 
 // waitForLocalCleanup only joins an active attempt. An idle/failed cleanup is

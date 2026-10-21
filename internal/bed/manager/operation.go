@@ -21,7 +21,7 @@ import (
 	"github.com/qiankunli/hostel/protocol"
 )
 
-// OperationKind classifies stateless bed operations (docs/kernel.md).
+// OperationKind classifies stateless bed operations (docs/bed.md).
 type OperationKind = protocol.OperationKind
 
 const (
@@ -35,7 +35,7 @@ const (
 )
 
 // Operation timeout policy: every operation is bounded so eviction's
-// refuse-and-retry always converges (docs/kernel.md). A non-positive
+// refuse-and-retry always converges (docs/bed.md). A non-positive
 // timeout gets the default; beyond the max is clamped, not rejected.
 const (
 	DefaultOperationTimeout = 5 * time.Minute
@@ -76,7 +76,7 @@ func (m *Manager) BeginOperation(b *managedBed, kind OperationKind, timeout time
 		m.mu.Unlock()
 		return nil, ErrBedUnavailable
 	}
-	if b.Spec().HasMainProcesses() && b.Bed.Status().Lifecycle.Phase != PhaseResident {
+	if b.Bed.Status().Lifecycle.Phase != PhaseResident {
 		b.mu.Unlock()
 		m.mu.Unlock()
 		return nil, ErrBedUnavailable

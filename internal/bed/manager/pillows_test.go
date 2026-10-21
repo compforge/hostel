@@ -136,9 +136,9 @@ func waitPillow(t *testing.T, m *Manager, b *Resident, name string, predicate fu
 	return pillow.Status{}
 }
 
-func TestBedPillowsShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
+func TestPillowMainProcessesAreOptionalPerBed(t *testing.T) {
 	m, specs, ports := testPillowManager(t)
-	if _, err := m.InitializeBedWithOptions(t.Context(), "with-pillows", testPillowOptions(specs)); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "with-pillows", testPillowOptions(specs)); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "with-pillows")
@@ -161,13 +161,13 @@ func TestBedPillowsShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
 	if err != nil || string(data) != "from-file" {
 		t.Fatalf("pillow did not resolve credential file: %q %v", data, err)
 	}
-	if _, err := m.InitializeBed(t.Context(), b.Name); !errors.Is(err, ErrPillowsConflict) {
+	if _, err := m.InitializeBed(t.Context(), b.Name, CreateOptions{Pillows: testWorkspacePillows()}); !errors.Is(err, ErrPillowsConflict) {
 		t.Fatalf("explicit empty create changed pillows: %v", err)
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, testPillowOptions(specs)); err != nil {
+	if _, err := m.InitializeBed(t.Context(), b.Name, testPillowOptions(specs)); err != nil {
 		t.Fatal(err)
 	}
-	plain, err := m.Ensure(t.Context(), "plain")
+	plain, err := declareTestBed(m, t.Context(), "plain")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestBedPillowsShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
 
 func TestBedPillowRestartChangesIdentityAndToken(t *testing.T) {
 	m, specs, _ := testPillowManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "restart", testPillowOptions(specs[:1]))
+	_, err := m.InitializeBed(t.Context(), "restart", testPillowOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestBedPillowRestartChangesIdentityAndToken(t *testing.T) {
 
 func TestBedPillowExecutionsUseCommonRegistry(t *testing.T) {
 	m, specs, _ := testPillowManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "execution", testPillowOptions(specs[:1]))
+	_, err := m.InitializeBed(t.Context(), "execution", testPillowOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestBedPillowNeverPublishesSquatterAndRetriesBinding(t *testing.T) {
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "foreign ready") })}
 	go srv.Serve(squatter)
 	defer srv.Close()
-	if _, err := m.InitializeBedWithOptions(t.Context(), "squatter", testPillowOptions(specs[:1])); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "squatter", testPillowOptions(specs[:1])); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "squatter")
@@ -285,7 +285,7 @@ func TestBedPillowNeverPublishesSquatterAndRetriesBinding(t *testing.T) {
 
 func TestBedPillowHoldCanBeReleasedEarly(t *testing.T) {
 	m, specs, _ := testPillowManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "hold", testPillowOptions(specs[:1]))
+	_, err := m.InitializeBed(t.Context(), "hold", testPillowOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestBedPillowHoldCanBeReleasedEarly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := m.Ensure(t.Context(), "other")
+	other, err := declareTestBed(m, t.Context(), "other")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestBedPillowHoldCanBeReleasedEarly(t *testing.T) {
 
 func TestBedPillowLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
 	m, specs, ports := testPillowManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "recover", testPillowOptions(specs[:1]))
+	_, err := m.InitializeBed(t.Context(), "recover", testPillowOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,6 +342,9 @@ func TestBedPillowLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
 	next.mu.Unlock()
 	if !identityRetained {
 		t.Fatal("recovery replaced local Bed identity")
+	}
+	if _, err := next.InitializeBed(t.Context(), b.Name, testPillowOptions(specs[:1])); err != nil {
+		t.Fatal(err)
 	}
 	recovered, err := next.Ensure(t.Context(), b.Name)
 	if err != nil {

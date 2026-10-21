@@ -15,7 +15,7 @@ Bed Manager 解析调用方的 Bed Name，Amenity Manager 以本地 Bed ID 维�
 创建与回收串行协调；设施之间的实现差异由各自类型化动作接口承接。
 
 产物归属、访问屏障和持久化分别判断：截图与下载写入对应 Bed workspace，file API 按
-BedFS 读取，Store 按配置选择快照子树。产物落在 Bed 目录，并不自动保证其他 Bed 进程
+BedFS 读取，Store 按 Volume persistence 选择完整持久卷。产物落在 Bed 目录，并不自动保证其他 Bed 进程
 无法访问；这仍依赖文件机制。BrowserContext 的 cookie/localStorage 等运行态不进入快照。
 
 ## 二、主流程
@@ -33,7 +33,7 @@ Chromium 支持 launch 或 attach。launch 由 Hostel 惰性启动浏览器，�
 浏览器不可用不阻止其他 Hostel 能力启动，使用浏览器的请求明确失败。
 
 MCP 在 daemon 内维护连接池，没有独立子进程；调用期间持有 operation，空闲连接不阻止
-Bed 回收。连接身份、请求快照和超时契约见 [mcp.md](mcp.md)。
+Bed 回收。连接身份、请求快照和超时契约见下文 MCP 章节。
 
 ## 三、关键设计
 
@@ -69,7 +69,7 @@ CDP token 属于 Bed，由进程环境或 browser/info 下发；铸造 token 不
 
 Bed teardown 关闭绑定的 Tenant，先撤销 token，再清理资源。已有 CDP 连接由 Bed session
 生命周期撤销，不能只删除 token 而放任旧连接继续使用设施。关闭失败的 Tenant 禁止重新获取
-凭据，仍保留资源清理责任。完整回收次序见 [kernel.md](kernel.md)。
+凭据，仍保留资源清理责任。完整回收次序见 [bed.md](bed.md)。
 
 ### 两级状态由领域拥有
 
@@ -117,3 +117,64 @@ token 生命周期、按需启停和回收。浏览器相关验证需要实际 C
 设施初始化与昂贵资源启动分开：Start 完成必要初始化，首次使用可以惰性启动资源，空闲时可以回收资源并保留 Tenant 身份和有效凭据。共享启动由设施协调；Tenant 资源操作按 Tenant 协调，不因一个 Tenant 的远端慢操作串行化所有 Tenant。
 
 状态锁只保护内存快照，不跨浏览器启动、CDP 调用或资源释放。全局与 Tenant Status、凭据读取均不等待这些操作；超时或取消终结等待，部分资源仍保留清理归属。关闭 Tenant 先撤销凭据，再清理资源；设施关闭阻止新工作，并等待自己拥有的后台任务退出。
+
+## MCP
+
+Hostel 在 carrier 内维护远程 MCP 连接，每个 bed 拥有独立的配置和连接池。
+MCP server 可以位于外部；设施支持 SSE 和 Streamable HTTP 的工具发现与执行，
+不启动 stdio server，不承担上层平台的工具授权、调度或持久化配置。
+
+配置与连接切分属于 [Bed 隔离](isolation.md) 的设施维度，整体所有权见
+[amenity.md](amenity.md)。它不为远端 MCP server 创建租户，也不保证远端存储按 Bed 隔离；
+远端数据授权取决于所提供的凭据及服务自身策略。
+
+### 调用与隔离
+
+HTTP 请求沿用 `X-Hostel-Bed`（或 `?bed=`）选择 bed，省略时使用 default。
+这些接口与 `/command` 一样属于可信控制面：bed 标识仅负责路由，不是认证凭据，
+接入方负责入口认证和 bed 访问授权。设施使用 carrier 网络和 HTTP 客户端的出网策略，
+不声称继承某个 bed executor 的网络隔离。
+
+- `PUT /v1/mcp/config` 原子替换该 bed 的默认 bundle。
+- `POST /v1/mcp/servers/{name}/tools/list` 使用默认 bundle 列举工具。
+- `POST /v1/mcp/servers/{name}/tools/call` 优先使用请求自带 bundle，否则使用默认配置。
+
+Bundle 包含 `revision`、`servers`、可选 `secrets`。Server 包含 `url`、
+`transport`（默认 `streamable_http`）、可选 `headers` 与 `timeoutMs`。
+Header 的 `${NAME}` 只从本 bundle 的 secrets 展开，缺失时拒绝配置，绝不读取 carrier env。
+调用包含 `name`、可选 `arguments` 对象、`_meta` 和 `bundle`。
+返回 MCP SDK 的完整工具结果，包括 `content`、`structuredContent`、`isError`；
+`isError=true` 是工具执行结果，HTTP/连接失败则以非 2xx 报告。
+
+连接身份由 bed、revision、配置内容摘要与 server name 共同决定。不能只信任调用方的
+revision：相同 revision 配不同 header 也必须建立不同连接。请求快照与默认配置独立，
+并发更新默认 bundle 不改变已开始调用的凭据。配置输入按值保存，不持有调用方可变 map。
+同一连接的操作串行，不同连接可以并行。
+
+### 连接生命周期
+
+一次 MCP 请求是 bed operation，执行期间禁止普通 eviction。空闲连接只是可丢弃的
+amenity 状态，不计作活跃 operation，不让 bed 永久 pinned。Bed evict/purge 或 daemon
+退出调用 `ReleaseTenant`，取消在途请求、关闭连接并清除内存配置。
+恢复后的 bed 配置为空；上层重新 PUT 或在 call 携带 bundle 即可恢复执行。
+
+每个 pool 有最大连接数、空闲回收与操作 deadline；达到连接上限时优先淘汰空闲连接，
+全部忙时返回容量错误。相同配置复用连接，握手受请求超时控制，建立后的 SSE 流随
+pool 存活，不随第一次调用结束而关闭。协议或网络失败丢弃连接，由下一次调用重建；
+当前工具调用不自动重放，因为响应丢失时无法判断有副作用的工具是否已执行。
+
+连接池、操作期限和输入大小均有上限。`pkg/mcpproxy.Options` 供嵌入方配置客户端、容量与期限。默认 HTTP client 拒绝重定向，部署方可注入统一 TLS/egress/tracing client。
+
+### 嵌入与验证
+
+- `pkg/mcpproxy` 是有意公开的单 sandbox Go API：`New`、`Configure`、`ListTools`、
+  `CallTool`、`Close`。它不依赖 bed、Gin 或平台业务，可以由其它 sandbox runtime 复用。
+- `internal/amenity/mcp.go` 将 pool 生命周期绑定到 bed。
+- `internal/api/apiv1/handler/mcp.go` 负责请求大小、operation、HTTP 错误及低敏日志。
+
+SDK 负责 MCP 握手、分页和传输；普通日志只记录 bed、路由、状态和耗时，不记录 bundle、
+secret、header 或工具参数，也不回显可能包含凭据的上游 transport 错误正文。
+
+`pkg/mcpproxy` 测试覆盖两种真实 MCP transport、配置版本并发、结果与元数据、取消、
+容量和连接回收；`tests/e2e` 使用真实 Hostel 二进制验证两个 bed 的配置/调用隔离和清理。
+运行方式见 [单机 E2E](../tests/e2e/README.md)。

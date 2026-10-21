@@ -184,7 +184,7 @@ func newTransferTestServer(t *testing.T, fixture *transferS3Fixture) (*testServe
 			t.Error(err)
 		}
 	})
-	b, err := mgr.Ensure(t.Context(), "one")
+	b, err := declareTestBed(mgr, t.Context(), "one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,8 +247,8 @@ func TestTransfersHTTPRoundTripNoopReplayAndScope(t *testing.T) {
 	req := transferRequest{ID: "upload", Source: transferEndpoint{Type: "bed", Path: "/workspace/source"}, Destination: transferEndpoint{Type: "s3", Key: "export/"}}
 	initial := startTestTransfer(t, s, req, 202)
 	result := awaitTestTransfer(t, s, req.ID)
-	if result.State != store.TransferSucceeded || result.Files != 1 || result.Bytes != 7 || b.Spec().Sync != store.SyncNoop {
-		t.Fatalf("upload: %+v sync=%s", result, b.Spec().Sync)
+	if result.State != store.TransferSucceeded || result.Files != 1 || result.Bytes != 7 || b.Spec().StoreKind != store.SyncNoop {
+		t.Fatalf("upload: %+v sync=%s", result, b.Spec().StoreKind)
 	}
 	req.InstanceID = initial.InstanceID
 	replay := startTestTransfer(t, s, req, 200)
@@ -429,7 +429,7 @@ func TestResticTransfersHTTPReferenceAndNoopBed(t *testing.T) {
 	req := transferRequest{Sync: store.SyncRestic, ID: "restic-upload", Source: transferEndpoint{Type: "bed", Path: "/workspace/source"}, Destination: transferEndpoint{Type: "s3", Key: "tenants/test/repositories/one"}}
 	first := startTestTransfer(t, s, req, 202)
 	result := awaitTestTransfer(t, s, req.ID)
-	if result.State != store.TransferSucceeded || len(result.Ref) != 64 || result.Sync != store.SyncRestic || b.Spec().Sync != store.SyncNoop {
+	if result.State != store.TransferSucceeded || len(result.Ref) != 64 || result.Sync != store.SyncRestic || b.Spec().StoreKind != store.SyncNoop {
 		t.Fatalf("restic upload: %+v", result)
 	}
 	firstRef := result.Ref

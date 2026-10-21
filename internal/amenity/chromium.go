@@ -39,7 +39,7 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-// ChromiumConfig selects launch-or-attach (docs/amenity.md §5).
+// ChromiumConfig selects launch-or-attach (docs/amenity.md#二主流程).
 type ChromiumConfig struct {
 	Ports *hostnetwork.PortManager
 	// ExecPath launches a hostel-owned Chromium ("" = probe common locations).
@@ -89,7 +89,7 @@ type chromium struct {
 	idleTimer  *time.Timer
 
 	// Crash supervision (the supervisor is the amenity itself, in-daemon —
-	// docs/kernel.md 〈进程树〉): a watcher on the master context detects the
+	// docs/pillow.md#命令session-与进程承载): a watcher on the master context detects the
 	// browser dying and flips back to idle with contexts dropped, so the next action
 	// lazily rebuilds resources under the same Tenant identity — no restart storm, and a bed
 	// simply sees a fresh browser. notBefore gates startup with

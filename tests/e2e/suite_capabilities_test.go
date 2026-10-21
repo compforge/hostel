@@ -79,7 +79,8 @@ func TestSuiteWithSharedCapabilities(t *testing.T) {
 			must2xx(t, "suite session", response)
 			assertCommandExit(t, result, 0)
 			waitRootFile(t, c, bed, "/workspace/session-marker", "session")
-			result, response = c.command(t, "suite-neighbor", map[string]any{"command": "/bin/cat \"$TARGET\"", "envs": map[string]string{"TARGET": filepath.Join(target.bedsRoot, bed, "data/workspace/command-marker")}, "timeout": 5000})
+			must2xx(t, "declare Bed", c.createBed(t, "suite-neighbor"))
+			result, response = c.command(t, "suite-neighbor", map[string]any{"command": "/bin/cat \"$TARGET\"", "envs": map[string]string{"TARGET": filepath.Join(target.bedsRoot, bed, "volumes/workspace/command-marker")}, "timeout": 5000})
 			must2xx(t, "sibling file access", response)
 			if result.Result == nil || result.Result.Process.ExitCode == nil || *result.Result.Process.ExitCode == 0 {
 				t.Fatalf("suite exposed sibling file: %+v", result)
@@ -108,7 +109,7 @@ func TestSuiteWithSharedCapabilities(t *testing.T) {
 				t.Fatalf("missing failed probe evidence: %+v", status)
 			}
 			// File-suite does not satisfy an explicit network-policy requirement.
-			response, err = c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "needs-policy", "networkPolicy": map[string]any{"defaultAction": "deny"}}, nil)
+			response, err = c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "needs-policy", "networkPolicy": map[string]any{"defaultAction": "deny"}, "pillows": workspacePillows()}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

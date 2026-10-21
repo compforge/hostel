@@ -44,7 +44,7 @@ func TestResourcePressureBackpressureAndReporting(t *testing.T) {
 	s := newTestServer(t)
 	s.mgr.SetResourceAdmission(rejectingResourceAdmission{})
 
-	rec := do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, map[string]string{BedHeader: "new-tenant"})
+	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"new-tenant","pillows":[{"name":"agent"}]}`), nil)
 	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "RESOURCE_PRESSURE") {
 		t.Fatalf("resource pressure = %d %s", rec.Code, rec.Body.String())
 	}

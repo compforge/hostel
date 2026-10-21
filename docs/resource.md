@@ -8,7 +8,7 @@ Hostel 的资源治理分成四层：**采集事实 → 汇报事实 → 执行�
 是否“客满”；最后一层约束单个 Bed 的资源消耗，以实现邻居保护。当前仍共享 Carrier
 预算，不能把记账或准入成功当成每个 Bed 已获得独立资源保障。
 
-隔离目标与实际边界见 [isolation.md](isolation.md)，持久化见 `store.md`。
+隔离目标与实际边界见 [isolation.md](isolation.md)，持久化见 `volumes.md`。
 
 ## 一、理念与概念
 
@@ -117,7 +117,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 
 ### 容量状态口径
 
-生命周期事实由 [核心模型](kernel.md#请求bed-与实例状态) 定义。一个 Bed 在某一时刻只落在一个具体状态。代码中的 `phase`、`activity`、`readiness` 和
+生命周期事实由 [核心模型](bed.md#请求bed-与实例状态) 定义。一个 Bed 在某一时刻只落在一个具体状态。代码中的 `phase`、`activity`、`readiness` 和
 `data_synced` 是正交事实；讨论容量时，把它们组合成互斥的叶子状态，再投影到三个有名集合：
 
 | 具体状态 | `occupied` | `resident` | `pinned` |

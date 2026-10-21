@@ -34,16 +34,16 @@ func TestLinuxNetworkPolicyAPI(t *testing.T) {
 		t.Fatalf("network unavailable: %+v", manager.Status())
 	}
 	s.mgr.SetNetworkManager(manager)
-	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"policy-a","sync":"noop","networkPolicy":{"defaultAction":"deny"}}`), nil)
+	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"policy-a","sync":"noop","networkPolicy":{"defaultAction":"deny"},"pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`), nil)
 	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, err := s.mgr.Ensure(ctx, "policy-a"); err != nil {
+	if _, err := declareTestBed(s.mgr, ctx, "policy-a"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.mgr.Ensure(ctx, "policy-b"); err != nil {
+	if _, err := declareTestBed(s.mgr, ctx, "policy-b"); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ method, body string }{

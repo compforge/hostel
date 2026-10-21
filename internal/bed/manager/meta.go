@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/osx"
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
@@ -46,12 +47,12 @@ type Usage struct {
 	LastRestoreMs int64 `json:"last_restore_ms,omitempty"`
 }
 
-// bedMeta is hostel's durable per-bed bookkeeping (docs/store.md §4).
+// bedMeta is hostel's durable per-bed bookkeeping (docs/volumes.md#本地数据与生命周期).
 type bedMeta struct {
-	SyncPaths []string       `json:"sync_paths"`
-	Sync      store.SyncKind `json:"sync,omitempty"`
-	Version   int            `json:"version"`
-	BedID     string         `json:"bed_id"`
+	Volumes []model.VolumeSpec `json:"volumes"`
+	Sync    store.SyncKind     `json:"sync,omitempty"`
+	Version int                `json:"version"`
+	BedID   string             `json:"bed_id"`
 	// CreatedAt is when the bed identity was first created — it survives
 	// evict/resume cycles via the snapshot.
 	CreatedAt time.Time `json:"created_at"`
@@ -59,7 +60,7 @@ type bedMeta struct {
 	// dirty tracking never mistakes a failed upload for a fresh snapshot.
 	LastPersistedAt time.Time `json:"last_persisted_at,omitzero"`
 	// Generation counts persist attempts, monotonically; it is the freshness
-	// token for local copies (docs/store.md): luggage is current iff its
+	// token for local copies (docs/volumes.md): luggage is current iff its
 	// generation >= the snapshot's. Bumped BEFORE packing so the snapshot
 	// carries its own generation; a failed upload leaves the local copy ahead,
 	// which reads as "locally dirty" — accurate, and the next persist re-bumps.
@@ -86,19 +87,11 @@ func loadMeta(bedDir string) (bedMeta, bool) {
 	if err != nil {
 		return m, false // missing = fresh bed; other errors surface on save
 	}
-	decoded := struct {
-		*bedMeta
-		LegacyStore store.SyncKind `json:"store"`
-	}{bedMeta: &m}
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	if err := json.Unmarshal(data, &m); err != nil {
 		// A corrupt meta gets rebuilt by the caller — losing CreatedAt is
 		// survivable, but never silently: this is the bed's identity record.
 		log.Printf("bed: corrupt %s in %s (%v); rebuilding meta", metaFile, bedDir, err)
 		return bedMeta{}, false
-	}
-	// Existing luggage must keep its policy, especially an explicit noop.
-	if m.Sync == "" {
-		m.Sync = decoded.LegacyStore
 	}
 	return m, true
 }

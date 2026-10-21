@@ -36,6 +36,10 @@ make build
 在另一个终端运行命令，并下载生成的文件：
 
 ```bash
+curl -fsS http://localhost:8872/v1/beds \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"agent-1","pillows":[{"name":"agent","mounts":[{"volume":"workspace","path":"/workspace"}]}]}'
+
 curl -fsSN http://localhost:8872/command \
   -H 'Content-Type: application/json' \
   -H 'X-Hostel-Bed: agent-1' \
@@ -45,7 +49,8 @@ curl -fsS 'http://localhost:8872/files/download?path=/workspace/hello.txt' \
   -H 'X-Hostel-Bed: agent-1'
 ```
 
-首次执行会按需创建 bed。后续命令和文件请求使用相同的 `X-Hostel-Bed`；省略时使用 `default` bed。
+创建 Bed 必须显式声明至少一个 Pillow。数据请求等待已声明 Bed 就绪，未声明返回 404。
+后续命令和文件请求使用相同的 `X-Hostel-Bed`；省略时使用 daemon 启动时声明的 `default` bed。
 普通命令各自在新进程中执行，`/session` 用于创建常驻 shell。
 命令中建议使用 `cwd` 和相对路径：文件 API 的路径归属于 bed，shell 文本中的绝对路径则由实际进程环境解释。
 

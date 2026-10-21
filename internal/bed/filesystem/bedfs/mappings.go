@@ -16,7 +16,7 @@ type mappedRoot struct {
 }
 
 // Mount is an internal, prepared filesystem binding. Volume owns admission and lifecycle.
-// Owned is set only for runtime-allocated empty directories, never host_path sources.
+// Owned is set only for Hostel-managed volumes, never host_path sources.
 type Mount struct {
 	Source, Target  string
 	ReadOnly, Owned bool

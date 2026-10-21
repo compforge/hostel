@@ -124,8 +124,8 @@ func (s *packStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, erro
 	return info, nil
 }
 
-func (s *packStore) Persist(ctx context.Context, bedID, dir string, generation int64, syncPaths []string) error {
-	filter, err := newSnapshotFilter(syncPaths)
+func (s *packStore) Persist(ctx context.Context, bedID, dir string, generation int64, volumeRoots []string) error {
+	filter, err := newSnapshotFilter(volumeRoots)
 	if err != nil {
 		return err
 	}

@@ -75,8 +75,8 @@ func (s *tarStore) Stat(ctx context.Context, bedID string) (*SnapshotInfo, error
 	return info, nil
 }
 
-func (s *tarStore) Persist(ctx context.Context, bedID, dir string, generation int64, syncPaths []string) error {
-	filter, err := newSnapshotFilter(syncPaths)
+func (s *tarStore) Persist(ctx context.Context, bedID, dir string, generation int64, volumeRoots []string) error {
+	filter, err := newSnapshotFilter(volumeRoots)
 	if err != nil {
 		return err
 	}

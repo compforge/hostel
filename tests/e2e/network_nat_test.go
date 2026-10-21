@@ -44,6 +44,7 @@ func TestNetworkNAT(t *testing.T) {
 			command := "E2E_NETWORK_PROBE=nat-client E2E_NETWORK_ADDRESS=" + shellx.Quote(address) +
 				" E2E_NAT_SOURCE=" + shellx.Quote(source) + " " + shellx.Quote(binary) + " -test.run=^TestNetworkNATProbe$"
 			for _, bed := range []string{"nat-a", "nat-b"} {
+				must2xx(t, "declare Bed", c.createBed(t, bed))
 				result, response := c.command(t, bed, map[string]any{"command": command, "timeout": 8000})
 				must2xx(t, "Bed NAT connection", response)
 				assertCommandExit(t, result, 0)

@@ -66,3 +66,34 @@ func TestBedEvictStartsFreshWithNoopStoreAndPurge(t *testing.T) {
 		return !hasBed(got, "lifecycle-bed")
 	})
 }
+
+// +case:id=bed_explicit_pillows,desc=`Reject empty declarations and data access before declaration`,expect=`400/404 without creating a Bed; an explicit Pillow enables command execution`
+func TestExplicitBedPillowDeclaration(t *testing.T) {
+	c := startTarget(t, targetOptions{isolation: "dorm"}).client
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	for _, request := range []map[string]any{{"id": "undeclared"}, {"id": "undeclared", "pillows": nil}, {"id": "undeclared", "pillows": []any{}}} {
+		response, err := c.json(ctx, "POST", "/v1/beds", "", request, nil)
+		if err != nil || response.Status != 400 {
+			t.Fatalf("missing Pillow: status=%d err=%v", response.Status, err)
+		}
+	}
+	_, response := c.command(t, "undeclared", map[string]any{"command": "true"})
+	if response.Status != 404 {
+		t.Fatalf("access created Bed: %d %s", response.Status, response.Body)
+	}
+	if hasBed(c.inventory(t), "undeclared") {
+		t.Fatal("undeclared Bed entered inventory")
+	}
+	response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "declared", "pillows": []map[string]any{{"name": "agent"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must2xx(t, "declare Pillow", response)
+	result, response := c.command(t, "declared", map[string]any{"command": "printf ready"})
+	must2xx(t, "execute declared Bed", response)
+	assertCommandExit(t, result, 0)
+	if result.Stdout != "ready" {
+		t.Fatalf("unexpected output: %q", result.Stdout)
+	}
+}

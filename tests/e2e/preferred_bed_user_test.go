@@ -45,6 +45,8 @@ func TestPreferredBedUser(t *testing.T) {
 			}
 			t.Logf("preferred=1200:1300 actual=%d:%d reason=%s", p.BedUser.UID, p.BedUser.GID, p.Selection.Reason)
 			const bed = "preferred-user"
+			must2xx(t, "declare Bed", c.createBed(t, bed))
+
 			must2xx(t, "upload as selected user", c.upload(t, bed, "/workspace/seed.txt", []byte("seed")))
 			command := "test \"$(cat seed.txt)\" = seed && printf identity-ok > identity.txt && id -u && id -g && grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status"
 			check := func(result commandResult) {

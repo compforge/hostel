@@ -135,7 +135,7 @@ func (s *Handler) RegisterRoutes(e *gin.Engine) {
 		v1.POST("/:bedId/transfers", s.startTransfer)
 		v1.GET("/:bedId/transfers/:transferId", s.transferStatus)
 		v1.DELETE("/:bedId/transfers/:transferId", s.cancelTransfer)
-		// Browser amenity verbs (docs/amenity.md §2) — bed-scoped actions,
+		// Browser amenity verbs (docs/amenity.md#通过-bed-入口访问共享设施) — bed-scoped actions,
 		// never a raw CDP passthrough.
 		v1.POST("/:bedId/browser/goto", s.browserGoto)
 		v1.POST("/:bedId/browser/screenshot", s.browserScreenshot)
@@ -153,6 +153,10 @@ func (s *Handler) RegisterRoutes(e *gin.Engine) {
 // respondBedError maps bed resolution/admission failures: a full or
 // resource-pressured instance is 429 backpressure, anything else is a bad id.
 func respondBedError(c *gin.Context, err error) {
+	if errors.Is(err, hostel.ErrNotFound) {
+		respondError(c, http.StatusNotFound, apiview.ErrBedInvalid, "bed not found")
+		return
+	}
 	if errors.Is(err, hostel.ErrInvalidArgument) {
 		var detail *hostel.Error
 		if errors.As(err, &detail) {
@@ -164,10 +168,7 @@ func respondBedError(c *gin.Context, err error) {
 		respondError(c, http.StatusConflict, apiview.ErrBedInvalid, err.Error())
 		return
 	}
-	if errors.Is(err, bed.ErrSyncConflict) {
-		respondError(c, http.StatusConflict, apiview.ErrBedSyncConflict, err.Error())
-		return
-	}
+
 	if errors.Is(err, bed.ErrResourcePressure) {
 		respondError(c, http.StatusTooManyRequests, apiview.ErrResourcePressure, err.Error())
 		return
@@ -190,8 +191,8 @@ func respondBedError(c *gin.Context, err error) {
 const resolvedBedContextKey = "hostel.resolved-bed"
 
 // bedOf resolves the target bed from the request (header/query → default),
-// creating it on first use. Adapters that require an existing bed may inject a
-// pre-resolved value, which also prevents their read paths from creating one.
+// waiting for its explicit declaration to become ready. Adapters may inject a
+// pre-resolved value; no data path creates a Bed.
 // On invalid id it writes an error and returns nil.
 func (s *Handler) bedOf(c *gin.Context) *bed.Resident {
 	if resolved, ok := c.Get(resolvedBedContextKey); ok {
@@ -213,7 +214,7 @@ func (s *Handler) bedOf(c *gin.Context) *bed.Resident {
 
 // withOp wraps a request-scoped handler in one operation of the given kind:
 // the bed is resolved, held for the handler's lifetime and released on return
-// (docs/kernel.md: an operation's span is one request). Explicit
+// (docs/bed.md: an operation's span is one request). Explicit
 // BeginOperation is reserved for work whose span is NOT the request —
 // background /command outlives it, foreground runs take their timeout from
 // the request body, isolatedCreate creates the bed it then holds.

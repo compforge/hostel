@@ -66,10 +66,11 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		spec := b.Spec()
 		meta, ok := loadMeta(spec.Dir)
 		if !ok {
-			meta = bedMeta{Version: 1, BedID: b.Name, CreatedAt: now, Sync: spec.Sync}
+			meta = bedMeta{Version: 1, BedID: b.Name, CreatedAt: now, Sync: spec.StoreKind}
 		}
-		meta.Sync = spec.Sync
-		meta.SyncPaths = spec.SyncPaths
+		meta.Sync = spec.StoreKind
+		meta.Version = 2
+		meta.Volumes = model.ManagedVolumes(spec.Volumes)
 		if staged.Snapshot != nil {
 			meta.SnapshotGeneration = staged.Snapshot.Generation
 			meta.SnapshotBytes = staged.Snapshot.Bytes

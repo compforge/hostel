@@ -105,7 +105,7 @@ type ResidentStatus struct {
 	RetainUntil        time.Time
 	Inflight           int
 	// Operations breaks Inflight down by kind; Sessions counts open stateful
-	// holds by kind (docs/kernel.md: sessions never raise Activity).
+	// holds by kind (docs/bed.md: sessions never raise Activity).
 	Operations map[OperationKind]int
 	Sessions   map[SessionKind]int
 	Usage      Usage
@@ -143,7 +143,7 @@ func (b *managedBed) activityLocked() Activity {
 }
 
 func (b *managedBed) dataSyncedLocked() bool {
-	return b.Spec().Sync == store.SyncNoop || !b.lastActiveAt.After(b.persistedAt)
+	return b.Spec().StoreKind == store.SyncNoop || !b.lastActiveAt.After(b.persistedAt)
 }
 
 // pinnedLocked is a compound capacity fact, not another lifecycle state.

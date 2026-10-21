@@ -36,7 +36,7 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	if m.Files(b) != nil {
 		return nil
 	}
-	home := filepath.Join(b.Spec().Dir, "data")
+	home := filepath.Join(b.Spec().Dir, "rootfs")
 	if err := os.MkdirAll(filepath.Join(home, "workspace"), 0755); err != nil {
 		return err
 	}

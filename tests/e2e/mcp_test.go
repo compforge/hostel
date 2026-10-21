@@ -55,6 +55,7 @@ func TestMCPRemoteTools(t *testing.T) {
 				return map[string]any{"revision": "same-revision", "servers": map[string]any{"remote": map[string]any{"url": fixture.URL + path, "transport": transport, "headers": map[string]string{"Authorization": "Bearer ${TOKEN}"}}}, "secrets": map[string]string{"TOKEN": token}}
 			}
 			for _, id := range []string{"mcp-a", "mcp-b"} {
+				must2xx(t, "declare Bed", c.createBed(t, id))
 				configured := request("PUT", "/v1/mcp/config", id, makeBundle(id))
 				must2xx(t, "configure", configured)
 				list := request("POST", "/v1/mcp/servers/remote/tools/list", id, nil)

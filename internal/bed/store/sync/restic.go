@@ -77,8 +77,8 @@ func (s *resticStore) readHead(ctx context.Context, id string) (resticHead, erro
 	return head, nil
 }
 
-func (s *resticStore) Persist(ctx context.Context, id, dir string, generation int64, syncPaths []string) error {
-	filter, err := newSnapshotFilter(syncPaths)
+func (s *resticStore) Persist(ctx context.Context, id, dir string, generation int64, volumeRoots []string) error {
+	filter, err := newSnapshotFilter(volumeRoots)
 	if err != nil {
 		return err
 	}

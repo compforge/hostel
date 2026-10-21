@@ -24,7 +24,7 @@ python3 tests/e2e/environments/kubernetes/run.py \
 每组运行 dorm / room / suite 的 Auto 文件机制，加全关闭机制的 carrier 对照，
 分别覆盖 local / supervisor。Network、cgroup 在本用例中关闭。
 每个组合创建两个 Bed 和可被 Bed UID 访问的测试源目录；不访问现有业务数据。
-具体断言与 profile 使用见 [环境说明](../e2e-environments.md#rootfs-与-pathmappings-权限矩阵)。
+具体断言与 profile 使用见 [环境说明](../e2e-environments.md#rootfs-与-hostpath-volumesmounts-权限矩阵)。
 
 ## 实测结果
 

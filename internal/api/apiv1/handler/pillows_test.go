@@ -35,7 +35,7 @@ func TestPillowManagementRoutesAndDeclarationConflict(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("create %d: %s", w.Code, w.Body)
 	}
-	b, err := m.Ensure(t.Context(), "pillow-bed")
+	b, err := declareTestBed(m, t.Context(), "pillow-bed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestPillowManagementRoutesAndDeclarationConflict(t *testing.T) {
 	if !b.Status().LastActiveAt.Equal(before) {
 		t.Fatal("pillow diagnostics renewed activity")
 	}
-	w = request(http.MethodPost, "/v1/beds", `{"id":"pillow-bed"}`)
+	w = request(http.MethodPost, "/v1/beds", `{"id":"pillow-bed","pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("declaration conflict: %d %s", w.Code, w.Body)
 	}
@@ -87,9 +87,9 @@ func TestPillowDefaultHTTPContract(t *testing.T) {
 	for _, body := range []string{
 		`{"id":"invalid","pillows":null}`,
 		`{"id":"invalid","pillows":[]}`,
-		`{"id":"invalid","services":[]}`,
-		`{"id":"invalid","env":{"VALUE":"legacy"}}`,
-		`{"id":"invalid","mounts":[]}`,
+		`{"id":"invalid","services":[],"pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`,
+		`{"id":"invalid","env":{"VALUE":"legacy"},"pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`,
+		`{"id":"invalid","mounts":[],"pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`,
 		`{"id":"invalid","pillows":[{"name":"main","process":{}}]}`,
 		`{"id":"invalid","pillows":[{"name":"main","command":[]}]}`,
 	} {

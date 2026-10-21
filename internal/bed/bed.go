@@ -35,13 +35,11 @@ type bed struct {
 type Spec struct {
 	Volumes      []VolumeSpec
 	PortMappings []PortMappingSpec
-	// SyncPaths selects Store-managed BedFS data. nil defaults to /workspace; [] syncs metadata only.
-	SyncPaths []string
 	// Pillows are ordered; the first is the default execution environment.
 	Pillows         []PillowSpec
 	Dir             string
 	CreatedAt       time.Time
-	Sync            SyncKind
+	StoreKind       SyncKind // resolved Store implementation, derived from Volume policies
 	NetworkPolicy   *NetworkPolicy
 	RecoveryDirs    []string
 	LocalPresent    bool
@@ -62,7 +60,6 @@ func clonePolicy(p *NetworkPolicy) *NetworkPolicy {
 func cloneSpec(s Spec) Spec {
 	s.Volumes = CloneVolumes(s.Volumes)
 	s.PortMappings = slices.Clone(s.PortMappings)
-	s.SyncPaths = slices.Clone(s.SyncPaths)
 	s.Pillows = ClonePillows(s.Pillows)
 	s.NetworkPolicy = clonePolicy(s.NetworkPolicy)
 	s.RecoveryDirs = append([]string(nil), s.RecoveryDirs...)

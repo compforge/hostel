@@ -25,7 +25,7 @@ func TestBedVolumeConsumers(t *testing.T) {
 	if _, err := exec.LookPath("bwrap"); err != nil {
 		t.Skip("bwrap not installed")
 	}
-	for _, variant := range []struct{ backend, source string }{{"local", "empty_dir"}, {"supervisor", "empty_dir"}, {"local", "host_path"}, {"supervisor", "host_path"}} {
+	for _, variant := range []struct{ backend, source string }{{"local", "managed"}, {"supervisor", "managed"}, {"local", "host_path"}, {"supervisor", "host_path"}} {
 		backend := variant.backend
 		t.Run(backend+"/"+variant.source, func(t *testing.T) {
 			options := restrictedOptions()
@@ -33,7 +33,7 @@ func TestBedVolumeConsumers(t *testing.T) {
 			c := startTarget(t, targetOptions{isolation: "suite", executor: backend, config: &options}).client
 			for _, id := range []string{"volume-a", "volume-b"} {
 				id := id
-				volume := map[string]any{"name": "shared", "empty_dir": map[string]any{}}
+				volume := map[string]any{"name": "shared", "managed": map[string]any{"persistence": "none"}}
 				var hostSource string
 				if variant.source == "host_path" {
 					hostSource = t.TempDir()

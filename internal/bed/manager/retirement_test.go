@@ -42,7 +42,7 @@ func TestFailedRetirementKeepsIdentityAndDataUntilRetry(t *testing.T) {
 	facility := &failingRelease{err: errors.New("upstream unavailable")}
 	m.amenities = amenity.NewManager(hostfacts.Collect())
 	m.amenities.Register(facility)
-	b, err := m.Ensure(context.Background(), "retire")
+	b, err := declareTestBed(m, context.Background(), "retire")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestFailedRetirementKeepsIdentityAndDataUntilRetry(t *testing.T) {
 	if _, err := os.Stat(file); err != nil {
 		t.Fatalf("data deleted before cleanup: %v", err)
 	}
-	if _, err := m.Ensure(context.Background(), b.Name); !errors.Is(err, ErrBedUnavailable) {
+	if _, err := declareTestBed(m, context.Background(), b.Name); !errors.Is(err, ErrBedUnavailable) {
 		t.Fatalf("reused failed retirement: %v", err)
 	}
 	if len(m.ListLuggage()) != 0 || m.removeLuggage(b.Name) {
@@ -81,7 +81,7 @@ func TestFailedRetirementKeepsIdentityAndDataUntilRetry(t *testing.T) {
 	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("retired data remains: %v", err)
 	}
-	next, err := m.Ensure(context.Background(), b.Name)
+	next, err := declareTestBed(m, context.Background(), b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestRetirementResumesAtFailedComponent(t *testing.T) {
 	m.amenities.Register(facility)
 	net := &retryReleaseNetwork{err: errors.New("network busy")}
 	m.SetNetworkManager(network.WithProvider(net, m.owners.Network))
-	b, err := m.Ensure(t.Context(), "retry-components")
+	b, err := declareTestBed(m, t.Context(), "retry-components")
 	if err != nil {
 		t.Fatal(err)
 	}
