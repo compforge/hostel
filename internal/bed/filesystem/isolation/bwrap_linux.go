@@ -23,7 +23,6 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
@@ -184,7 +183,7 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 		return err
 	}
 	executable := rootExecutable(fs, cmd.Path, b.View(fs).MappingSupport())
-	argv := b.args(fs.Rootfs(), fs.Workdir(), processCwd, fs.PathMappings())
+	argv := b.args(fs.Rootfs(), fs.Workdir(), processCwd, fs.Mounts())
 	argv = append(argv[:len(argv)-1], systemFileArgs(fs)...)
 	argv = append(argv, "--")
 	userArgs := append([]string{executable}, cmd.Args[1:]...)
@@ -201,7 +200,7 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 
 func (b *bwrap) AllowsMappings() bool { return true }
 
-func (b *bwrap) args(home, workspace, cwd string, mappings []model.PathMapping) []string {
+func (b *bwrap) args(home, workspace, cwd string, mappings []bedfs.Mount) []string {
 	args := buildBwrapArgs(b.root, home, workspace, cwd, b.maskPaths, mappings, existingRuntimePaths()...)
 	if b.rootful != nil {
 		// Rootful preparation creates a mount namespace using existing host

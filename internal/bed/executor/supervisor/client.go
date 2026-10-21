@@ -72,7 +72,7 @@ func (c *Client) Start(processID string, argv []string, dir string, env []string
 	return c.start(processID, argv, dir, env, stdin, stdout, stderr, false, extraFiles)
 }
 
-func (c *Client) StartService(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File, extraFiles ...*os.File) (int, error) {
+func (c *Client) StartMain(processID string, argv []string, dir string, env []string, stdin, stdout, stderr *os.File, extraFiles ...*os.File) (int, error) {
 	return c.start(processID, argv, dir, env, stdin, stdout, stderr, true, extraFiles)
 }
 

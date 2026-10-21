@@ -144,7 +144,7 @@ func TestMappingReadCandidatesSurviveReopen(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fs.Rootfs(), "mnt/project/input.txt"), []byte("local"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	mappings := fs.PathMappings()
+	mappings := fs.Mounts()
 	root := fs.Rootfs()
 	if err := fs.Close(); err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestMappingReadCandidatesSurviveReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	if err := reopened.SetPathMappings(mappings); err != nil {
+	if err := reopened.SetMounts(mappings); err != nil {
 		t.Fatal(err)
 	}
 	got, err := NewReader(HostView(reopened), "").Read("/mnt/project/input.txt")

@@ -7,26 +7,26 @@ import (
 
 func TestSnapshotsDoNotGrantWriteAccess(t *testing.T) {
 	policy := &NetworkPolicy{DefaultAction: "deny", Egress: []NetworkRule{{Action: "allow", Target: "example.org"}}}
-	spec := Spec{Env: map[string]string{"KEY": "original"}, NetworkPolicy: policy, RecoveryDirs: []string{"original"}}
+	spec := Spec{NetworkPolicy: policy, RecoveryDirs: []string{"original"}, Pillows: []PillowSpec{{Name: "main", Env: map[string]string{"KEY": "original"}}}}
 	b := New("a", "", spec)
 	policy.Egress[0].Target = "mutated-input"
 	spec.RecoveryDirs[0] = "mutated-input"
-	spec.Env["KEY"] = "mutated-input"
+	spec.Pillows[0].Env["KEY"] = "mutated-input"
 	snapshot := b.Spec()
 	snapshot.NetworkPolicy.Egress[0].Target = "mutated-read"
 	snapshot.RecoveryDirs[0] = "mutated-read"
-	snapshot.Env["KEY"] = "mutated-read"
-	if got := b.Spec(); got.Env["KEY"] != "original" || got.NetworkPolicy.Egress[0].Target != "example.org" || got.RecoveryDirs[0] != "original" {
+	snapshot.Pillows[0].Env["KEY"] = "mutated-read"
+	if got := b.Spec(); got.Pillows[0].Env["KEY"] != "original" || got.NetworkPolicy.Egress[0].Target != "example.org" || got.RecoveryDirs[0] != "original" {
 		t.Fatalf("spec aliased: %+v", got)
 	}
 	owners := NewOwners()
 	var retainedEnv map[string]string
 	SpecWriter{}.Update(b, func(s *Spec) {
-		s.Env["KEY"] = "updated"
-		retainedEnv = s.Env
+		s.Pillows[0].Env["KEY"] = "updated"
+		retainedEnv = s.Pillows[0].Env
 	})
 	retainedEnv["KEY"] = "mutated-callback"
-	if b.Spec().Env["KEY"] != "updated" {
+	if b.Spec().DefaultPillow().Env["KEY"] != "updated" {
 		t.Fatal("spec writer leaked environment ownership")
 	}
 	var retained *NetworkStatus

@@ -31,7 +31,7 @@ const (
 	OpMCP        = protocol.OpMCP
 	OpCheckpoint = protocol.OpCheckpoint
 	OpControl    = protocol.OpControl
-	OpService    = protocol.OpService
+	OpPillow     = protocol.OpPillow
 )
 
 // Operation timeout policy: every operation is bounded so eviction's
@@ -76,12 +76,12 @@ func (m *Manager) BeginOperation(b *managedBed, kind OperationKind, timeout time
 		m.mu.Unlock()
 		return nil, ErrBedUnavailable
 	}
-	if len(b.Spec().Services) > 0 && b.Bed.Status().Lifecycle.Phase != PhaseResident {
+	if b.Spec().HasMainProcesses() && b.Bed.Status().Lifecycle.Phase != PhaseResident {
 		b.mu.Unlock()
 		m.mu.Unlock()
 		return nil, ErrBedUnavailable
 	}
-	if len(b.Spec().Services) > 0 && !b.Bed.Status().Lifecycle.Ready && kind != OpControl {
+	if b.Spec().HasMainProcesses() && !b.Bed.Status().Lifecycle.Ready && kind != OpControl {
 		b.mu.Unlock()
 		m.mu.Unlock()
 		return nil, ErrBedUnavailable

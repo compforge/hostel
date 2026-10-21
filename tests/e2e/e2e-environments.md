@@ -111,7 +111,7 @@ AppArmor 的实际约束测试必须使用编译并启用 AppArmor 的节点。�
 而被节点拒绝是可保留的环境错误证据，不等于已验证 AppArmor 约束下的 Hostel。
 同理，cgroup v1、v2 和 cgroup 委派是不同前提，不能靠切换 Pod 的 capability 相互替代。
 
-## Rootfs 与 PathMappings 权限矩阵
+## Rootfs 与 HostPath volumes/mounts 权限矩阵
 
 权限实验以文件任务的实际效果为主：Bed 的根数据是否独立，Carrier 共享数据在 API 和
 进程中是否可读写，只读声明在哪一层生效。UID/GID、capabilities、ptrace 和所选 helper
@@ -127,10 +127,10 @@ local / supervisor 执行后端。文件机制保持 Auto，以观察真实权�
 - Rootfs：相同绝对 Bed 路径的 API 数据互不覆盖；结构化 cwd 始终访问当前 Bed；
   声明 `rootfs=true` 时，原生命令的绝对路径读写必须与 API 一致。
   弱视图下记录原生路径访问 Carrier 或被访问控制拒绝，不能算作根视图兑现。
-- PathMappings：API 读取源、写回读写源、拒绝只读写入；两个 Bed 通过显式映射共享数据。
+- HostPath volumes/mounts：API 读取源、写回读写源、支持只读时拒绝写入、不支持时拒绝初始化；两个 Bed 通过显式映射共享数据。
   声明进程映射可用时验证原生路径，读写映射同时验证持久 session。
-- 降级：不支持的进程映射不能冒充已接入源；有根视图的未兑现映射验证 API 的
-  Bed 本地候选优先、缺失时读取 Carrier 源。API 的只读限制独立保留。
+- 降级：不支持的读写进程映射不能冒充已接入源，文件 API 仍可访问声明的源；
+  只读挂载无法兑现时必须使 Bed 初始化失败。
 - 回收：purge 两 Bed 后，调用方的共享源目录与数据仍然存在，再由测试 fixture 清理。
 
 ```sh
@@ -150,5 +150,5 @@ AppArmor 需要支持它的节点，不把准入或节点拒绝记录成文件�
 
 逐组合保留文件 Level、mechanism、mode、rootfs、读写/只读映射支持与降级原因，
 并与提交和 admission 后的 securityContext、suite 日志一起留证。
-已有 `TestBedRootServiceCommandFiles` 单独验证 bwrap/PRoot 下 Service 与命令、API 的
-根数据互通；本矩阵不把它未执行的 Service 分支算入覆盖。
+已有 `TestBedRootPillow 主进程CommandFiles` 单独验证 bwrap/PRoot 下 Pillow 主进程 与命令、API 的
+根数据互通；本矩阵不把它未执行的 Pillow 主进程 分支算入覆盖。

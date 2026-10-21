@@ -6,7 +6,10 @@ English | [简体中文](README.zh-CN.md)
 take on kubelet / Pod: one daemon manages multiple sandboxes, called **beds**,
 on a laptop, VM, CI runner or in a container, making a best effort to meet each
 bed's needs within the host's capabilities.
-Each bed provides a workspace for commands, shell sessions and managed services.
+Each bed declares shared resources and named execution environments called **pillows**.
+A pillow holds environment variables, a working directory and volume mounts; commands,
+shell sessions and an optional supervised main process run in that environment.
+The first pillow is the default. See [the runtime model](docs/kernel.md) and [Pillow](docs/pillow.md).
 
 Beds share a machine or container, reducing the need to provision a separate
 runtime for every task. Hostel manages execution and local resources. In a cluster,
@@ -17,7 +20,8 @@ an upstream control plane owns instance placement, cross-instance routing and AP
 - Run commands with streamed output, cancellation and structured exit results;
   use shell sessions when state must persist across commands.
 - Read, write and transfer files within a bed's workspace.
-- Declare long-running services with readiness checks and restart policies.
+- Declare Pillow main processes with readiness checks and restart policies.
+- Share bed volumes through explicit mounts in each pillow.
 - Persist selected paths to S3-compatible storage and restore them when a bed is recreated.
 - Share Chromium and remote MCP connections with application state scoped to beds.
 

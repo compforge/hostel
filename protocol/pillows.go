@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 )
 
-// ServiceStatus references a named PortMapping; the mapping owns allocated ports.
-type ServiceStatus struct {
+// PillowStatus references a named PortMapping; the mapping owns allocated ports.
+type PillowStatus struct {
+	Prepared    bool   `json:"prepared"`
 	PortMapping string `json:"port_mapping,omitempty"`
 	Name        string `json:"name"`
 	Required    bool   `json:"required"`

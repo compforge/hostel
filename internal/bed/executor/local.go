@@ -18,12 +18,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/qiankunli/hostel/internal/bed/tool"
 	"log"
 	"os/exec"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/bed/tool"
 
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/hostel/internal/bed/resource"
@@ -100,7 +101,7 @@ func (e *localExecutor) Start(ctx context.Context, processID string, cmd *exec.C
 	return e.start(ctx, processID, cmd, false)
 }
 
-func (e *localExecutor) StartService(ctx context.Context, processID string, cmd *exec.Cmd) (Process, error) {
+func (e *localExecutor) StartMain(ctx context.Context, processID string, cmd *exec.Cmd) (Process, error) {
 	return e.start(ctx, processID, cmd, true)
 }
 
@@ -287,13 +288,13 @@ func (p *localProcess) markExitedBeforeReap(barrierErr error) error {
 	p.exited = true
 	p.signalMu.Unlock()
 	if p.drainGroup {
-		// Do not publish completion/release a service's sockets while a child
+		// Do not publish completion/release a main process's sockets while a child
 		// still writes. Retaining the unreaped leader also prevents PID ABA.
 		for {
 			if err := hostprocess.DrainGroup(p.pid); err == nil {
 				break
 			} else {
-				log.Printf("executor: service group cleanup pending: pid=%d err=%v", p.pid, err)
+				log.Printf("executor: main process group cleanup pending: pid=%d err=%v", p.pid, err)
 			}
 			time.Sleep(time.Second)
 		}

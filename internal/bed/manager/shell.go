@@ -79,6 +79,7 @@ func validBedID(id string) error {
 // Callers holding bed/manager locks may call Dead() safely for the same
 // reason. Never add code that holds mu while blocking.
 type Shell struct {
+	Pillow          string
 	ExecutorID      string
 	ExecutorBackend string
 
@@ -133,6 +134,7 @@ func startShell(bedExecutor executor.Executor, shellPath string, env []string, e
 		stdin:           inW,
 		lines:           make(chan string, 64),
 		view:            environment.View(),
+		Pillow:          environment.name,
 	}
 	// Single long-lived reader → lines channel.
 	go func() {
@@ -266,8 +268,19 @@ func (s *Shell) runLocked(ctx context.Context, command string, onLine func(strin
 // cwdInBed, when non-empty, is the starting directory (already resolved+confined
 // by the caller via BedFS).
 func (m *Manager) CreateShell(b *managedBed, cwdInBed string) (string, error) {
+	return m.CreatePillowShell(b, b.Spec().DefaultPillow().Name, cwdInBed)
+}
+func (m *Manager) CreatePillowShell(b *managedBed, name, cwdInBed string) (string, error) {
+	environment, err := b.pillowEnvironment(name)
+	if err != nil {
+		return "", err
+	}
 	m.touchBed(b)
-	env, err := m.buildExecutionEnv(b, nil)
+	base, err := m.configurations.Pillow(b.Bed, name)
+	if err != nil {
+		return "", err
+	}
+	env, err := m.buildBedEnvWithView(b, environment.View(), base)
 	if err != nil {
 		return "", err
 	}
@@ -275,7 +288,7 @@ func (m *Manager) CreateShell(b *managedBed, cwdInBed string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sh, err := startShell(bedExecutor, m.shellPath, env, b.environment, cwdInBed)
+	sh, err := startShell(pillowExecutor{Executor: bedExecutor, name: name}, m.shellPath, env, environment, cwdInBed)
 	if err != nil {
 		return "", err
 	}
@@ -311,7 +324,7 @@ func (m *Manager) startSessionExecution(ctx context.Context, b *Resident, shell 
 	if err != nil {
 		return nil, err
 	}
-	execution := m.executions.trackSession(ctx, b.Name, shell, command, cwdInBed, settings, timeout, onStart, onOutput, func(result ExecutionResult) {
+	execution := m.executions.trackSession(withPillow(ctx, shell.Pillow), b.Name, shell, command, cwdInBed, settings, timeout, onStart, onOutput, func(result ExecutionResult) {
 		finishOperation()
 		b.RecordCommand(result.Duration)
 	})

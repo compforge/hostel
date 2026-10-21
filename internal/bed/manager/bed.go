@@ -16,7 +16,7 @@
 // a sandbox: one workspace dir, its own mount namespace (under bwrap), stateful
 // shell sessions and one-shot commands running inside it. A pod with one bed ≈
 // dedicated; with many beds ≈ shared — each bed still carrying its private
-// slice (ns, workspace, shell state, service tenants).
+// slice (ns, workspace, shell state, pillow tenants).
 package manager
 
 import (

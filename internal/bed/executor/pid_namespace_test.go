@@ -2,9 +2,10 @@ package executor
 
 import (
 	"context"
-	"github.com/qiankunli/hostel/internal/bed/tool"
 	"strings"
 	"testing"
+
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 func TestLocalExecutorRejectsPrivatePIDNamespace(t *testing.T) {

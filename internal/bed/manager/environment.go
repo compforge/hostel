@@ -10,7 +10,7 @@ import (
 
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/hostel/internal/bed/executor"
-	"github.com/qiankunli/hostel/internal/bed/service"
+	"github.com/qiankunli/hostel/internal/bed/pillow"
 	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
@@ -93,14 +93,14 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	if run.ExitCode != 0 {
 		return fmt.Errorf("isolation: combined shell probe exited %d", run.ExitCode)
 	}
-	// Exercise the Service process entry point too, without defining a hosted
+	// Exercise the Pillow process entry point too, without defining a hosted
 	// application or making a readiness/restart policy part of the probe.
-	p, err := (serviceRuntime{manager: m, bed: b}).Start(ctx, service.Launch{
-		Command:   []string{"/bin/sh", "-c", command + " && printf service > service-marker"},
+	p, err := (pillowRuntime{manager: m, bed: b}).Start(ctx, pillow.Launch{Name: b.Spec().DefaultPillow().Name,
+		Command:   []string{"/bin/sh", "-c", command + " && printf pillow > pillow-marker"},
 		Directory: "/workspace/.hostel-environment-probe",
 	})
 	if err != nil {
-		return fmt.Errorf("isolation: combined service probe: %w", err)
+		return fmt.Errorf("isolation: combined pillow probe: %w", err)
 	}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -115,17 +115,17 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	case <-p.Done():
 	}
 	if outcome := p.Outcome(); outcome.Kind != executor.ProcessExited || outcome.ExitCode != 0 {
-		return fmt.Errorf("isolation: combined service probe failed: %+v", outcome)
+		return fmt.Errorf("isolation: combined pillow probe failed: %+v", outcome)
 	}
-	if _, err := b.BedFS().Stat("/workspace/.hostel-environment-probe/service-marker"); err != nil {
-		return fmt.Errorf("isolation: service/file view probe: %w", err)
+	if _, err := b.BedFS().Stat("/workspace/.hostel-environment-probe/pillow-marker"); err != nil {
+		return fmt.Errorf("isolation: pillow/file view probe: %w", err)
 	}
 	data, err := b.BedFS().Read("/tmp/.hostel-environment-probe")
 	if err != nil {
 		return fmt.Errorf("isolation: temporary directory/file view probe: %w", err)
 	}
 	if string(data) != "temporarytemporarytemporary" {
-		return fmt.Errorf("isolation: command, session and Service do not share the Bed temporary directory")
+		return fmt.Errorf("isolation: command, session and Pillow do not share the Bed temporary directory")
 	}
 	return nil
 }

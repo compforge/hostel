@@ -40,7 +40,7 @@ const (
 	ExecutionForeground ExecutionMode = "foreground"
 	ExecutionBackground ExecutionMode = "background"
 	ExecutionSession    ExecutionMode = "session"
-	ExecutionService    ExecutionMode = "service"
+	ExecutionMain       ExecutionMode = "main"
 )
 
 type TerminationCause string
@@ -52,7 +52,7 @@ const (
 	CauseTimeout           TerminationCause = "timeout"
 	CauseClientCanceled    TerminationCause = "client_canceled"
 	CauseInterrupted       TerminationCause = "interrupted"
-	CauseServiceStop       TerminationCause = "service_stop"
+	CauseMainStop          TerminationCause = "main_stop"
 	CauseBedTeardown       TerminationCause = "bed_teardown"
 	CauseDaemonShutdown    TerminationCause = "daemon_shutdown"
 	CauseExternalSignal    TerminationCause = "external_signal"
@@ -80,6 +80,7 @@ type ExecutionOutput struct {
 // ExecutionResult combines the process fact owned by the Executor with the
 // termination intent owned by the execution controller.
 type ExecutionResult struct {
+	Pillow          string
 	ExecutionID     string
 	BedID           string
 	Mode            ExecutionMode
@@ -95,6 +96,7 @@ type ExecutionResult struct {
 }
 
 type ExecutionStatus struct {
+	Pillow          string
 	ID              string
 	BedID           string
 	Mode            ExecutionMode
@@ -109,6 +111,7 @@ type ExecutionStatus struct {
 // Execution is one one-shot command lifetime. Foreground and background are
 // the same object; mode only decides whether the initiating HTTP request waits.
 type Execution struct {
+	Pillow  string
 	Content string
 	log     *executionLog
 
@@ -151,12 +154,14 @@ func newExecution(ctx context.Context, bedID string, mode ExecutionMode, executo
 	ctx, span := tracing.Tracer().Start(ctx, "hostel.execution", oteltrace.WithAttributes(
 		attribute.String("hostel.execution.id", executionID),
 		attribute.String("hostel.bed.id", bedID),
+		attribute.String("hostel.pillow.name", func() string { name, _ := ctx.Value(pillowContextKey{}).(string); return name }()),
 		attribute.String("hostel.execution.mode", string(mode)),
 		attribute.String("hostel.executor.id", executorID),
 		attribute.String("hostel.executor.backend", executorBackend),
 	))
 	return &Execution{
 		ID:              executionID,
+		Pillow:          func() string { name, _ := ctx.Value(pillowContextKey{}).(string); return name }(),
 		BedID:           bedID,
 		Mode:            mode,
 		ExecutorID:      executorID,
@@ -258,6 +263,7 @@ func (e *Execution) finishResult(outcome *executor.ProcessOutcome, failure error
 	result := ExecutionResult{
 		ExecutionID:     e.ID,
 		BedID:           e.BedID,
+		Pillow:          e.Pillow,
 		Mode:            e.Mode,
 		ExecutorID:      e.ExecutorID,
 		ExecutorBackend: e.ExecutorBackend,
@@ -350,6 +356,7 @@ func (e *Execution) Status() ExecutionStatus {
 	status := ExecutionStatus{
 		ID:              e.ID,
 		BedID:           e.BedID,
+		Pillow:          e.Pillow,
 		Mode:            e.Mode,
 		ExecutorID:      e.ExecutorID,
 		ExecutorBackend: e.ExecutorBackend,
@@ -421,6 +428,7 @@ func (r *ExecutionRegistry) track(
 	tracing.InfoContext(execution.ctx, "hostel execution started",
 		"execution_id", execution.ID,
 		"bed", execution.BedID,
+		"pillow", execution.Pillow,
 		"mode", execution.Mode,
 		"executor_id", execution.ExecutorID,
 		"executor_backend", execution.ExecutorBackend,
@@ -521,6 +529,7 @@ func (r *ExecutionRegistry) trackSession(
 	tracing.InfoContext(execution.ctx, "hostel execution started",
 		"execution_id", execution.ID,
 		"bed", execution.BedID,
+		"pillow", execution.Pillow,
 		"mode", execution.Mode,
 		"executor_id", execution.ExecutorID,
 		"executor_backend", execution.ExecutorBackend,
@@ -583,7 +592,7 @@ func (r *ExecutionRegistry) killBed(bedID string, cause TerminationCause) {
 	r.mu.Lock()
 	var executions []*Execution
 	for _, execution := range r.executions {
-		if execution.BedID == bedID && execution.Mode != ExecutionService {
+		if execution.BedID == bedID && execution.Mode != ExecutionMain {
 			executions = append(executions, execution)
 		}
 	}

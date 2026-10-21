@@ -1,4 +1,4 @@
-package service
+package pillow
 
 import (
 	"os"
@@ -19,10 +19,10 @@ func TestUnavailableTokenFilePreventsProcessStart(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			b := newServiceTestBed("token-file", "", bed.Spec{Services: []bed.ServiceSpec{{
+			b := newPillowTestBed("token-file", "", bed.Spec{Pillows: []bed.PillowSpec{{
 				Name: "web", Command: []string{"server"}, Required: true,
 				EnvFiles: map[string]string{"TOKEN": path},
-				HTTP:     &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}},
+				HTTP:     &bed.PillowHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}},
 			}}})
 			runtime := &fakeRuntime{}
 			if err := m.PrepareBed(t.Context(), b, runtime); err == nil {

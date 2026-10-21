@@ -5,7 +5,6 @@ package e2e_test
 import (
 	"context"
 	"fmt"
-	"github.com/qiankunli/hostel/internal/bed/tool"
 	"net/url"
 	"os"
 	"os/exec"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 func TestBedTemporaryDirectory(t *testing.T) {
@@ -71,19 +72,19 @@ func checkBedTemporaryDirectory(t *testing.T, c *apiClient, mode string) {
 	if health.ProcessView.Mode != mode {
 		t.Fatalf("view=%s want=%s", health.ProcessView.Mode, mode)
 	}
-	// A Service and commands must use the same directory despite separate launches.
+	// A Pillow and commands must use the same directory despite separate launches.
 	const worker = `set -eu
 while :; do
  if test -f "$TMPDIR/session-input"; then
-  printf '%s:' "$MARKER" > "$TMPDIR/service-output.next"
-  cat "$TMPDIR/session-input" >> "$TMPDIR/service-output.next"
-  mv "$TMPDIR/service-output.next" "$TMPDIR/service-output"
+  printf '%s:' "$MARKER" > "$TMPDIR/pillow-output.next"
+  cat "$TMPDIR/session-input" >> "$TMPDIR/pillow-output.next"
+  mv "$TMPDIR/pillow-output.next" "$TMPDIR/pillow-output"
  fi
  sleep 0.1
 done`
 	beds := []string{"temporary-a", "temporary-b"}
 	for _, id := range beds {
-		response, err = c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": id, "services": []map[string]any{{"name": "temporary-worker", "command": []string{"/bin/sh", "-c", worker}, "env": map[string]string{"MARKER": id}, "required": true, "restart": "never", "stop_seconds": 1}}}, nil)
+		response, err = c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": id, "pillows": []map[string]any{{"name": "temporary-worker", "command": []string{"/bin/sh", "-c", worker}, "env": map[string]string{"MARKER": id}, "required": true, "restart_policy": "never", "stop_seconds": 1}}}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -118,7 +119,7 @@ done`
 	}
 	// Check after both Beds wrote the same names, detecting last-writer-wins leaks.
 	for _, id := range beds {
-		waitRootFile(t, c, id, "/tmp/service-output", id+":"+id)
+		waitRootFile(t, c, id, "/tmp/pillow-output", id+":"+id)
 		for _, file := range []struct{ name, want string }{{"stdout", id}, {"stderr", "error"}} {
 			response, err := c.request(ctx, "GET", "/v1/beds/"+id+"/execd/files/download?path=/tmp/capture/"+file.name, "", nil, "")
 			if err != nil || response.Status != 200 || string(response.Body) != file.want {
@@ -130,7 +131,7 @@ done`
 			t.Fatal(err)
 		}
 		must2xx(t, "remove capture", response)
-		result, response := c.command(t, id, map[string]any{"command": `test ! -e "$TMPDIR/capture" && test "$(cat "$TMPDIR/service-output")" = ` + fmt.Sprintf("'%s:%s'", id, id), "timeout": 5000})
+		result, response := c.command(t, id, map[string]any{"command": `test ! -e "$TMPDIR/capture" && test "$(cat "$TMPDIR/pillow-output")" = ` + fmt.Sprintf("'%s:%s'", id, id), "timeout": 5000})
 		must2xx(t, "process observes API deletion", response)
 		assertCommandExit(t, result, 0)
 	}

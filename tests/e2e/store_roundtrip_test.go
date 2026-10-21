@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// TestMixedBedStoresRoundTrip uses a real S3-compatible service and two daemon
+// TestMixedBedStoresRoundTrip uses a real S3-compatible pillow and two daemon
 // workspace roots: a successful restore cannot accidentally reuse local luggage.
 func TestMixedBedStoresRoundTrip(t *testing.T) {
 	if os.Getenv("HOSTEL_E2E_REQUIRE_S3") != "1" {

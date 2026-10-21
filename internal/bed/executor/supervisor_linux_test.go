@@ -99,7 +99,7 @@ func TestSupervisorStartIsIdempotentAndTerminalStatusReconnects(t *testing.T) {
 	}
 }
 
-func TestRejectedLargeStartsKeepServiceAndExecutor(t *testing.T) {
+func TestRejectedLargeStartsKeepPillowAndExecutor(t *testing.T) {
 	factory, err := NewSupervisorFactory(os.Args[0], resource.Noop("test"))
 	if err != nil {
 		t.Fatal(err)
@@ -112,13 +112,13 @@ func TestRejectedLargeStartsKeepServiceAndExecutor(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer bedExecutor.Shutdown(ctx)
-	serviceCmd, serviceOutput := testCommand(t, "sleep 30")
-	service, err := bedExecutor.(*supervisedExecutor).StartService(ctx, "service-stays-up", serviceCmd)
+	pillowCmd, pillowOutput := testCommand(t, "sleep 30")
+	pillow, err := bedExecutor.(*supervisedExecutor).StartMain(ctx, "pillow-stays-up", pillowCmd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeCommandOutput(t, serviceCmd)
-	defer serviceOutput.Close()
+	closeCommandOutput(t, pillowCmd)
+	defer pillowOutput.Close()
 
 	for _, tc := range []struct {
 		name    string
@@ -146,8 +146,8 @@ func TestRejectedLargeStartsKeepServiceAndExecutor(t *testing.T) {
 			if bedExecutor.State() != StateReady {
 				t.Fatalf("Executor state after rejected Start = %s", bedExecutor.State())
 			}
-			if err := syscall.Kill(service.PID(), 0); err != nil {
-				t.Fatalf("service lost after rejected Start: %v", err)
+			if err := syscall.Kill(pillow.PID(), 0); err != nil {
+				t.Fatalf("pillow lost after rejected Start: %v", err)
 			}
 		})
 	}

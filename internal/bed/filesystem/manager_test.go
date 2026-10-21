@@ -32,7 +32,7 @@ func TestAPIMappingPreparesWithoutProcessMappingAndPreservesSource(t *testing.T)
 	if err := os.WriteFile(file, []byte("external"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	b := bed.New("one", "", bed.Spec{Dir: filepath.Join(base, "beds", "one"), PathMappings: []bed.PathMapping{{HostPath: source, BedPath: "/project"}}})
+	b := bed.New("one", "", bed.Spec{Dir: filepath.Join(base, "beds", "one"), Volumes: []bed.VolumeSpec{{Name: "project", HostPath: &bed.HostPathVolume{Path: source}}}, Pillows: []bed.PillowSpec{{Name: "main", Mounts: []bed.VolumeMount{{Volume: "project", Path: "/project"}}}}})
 	manager := NewManager(carrierOnly{}, bed.NewOwners().Filesystem)
 	err := manager.Prepare(context.Background(), b)
 	if err != nil {

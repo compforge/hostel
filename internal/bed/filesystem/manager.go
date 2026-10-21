@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"github.com/qiankunli/hostel/internal/bed"
@@ -21,12 +23,14 @@ type Manager struct {
 	bed.Noop
 	mu       sync.Mutex
 	files    map[*bed.Bed]*bedfs.FS
+	pillows  map[*bed.Bed]map[string]*bedfs.FS
+	volumes  map[*bed.Bed]string
 	isolator isolation.Isolator
 	status   bed.StatusWriter[bed.FilesystemStatus]
 }
 
 func NewManager(iso isolation.Isolator, status bed.StatusWriter[bed.FilesystemStatus]) *Manager {
-	return &Manager{files: make(map[*bed.Bed]*bedfs.FS), isolator: iso, status: status}
+	return &Manager{pillows: make(map[*bed.Bed]map[string]*bedfs.FS), volumes: make(map[*bed.Bed]string), files: make(map[*bed.Bed]*bedfs.FS), isolator: iso, status: status}
 }
 func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	if m.Files(b) != nil {
@@ -44,10 +48,10 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	m.mu.Lock()
 	m.files[b] = fs
 	m.mu.Unlock()
-	if err := fs.SetPathMappings(b.Spec().PathMappings); err != nil {
+	if err := m.prepareVolumes(b, fs); err != nil {
 		return err
 	}
-	// Temporary files are Bed data too: separate executions and Services must
+	// Temporary files are Bed data too: separate executions and Pillows must
 	// share this directory, not receive an unrelated per-process tmpfs.
 	if err := fs.PrepareTempdir(); err != nil {
 		return err
@@ -55,9 +59,9 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	// API mapping ownership survives an unavailable process-path mechanism.
 	// Report the gap once at preparation; do not reject otherwise usable Beds.
 	support := m.isolator.View(fs).MappingSupport()
-	for _, mapping := range fs.PathMappings() {
+	for _, mapping := range fs.Mounts() {
 		if !support.Supports(mapping.ReadOnly) {
-			log.Printf("filesystem: bed=%s path=%s mapping available through API; process mapping unavailable read_only=%t", b.ID.String(), mapping.BedPath, mapping.ReadOnly)
+			log.Printf("filesystem: bed=%s path=%s mapping available through API; process mapping unavailable read_only=%t", b.ID.String(), mapping.Target, mapping.ReadOnly)
 		}
 	}
 	m.status.Set(b, bed.FilesystemStatus{Rootfs: fs.Rootfs(), Workdir: fs.Workdir()})
@@ -67,21 +71,33 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 // PrepareView runs after cooperating components have prepared their files.
 // Bed Manager owns this ordering; the resulting view stays fixed until Release.
 func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Mapping) error {
-	fs := m.Files(b)
 	if b.Status().Filesystem.Prepared {
 		return nil
 	}
-	// Component-owned files must not silently mask an explicit caller mapping.
-	for _, file := range files {
-		for _, mapping := range fs.PathMappings() {
-			if bed.PathsOverlap(file.Target, mapping.BedPath) {
-				return fmt.Errorf("%w: mapping %s overlaps system file %s", bed.ErrInvalidPaths, mapping.BedPath, file.Target)
+	if err := m.prepareVolumeOwners(b); err != nil {
+		return err
+	}
+	views := m.PillowFiles(b)
+	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Mounts = nil })
+	for _, consumer := range slices.Sorted(maps.Keys(views)) {
+		view := views[consumer]
+		for _, file := range files {
+			for _, mapping := range view.Mounts() {
+				if bed.PathsOverlap(file.Target, mapping.Target) {
+					return fmt.Errorf("%w: mount %s overlaps system file %s", bed.ErrInvalidPaths, mapping.Target, file.Target)
+				}
 			}
 		}
-	}
-	fs.SetSystemFiles(files)
-	if err := m.isolator.Prepare(ctx, fs); err != nil {
-		return err
+		view.SetSystemFiles(files)
+		if err := view.RefreshOwner(); err != nil {
+			return err
+		}
+		if err := m.validateVolumeView(b, consumer, view); err != nil {
+			return err
+		}
+		if err := m.isolator.Prepare(ctx, view); err != nil {
+			return fmt.Errorf("prepare file view consumer=%q: %w", consumer, err)
+		}
 	}
 	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Prepared = true })
 	return nil
@@ -92,6 +108,20 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 	if fs == nil {
 		return nil
 	}
+	for name, view := range m.PillowFiles(b) {
+		if view == fs {
+			continue
+		}
+		if err := m.isolator.Release(ctx, view); err != nil {
+			return err
+		}
+		if err := view.Close(); err != nil {
+			return err
+		}
+		m.mu.Lock()
+		delete(m.pillows[b], name)
+		m.mu.Unlock()
+	}
 	if err := m.isolator.Release(ctx, fs); err != nil {
 		return err
 	}
@@ -100,6 +130,8 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 	}
 	m.mu.Lock()
 	delete(m.files, b)
+	delete(m.pillows, b)
+	delete(m.volumes, b)
 	m.mu.Unlock()
 	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Prepared = false })
 	return nil

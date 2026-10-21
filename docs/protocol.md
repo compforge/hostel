@@ -1,7 +1,7 @@
 # 公开 Bed 数据契约
 
 `github.com/qiankunli/hostel/protocol` 是服务端和 Go 调用方共用的 Bed 管理数据定义。
-本包目前覆盖 Bed 摘要、详情、生命周期、服务、端口映射及 Bed 级组件状态；不代表所有
+本包目前覆盖 Bed 摘要、详情、生命周期、Pillow 声明与状态、端口映射及 Bed 级组件状态；不代表所有
 Hostel API 都已迁入。本包只依赖标准库，不包含 client、资源操作、运行时对象或上游发布策略。
 
 ## 模块与工具链边界
@@ -19,7 +19,7 @@ Hostel 主模块通过本地 replace 复用同一份协议源码，继续使用�
 
 公开字段和 JSON tag 由 `protocol` 定义。纯数据类型由内部 owner 直接复用；内部确有
 额外字段时组合公开结构，例如 FilesystemStatus 组合公开 preparation 状态并保留内部路径，
-Service 状态组合公开字段并保留内部执行结果。不为内外两侧另造 DTO/View 名称或重复字段表。
+Pillow 主进程状态组合公开字段并保留内部执行结果。不为内外两侧另造 DTO/View 名称或重复字段表。
 
 Bed 的 `id` 与 `name` 沿用 Hostel 内部语义：调用方通过 Name 标记和寻址 Bed，
 Hostel 自行生成 ID 唯一标识本地生命周期，避免调用方标识与内部资源归属冲突。
@@ -40,11 +40,17 @@ Hostel 自行生成 ID 唯一标识本地生命周期，避免调用方标识与
 
 ## 其它 HTTP 字段
 
-保持 `status.lifecycle`、`status.services`、`status.port_mappings` 等现有路径，
-以及 JSON tag、omitempty/omitzero、空集合和数值类型。生命周期 readiness 使用
-`readiness.status`，Service readiness 使用 `ready`。
+`status.lifecycle` 表达 Bed 生命周期，`status.pillows` 表达每个 Pillow 的准备与主进程事实，
+`status.port_mappings` 表达端口发现。生命周期 readiness 使用 `readiness.status`，
+Pillow 使用 `prepared` 区分环境准备，`phase`、`ready` 和 execution 字段表达主进程状态。
 
-Service 的 outcome 保留既有诊断 JSON；底层 executor 类型不成为公开依赖，私有 Detail
+创建声明使用有序 `pillows`；环境、workdir 和 mounts 归属 Pillow，卷来源归属 Bed。
+首项是默认 Pillow，省略列表创建 main，显式 null 或空列表拒绝。主进程使用直接字段
+`command`、`args`、`restart_policy`，管理路径为 `/v1/beds/:bedId/pillows`。
+旧 HTTP `services`、顶层环境与 PathMappings 不再接受；旧本地身份只在存储读取边界
+校验和升级，新记录只写新模型。接入方须同步更新创建声明、状态读取和主进程管理路径。
+
+Pillow 主进程的 outcome 保留既有诊断 JSON；底层 executor 类型不成为公开依赖，私有 Detail
 继续清空。Amenity 的 status 是设施拥有的可扩展 JSON 值；公开契约不暴露内部 sealed Tenant
 接口。路径、资源句柄、锁和发布策略留在内部实现。
 
@@ -54,5 +60,5 @@ Service 的 outcome 保留既有诊断 JSON；底层 executor 类型不成为公
 ## 验证
 
 `protocol` 的外部包测试使用既有 wire shape 验证解析和往返；API 测试使用公开类型读取实际
-Bed 和 Service 响应，检查 readiness 与执行身份。构建时可用 `go list -deps ./protocol`
+Bed 和 Pillow 主进程响应，检查 readiness 与执行身份。构建时可用 `go list -deps ./protocol`
 检查依赖，本包的传递依赖应全部为标准库。

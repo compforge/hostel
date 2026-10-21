@@ -172,7 +172,7 @@ Amenity Manager 只通过适配器参与 Bed 回收，其设施全局生命周�
 |---|---|---|
 | `host` | 宿主系统事实，不代表领域已启用某项能力 | 不重复返回 |
 | `components` | 各领域 Component Status | 各领域在此 Bed 上的实际状态 |
-| `services` | 不展开 | Service 运行、就绪及 execution 事实 |
+| `pillows` | 不展开 | 环境准备、主进程运行、就绪及 execution 事实 |
 | `port_mappings` | 不展开 | Bed 内监听与 Carrier 发布映射 |
 | `amenities` | 各设施全局状态 | 已绑定 Tenant 的 ID 和设施自定义状态 |
 
@@ -182,7 +182,7 @@ Bed 详情的 `status.lifecycle` 由 Bed Manager 提供；Tenant 状态由设施
 
 `GET /v1/status` 的 `schema_version` 为 `11`。该接口只组合 Hostel/Carrier 粒度状态，不携带 `beds` 列表；Bed inventory 由 `GET /v1/beds` 独立提供。工具选择报告位于 `components.filesystem.tools`、`components.network.tools` 和 `components.resource.accounting.tools`；每项包含 Policy、Requirements、探测结果、是否选中及原因。`requirements.tools` 是该工具依赖的外部程序列表，与组件的工具状态映射分别解释。
 
-Privilege 的 credential helper 诊断字段为 `helper`。Bed Service 的 `phase` 表达运行阶段，独立的 `ready` 表达当前可用性；readiness 变化不终止运行实例。`host.fact` 报告 runtime、process、security_modules、
+Privilege 的 credential helper 诊断字段为 `helper`。Pillow 主进程的 `phase` 表达运行阶段，独立的 `ready` 表达当前可用性；readiness 变化不终止运行实例。`host.fact` 报告 runtime、process、security_modules、
 namespace_limits、kernel_features 与 ptrace 等启动事实；`host.status` 组合动态资源状态，
 其中 `ports` 是 Hostel 管理的端口分配，不是系统全部监听端口。状态读取复用已有事实与资源状态，不重新探测。
 `components.filesystem` 报告文件隔离和

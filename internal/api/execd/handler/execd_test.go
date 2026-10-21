@@ -167,9 +167,9 @@ func TestExecdLocalOperationsKeepAuthentication(t *testing.T) {
 	defer control.Close()
 	// Persisted Bed declarations may retain old environment keys. They must not
 	// turn local Execd operations into control-plane requests.
-	raw, err := json.Marshal(map[string]any{"id": "secured", "env": map[string]string{
+	raw, err := json.Marshal(map[string]any{"id": "secured", "pillows": []map[string]any{{"name": "main", "env": map[string]string{
 		"EXECD_ACCESS_TOKEN": "own-token", "EXECD_CONTROL_URL": control.URL,
-	}})
+	}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

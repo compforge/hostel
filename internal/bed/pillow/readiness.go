@@ -1,4 +1,4 @@
-package service
+package pillow
 
 import (
 	"context"
@@ -18,7 +18,7 @@ type readinessResult struct {
 
 // readinessCheck keeps the diagnostic and one-time degradation log local to an
 // execution. Network isolation and listener inspection are optional enhancements,
-// not prerequisites for running a service in the Bed's chosen environment.
+// not prerequisites for running a pillow in the Bed's chosen environment.
 func (m *Manager) readinessCheck(g *group, r *record, proc Process, address, token string) func(context.Context) (readinessResult, error) {
 	warned := false
 	return func(ctx context.Context) (readinessResult, error) {
@@ -41,13 +41,13 @@ func (m *Manager) readinessCheck(g *group, r *record, proc Process, address, tok
 		m.update(g, r, func(s *Status) { s.Listener = &inspection })
 		switch inspection.State {
 		case hostnetwork.ListenerForeign:
-			log.Printf("hostel service listener conflict: bed=%s id=%s service=%s execution=%s address=%s", g.bed.Name, g.bed.ID, r.spec.Name, proc.ExecutionID(), address)
+			log.Printf("hostel pillow listener conflict: bed=%s id=%s pillow=%s execution=%s address=%s", g.bed.Name, g.bed.ID, r.spec.Name, proc.ExecutionID(), address)
 			return readinessResult{}, errBindingConflict
 		case hostnetwork.ListenerAbsent:
 			return readinessResult{Reason: "ListenerAbsent"}, nil
 		case hostnetwork.ListenerUnavailable:
 			if !warned {
-				log.Printf("hostel service listener inspection unavailable: bed=%s id=%s service=%s execution=%s method=%s reason=%s readiness=process_and_http", g.bed.Name, g.bed.ID, r.spec.Name, proc.ExecutionID(), inspection.Method, inspection.Reason)
+				log.Printf("hostel pillow listener inspection unavailable: bed=%s id=%s pillow=%s execution=%s method=%s reason=%s readiness=process_and_http", g.bed.Name, g.bed.ID, r.spec.Name, proc.ExecutionID(), inspection.Method, inspection.Reason)
 				warned = true
 			}
 		case hostnetwork.ListenerOwned:

@@ -1,7 +1,6 @@
 package bedfs
 
 import (
-	model "github.com/qiankunli/hostel/internal/bed"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,7 +56,7 @@ func TestTemporaryDirectoryViews(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := os.Stat(external)
-	if err := fs.SetPathMappings([]model.PathMapping{{HostPath: external, BedPath: "/tmp"}}); err != nil {
+	if err := fs.SetMounts([]Mount{{Source: external, Target: "/tmp"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := fs.PrepareTempdir(); err != nil {

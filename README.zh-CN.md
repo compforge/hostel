@@ -4,7 +4,10 @@
 
 **Hostel 是面向 AI Agent 的 sandbox runtime。** Hostel / Bed 可以看作「猴版」的 kubelet / Pod：
 一个 daemon 在笔记本、VM、CI runner 或容器内管理多个 sandbox，每个称为一张 **bed**。
-Hostel 在宿主能力范围内尽力满足各 bed 的需求，提供工作区、命令执行、shell 会话和托管服务。
+Hostel 以 BedSpec 声明运行与管理模型，在宿主能力范围内尽力兑现。
+Bed 声明共享资源；其下的 **pillow** 是命名执行环境，持有环境变量、工作目录和卷挂载，
+可运行临时命令、shell 会话及可选的托管主进程。首个 pillow 为默认环境。
+详见[核心架构](docs/kernel.md)与 [Pillow](docs/pillow.md)。
 
 多张 bed 共享机器或容器，减少为每个任务单独创建运行环境的需要。Hostel 负责执行和本地资源管理；
 集群环境下，实例调度、跨实例路由和 API 访问授权由上层控制面负责。
@@ -13,7 +16,8 @@ Hostel 在宿主能力范围内尽力满足各 bed 的需求，提供工作区�
 
 - 执行命令，提供流式输出、取消和结构化退出结果；需要跨命令保留 shell 状态时使用会话。
 - 读写工作区文件，上传、下载和传输文件。
-- 声明常驻服务，管理启动、就绪检查和重启策略。
+- 声明 Pillow 主进程，管理启动、就绪检查和重启策略。
+- 声明 Bed 共享卷，由各 Pillow 显式挂载。
 - 将指定路径持久化到 S3 兼容存储，在重新创建 bed 时恢复。
 - 共享 Chromium 和远端 MCP 连接，按 bed 管理应用状态。
 

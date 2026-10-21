@@ -28,6 +28,7 @@ type ProcessOutcome struct {
 }
 
 type ExecutionResult struct {
+	Pillow          string               `json:"pillow"`
 	ExecutionID     string               `json:"execution_id"`
 	BedID           string               `json:"bed_id"`
 	Mode            bed.ExecutionMode    `json:"mode"`
@@ -84,6 +85,7 @@ func ExecutionResultFrom(result bed.ExecutionResult) ExecutionResult {
 	return ExecutionResult{
 		ExecutionID:     result.ExecutionID,
 		BedID:           result.BedID,
+		Pillow:          result.Pillow,
 		Mode:            result.Mode,
 		ExecutorID:      result.ExecutorID,
 		ExecutorBackend: result.ExecutorBackend,

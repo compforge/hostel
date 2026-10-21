@@ -36,13 +36,14 @@ import (
 //
 // Immutable value; safe to copy.
 type paths struct {
-	prefix string
-	home   string // bed_home carrier dir ({bed dir}/data) — the bed's "/"
+	workdir string
+	prefix  string
+	home    string // bed_home carrier dir ({bed dir}/data) — the bed's "/"
 }
 
 // newPaths builds the converter for one bed, anchored at bed_home.
 func newPaths(home string) paths {
-	return paths{home: filepath.Clean(home), prefix: "/"}
+	return paths{home: filepath.Clean(home), prefix: "/", workdir: DefaultWorkdir}
 }
 
 // Rootfs is the bed_home host dir this converter is anchored at.
@@ -52,7 +53,7 @@ func (p paths) Rootfs() string { return p.home }
 // subdir the client names DefaultWorkdir. Derived, not stored — the client
 // namespace IS bed_home, so /workspace resolves by the general rule.
 func (p paths) WorkdirHost() string {
-	return filepath.Join(p.home, filepath.FromSlash(strings.TrimPrefix(DefaultWorkdir, "/")))
+	return filepath.Join(p.home, filepath.FromSlash(strings.TrimPrefix(p.clientWorkdir(), "/")))
 }
 
 // FromClient maps a client path to the host path. The client's "/" is the
@@ -70,7 +71,7 @@ func (p paths) FromClient(cp string) (string, error) {
 	}
 	rel := cp
 	if !path.IsAbs(cp) {
-		rel = path.Join(DefaultWorkdir, cp) // Workdir-relative
+		rel = path.Join(p.clientWorkdir(), cp) // Workdir-relative
 	}
 	// Normalize under a fake root to neutralize any ".." segments.
 	clean := path.Clean("/" + strings.TrimPrefix(rel, "/"))
@@ -100,4 +101,11 @@ func (p paths) ToClient(host string) string {
 		return "/"
 	}
 	return path.Join("/", p.prefix, filepath.ToSlash(rel))
+}
+
+func (p paths) clientWorkdir() string {
+	if p.workdir == "" {
+		return DefaultWorkdir
+	}
+	return p.workdir
 }

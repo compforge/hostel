@@ -2,7 +2,7 @@ package protocol
 
 // BedStatus groups observations by the domain that owns each fact.
 type BedStatus struct {
-	Services     []ServiceStatus     `json:"services"`
+	Pillows      []PillowStatus      `json:"pillows"`
 	PortMappings []PortMappingStatus `json:"port_mappings"`
 	Isolation    RoomStatus          `json:"isolation"`
 	Lifecycle    BedLifecycle        `json:"lifecycle"`

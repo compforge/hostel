@@ -34,7 +34,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	components := []daemonComponent{
 		{"filesystem", m.files}, {"privilege", m.privileges}, {"resource", m.resourceManager},
 		{"store", m.store}, {"network", m.network}, {"executor", m.executorManager},
-		{"configuration", m.configurations}, {"service", m.services},
+		{"configuration", m.configurations}, {"pillow", m.pillows},
 	}
 	for _, component := range components {
 		// Start may allocate before failing; register cleanup ownership first.
@@ -189,8 +189,8 @@ func (m *Manager) Close(ctx context.Context) error {
 		return err
 	}
 	m.mu.Lock()
-	holds := make([]*serviceHold, 0, len(m.serviceHolds))
-	for _, hold := range m.serviceHolds {
+	holds := make([]*pillowHold, 0, len(m.pillowHolds))
+	for _, hold := range m.pillowHolds {
 		holds = append(holds, hold)
 	}
 	m.mu.Unlock()

@@ -3,6 +3,8 @@ package bed
 import (
 	"maps"
 	"slices"
+
+	"github.com/qiankunli/hostel/protocol"
 )
 
 // Configuration describes process configuration without resolving file values.
@@ -14,10 +16,7 @@ type Configuration struct {
 	EnvValueFrom map[string]ConfigurationKeyRef `json:"env_value_from,omitempty"`
 }
 
-type ConfigurationKeyRef struct {
-	Source string `json:"source"`
-	Key    string `json:"key"`
-}
+type ConfigurationKeyRef = protocol.ConfigurationKeyRef
 
 func CloneConfiguration(s Configuration) Configuration {
 	s.Env = maps.Clone(s.Env)
@@ -27,10 +26,6 @@ func CloneConfiguration(s Configuration) Configuration {
 	return s
 }
 
-func (s Spec) MainConfiguration() Configuration {
-	return CloneConfiguration(Configuration{Env: s.Env, EnvFiles: s.EnvFiles, EnvFrom: s.EnvFrom, EnvValueFrom: s.EnvValueFrom})
-}
-
-func (s ServiceSpec) Configuration() Configuration {
+func PillowConfiguration(s PillowSpec) Configuration {
 	return CloneConfiguration(Configuration{Env: s.Env, EnvFiles: s.EnvFiles, EnvFrom: s.EnvFrom, EnvValueFrom: s.EnvValueFrom})
 }

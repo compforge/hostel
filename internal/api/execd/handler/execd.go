@@ -56,7 +56,7 @@ func (s *Handler) bindExecdBed(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	token := b.Spec().Env["EXECD_ACCESS_TOKEN"]
+	token := b.Spec().DefaultPillow().Env["EXECD_ACCESS_TOKEN"]
 	if token != "" && !(c.Request.Method == http.MethodGet && strings.HasSuffix(c.FullPath(), "/ping")) {
 		supplied := c.GetHeader("X-EXECD-ACCESS-TOKEN")
 		if supplied == "" {
@@ -75,7 +75,7 @@ func (s *Handler) bindExecdBed(c *gin.Context) {
 func (s *Handler) execdInterrupt(c *gin.Context) {
 	b := s.bedOf(c)
 	execution, ok := s.mgr.Executions().Get(c.Query("id"))
-	if !ok || execution.BedID != b.Name || execution.Mode == bed.ExecutionService {
+	if !ok || execution.BedID != b.Name || execution.Mode == bed.ExecutionMain {
 		respondError(c, 404, apiview.ErrCommandNotFound, "command not found")
 		return
 	}

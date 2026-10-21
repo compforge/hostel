@@ -20,7 +20,7 @@ func TestStatusObserverUsesInjectedHostSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ports.Close()
-	beds, err := manager.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "shared", root), facilities, 0, nil, manager.WithServices(ports))
+	beds, err := manager.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "shared", root), facilities, 0, nil, manager.WithPillows(ports))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,12 +39,12 @@ func TestStatusObserverUsesInjectedHostSnapshot(t *testing.T) {
 	if got := beds.HostFacts().System.Runtime.KernelRelease; got != "injected-host" {
 		t.Fatal(got)
 	}
-	allocation, err := ports.Reserve("test/service", "test-scope", "127.0.0.1:24000")
+	allocation, err := ports.Reserve("test/pillow", "test-scope", "127.0.0.1:24000")
 	if err != nil {
 		t.Fatal(err)
 	}
 	report := observer.Status()
-	if got := report.Host.Status.Ports; len(got) != 1 || got[0].Owner != "test/service" || got[0].State != "reserved" {
+	if got := report.Host.Status.Ports; len(got) != 1 || got[0].Owner != "test/pillow" || got[0].State != "reserved" {
 		t.Fatalf("host port allocation = %+v", got)
 	}
 	if err := allocation.Release(); err != nil {

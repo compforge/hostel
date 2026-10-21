@@ -2,11 +2,12 @@ package network
 
 import (
 	"errors"
-	"github.com/qiankunli/hostel/internal/bed"
-	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"net"
 	"strconv"
 	"testing"
+
+	"github.com/qiankunli/hostel/internal/bed"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
 func TestPortMappingModesAndOwnership(t *testing.T) {

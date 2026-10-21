@@ -3,9 +3,10 @@ package store
 import (
 	"context"
 	"fmt"
-	"github.com/qiankunli/hostel/internal/bed"
 	"sync"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/bed"
 
 	"github.com/qiankunli/hostel/internal/bed/store/backend"
 	storesync "github.com/qiankunli/hostel/internal/bed/store/sync"

@@ -4,65 +4,41 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 )
 
 var ErrInvalidPaths = errors.New("bed: invalid path declaration")
 
-// PathMapping connects carrier data to a Bed path. Hostel does not own or
-// synchronize HostPath; its storage owner supplies durability and permissions.
-type PathMapping struct {
-	HostPath string `json:"host_path"`
-	BedPath  string `json:"bed_path"`
-	ReadOnly bool   `json:"read_only,omitempty"`
-}
-
-// NormalizePaths preserves nil (omitted) versus an explicit empty declaration.
-// It owns lexical validation; Filesystem checks carrier sources during Prepare.
-func NormalizePaths(mappings []PathMapping, syncPaths []string) ([]PathMapping, []string, error) {
-	mappings, syncPaths = slices.Clone(mappings), slices.Clone(syncPaths)
-	fail := func(message string) ([]PathMapping, []string, error) {
-		return nil, nil, fmt.Errorf("%w: %s", ErrInvalidPaths, message)
-	}
-	for i, p := range syncPaths {
+// NormalizeSyncPaths preserves omitted versus explicitly empty declarations.
+func NormalizeSyncPaths(paths []string) ([]string, error) {
+	out := slices.Clone(paths)
+	for i, p := range out {
 		p = path.Clean(p)
 		if !path.IsAbs(p) || p == "/" {
-			return fail("sync paths must be absolute and non-root")
+			return nil, fmt.Errorf("%w: sync paths must be absolute and non-root", ErrInvalidPaths)
 		}
-		syncPaths[i] = p
-		for _, other := range syncPaths[:i] {
+		for _, other := range out[:i] {
 			if PathsOverlap(p, other) {
-				return fail("sync paths overlap")
+				return nil, fmt.Errorf("%w: sync paths overlap", ErrInvalidPaths)
 			}
+		}
+		out[i] = p
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+func validateMountPath(p string) error {
+	if !path.IsAbs(p) || p == "/" {
+		return fmt.Errorf("%w: mount paths must be absolute and non-root", ErrInvalidPaths)
+	}
+	for _, reserved := range []string{"/workspace", "/dev", "/proc", "/sys", "/.hostel"} {
+		if PathsOverlap(p, reserved) {
+			return fmt.Errorf("%w: mount overlaps reserved path %s", ErrInvalidPaths, reserved)
 		}
 	}
-	for i, m := range mappings {
-		m.HostPath, m.BedPath = filepath.Clean(m.HostPath), path.Clean(m.BedPath)
-		if !filepath.IsAbs(m.HostPath) || m.HostPath == "/" || !path.IsAbs(m.BedPath) || m.BedPath == "/" {
-			return fail("mapping paths must be absolute and non-root")
-		}
-		for _, reserved := range []string{"/workspace", "/dev", "/proc", "/sys", "/.hostel"} {
-			if PathsOverlap(m.BedPath, reserved) {
-				return fail("mapping overlaps reserved path " + reserved)
-			}
-		}
-		for _, p := range syncPaths {
-			if PathsOverlap(m.BedPath, p) {
-				return fail("mapped data cannot be automatically synced")
-			}
-		}
-		for _, other := range mappings[:i] {
-			if PathsOverlap(m.BedPath, other.BedPath) || PathsOverlap(m.HostPath, other.HostPath) {
-				return fail("path mappings overlap")
-			}
-		}
-		mappings[i] = m
-	}
-	slices.Sort(syncPaths)
-	slices.SortFunc(mappings, func(a, b PathMapping) int { return strings.Compare(a.BedPath, b.BedPath) })
-	return mappings, syncPaths, nil
+	return nil
 }
 
 func PathsOverlap(a, b string) bool {

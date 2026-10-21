@@ -16,7 +16,7 @@
 // rooted at bed_home: it defines the client namespace, carrier placement and
 // Executor views independently of any particular isolation mechanism.
 //
-// Rootfs owns the Bed-local data root; PathMappings connect declared external
+// Rootfs owns the Bed-local data root; Mounts connect declared Volume
 // data. Workdir is the default directory and relative API path base. These
 // data addresses are independent of the process view and its isolation level.
 package bedfs
@@ -24,7 +24,6 @@ package bedfs
 import (
 	"errors"
 	"fmt"
-	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 	"os"
 	"os/user"
 	"path"
@@ -33,6 +32,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 )
 
 // FileInfo describes BedFS metadata using Unix permission bits and Bed paths.
@@ -112,6 +113,13 @@ func (o *FS) RefreshOwner() error {
 	fi, err := o.root.Stat(".")
 	if err != nil {
 		return err
+	}
+	for _, mapping := range o.mappings {
+		if mapping.owned {
+			if err := mapping.fs.RefreshOwner(); err != nil {
+				return err
+			}
+		}
 	}
 	o.uid, o.gid = -1, -1
 	if uid, gid, ok := ownerOf(fi); ok && uid != os.Geteuid() {
@@ -241,7 +249,7 @@ func (o *FS) Resolve(p string) (string, error) {
 func (o *FS) Rootfs() string { return o.paths.Rootfs() }
 
 // Workdir returns the default working directory in Carrier coordinates.
-func (o *FS) Workdir() string { return o.paths.WorkdirHost() }
+func (o *FS) Workdir() string { p, _ := o.Resolve(o.ClientWorkdir()); return p }
 
 func (o *FS) virtual(full string) string { return o.paths.ToClient(full) }
 
@@ -723,4 +731,14 @@ func (o *FS) Search(p, pattern string) ([]FileInfo, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func (o *FS) ClientWorkdir() string { return o.paths.clientWorkdir() }
+
+// SetWorkdir fixes the Pillow-relative path base before publishing this view.
+func (o *FS) SetWorkdir(p string) {
+	o.paths.workdir = p
+	for _, m := range o.mappings {
+		m.fs.paths.workdir = p
+	}
 }

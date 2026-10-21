@@ -1,8 +1,9 @@
 package manager
 
 import (
-	"github.com/qiankunli/hostel/internal/bed/network"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/bed/network"
 )
 
 type InstanceState string

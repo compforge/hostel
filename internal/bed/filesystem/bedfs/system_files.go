@@ -1,8 +1,9 @@
 package bedfs
 
 import (
-	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 	"slices"
+
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 )
 
 // SetSystemFiles supplies component-owned, read-only system configuration files

@@ -15,17 +15,17 @@ import (
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/network"
-	"github.com/qiankunli/hostel/internal/bed/service"
+	"github.com/qiankunli/hostel/internal/bed/pillow"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
-var ErrServicesConflict = errors.New("bed: cannot change declared services")
+var ErrPillowsConflict = errors.New("bed: cannot change declared pillows")
 
-func WithServices(ports *hostnetwork.PortManager) ManagerOption {
+func WithPillows(ports *hostnetwork.PortManager) ManagerOption {
 	return func(m *Manager) {
 		m.ports = ports
 		m.portMappings = network.NewPortMappings(ports)
-		m.services = service.NewManager(m.portMappings, m.servicesChanged)
+		m.pillows = pillow.NewManager(m.portMappings, m.pillowsChanged)
 		m.network.SetPortMappings(m.portMappings)
 	}
 }
@@ -36,24 +36,24 @@ func (m *Manager) PortStatus() []hostnetwork.PortStatus {
 	}
 	return m.ports.Status()
 }
-func (m *Manager) Services() *service.Manager { return m.services }
+func (m *Manager) Pillows() *pillow.Manager { return m.pillows }
 func (m *Manager) PortMappings(b *model.Bed) []network.PortMappingStatus {
 	return m.portMappings.Status(b)
 }
 
-func (m *Manager) ServiceLogs(b *Resident, id string, cursor int64) ([]ExecutionOutput, int64, bool, bool, error) {
+func (m *Manager) PillowLogs(b *Resident, id string, cursor int64) ([]ExecutionOutput, int64, bool, bool, error) {
 	e, ok := m.executions.Get(id)
-	if !ok || e.BedID != b.Name || e.Mode != ExecutionService {
-		return nil, 0, false, false, fmt.Errorf("service execution not found")
+	if !ok || e.BedID != b.Name || e.Mode != ExecutionMain {
+		return nil, 0, false, false, fmt.Errorf("pillow execution not found")
 	}
 	out, next, running, truncated := e.Logs(cursor)
 	return out, next, running, truncated, nil
 }
 
-func (m *Manager) servicesChanged(b *model.Bed) {
-	m.serviceStatusMu.Lock()
-	defer m.serviceStatusMu.Unlock()
-	ready := m.services.Ready(b)
+func (m *Manager) pillowsChanged(b *model.Bed) {
+	m.pillowStatusMu.Lock()
+	defer m.pillowStatusMu.Unlock()
+	ready := m.pillows.Ready(b)
 	m.owners.Lifecycle.Update(b, func(s *model.LifecycleStatus) {
 		if s.Phase != PhaseResident {
 			return
@@ -63,48 +63,56 @@ func (m *Manager) servicesChanged(b *model.Bed) {
 		if ready {
 			s.Reason = "Initialized"
 		} else {
-			s.Reason = "RequiredServiceUnavailable"
+			s.Reason = "RequiredPillowUnavailable"
 		}
 	})
 }
 
-func checkServices(options CreateOptions, actual []model.ServiceSpec) error {
+func checkPillows(options CreateOptions, actual []model.PillowSpec) error {
 	if options.lookup {
 		return nil
 	}
-	if len(actual) == 0 && len(options.Services) == 0 {
+	if len(actual) == 0 && len(options.Pillows) == 0 {
 		return nil
 	}
-	if !reflect.DeepEqual(actual, options.Services) {
-		return ErrServicesConflict
+	normalized, err := pillow.Normalize(actual)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(normalized, options.Pillows) {
+		return ErrPillowsConflict
 	}
 	return nil
 }
 
-type serviceRuntime struct {
+type pillowRuntime struct {
 	manager *Manager
 	bed     *managedBed
 }
 
-func (r serviceRuntime) Network() (string, string, error) {
+func (r pillowRuntime) Network() (string, string, error) {
 	attachment := r.bed.environment.network
 	if attachment == nil {
 		return "", "127.0.0.1", nil
 	}
 	addressed, ok := attachment.(interface{ Address() string })
 	if !ok || addressed.Address() == "" {
-		return "", "", fmt.Errorf("Bed network does not provide a reachable service address")
+		return "", "", fmt.Errorf("Bed network does not provide a reachable pillow address")
 	}
 	return r.bed.ID.String(), addressed.Address(), nil
 }
-func (r serviceRuntime) Start(ctx context.Context, launch service.Launch) (service.Process, error) {
+func (r pillowRuntime) Start(ctx context.Context, launch pillow.Launch) (pillow.Process, error) {
 	b, m := r.bed, r.manager
-	cwd, err := b.filesystem.Resolve(launch.Directory)
+	environment := b.environment
+	if view, ok := environment.pillows[launch.Name]; ok {
+		environment = view
+	}
+	cwd, err := environment.fs.Resolve(launch.Directory)
 	if err != nil {
 		return nil, err
 	}
 	cmd := exec.Command(launch.Command[0], launch.Command[1:]...)
-	cmd.Env, err = m.buildBedEnv(b, launch.Env)
+	cmd.Env, err = m.buildBedEnvWithView(b, environment.View(), launch.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -126,12 +134,12 @@ func (r serviceRuntime) Start(ctx context.Context, launch service.Launch) (servi
 	var proc executor.Process
 	if err == nil {
 		starter, ok := e.(interface {
-			StartService(context.Context, string, *exec.Cmd) (executor.Process, error)
+			StartMainFor(context.Context, string, string, *exec.Cmd) (executor.Process, error)
 		})
 		if !ok {
-			err = fmt.Errorf("executor does not support supervised service groups")
+			err = fmt.Errorf("executor does not support supervised pillow groups")
 		} else {
-			proc, err = starter.StartService(ctx, "process-"+randx.Hex(8), cmd)
+			proc, err = starter.StartMainFor(ctx, launch.Name, "process-"+randx.Hex(8), cmd)
 		}
 	}
 	if err != nil {
@@ -139,29 +147,29 @@ func (r serviceRuntime) Start(ctx context.Context, launch service.Launch) (servi
 		errR.Close()
 		return nil, err
 	}
-	// Supervision owns cancellation and graceful stop. Do not turn a service
+	// Supervision owns cancellation and graceful stop. Do not turn a pillow
 	// into a permanent Bed operation or couple it to the create HTTP request.
-	execution := m.executions.track(context.WithoutCancel(ctx), b.Name, ExecutionService, e.ID(), e.Backend(), proc, outR, errR, 0, "", nil, nil, nil, nil)
-	return &serviceProcess{process: proc, execution: execution}, nil
+	execution := m.executions.track(withPillow(context.WithoutCancel(ctx), launch.Name), b.Name, ExecutionMain, e.ID(), e.Backend(), proc, outR, errR, 0, "", nil, nil, nil, nil)
+	return &pillowProcess{process: proc, execution: execution}, nil
 }
 
-type serviceProcess struct {
+type pillowProcess struct {
 	process   executor.Process
 	execution *Execution
 }
 
-func (p *serviceProcess) PID() int                         { return p.process.PID() }
-func (p *serviceProcess) ExecutionID() string              { return p.execution.ID }
-func (p *serviceProcess) ExecutorID() string               { return p.execution.ExecutorID }
-func (p *serviceProcess) Done() <-chan struct{}            { return p.execution.done }
-func (p *serviceProcess) Outcome() executor.ProcessOutcome { return *p.execution.Wait().Process }
-func (p *serviceProcess) Stop(ctx context.Context, grace time.Duration) error {
+func (p *pillowProcess) PID() int                         { return p.process.PID() }
+func (p *pillowProcess) ExecutionID() string              { return p.execution.ID }
+func (p *pillowProcess) ExecutorID() string               { return p.execution.ExecutorID }
+func (p *pillowProcess) Done() <-chan struct{}            { return p.execution.done }
+func (p *pillowProcess) Outcome() executor.ProcessOutcome { return *p.execution.Wait().Process }
+func (p *pillowProcess) Stop(ctx context.Context, grace time.Duration) error {
 	select {
 	case <-p.execution.done:
 		return nil
 	default:
 	}
-	p.execution.requestStop(CauseServiceStop, func() {
+	p.execution.requestStop(CauseMainStop, func() {
 		if signaler, ok := p.process.(interface{ Signal(syscall.Signal) error }); ok {
 			if err := signaler.Signal(syscall.SIGTERM); err != nil {
 				p.process.Kill()
@@ -189,23 +197,23 @@ func (p *serviceProcess) Stop(ctx context.Context, grace time.Duration) error {
 	}
 }
 
-// HoldService protects direct requests and service-internal asynchronous work
+// HoldPillow protects direct requests and pillow-internal asynchronous work
 // from normal/explicit eviction. It is a bounded operation, not a permanent
-// activity claim made by the background service itself.
-func (m *Manager) HoldService(b *Resident, duration time.Duration) (ServiceHold, error) {
+// activity claim made by the background pillow itself.
+func (m *Manager) HoldPillow(b *Resident, duration time.Duration) (PillowHold, error) {
 	if duration <= 0 || duration > MaxOperationTimeout {
-		return ServiceHold{}, fmt.Errorf("service hold must be positive and at most 2 hours")
+		return PillowHold{}, fmt.Errorf("pillow hold must be positive and at most 2 hours")
 	}
-	finish, err := m.BeginOperation(b, OpService, duration)
+	finish, err := m.BeginOperation(b, OpPillow, duration)
 	if err != nil {
-		return ServiceHold{}, err
+		return PillowHold{}, err
 	}
-	hold := &serviceHold{bed: b, view: ServiceHold{ID: "hold-" + randx.Hex(16), ExpiresAt: time.Now().Add(duration)}}
+	hold := &pillowHold{bed: b, view: PillowHold{ID: "hold-" + randx.Hex(16), ExpiresAt: time.Now().Add(duration)}}
 	var once sync.Once
 	hold.finish = func() {
 		once.Do(func() {
 			m.mu.Lock()
-			delete(m.serviceHolds, hold.view.ID)
+			delete(m.pillowHolds, hold.view.ID)
 			timer, stop := hold.timer, hold.stop
 			m.mu.Unlock()
 			if timer != nil {
@@ -218,31 +226,31 @@ func (m *Manager) HoldService(b *Resident, duration time.Duration) (ServiceHold,
 		})
 	}
 	m.mu.Lock()
-	if m.serviceHolds == nil {
-		m.serviceHolds = make(map[string]*serviceHold)
+	if m.pillowHolds == nil {
+		m.pillowHolds = make(map[string]*pillowHold)
 	}
-	m.serviceHolds[hold.view.ID] = hold
+	m.pillowHolds[hold.view.ID] = hold
 	hold.timer = time.AfterFunc(duration, hold.finish)
 	hold.stop = context.AfterFunc(m.cleanupCtx, hold.finish)
 	m.mu.Unlock()
 	return hold.view, nil
 }
 
-type ServiceHold struct {
+type PillowHold struct {
 	ID        string    `json:"id"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
-type serviceHold struct {
+type pillowHold struct {
 	bed    *Resident
-	view   ServiceHold
+	view   PillowHold
 	finish func()
 	timer  *time.Timer
 	stop   func() bool
 }
 
-func (m *Manager) ReleaseServiceHold(b *Resident, id string) {
+func (m *Manager) ReleasePillowHold(b *Resident, id string) {
 	m.mu.Lock()
-	hold := m.serviceHolds[id]
+	hold := m.pillowHolds[id]
 	m.mu.Unlock()
 	if hold != nil && hold.bed == b {
 		hold.finish()

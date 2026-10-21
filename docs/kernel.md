@@ -3,7 +3,7 @@
 ## 一、定位与目标
 
 Hostel 是面向 AI Agent 的 sandbox runtime，在一个 Carrier（一台机器或一个容器）内，
-用一份重运行环境低成本承载多个 Bed。Hostel / Bed 可类比轻量、尽力实现的 Docker / Container：
+用一份重运行环境低成本承载多个 Bed。Hostel / Bed 可类比轻量、尽力实现的 kubelet / Pod：
 面向受限的 Host/Pod，从 API 视角提供尽可能接近 Container 的文件、工作目录与执行体验。
 当前面向可信或半可信代码。
 
@@ -14,10 +14,15 @@ Docker/containerd 已覆盖的通用容器运行时。Hostel 选择解决宿主�
 并尽量保持同一套 API 使用体验。完备的隔离机制是可利用的条件，支持受限环境中的组件
 降级与能力组合才是这套设计的主要价值；Docker/containerd 可以作为 Carrier 的承载层。
 
-**Hostel 的核心价值是组件按需组合、按宿主能力降级，并在 API 层尽量保持统一的使用体验。**
-文件、身份、网络和资源组件分别选择可用机制，再验证它们能否共同承载 Bed；某一组件能力
-不足时，保留其他组件已经能够提供的能力。完整的 namespace 和 cgroup 是可用时采用的
-实现条件，不是所有 Bed 的启动前提。
+**Hostel 通过 Bed Spec 描述其支持的 workload 运行与管理模型，底层根据宿主实际能力实现、
+组合或降级，尽量让调用方无感。** Bed Spec 表达工作负载的运行方式、资源关系与生命周期需求；
+Hostel 负责把这些声明落实为可执行、可管理的 Bed。调用方围绕同一套模型使用命令、session、
+Pillow 主进程、文件和网络能力，具体机制由所属领域根据宿主条件选择。
+
+工作负载语义与底层机制分开演进：先确定 Bed Spec 所表达的行为契约，再选择能够兑现它的实现，
+并在保持契约的前提下提供替代或降级路径。文件、身份、网络和资源组件分别选择可用机制，再验证
+它们能否共同承载 Bed；某一组件能力不足时，保留其他组件已经能够提供的能力。完整的 namespace
+和 cgroup 是可用时采用的实现条件，不是所有 Bed 的启动前提。
 
 统一体验以 Bed 身份、操作语义和资源发现契约为基础；底层路径、端口和隔离机制可以随
 实际能力变化，由所属领域与 API 适配表达为调用方可用的结果。能力差异仍须在状态中
@@ -54,9 +59,10 @@ Hostel 负责实例内 Bed 生命周期、执行、文件、持久化、可选�
 | 对象 | 身份与职责 |
 |---|---|
 | Bed | 调用方以 Name 路由、本地以 ID 归属的 sandbox 单元，持有文件数据、配置与生命周期 |
-| BedFS | Bed 的文件系统数据域，拥有 Rootfs、Workdir、PathMappings 和三类路径空间 |
+| Pillow | Bed 内命名执行环境，持有 env、配置引用、workdir、mounts 和可选主进程声明 |
+| BedFS | Bed 文件数据与各 Pillow 文件视图，统一解析文件 API 和进程使用的路径 |
 | Executor | Bed 当前可替换的进程承载域，一个 resident Bed 同时至多有一个 |
-| Execution | 一次命令运行，记录所属 Bed、Executor、输出与结构化终态 |
+| Execution | 一次运行，记录所属 Bed、Pillow、Executor、输出与结构化终态 |
 | Amenity | Carrier 共享的设施，按 Bed 分配状态并管理设施本身的生命周期 |
 
 Bed 是上层路由与归属的单位，不等于某个 OS 进程。Hostel 在 Pod 内以进程为中心提供轻量隔离单元，
@@ -71,14 +77,16 @@ daemon
 │   ├── Network Manager
 │   ├── Store Manager
 │   ├── Executor Manager
+│   ├── Configuration Manager
+│   ├── Pillow Manager
 │   └── Resource Manager
 └── Amenity Manager
 ```
 
 `internal/bed` 只放共享模型和契约，全仓只有一个 `Bed` 类型。Spec 保存解析后的配置与准备输入，
-Status 分为 Lifecycle、Filesystem、Privilege、Network、Store、Executor、Resource 七个
-类型化部分。各领域能读取完整快照，只获得自己部分的 `StatusWriter`；Bed Manager 拥有 Spec 和
-Lifecycle 的更新权。读写都复制可变成员，不能通过返回的 map、slice 或指针绕过写入边界。
+共享 Status 按 Lifecycle、Filesystem、Privilege、Network、Store、Executor、Resource
+划分类型化部分；Pillow Manager 持有环境和主进程状态，查询时合入公开 Bed 快照。
+各领域能读取共享快照，只获得自己部分的 `StatusWriter`；Bed Manager 拥有 Spec 和 Lifecycle 的更新权。读写都复制可变成员，不能通过返回的 map、slice 或指针绕过写入边界。
 
 资源句柄、锁、后台任务和客户端由对应领域 Manager 持有。Bed Manager 内部的 `managedBed`
 承载 operation/session、版本水位与清理重试等协调状态，通过 `Resident` 操作句柄供入口层使用；
@@ -86,7 +94,7 @@ Lifecycle 的更新权。读写都复制可变成员，不能通过返回的 map
 
 为 Bed 准备资源与限制是 Bed Manager 的职责：它协调各组件，优先利用 Hostel 已有的管理权限，
 不足时才选择经过验证的降级机制。工作负载的最终低权限身份不限制管理侧的准备能力。
-Executor 只负责在选定环境中运行 command、session 和 Service，不选择资源或决定降级。
+Executor 只负责在选定环境中运行 command、session 和 Pillow 主进程，不选择资源或决定降级。
 rootful 文件视图等可复用资源在 Bed 初始化时准备并由领域组件持有，Executor 替换不改变这些资源；
 执行入口只进入环境并在交出控制权前降权。具体顺序与信任边界见 [权限模型](privilege.md)。
 
@@ -104,10 +112,31 @@ Executor 重建只替换领域资源，不新建 Bed。ID 保存在 `{beds-root}
 Lifecycle 状态是初始化进度与调度视图的唯一来源；Store 统一发布快照/磁盘提示，Executor
 观察自身退出并更新状态，Network 串行提交同一 Bed 的策略与状态，避免旧结果覆盖新结果。
 
+### Bed 与 Pillow
+
+BedSpec 描述资源和工作负载关系：Bed 拥有 Volumes、根数据、网络、权限、资源与 Store；
+Pillow 在具体进程之前组织配置与消费视图。BedSpec.pillows 的第一项为默认 Pillow，
+名称在 Bed 内唯一，显式选择按名称；顺序不表达启动依赖。省略列表时创建 main，空列表拒绝。
+规范化保持顺序，重复创建检查包含顺序在内的完整 Pillow 声明。
+
+Pillow 直接包含 command / args 以及主进程监督策略。没有 command 时只准备环境，
+有 command 时自动启动主进程；同 Pillow 可以同时执行临时命令或创建 Session。
+每个 Session 固定绑定创建时的 Pillow 与 Executor，主进程退出不删除环境。
+工作目录默认 /workspace，文件 API 与命令采用相同的相对路径基准。
+
+配置归属是 Bed → Pillow，进程仍由 Bed 唯一 Executor 承载。Executor 替换重新绑定各 Pillow
+视图，保留 Bed 数据与临时卷。Pillow 之间共享 BedUser、根数据、网络和资源，不增加独立镜像
+或进程 namespace；不同 env/mounts 不代表完整安全隔离。
+
+Filesystem 先准备 Bed Volume 来源，再把 Pillow mounts 编译为文件 API 和进程视图。
+empty_dir 由 Bed 驻留实例拥有，host_path 借用外部目录；具体投影属于文件实现，不另设 Bed
+路径映射声明。只读等明确诉求无法兑现时拒绝，受限宿主下实际降级通过状态披露。
+Pillow 的监督与管理契约见 [pillow.md](pillow.md)。
+
 ### Bed 网络与端口声明
 
-Bed Spec 的 `PortMappings` 描述命名 TCP 需求，Service 引用它；PathMappings 对应文件路径，
-PortMappings 对应网络内外地址。`status.services` 与 `status.port_mappings` 直接属于 Bed，
+Bed Spec 的 `PortMappings` 描述命名 TCP 需求，Pillow 主进程引用它；Volumes 定义文件数据来源、Mounts 定义各执行方的访问路径与权限，
+PortMappings 对应网络内外地址。`status.pillows` 与 `status.port_mappings` 直接属于 Bed，
 `status.components.network` 报告实际网络能力。能力降级时保持同一发现接口，明确返回实际地址，
 硬要求无法满足时失败。具体声明、共享网络端口及回收顺序见 [network.md](network.md#bed-portmapping)。
 
@@ -194,13 +223,14 @@ Amenity 的全局启停直属 daemon；Bed Manager 通过薄生命周期适配�
 
 ### 组件参与生命周期
 
-`bedinit` 是 command、session 和 Service 每次启动进程时共用的可信初始化路径：
+`bedinit` 是 command、session 和 Pillow 主进程每次启动进程时共用的可信初始化路径：
 按 Bed Manager 绑定的执行方案进入环境、切换身份及权限、应用 env/cwd，最后 `exec`
 用户程序。它使用 Hostel 自身二进制的内部入口，不是用户镜像的 ENTRYPOINT，
 也不是 Bed 生命周期的 Prepare hook、常驻服务或 PID 1。Executor 只负责启动和监督；
 资源分配、机制选择与降级仍由 Bed Manager 及领域组件完成。
 Bed Manager 为新 Executor 绑定执行环境后才发布它：Filesystem 可从 Bed 模板派生
-与该进程域匹配的最终视图，command/session/Service 共用，Executor 退出后释放。
+与该进程域匹配的各 Pillow 最终视图；command、Session 和主进程使用所属 Pillow 的视图，
+Executor 退出后释放。卷数据与模板归 Bed，Executor 替换不改变它们。
 准备失败的 Executor 保留清理责任，清理成功前不得复用或替换。
 
 每个 Bed hook 接收同一个 `*bed.Bed`，资源按具体 allocation 归属。组件还提供类型化
@@ -209,9 +239,9 @@ Bed Manager 为新 Executor 绑定执行环境后才发布它：Filesystem 可�
 | Hook | Bed Manager 驱动时机与完成条件 |
 |---|---|
 | Recover | 启动准入前恢复已有本地身份；Privilege 根据目录 owner 保留 UID |
-| Prepare | 初始化时先准备 Store、Filesystem 数据、Privilege、Network（含初始策略），再组装文件视图和 Environment，准备 Resource、Configuration、Executor、Amenity、Service；全部成功后才发布 Ready |
+| Prepare | 初始化时先准备 Store、Filesystem 数据、Privilege、Network（含初始策略），再组装文件视图和 Environment，准备 Resource、Configuration、Executor、Amenity、Pillow 主进程；全部成功后才发布 Ready |
 | Stop | 已停止数据面准入后终止 Transfer 与 Executor，阻止继续使用资源 |
-| Release | Stop 成功后释放 Service、设施切片、Executor、资源组、Configuration、BedFS、网络和 Store 任务状态；文件视图先于其引用的网络配置释放，不释放 UID |
+| Release | Stop 成功后释放 Pillow 主进程、设施切片、Executor、资源组、Configuration、BedFS、网络和 Store 任务状态；文件视图先于其引用的网络配置释放，不释放 UID |
 | Forget | 运行资源和本地 Bed / `.gc-*` 目录全部清理后，由 Privilege 释放身份 |
 
 Stop / Release 保存每个参与者的完成进度，失败重试从未完成的 hook 继续；已成功的 hook 不重复执行。
@@ -269,7 +299,7 @@ Bed Manager 是保活与回收决策的唯一 owner。共享 Bed 的 Lifecycle S
 
 自动回收要求无 operation，且 `keepalive_at + idleTTL` 已到期；idleTTL 为零时禁用
 自动到期，default Bed 仍不参与自动回收。operation 的执行超时由各执行入口负责，
-保活承诺不取代任务取消。清理、Service readiness 更新和状态发布不得覆盖保活基准。
+保活承诺不取代任务取消。清理、Pillow 主进程readiness 更新和状态发布不得覆盖保活基准。
 
 续期与开始回收在 Bed Manager 内原子互斥：续期先成功则回收必须遵守更晚期限；
 回收先开始则拒绝续期，不重新开放正在退出的 Bed。只有当前 resident 身份可续期，
@@ -277,7 +307,7 @@ Bed Manager 是保活与回收决策的唯一 owner。共享 Bed 的 Lifecycle S
 
 续期不是 operation，不改变 active、pinned 或 Store 同步事实。一个 idle、非 pinned
 的 Bed 仍可处于保留期，继续占用 resident/occupied 容量，使 Carrier 保持 retained。
-期限只约束自动回收，不阻止显式删除或 daemon shutdown，也不保证 Service 不会故障重启。
+期限只约束自动回收，不阻止显式删除或 daemon shutdown，也不保证 Pillow 主进程不会故障重启。
 保活基准属于本次驻留，不进入 Bed 快照；daemon 重启后由上层重新确认运行态与保留期限。
 
 ### 执行与进程归属
@@ -285,10 +315,10 @@ Bed Manager 是保活与回收决策的唯一 owner。共享 Bed 的 Lifecycle S
 `/command` 每次创建独立进程；只有显式 `/session` 才保留 shell 的 cd/export 等状态。
 普通命令之间通过文件延续状态，避免某条脚本的 exit、trap 或 set -e 终结其他执行。
 
-Bed 的基础执行环境属于 Spec，而不属于 Executor 或某次命令。普通命令和新建 session shell
-按 Carrier 环境、Hostel 注入的 Bed 上下文、Bed Env、单次执行 env 的顺序组合；保留变量
-不允许调用方覆盖。session 内的 export 只改变该 shell，不能改写 Bed 定义或其他执行。
-Bed Service 共用隔离和目录视图，但只叠加自己的环境，不隐式继承普通执行的 Bed Env。
+Pillow 的基础执行环境属于 BedSpec，而不属于 Executor 或某次命令。命令、Session 和主进程
+按 Carrier 环境、Hostel 注入的 Bed 上下文、所属 Pillow 配置、单次执行 env 的顺序组合；
+保留变量不允许调用方覆盖。Session 内的 export 只改变该 shell，不能改写 Pillow 定义或其他执行。
+Pillow 之间不隐式继承配置，配置来源在消费者启动时重新解析。
 
 环境声明在本地 Bed 生命周期内固定，重复创建必须一致，原生 Ensure 只加入已有声明。
 它随 daemon 私有的本地身份记录保存，Executor 替换和保留目录的重启不会丢失；不进入
@@ -302,8 +332,9 @@ hostel daemon
 └─ Bed（领域身份，非 OS 进程）
    └─ Executor（当前进程承载域）
       └─ supervisor（Linux backend）
-         ├─ 一次性命令进程
-         └─ 显式 session shell
+         ├─ 一次性命令进程（绑定 Pillow）
+         ├─ 显式 session shell（固定 Pillow）
+         └─ Pillow 主进程（可选）
 ```
 
 Linux supervisor 负责派生、收尸与整域回收，可重连 IPC 和幂等 Start 避免重试重复执行。

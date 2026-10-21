@@ -120,12 +120,12 @@ func (s *Handler) RegisterRoutes(e *gin.Engine) {
 		v1.GET("/capabilities", s.capabilities)
 		v1.GET("/:bedId", s.bedGet)
 		v1.POST("/:bedId/renew-expiration", s.bedRenewExpiration)
-		v1.GET("/:bedId/services", s.serviceList)
-		v1.GET("/:bedId/services/:service", s.serviceGet)
-		v1.GET("/:bedId/services/:service/logs", s.serviceLogs)
-		v1.POST("/:bedId/services/:service/restart", s.serviceRestart)
-		v1.POST("/:bedId/services/:service/access", s.serviceAccess)
-		v1.DELETE("/:bedId/service-holds/:holdId", s.serviceHoldRelease)
+		v1.GET("/:bedId/pillows", s.pillowList)
+		v1.GET("/:bedId/pillows/:pillow", s.pillowGet)
+		v1.GET("/:bedId/pillows/:pillow/logs", s.pillowLogs)
+		v1.POST("/:bedId/pillows/:pillow/process/restart", s.pillowRestart)
+		v1.POST("/:bedId/pillows/:pillow/access", s.pillowAccess)
+		v1.DELETE("/:bedId/pillow-holds/:holdId", s.pillowHoldRelease)
 		v1.GET("/:bedId/network/healthz", s.networkPolicy)
 		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 			v1.Handle(method, "/:bedId/network/policy", s.networkPolicy)
@@ -160,7 +160,7 @@ func respondBedError(c *gin.Context, err error) {
 			return
 		}
 	}
-	if errors.Is(err, bed.ErrPortsConflict) || errors.Is(err, bed.ErrPathsConflict) || errors.Is(err, bed.ErrServicesConflict) || errors.Is(err, bed.ErrEnvConflict) {
+	if errors.Is(err, bed.ErrPortsConflict) || errors.Is(err, bed.ErrPathsConflict) || errors.Is(err, bed.ErrPillowsConflict) {
 		respondError(c, http.StatusConflict, apiview.ErrBedInvalid, err.Error())
 		return
 	}

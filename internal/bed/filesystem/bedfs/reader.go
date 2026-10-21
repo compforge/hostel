@@ -150,10 +150,10 @@ func (r *Reader) Search(p, pattern string) ([]FileInfo, error) {
 	return entries, nil
 }
 
-// SetPathMappings creates an empty local directory for parent discovery. It
+// SetMounts creates an empty local directory for parent discovery. It
 // must not make a source directory look empty when the process mapping is absent.
 func emptyMappingPlaceholder(local *FS, prefix, p string) (bool, error) {
-	if clientPath(p) != prefix {
+	if local.clientPath(p) != prefix {
 		return false, nil
 	}
 	host, err := local.Resolve(p)

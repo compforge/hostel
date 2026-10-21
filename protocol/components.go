@@ -32,8 +32,18 @@ type ResourceStatus struct {
 }
 
 // FilesystemStatus exposes preparation without leaking host filesystem paths.
+type VolumeMountStatus struct {
+	Volume        string `json:"volume"`
+	Path          string `json:"path"`
+	Pillow        string `json:"pillow,omitempty"`
+	ReadOnly      bool   `json:"read_only"`
+	ProcessMapped bool   `json:"process_mapped"`
+	Reason        string `json:"reason,omitempty"`
+}
+
 type FilesystemStatus struct {
-	Prepared bool `json:"prepared"`
+	Mounts   []VolumeMountStatus `json:"mounts,omitempty"`
+	Prepared bool                `json:"prepared"`
 }
 
 type NetworkRule struct {

@@ -6,10 +6,10 @@ Hostel 的 daemon 启动配置按组件组合。Filesystem、Network、Resource�
 分别拥有自己的 Config；总配置负责把它们组装起来。Config 不仅承载 Tool 开关，也包含普通运行参数，
 例如 Store 的 S3 endpoint、bucket、凭据和同步策略。
 
-Bed Service 的完整声明、Pod IP 发布地址及 daemon 统一 TCP 端口池参数见
-[bed-service.md](bed-service.md#四部署配置与-api)。Carrier 包含服务程序不会自动为每个 Bed 启用服务。
-普通执行与 Service 的环境变量、命名文件来源及 `--configuration-sources` 见
-[bed-configuration.md](bed-configuration.md)。
+Pillow 主进程的完整声明、Pod IP 发布地址及 daemon 统一 TCP 端口池参数见
+[pillow.md](pillow.md#四部署配置与-api)。Carrier 包含服务程序不会自动为每个 Bed 启用服务。
+Pillow 的环境变量、命名文件来源及 `--configuration-sources` 见
+[configuration-sources.md](configuration-sources.md)。
 
 输入 Options 使用指针区分未指定与显式零值。启动入口按下列优先级生成确定的 Config：
 
@@ -53,7 +53,7 @@ Requirements 由实现声明，caller 不给环境前提设置 Policy；实际�
 
 ## 启动、失败与观测
 
-启动入口合并配置并校验冲突，各组件按策略探测、选择和准备，再以临时 Bed 验证 command/session/Service 的组合。
+启动入口合并配置并校验冲突，各组件按策略探测、选择和准备，再以临时 Bed 验证 command/session/Pillow 主进程的组合。
 组合失败时先保留文件保证，依次尝试可选进程、网络和身份组合；耗尽后才更换文件候选，并恢复原始增强偏好重新探测。
 整体选择、单次组合执行与清理都有独立的有界预算；候选耗尽或选择预算耗尽则失败。
 Required 功能启动时无法满足就启动失败；清理失败也终止回退，保留资源 owner 和错误，不继续尝试下一组。
@@ -84,16 +84,16 @@ E2E 通过内部 Options 在同一台机器上控制功能组合，仍启动真�
 前提包括 Linux supervisor、PID/mount namespace 创建权限和 procfs 挂载权限。
 这一策略与文件、网络隔离分别配置；选定后，live Bed 和替换 Executor 不重新降级。
 
-一个 Executor 的 command、session 和 Service 共享 PID namespace 和最终文件挂载视图。
+一个 Executor 的所有进程共享 PID namespace；command、Session 和主进程进入所属 Pillow 的最终文件挂载视图。
 Supervisor 是域内 PID 1，负责收尸与终止；Executor 丢失会结束该域。替换时保留 BedFS，
 重新创建进程域和对应文件视图，旧资源清理成功前不发布新 Executor。
-对 daemon 返回的 PID 仍属于 daemon 可见的命名空间，供 Service 监听端口归属检查使用。
+对 daemon 返回的 PID 仍属于 daemon 可见的命名空间，供 Pillow 主进程监听端口归属检查使用。
 
 Component 的 `tools.pidns` 报告 policy、requirements、probe、selected 和 reason；
 Bed 的 `executor.private_pid_namespace` 报告所属进程域是否实际隔离。启动组合回退
 保留原始 Policy 和探测证据，不通过改写 Policy 来伪装成调用方关闭了隔离。
 
-共享控制目录仍使用通用 `PathMapping`。需要真实挂载点的调用方必须选择已兑现 mount
+共享控制目录通过 Bed `volumes` 和各 Pillow 的 `mounts` 声明。需要真实挂载点的调用方必须选择已兑现 mount
 视图的文件机制；PRoot/pathshim 路径投影不能作为内核挂载能力的证明。Hostel 不解释
 目录中的上层控制协议或迁移资格标记。
 
@@ -106,4 +106,4 @@ Bed 的 `executor.private_pid_namespace` 报告所属进程域是否实际隔离
 进程 namespace 的选择与冻结由 Executor 拥有；新增进程工具接入它的组合候选入口和工具状态，
 文件组合入口无需识别新 namespace 名称。跨领域依赖由 Bed Manager 协调，在同一文件保证内
 先尝试可选增强组合，之后才更换文件机制。Required 成员始终保留，清理失败停止后续尝试。
-选定组合用于所有命令、session、Service 和替换 Executor；运行时失败明确返回错误。
+选定组合用于所有命令、session、Pillow 主进程和替换 Executor；运行时失败明确返回错误。

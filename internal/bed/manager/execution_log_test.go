@@ -3,14 +3,15 @@ package manager
 import (
 	"context"
 	"fmt"
-	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
-	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
 func TestBackgroundLogRetentionAndBedLifetime(t *testing.T) {

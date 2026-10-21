@@ -78,7 +78,7 @@ func TestRenewExpirationRejectsInvalidAndUnavailableBeds(t *testing.T) {
 			t.Fatalf("phase %s: %v", phase, err)
 		}
 	}
-	// Readiness is independent: a resident with a restarting service may renew.
+	// Readiness is independent: a resident with a restarting pillow may renew.
 	m.setLifecycle(b.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: false})
 	if _, err := m.RenewExpiration(b, &until); err != nil {
 		t.Fatal(err)
@@ -134,28 +134,28 @@ func TestRenewExpirationFencesIdleCollection(t *testing.T) {
 	}
 }
 
-func TestRenewExpirationKeepsServiceExecution(t *testing.T) {
-	m, specs, _ := testServiceManager(t)
+func TestRenewExpirationKeepsPillowExecution(t *testing.T) {
+	m, specs, _ := testPillowManager(t)
 	m.SetBedIdleTTL(time.Minute)
-	if _, err := m.InitializeBedWithOptions(t.Context(), "renew-service", testServiceOptions(specs)); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "renew-pillow", testPillowOptions(specs)); err != nil {
 		t.Fatal(err)
 	}
-	b, err := m.Ensure(t.Context(), "renew-service")
+	b, err := m.Ensure(t.Context(), "renew-pillow")
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := m.services.Status(b.Bed)
+	before := m.pillows.Status(b.Bed)
 	until := time.Now().Add(time.Hour)
 	if _, err := m.RenewExpiration(b, &until); err != nil {
 		t.Fatal(err)
 	}
-	after := m.services.Status(b.Bed)
+	after := m.pillows.Status(b.Bed)
 	if len(after) != len(before) || b.Inflight() != 0 || b.Status().Pinned {
-		t.Fatal("renew changed service or operation state")
+		t.Fatal("renew changed pillow or operation state")
 	}
 	for i := range before {
 		if before[i].ExecutionID != after[i].ExecutionID {
-			t.Fatal("renew restarted service")
+			t.Fatal("renew restarted pillow")
 		}
 	}
 	if reaped := m.CollectExpired(t.Context(), time.Now().Add(2*time.Minute)); len(reaped) != 0 {

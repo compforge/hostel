@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+
 	"github.com/qiankunli/hostel/internal/bed"
 	"golang.org/x/sync/semaphore"
 )

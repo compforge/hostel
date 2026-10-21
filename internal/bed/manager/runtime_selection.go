@@ -197,7 +197,7 @@ func probeRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell stri
 	if err := os.Chmod(scratch, 0755); err != nil {
 		return attempt, errors.Join(err, os.RemoveAll(scratch))
 	}
-	m, err := NewManager(host, scratch, "default", shell, selection.Files, nil, 0, nil, WithRuntimeSelection(selection), WithServices(ports))
+	m, err := NewManager(host, scratch, "default", shell, selection.Files, nil, 0, nil, WithRuntimeSelection(selection), WithPillows(ports))
 	if err != nil {
 		return attempt, errors.Join(err, os.RemoveAll(scratch))
 	}
