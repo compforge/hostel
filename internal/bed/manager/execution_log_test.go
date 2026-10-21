@@ -113,7 +113,7 @@ func TestLogCleanupFailureIsRetried(t *testing.T) {
 func TestBackgroundHistoryOutlivesBoundedHotOutput(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
-	b, err := declareTestBed(m, t.Context(), "default")
+	b, err := declareTestBed(m, t.Context(), "test-bed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestBackgroundHistoryOutlivesBoundedHotOutput(t *testing.T) {
 
 func TestRestartCleansUnrecoverableExecutionLogs(t *testing.T) {
 	m := newTestManager(t)
-	b, err := declareTestBed(m, t.Context(), "default")
+	b, err := declareTestBed(m, t.Context(), "test-bed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestRestartCleansUnrecoverableExecutionLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m2.Close(context.Background())
-	restored, err := declareTestBed(m2, t.Context(), "default")
+	restored, err := declareTestBed(m2, t.Context(), "test-bed")
 	if err != nil {
 		t.Fatal(err)
 	}

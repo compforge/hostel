@@ -70,14 +70,14 @@ func TestVolumePersistenceOverridesInstanceDefault(t *testing.T) {
 	if got := storageRequests.Load(); got != 0 {
 		t.Fatalf("noop made %d S3 requests", got)
 	}
-	created, err = c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "default-bed", "pillows": workspacePillows()}, nil)
+	created, err = c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "inherited-store", "pillows": workspacePillows()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	must2xx(t, "create default", created)
-	c.waitBed(t, "default-bed", func(b bedView) bool { return b.Status.Phase == "failed" && b.Sync == "cas" }, "default Store denial")
+	must2xx(t, "create Bed with inherited Store", created)
+	c.waitBed(t, "inherited-store", func(b bedView) bool { return b.Status.Phase == "failed" && b.Sync == "cas" }, "default Store denial")
 	if storageRequests.Load() == 0 {
-		t.Fatal("default Bed did not use configured S3")
+		t.Fatal("Bed did not inherit the configured S3 Store")
 	}
 	// Reverse direction: an API-selected S3 Bed also overrides a noop default.
 	reverse := startTarget(t, targetOptions{store: "noop"}).client

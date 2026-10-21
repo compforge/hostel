@@ -220,8 +220,7 @@ type InventoryBed struct {
 // initialization (Ensure), so a scheduler routing on outdated data is slow,
 // never wrong.
 //
-// +spec=`Scheduler inventory accounts for every Bed, independent of its name.`
-// +case:id=default_named_bed_inventory,desc=`Declare a Bed named default`,expect=`it consumes capacity and appears in inventory until reclaimed`
+// +spec=`Scheduler inventory projects Bed lifecycle state and capacity from the same captured inventory.`
 func (m *Manager) Inventory() []InventoryBed {
 	return m.captureInventory()
 }

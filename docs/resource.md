@@ -133,11 +133,11 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 
 三个聚合的包含关系为 `pinned_beds ⊆ resident_beds ⊆ occupied_beds`：
 
-- `occupied_beds`：正在占用 `max_beds` 名额的 tenant Bed，包含 initializing、resident 和 evicting。
-- `resident_beds`：已在当前 Node 准备好 BedFS/运行境的 tenant Bed，包含 resident 和仍在持久化复核的 evicting；不包含 initializing 或已停止准入的 CleanupPending。
+- `occupied_beds`：正在占用 `max_beds` 名额的 Bed，包含 initializing、resident 和 evicting。
+- `resident_beds`：已在当前 Node 准备好 BedFS/运行境的 Bed，包含 resident 和仍在持久化复核的 evicting；不包含 initializing 或已停止准入的 CleanupPending。
 - `pinned_beds`：其中有 operation，或 durable store 下 `data_synced=false` 的 Bed；它们暂时只能由当前 carrier 承接。noop 只在 operation 进行期间 pinned。
 
-`phase_counts.initializing` 仍表达生命周期，`activity_counts.active|idle` 仍只表达已 resident Bed 的操作态；不为了“凑总数”把 initializing 塞进 activity。所有 Bed（包括名为 `default` 的 Bed）都参与上述容量计数。
+`phase_counts.initializing` 仍表达生命周期，`activity_counts.active|idle` 仍只表达已 resident Bed 的操作态；不为了“凑总数”把 initializing 塞进 activity。
 
 ![Bed 状态变化与 Node 容量计数](assets/bed-state-counts.svg)
 

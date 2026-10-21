@@ -31,7 +31,7 @@ func NewServer(mgr *bed.Manager) *testServer {
 	return &testServer{h, engine}
 }
 func (s *testServer) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.engine.ServeHTTP(w, r) }
-func newTestServer(t *testing.T) *testServer {
+func newTestServerWithBed(t *testing.T) *testServer {
 	t.Helper()
 	root := t.TempDir()
 	mgr, err := bed.NewManager(hostfacts.Collect(), root, "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, nil)
@@ -45,7 +45,7 @@ func newTestServer(t *testing.T) *testServer {
 			t.Errorf("close manager: %v", err)
 		}
 	})
-	if _, err := declareTestBed(mgr, t.Context(), "default"); err != nil {
+	if _, err := declareTestBed(mgr, t.Context(), "test-bed"); err != nil {
 		t.Fatal(err)
 	}
 	return NewServer(mgr)
@@ -56,7 +56,7 @@ func do(t *testing.T, s *testServer, method, path string, body io.Reader, hdr ma
 	req := httptest.NewRequest(method, path, body)
 	// Select the explicitly declared fixture Bed; query/header overrides still win.
 	if req.URL.Query().Get("bed") == "" {
-		req.Header.Set(BedHeader, "default")
+		req.Header.Set(BedHeader, "test-bed")
 	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)
@@ -106,7 +106,7 @@ func waitBedReady(t *testing.T, s *testServer, id string) *httptest.ResponseReco
 }
 
 func TestDataRequestRequiresExplicitBed(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	for _, path := range []string{"/execd/command", "/execd/files/info?path=/workspace"} {
 		method := http.MethodGet
 		if strings.HasSuffix(path, "/command") {

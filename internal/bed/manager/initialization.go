@@ -312,7 +312,7 @@ func (m *Manager) beginInitialization(
 	// observable until this explicit desired-state signal arrives.
 	delete(m.initializations, id)
 
-	if m.maxBeds > 0 && m.tenantOccupiedBedsLocked() >= m.maxBeds {
+	if m.maxBeds > 0 && m.occupiedBedsLocked() >= m.maxBeds {
 		m.mu.Unlock()
 		return nil, nil, ErrBedLimit
 	}

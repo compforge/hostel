@@ -128,7 +128,7 @@ internal/
 - 全局错误契约由 `internal/error.go` 拥有，领域按 `errors.Is/As` 传递分类和 cause；协议映射留在各 API，详见 [错误契约](docs/protocol.md)。
 
 - **bed = 客人单元 = 对外一个 sandbox**（独立文件空间 + 执行环境，状态跨命令保持）；**房型是 Bed 文件隔离保证的用户分档**——bed 是跨档不变的基本单位，房型不替代 bed 命名（见 `docs/isolation.md`）。
-  - **显式 Bed 生命周期**：daemon 空载启动，不创建默认 Bed；数据请求必须显式选择 Bed，缺失返回 400。`default` 是普通名称，与其他 Bed 一样参与容量、inventory、准入、回收、purge 和 isolated session 映射。
+  - **显式 Bed 生命周期**：daemon 空载启动，由调用方声明 Bed；数据请求必须显式选择 Bed。容量、inventory、准入和回收统一以 Bed 生命周期为依据。
   - **生命周期事实分维度**：
     - inventory 的 `status.phase=initializing|resident|evicting|purging|dormant|failed` 表达 Bed 所处阶段，`status.readiness` 表达能否服务；Bed 详情将这组事实置于 `status.lifecycle`。
     - resident / evicting Bed 的 `status.activity=active|idle` 由 operation 数量派生。
@@ -137,7 +137,7 @@ internal/
     - Bed 级请求分 operation 与 session 两类，详见 `docs/bed.md`。
   - **luggage**：正常 evict 在 durable/noop 下都删除本地 Bed 目录；durable 可从快照恢复，noop 再次初始化则从空目录开始。luggage 扫描只处理异常退出遗留目录，详见 `docs/bed.md`。
   - **bed 容量准入**：
-    - `occupied_beds` 包含 initializing 与 resident/evicting tenant Bed，`--max-beds` 是其唯一数量硬上限。
+    - `occupied_beds` 包含 initializing 与 resident/evicting Bed，`--max-beds` 是其唯一数量硬上限。
     - 初始化在任何 Store I/O 前预占名额，避免并发 Stage-in 穿透。
     - `--bed-pressure-threshold-percent` 默认 80，`occupied/max-beds` 或 `pinned/max-pinned-beds` 任一达水位即上报软 `bed_pressure`。
     - `max-pinned-beds` 不是准入限制，超过也不返回 429；CPU/内存 pressure 仍单独执行资源准入。

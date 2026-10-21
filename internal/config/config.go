@@ -62,7 +62,7 @@ type Config struct {
 	// new Bed creation; the 429 it produces is
 	// the backpressure/placement signal for an upstream scheduler.
 	MaxBeds int
-	// MaxPinnedBeds is the reference capacity for tenant beds that are running
+	// MaxPinnedBeds is the reference capacity for Beds that are running
 	// work or whose latest data has not reached the durable store. It is not an
 	// admission limit. Zero inherits MaxBeds.
 	MaxPinnedBeds int

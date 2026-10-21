@@ -102,15 +102,10 @@ Ensure 仅等待已经声明的任务就绪；Bed 不存在时返回 404，不�
 
 同 Name 初始化合并为一个任务，在任何 Store I/O 前预占容量。原生请求通过 header/query
 显式选择 Bed，省略返回 400；isolated-session 映射 Bed，不维护平行生命周期。
-daemon 启动时不创建任何 Bed，空实例为 releasable。所有 Bed 必须显式声明；
-`default` 是普通名称，与其他 Bed 一样参与 inventory、准入、容量计数、到期回收和 purge。
+daemon 空载启动，由调用方声明 Bed；空实例为 releasable。
 恢复快照时，调用方仍须声明 Pillow 及 mounts；Store 只提供 Volume 契约和数据。
 卷契约解析后再验证挂载、准备执行环境并发布 Ready，恢复过程不补执行配置。
 数量上限与 carrier 资源准入见 [resource.md](resource.md)，适用于所有 Bed。
-
-从 0.2.4 起不再提供 `--default-bed` / `HOSTEL_DEFAULT_BED`，`/healthz` 也不再返回
-`default_bed`。原先省略 Bed 标识的调用方须先声明一个 Bed，再显式传递该名称；
-CLI/SDK 可在调用端提供便捷默认值，daemon 不保留特殊生命周期。
 
 Ready 必须等到 Store Stage-in、BedFS、身份、已启用的网络及初始策略、资源记账、设施切片、Pillow 环境
 及必需主进程全部准备完成。Executor 仍可按需创建；Ready 表达本次选定能力已准备好，不表示所有维度

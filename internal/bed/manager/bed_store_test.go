@@ -126,7 +126,7 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(durable.Workdir(), "restored.txt")); err != nil {
-		t.Fatalf("default bed did not restore: %v", err)
+		t.Fatalf("Bed using the instance Store did not restore: %v", err)
 	}
 	if err := m.Purge(ctx, b.Name); err != nil {
 		t.Fatal(err)

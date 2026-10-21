@@ -12,9 +12,6 @@ import (
 // +case:id=bed_public_identity,desc=`Create, read, retry and recreate the same Bed name`,expect=`Creation, detail and inventory agree on ID and Name; recreation changes only the lifetime ID`
 func TestBedPublicIdentity(t *testing.T) {
 	s := newTestServer(t)
-	if err := s.mgr.Purge(t.Context(), "default"); err != nil {
-		t.Fatal(err)
-	}
 	const name = "caller-bed"
 	create := func() protocol.Bed {
 		t.Helper()

@@ -358,7 +358,7 @@ func TestTransfersCancelAndPurgeJoinBeforeBedRemoval(t *testing.T) {
 }
 
 func TestTransfersWithoutS3AndInvalidTimeout(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	req := transferRequest{ID: "one", Source: transferEndpoint{Type: "bed", Path: "/workspace"}, Destination: transferEndpoint{Type: "s3", Key: "export/"}}
 	startTestTransfer(t, s, req, 503)
 	req.TimeoutMs = 1 << 62

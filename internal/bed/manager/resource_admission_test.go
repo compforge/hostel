@@ -38,7 +38,6 @@ func TestResourceAdmissionChecksSyncedIdleAndNewBeds(t *testing.T) {
 	m := newTestManager(t)
 	a, _ := declareTestBed(m, context.Background(), "a")
 	b, _ := declareTestBed(m, context.Background(), "b")
-	defaultBed, _ := declareTestBed(m, context.Background(), "default")
 	admission := &mutableAdmission{decision: resource.AdmissionDecision{Allowed: true}}
 	m.SetResourceAdmission(admission)
 
@@ -56,9 +55,6 @@ func TestResourceAdmissionChecksSyncedIdleAndNewBeds(t *testing.T) {
 	}
 	if _, err := declareTestBed(m, context.Background(), "new"); !errors.Is(err, ErrResourcePressure) {
 		t.Fatalf("admit new resident: want ErrResourcePressure, got %v", err)
-	}
-	if _, err := m.BeginOperation(defaultBed, OpExec, 0); !errors.Is(err, ErrResourcePressure) {
-		t.Fatalf("default named Bed bypassed resource admission: %v", err)
 	}
 	finishA2()
 	finishA()

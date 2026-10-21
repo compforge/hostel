@@ -55,7 +55,7 @@ curl -fsS 'http://localhost:8872/files/download?path=/workspace/hello.txt' \
 
 Create a Bed with at least one explicit Pillow before accessing it. Data requests
 wait for initialization and return 404 for undeclared Beds. Use the same
-`X-Hostel-Bed` header for subsequent requests; omitting the Bed selector returns 400. The daemon starts with no Beds; `default` is an ordinary name that must be explicitly declared.
+`X-Hostel-Bed` header for subsequent requests; omitting the Bed selector returns 400. Declare a Bed before sending requests to it.
 Ordinary commands run in fresh processes; `/session` creates a persistent shell.
 Use `cwd` and relative paths in commands: file API paths are bed-relative, while
 absolute paths inside shell text follow the selected process environment.

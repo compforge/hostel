@@ -94,7 +94,7 @@ func TestExplicitBedPillowDeclaration(t *testing.T) {
 	}
 }
 
-// +case:id=explicit_bed_idle_release,desc=`Start empty, reject implicit requests, then expire and purge an explicitly declared default Bed`,expect=`All Beds consume capacity and the daemon returns to releasable without a hidden resident`
+// +case:id=explicit_bed_idle_release,desc=`Start empty, reject implicit requests, then expire and purge an explicitly declared Bed`,expect=`All Beds consume capacity and the daemon returns to releasable after the last Bed is reclaimed`
 func TestExplicitBedIdleRelease(t *testing.T) {
 	requireTestBinary(t)
 	c := startTarget(t, targetOptions{isolation: "dorm", maxBeds: 1, config: &config.Options{BedIdleTTL: value(2 * time.Second)}}).client
@@ -115,26 +115,26 @@ func TestExplicitBedIdleRelease(t *testing.T) {
 	if got := c.inventory(t); !assertEmpty(got) {
 		t.Fatalf("implicit request created a Bed: %+v", got)
 	}
-	must2xx(t, "declare default", c.createBed(t, "default"))
-	c.waitBed(t, "default", func(b bedView) bool { return b.Status.Phase == "resident" && b.Status.Readiness.Ready }, "resident")
-	if got := c.inventory(t); len(got.Beds) != 1 || !hasBed(got, "default") || got.Instance.Status != "retained" {
-		t.Fatalf("default Bed not visible and retained: %+v", got)
+	must2xx(t, "declare Bed", c.createBed(t, "lifecycle-bed"))
+	c.waitBed(t, "lifecycle-bed", func(b bedView) bool { return b.Status.Phase == "resident" && b.Status.Readiness.Ready }, "resident")
+	if got := c.inventory(t); len(got.Beds) != 1 || !hasBed(got, "lifecycle-bed") || got.Instance.Status != "retained" {
+		t.Fatalf("Bed not visible and retained: %+v", got)
 	}
 	if response := c.createBed(t, "overflow"); response.Status != http.StatusTooManyRequests {
-		t.Fatalf("default Bed bypassed capacity: %d %s", response.Status, response.Body)
+		t.Fatalf("Bed bypassed capacity: %d %s", response.Status, response.Body)
 	}
-	c.waitInventory(t, "idle default Bed reclaimed and instance releasable", assertEmpty)
-	must2xx(t, "recreate default", c.createBed(t, "default"))
-	result, response := c.command(t, "default", map[string]any{"command": "printf explicit-ready", "timeout": 1000})
+	c.waitInventory(t, "idle Bed reclaimed and instance releasable", assertEmpty)
+	must2xx(t, "recreate Bed", c.createBed(t, "lifecycle-bed"))
+	result, response := c.command(t, "lifecycle-bed", map[string]any{"command": "printf explicit-ready", "timeout": 1000})
 	must2xx(t, "explicit command", response)
 	assertCommandExit(t, result, 0)
 	if result.Stdout != "explicit-ready" {
 		t.Fatalf("explicit command output: %q", result.Stdout)
 	}
-	response, err := c.json(ctx, http.MethodDelete, "/v1/beds/default?purge=true", "", nil, nil)
+	response, err := c.json(ctx, http.MethodDelete, "/v1/beds/lifecycle-bed?purge=true", "", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	must2xx(t, "purge default", response)
-	c.waitInventory(t, "purged default Bed removed and instance releasable", assertEmpty)
+	must2xx(t, "purge Bed", response)
+	c.waitInventory(t, "purged Bed removed and instance releasable", assertEmpty)
 }

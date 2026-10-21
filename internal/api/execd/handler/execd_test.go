@@ -32,7 +32,7 @@ func decodeExecd(t *testing.T, body string) []view.StreamEvent {
 }
 
 func TestExecdAddressesShareProtocolAndBed(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	createBedAndWait(t, s, "bed-a")
 	createBedAndWait(t, s, "bed-b")
 	for _, base := range []string{"/execd", "/v1/beds/bed-a/execd"} {
@@ -117,7 +117,7 @@ func TestExecdAddressesShareProtocolAndBed(t *testing.T) {
 }
 
 func TestExecdFilesUseResolvedBed(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	createBedAndWait(t, s, "a")
 	createBedAndWait(t, s, "b")
 	content := []byte("附件\x00\xff\r\n")
@@ -158,7 +158,7 @@ func TestExecdFilesUseResolvedBed(t *testing.T) {
 }
 
 func TestExecdLocalOperationsKeepAuthentication(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	var callbacks atomic.Int32
 	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callbacks.Add(1)

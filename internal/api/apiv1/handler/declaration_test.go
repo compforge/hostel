@@ -29,7 +29,7 @@ func declareTestBed(m *manager.Manager, ctx context.Context, name string) (*mana
 
 // +case:id=explicit_bed_declaration,desc=`Create with missing/null/empty Pillows and access an undeclared Bed`,expect=`400/404 without allocating Bed identity or data`
 func TestBedDeclarationRequiredHTTP(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	for _, body := range []string{`{"id":"missing"}`, `{"id":"missing","pillows":null}`, `{"id":"missing","pillows":[]}`} {
 		rec := do(t, s, "POST", "/v1/beds", strings.NewReader(body), nil)
 		if rec.Code != 400 {

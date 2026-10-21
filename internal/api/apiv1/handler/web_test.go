@@ -57,10 +57,16 @@ func newTestServer(t *testing.T) *testServer {
 			t.Errorf("close manager: %v", err)
 		}
 	})
-	if _, err := declareTestBed(mgr, t.Context(), "default"); err != nil {
+	return NewServer(mgr)
+}
+
+func newTestServerWithBed(t *testing.T) *testServer {
+	t.Helper()
+	s := newTestServer(t)
+	if _, err := declareTestBed(s.mgr, t.Context(), "test-bed"); err != nil {
 		t.Fatal(err)
 	}
-	return NewServer(mgr)
+	return s
 }
 
 func do(t *testing.T, s *testServer, method, path string, body io.Reader, hdr map[string]string) *httptest.ResponseRecorder {
@@ -68,7 +74,7 @@ func do(t *testing.T, s *testServer, method, path string, body io.Reader, hdr ma
 	req := httptest.NewRequest(method, path, body)
 	// Select the explicitly declared fixture Bed; query/header overrides still win.
 	if req.URL.Query().Get("bed") == "" {
-		req.Header.Set(BedHeader, "default")
+		req.Header.Set(BedHeader, "test-bed")
 	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)
@@ -132,8 +138,8 @@ func TestPingAndHealthz(t *testing.T) {
 	if bedUser == nil || bedUser["strategy"] != "fixed" {
 		t.Fatalf("/healthz bed_user = %v", bedUser)
 	}
-	if h["occupied_beds"] != float64(1) || h["resident_beds"] != float64(1) {
-		t.Fatalf("/healthz bed counts = occupied:%v resident:%v, want 1/1 for the declared fixture Bed", h["occupied_beds"], h["resident_beds"])
+	if h["occupied_beds"] != float64(0) || h["resident_beds"] != float64(0) {
+		t.Fatalf("/healthz bed counts = occupied:%v resident:%v, want 0/0 for an empty instance", h["occupied_beds"], h["resident_beds"])
 	}
 	if h["bed_pressure_threshold_percent"] != float64(80) {
 		t.Fatalf("/healthz bed pressure threshold = %v, want 80", h["bed_pressure_threshold_percent"])
@@ -144,7 +150,7 @@ func TestPingAndHealthz(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	rec := do(t, s, http.MethodGet, "/v1/status", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/v1/status = %d %s", rec.Code, rec.Body.String())
@@ -268,7 +274,7 @@ func TestStatus(t *testing.T) {
 }
 
 func TestUploadInfoDownloadRoundTrip(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 
 	// multipart upload with a metadata JSON part carrying the path.
 	var buf bytes.Buffer
@@ -306,7 +312,7 @@ func TestUploadInfoDownloadRoundTrip(t *testing.T) {
 }
 
 func TestDormFileAPIsReadCommandAbsolutePathWhenEnabled(t *testing.T) {
-	base := newTestServer(t)
+	base := newTestServerWithBed(t)
 	s := NewServer(base.mgr, WithDormReadFallbackRoot("/"))
 	rawDir := t.TempDir()
 	rawPath := filepath.Join(rawDir, "artifact.txt")
@@ -339,9 +345,9 @@ func TestDormFileAPIsReadCommandAbsolutePathWhenEnabled(t *testing.T) {
 		t.Fatalf("fallback search = %d %s", rec.Code, rec.Body.String())
 	}
 
-	b, ok := s.mgr.Get("default")
+	b, ok := s.mgr.Get("test-bed")
 	if !ok {
-		t.Fatal("default bed not found after command")
+		t.Fatal("fixture Bed not found after command")
 	}
 	if err := b.BedFS().Write(filepath.ToSlash(rawPath), []byte("bed-local"), 0); err != nil {
 		t.Fatal(err)
@@ -360,7 +366,7 @@ func TestDormFileAPIsReadCommandAbsolutePathWhenEnabled(t *testing.T) {
 }
 
 func TestDormFileAPIsDoNotReadProcessRootByDefault(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	rawPath := filepath.Join(t.TempDir(), "carrier-only.txt")
 	if err := os.WriteFile(rawPath, []byte("carrier"), 0o644); err != nil {
 		t.Fatal(err)
@@ -372,7 +378,7 @@ func TestDormFileAPIsDoNotReadProcessRootByDefault(t *testing.T) {
 }
 
 func TestAbsolutePathAndCommandCwdShareBedHome(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	const clientPath = "/tmp/workspace/job/input.txt"
 
 	var buf bytes.Buffer
@@ -417,7 +423,7 @@ func TestAbsolutePathAndCommandCwdShareBedHome(t *testing.T) {
 }
 
 func TestCommandCwdCanBeBedRoot(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	rec := do(t, s, http.MethodPost, "/command",
 		strings.NewReader(`{"command":"printf bed-root > marker.txt","cwd":"/"}`),
 		map[string]string{"Content-Type": "application/json"})
@@ -438,7 +444,7 @@ func TestCommandCwdCanBeBedRoot(t *testing.T) {
 }
 
 func TestCommandCwdPreservesHeredocTerminatorAtEOF(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	body, err := json.Marshal(RunCommandRequest{
 		Command: "cat <<'PY'\nheredoc-ok\nPY",
 		Cwd:     "/workspace",
@@ -490,7 +496,7 @@ func parseSSE(t *testing.T, body string) []apiview.StreamEvent {
 }
 
 func TestCommandForegroundSSE(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	rec := do(t, s, "POST", "/command", strings.NewReader(`{"command":"echo hostel-ok"}`),
 		map[string]string{"Content-Type": "application/json"})
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
@@ -521,13 +527,13 @@ func TestCommandForegroundSSE(t *testing.T) {
 }
 
 func TestCommandSilentExecStartsStreamBeforeCompletion(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	ts := httptest.NewServer(s)
 	defer ts.Close()
 
 	client := ts.Client()
 	client.Timeout = time.Second
-	resp, err := client.Post(ts.URL+"/command?bed=default", "application/json", strings.NewReader(`{"command":"sleep 2"}`))
+	resp, err := client.Post(ts.URL+"/command?bed=test-bed", "application/json", strings.NewReader(`{"command":"sleep 2"}`))
 	if err != nil {
 		t.Fatalf("wait for command stream headers: %v", err)
 	}
@@ -572,7 +578,7 @@ func TestSSEHeartbeatStopsWithHandler(t *testing.T) {
 }
 
 func TestCommandForegroundPreservesStdoutAndStderr(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	rec := do(t, s, "POST", "/command", strings.NewReader(`{"command":"printf out; printf err >&2; exit 7"}`),
 		map[string]string{"Content-Type": "application/json"})
 	if rec.Code != http.StatusOK {
@@ -621,7 +627,7 @@ func TestLostExecutorResultDoesNotExposeTransportError(t *testing.T) {
 }
 
 func TestSessionStatePersistsAcrossRuns(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	rec := do(t, s, "POST", "/session", strings.NewReader(`{}`), map[string]string{"Content-Type": "application/json"})
 	if rec.Code != 200 {
 		t.Fatalf("create session = %d %s", rec.Code, rec.Body.String())
@@ -659,7 +665,7 @@ func TestSessionStatePersistsAcrossRuns(t *testing.T) {
 }
 
 func TestBedIsolationAcrossHeader(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	createBedAndWait(t, s, "alice")
 	createBedAndWait(t, s, "bob")
 	// Write a file into bed "alice".
@@ -693,7 +699,7 @@ func TestBedIsolationAcrossHeader(t *testing.T) {
 }
 
 func TestBedsCRUD(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	rec := createBedAndWait(t, s, "conv-1")
 	rec = do(t, s, "GET", "/v1/beds", nil, nil)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "conv-1") {
@@ -767,7 +773,7 @@ func TestBedsCRUD(t *testing.T) {
 }
 
 func TestCapabilities(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	rec := do(t, s, "GET", "/v1/beds/capabilities", nil, nil)
 	var caps map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &caps)
@@ -779,7 +785,7 @@ func TestCapabilities(t *testing.T) {
 }
 
 func TestCommandRejectsReservedEnvNamespace(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	rec := do(t, s, http.MethodPost, "/command",
 		strings.NewReader(`{"command":"true","envs":{"BED_ID":"spoof"}}`),
 		map[string]string{"Content-Type": "application/json"})
@@ -815,10 +821,6 @@ func TestMaxBedsBackpressure(t *testing.T) {
 	rec = do(t, s, "GET", "/files/info?path=/workspace", nil, map[string]string{BedHeader: "three"})
 	if rec.Code != 404 {
 		t.Fatalf("undeclared Bed access = %d (want 404)", rec.Code)
-	}
-	rec = do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"default","pillows":[{"name":"agent"}]}`), nil)
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("default named Bed bypassed capacity: %d %s", rec.Code, rec.Body.String())
 	}
 	// Capacity is reported for scheduler placement.
 	rec = do(t, s, "GET", "/healthz", nil, nil)
@@ -861,12 +863,12 @@ func TestMaxPinnedBedsReportsPressureWithoutBackpressure(t *testing.T) {
 		t.Fatalf("checkpoint two = %d %s", rec.Code, rec.Body.String())
 	}
 	// A completed read on another synced Bed leaves only the active operation pinned.
-	if _, err := declareTestBed(mgr, t.Context(), "default"); err != nil {
+	if _, err := declareTestBed(mgr, t.Context(), "test-bed"); err != nil {
 		t.Fatal(err)
 	}
 	rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, nil)
 	if rec.Code != http.StatusOK || mgr.PinnedBedCount() != 1 {
-		t.Fatalf("default during pinned cap = %d pinned=%d body=%s", rec.Code, mgr.PinnedBedCount(), rec.Body.String())
+		t.Fatalf("idle Bed during pinned pressure = %d pinned=%d body=%s", rec.Code, mgr.PinnedBedCount(), rec.Body.String())
 	}
 
 	rec = do(t, s, http.MethodGet, "/healthz", nil, nil)
@@ -921,8 +923,8 @@ func TestCheckpointEndpointAndPersistenceReporting(t *testing.T) {
 
 // /v1/beds is the scheduler's one-poll picture: instance capacity plus
 // every local Bed — managed in-memory Beds and orphaned/legacy luggage.
-func TestBedListIncludesDefaultNamedBed(t *testing.T) {
-	s := newTestServer(t)
+func TestBedListAccountsForResidentBed(t *testing.T) {
+	s := newTestServerWithBed(t)
 	rec := do(t, s, http.MethodGet, "/v1/beds", nil, nil)
 	var body struct {
 		Instance struct {
@@ -934,16 +936,13 @@ func TestBedListIncludesDefaultNamedBed(t *testing.T) {
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &body) != nil {
 		t.Fatalf("inventory: %d %s", rec.Code, rec.Body.String())
 	}
-	if body.Instance.Status != "retained" || body.Instance.OccupiedBeds != 1 || len(body.Beds) != 1 || body.Beds[0].Name != "default" {
-		t.Fatalf("default named Bed not accounted for: %s", rec.Body.String())
+	if body.Instance.Status != "retained" || body.Instance.OccupiedBeds != 1 || len(body.Beds) != 1 || body.Beds[0].Name != "test-bed" {
+		t.Fatalf("resident Bed not accounted for: %s", rec.Body.String())
 	}
 }
 
 func TestBedListEndpoint(t *testing.T) {
 	s := newTestServer(t)
-	if err := s.mgr.Purge(t.Context(), "default"); err != nil {
-		t.Fatal(err)
-	}
 	s.mgr.SetBedIdleTTL(time.Minute)
 	s.mgr.SetLuggageLimits(1000, 800)
 
@@ -1043,7 +1042,7 @@ func TestBedListEndpoint(t *testing.T) {
 }
 
 func TestDeleteEvictVsPurge(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	// Create, then default DELETE = evict (noop store: no snapshot, but 200).
 	rec := createBedAndWait(t, s, "lifecycle")
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"activity":"idle"`) {
@@ -1058,18 +1057,18 @@ func TestDeleteEvictVsPurge(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("purge = %d %s", rec.Code, rec.Body.String())
 	}
-	// A Bed named default follows the same purge lifecycle.
-	rec = do(t, s, "DELETE", "/v1/beds/default?purge=true", nil, nil)
+	// Purge also ends a resident Bed identity.
+	rec = do(t, s, "DELETE", "/v1/beds/test-bed?purge=true", nil, nil)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("purge default = %d (want 200)", rec.Code)
+		t.Fatalf("purge resident Bed = %d (want 200)", rec.Code)
 	}
-	if _, ok := s.mgr.Get("default"); ok {
-		t.Fatal("purged default Bed remains resident")
+	if _, ok := s.mgr.Get("test-bed"); ok {
+		t.Fatal("purged Bed remains resident")
 	}
 }
 
 func TestDataRequestRequiresExplicitBed(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	for _, path := range []string{"/command", "/files/info?path=/workspace"} {
 		method := http.MethodGet
 		if strings.HasSuffix(path, "/command") {

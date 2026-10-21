@@ -80,10 +80,10 @@ type Manager struct {
 	executorFactory     executor.Factory   // creates each managedBed's replaceable process realm
 	resources           resource.Tracker   // per-bed cgroup accounting; noop when unavailable
 	admission           resource.Admitter  // cached carrier-pressure verdict; never performs request-path I/O
-	maxBeds             int                // cap on occupied tenant beds; 0 = unlimited
+	maxBeds             int                // cap on occupied Beds; 0 = unlimited
 	maxPinnedBeds       int                // pinned-count pressure reference; 0 = pressure disabled
 	pressurePercent     int                // shared occupied/pinned high-watermark percentage
-	pinnedBeds          atomic.Int64       // tenant beds running work or holding data not yet durable
+	pinnedBeds          atomic.Int64       // Beds running work or holding data not yet durable
 	network             *network.Manager
 	store               *store.Manager // daemon-wide persistence component
 	processEnv          processEnv     // explicit carrier software env; never daemon-wide inheritance
@@ -126,7 +126,7 @@ const defaultBedPressureThresholdPercent = 80
 var ErrBedLimit = errors.New("bed: max bed count reached")
 
 // ErrResourcePressure is returned when aggregate carrier CPU or memory usage
-// is already too high to initialize another tenant bed.
+// is already too high to initialize another Bed.
 var ErrResourcePressure = errors.New("bed: carrier resource admission threshold reached")
 
 // ErrBedUnavailable means the caller holds a stale Bed pointer whose resident
@@ -366,7 +366,7 @@ func (m *Manager) resourceAdmissionErrorLocked() error {
 	return nil
 }
 
-// adjustPinnedLocked updates the tenant capacity counter after a bed mutation.
+// adjustPinnedLocked updates the Bed capacity counter after a bed mutation.
 // Callers hold m.mu and b.mu and pass the pre-mutation compound value.
 func (m *Manager) adjustPinnedLocked(b *managedBed, wasPinned bool) {
 	isPinned := b.pinnedLocked()
@@ -378,22 +378,22 @@ func (m *Manager) adjustPinnedLocked(b *managedBed, wasPinned bool) {
 	}
 }
 
-// ResidentBedCount reports current resident/evicting tenant beds without
+// ResidentBedCount reports current resident/evicting Beds without
 // taking the manager lock. Initializing Beds are counted by OccupiedBedCount.
 func (m *Manager) ResidentBedCount() int64 { return m.residentBeds.Load() }
 
-// OccupiedBedCount reports tenant beds that currently consume maxBeds
+// OccupiedBedCount reports Beds that currently consume maxBeds
 // admission capacity: initializing plus resident/evicting beds.
 func (m *Manager) OccupiedBedCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.tenantOccupiedBedsLocked()
+	return m.occupiedBedsLocked()
 }
 
-// tenantOccupiedBedsLocked includes initializing beds because admission must
+// occupiedBedsLocked includes initializing beds because admission must
 // reserve their eventual resident slot before any slow Store I/O starts.
 // Callers must hold m.mu.
-func (m *Manager) tenantOccupiedBedsLocked() int {
+func (m *Manager) occupiedBedsLocked() int {
 	n := len(m.beds) + len(m.retirements)
 	for id, initialization := range m.initializations {
 		if m.retirements[id] == nil && initialization.snapshot().Phase == PhaseInitializing {
@@ -497,7 +497,7 @@ func (m *Manager) finishRetirement(ctx context.Context, b *managedBed) (bool, er
 // CollectExpired reaps beds whose promised expiry has elapsed. The final
 // expiry/running-exec check happens again under the bed lock in evictExpired,
 // closing the scan→evict race with a concurrent command.
-// +spec=`Every Bed name follows the same retention and reclamation rules.`
+// +spec=`Idle collection reclaims a Bed only after its retention promise expires and its operations finish.`
 // +link:doc=docs/bed.md
 func (m *Manager) CollectExpired(ctx context.Context, now time.Time) []string {
 	var stale []string

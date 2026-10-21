@@ -7,7 +7,7 @@ import (
 )
 
 func TestCreateBedEnvironmentContract(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	body := `{"id":"env-bed","pillows":[{"name":"main","env":{"VALUE":"private-base-value"}}]}`
 	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(body), nil)
 	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
