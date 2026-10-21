@@ -29,6 +29,7 @@ import (
 	"github.com/qiankunli/go-stdx/shellx"
 	"github.com/qiankunli/go-stdx/uuid"
 
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
@@ -106,7 +107,14 @@ func (s *Handler) isolatedCreate(c *gin.Context) {
 		return
 	}
 
-	b, err := s.mgr.Ensure(c.Request.Context(), uuid.V7())
+	id := uuid.V7()
+	if _, err := s.mgr.InitializeBed(c.Request.Context(), id, bed.CreateOptions{
+		Pillows: []model.PillowSpec{{Name: "main", Mounts: []model.VolumeMount{{Volume: "workspace", Path: "/workspace"}}}},
+	}); err != nil {
+		respondBedError(c, err)
+		return
+	}
+	b, err := s.mgr.Ensure(c.Request.Context(), id)
 	if err != nil {
 		respondBedError(c, err)
 		return

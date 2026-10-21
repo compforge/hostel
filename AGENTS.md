@@ -20,7 +20,7 @@
 - **bed name**：调用方给定的不透明路由标识，支持中文；HTTP 请求的 bed/id 参数及 `BED_ID` 都表达 Name；管理响应同时返回 `name` 与本地生命周期 `id`，缺省为 `default`。Hostel 不解释其上层业务语义。
 - **bed id**：Hostel 生成的本地身份；本地数据保留期间跨重启恢复，Forget 后同名创建换 ID。领域资源以 ID 归属，远端快照以 Name/快照引用定位。
 - **beds-root**：所有 bed 目录的**父目录**，**可配、不写死**（`--beds-root` / `HOSTEL_BEDS_ROOT`，默认 `/workspace`）；**daemon 启动时创建一次**。
-- **bed 目录**：`{beds-root}/{bed name}`，含 `meta.json`（可移植身份）、`rootfs/` 与 `volumes/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面首次请求通过 `Ensure` 加入同一初始化并等待，详见 `docs/bed.md`。
+- **bed 目录**：`{beds-root}/{bed name}`，含 `meta.json`（可移植身份）、`rootfs/` 与 `volumes/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面通过 `Ensure` 等待已经显式声明的 Bed，缺失返回 not found，详见 `docs/bed.md`。
 - **BedFS**：Bed 持有的文件系统数据域；提供 Bed Rootfs、Volume 数据与各 Pillow 的 Workdir/Mounts 视图、三个路径空间及文件操作。Executor 替换不改变 BedFS 身份，详见 `docs/volumes.md`。
 - **bed_home（rootfs 目录）**：BedFS 的宿主根 `{bed 目录}/rootfs`——**Bed 自身数据根**；未命中外部映射的客户端路径解析到它下面，回显保持 Bed 路径。它不参与自动持久化，也不表示进程已有独立的 `/`。
 - **Workdir**：Pillow 默认工作目录，当前为 `/workspace`（`bedfs.DefaultWorkdir`），也是 API 相对路径的解析基准；具体进程的 cwd 可以覆盖。Rootfs、Workdir 与 Volumes/Mounts 的关系见 `docs/volumes.md`。
@@ -55,7 +55,7 @@ tini (pid1)                       pod 级收尸兜底
    │  BedFS.Resolve：单射 rebase（回显为其逆映射）
    ▼
 <beds-root>/                 宿主侧，所有 bed 父目录；可配 HOSTEL_BEDS_ROOT，默认 /workspace，daemon 启动建
-└─ <bed name>/                      bed 目录；InitializeBed / Ensure 首次初始化时创建
+└─ <bed name>/                      bed 目录；InitializeBed 接受显式 Pillow 声明后创建
    ├─ meta.json                   可移植身份
    ├─ rootfs/                     临时根数据
    └─ volumes/

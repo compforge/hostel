@@ -105,7 +105,7 @@ func TestRecoveryFencesGCResidueWithWatermarksDisabled(t *testing.T) {
 	claimTestUser(t, m, "same")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := m.Ensure(ctx, "same"); !errors.Is(err, ErrBedUnavailable) {
+	if _, err := declareTestBed(m, ctx, "same"); !errors.Is(err, ErrBedUnavailable) {
 		t.Fatalf("create beside recovered cleanup: %v", err)
 	}
 	assertUserReserved(t, m)
@@ -160,7 +160,7 @@ func TestPurgeJoinsRunningGCAndCreateWaitsForCleanup(t *testing.T) {
 	go func() { gcDone <- m.removeLuggage("same") }()
 	<-started
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	_, err := m.Ensure(ctx, "same")
+	_, err := declareTestBed(m, ctx, "same")
 	cancel()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		close(release)

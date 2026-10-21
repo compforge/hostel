@@ -153,7 +153,7 @@ func TestIsolatedSessionRemainsActiveWhileEvicting(t *testing.T) {
 		}
 	})
 	const id = "isolated-evicting"
-	if _, err := mgr.Ensure(context.Background(), id); err != nil {
+	if _, err := declareTestBed(mgr, context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
 	s := NewServer(mgr)
@@ -247,7 +247,7 @@ func TestIsolatedUnsupportedOptionsAndCapabilities(t *testing.T) {
 		t.Fatalf("isolated capabilities = %v", capabilities)
 	}
 
-	if _, err := s.mgr.Ensure(context.Background(), "any"); err != nil {
+	if _, err := declareTestBed(s.mgr, context.Background(), "any"); err != nil {
 		t.Fatalf("resolve session for unsupported routes: %v", err)
 	}
 	rec = do(t, s, http.MethodGet, "/v1/isolated/session/any/diff", nil, nil)
@@ -262,10 +262,10 @@ func TestIsolatedUnsupportedOptionsAndCapabilities(t *testing.T) {
 
 func TestDefaultBedIsNotAnIsolatedSession(t *testing.T) {
 	s := newTestServer(t)
-	if _, err := s.mgr.Ensure(context.Background(), ""); err != nil {
+	if _, err := declareTestBed(s.mgr, context.Background(), ""); err != nil {
 		t.Fatalf("resolve default bed: %v", err)
 	}
-	visible, err := s.mgr.Ensure(context.Background(), "native-bed")
+	visible, err := declareTestBed(s.mgr, context.Background(), "native-bed")
 	if err != nil {
 		t.Fatalf("resolve non-default bed: %v", err)
 	}

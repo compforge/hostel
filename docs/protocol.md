@@ -45,7 +45,7 @@ Hostel 自行生成 ID 唯一标识本地生命周期，避免调用方标识与
 Pillow 使用 `prepared` 区分环境准备，`phase`、`ready` 和 execution 字段表达主进程状态。
 
 创建声明使用有序 `pillows`；环境、workdir 和 mounts 归属 Pillow，卷来源归属 Bed。
-首项是默认 Pillow，省略列表创建 main，显式 null 或空列表拒绝。主进程使用直接字段
+首项是默认 Pillow；创建 Bed 必须提供非空列表，缺失、null 或空列表均返回 400。主进程使用直接字段
 `command`、`args`、`restart_policy`，管理路径为 `/v1/beds/:bedId/pillows`。
 Volume 使用互斥来源 `managed` 或 `host_path`；`managed.persistence` 为 `none` 或 `sync`。
 Pillow 的挂载路径与 Volume 的持久身份独立，完整数据契约见 [volumes.md](volumes.md)。

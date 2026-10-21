@@ -59,10 +59,10 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 	st.snaps["ephemeral"] = []byte("old remote contents")
 	m := storeTestManager(t, t.TempDir(), st)
 	defer m.Close(ctx)
-	if _, err := m.InitializeBedWithOptions(ctx, "ephemeral", CreateOptions{Volumes: testWorkspaceVolume("none")}); err != nil {
+	if _, err := m.InitializeBed(ctx, "ephemeral", CreateOptions{Volumes: testWorkspaceVolume("none"), Pillows: testWorkspacePillows()}); err != nil {
 		t.Fatal(err)
 	}
-	b, err := m.Ensure(ctx, "ephemeral")
+	b, err := declareTestBed(m, ctx, "ephemeral")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 	if err := m.Checkpoint(ctx, b.Name); err != nil {
 		t.Fatal(err)
 	}
-	normal, err := m.Ensure(ctx, "normal")
+	normal, err := declareTestBed(m, ctx, "normal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,10 +108,10 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 			t.Fatalf("evict %s: %v %v", id, ok, err)
 		}
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, b.Name, CreateOptions{Volumes: testWorkspaceVolume("none")}); err != nil {
+	if _, err := m.InitializeBed(ctx, b.Name, CreateOptions{Volumes: testWorkspaceVolume("none"), Pillows: testWorkspacePillows()}); err != nil {
 		t.Fatal(err)
 	}
-	resumed, err := m.Ensure(ctx, b.Name)
+	resumed, err := declareTestBed(m, ctx, b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(resumed.Workdir(), "marker.txt")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("noop restored contents: %v", err)
 	}
-	durable, err := m.Ensure(ctx, normal.Name)
+	durable, err := declareTestBed(m, ctx, normal.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,20 +154,20 @@ func TestBedStoreUsesLocalMetadataAndDefaultsAfterEviction(t *testing.T) {
 	st := newFakeStore()
 	m := storeTestManager(t, root, st)
 	defer m.Close(ctx)
-	b, err := m.Ensure(ctx, "one")
+	b, err := declareTestBed(m, ctx, "one")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if b.Spec().StoreKind != "noop" {
 		t.Fatal("local metadata lost selection")
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, "one", CreateOptions{Volumes: testWorkspaceVolume("sync")}); !errors.Is(err, ErrPathsConflict) {
+	if _, err := m.InitializeBed(ctx, "one", CreateOptions{Volumes: testWorkspaceVolume("sync"), Pillows: testWorkspacePillows()}); !errors.Is(err, ErrPathsConflict) {
 		t.Fatalf("live store switch=%v", err)
 	}
 	if ok, err := m.Evict(ctx, "one"); err != nil || !ok {
 		t.Fatalf("evict=%v %v", ok, err)
 	}
-	b, err = m.Ensure(ctx, "one")
+	b, err = declareTestBed(m, ctx, "one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,16 +195,16 @@ func TestBedStoreConflictWhileInitializing(t *testing.T) {
 	st := &initializationBlockingStore{fakeStore: newFakeStore(), started: make(chan struct{}, 1), release: make(chan struct{})}
 	m := storeTestManager(t, t.TempDir(), st)
 	defer m.Close(ctx)
-	if _, err := m.InitializeBed(ctx, "pending"); err != nil {
+	if _, err := m.InitializeBed(ctx, "pending", CreateOptions{Pillows: testWorkspacePillows()}); err != nil {
 		t.Fatal(err)
 	}
 	<-st.started
-	_, err := m.InitializeBedWithOptions(ctx, "pending", CreateOptions{Volumes: testWorkspaceVolume("none")})
+	_, err := m.InitializeBed(ctx, "pending", CreateOptions{Volumes: testWorkspaceVolume("none"), Pillows: testWorkspacePillows()})
 	close(st.release)
 	if !errors.Is(err, ErrPathsConflict) {
 		t.Fatalf("concurrent store switch=%v", err)
 	}
-	if _, err := m.Ensure(ctx, "pending"); err != nil {
+	if _, err := declareTestBed(m, ctx, "pending"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -234,7 +234,7 @@ func TestOmittedBedStoreInheritsConfiguredBackend(t *testing.T) {
 	ctx := context.Background()
 	st := &countedStore{fakeStore: newFakeStore()}
 	m := storeTestManager(t, t.TempDir(), st)
-	b, err := m.Ensure(ctx, "unspecified")
+	b, err := declareTestBed(m, ctx, "unspecified")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,10 +261,10 @@ func TestDurableBedSyncsWithNoopInstanceDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, "durable", CreateOptions{Volumes: testWorkspaceVolume("sync")}); err != nil {
+	if _, err := m.InitializeBed(ctx, "durable", CreateOptions{Volumes: testWorkspaceVolume("sync"), Pillows: testWorkspacePillows()}); err != nil {
 		t.Fatal(err)
 	}
-	b, err := m.Ensure(ctx, "durable")
+	b, err := declareTestBed(m, ctx, "durable")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,7 @@ func TestPurgeKeepsMetadataUntilSnapshotDeletionSucceeds(t *testing.T) {
 	st := &failingDeleteStore{fakeStore: newFakeStore(), fail: true}
 	m := storeTestManager(t, t.TempDir(), st)
 	defer m.Close(ctx)
-	b, err := m.Ensure(ctx, "retry")
+	b, err := declareTestBed(m, ctx, "retry")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,10 +335,10 @@ func TestPurgeAbsentDurableBedWithNoopDefault(t *testing.T) {
 	m.store = store.NewManagerWithStores(store.Noop{}, st)
 	m.store.SetStatusWriter(m.owners.Store)
 	defer m.Close(t.Context())
-	if _, err := m.InitializeBedWithOptions(t.Context(), "persistent", CreateOptions{Volumes: testWorkspaceVolume("sync")}); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "persistent", CreateOptions{Volumes: testWorkspaceVolume("sync"), Pillows: testWorkspacePillows()}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Ensure(t.Context(), "persistent"); err != nil {
+	if _, err := declareTestBed(m, t.Context(), "persistent"); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := m.Evict(t.Context(), "persistent"); err != nil || !ok {

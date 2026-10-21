@@ -28,7 +28,7 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	m.startEnvironmentProbe(started)
 	defer func() { m.finishEnvironmentProbe(started, retErr) }()
 	id := "environment-probe-" + randx.Hex(6)
-	initialization, _, err := m.beginInitialization(ctx, id, CreateOptions{Volumes: []model.VolumeSpec{{Name: "workspace", Managed: &model.ManagedVolume{Persistence: "none"}}}})
+	initialization, _, err := m.beginInitialization(ctx, id, CreateOptions{Pillows: []model.PillowSpec{{Name: "probe", Mounts: []model.VolumeMount{{Volume: "workspace", Path: "/workspace"}}}}, Volumes: []model.VolumeSpec{{Name: "workspace", Managed: &model.ManagedVolume{Persistence: "none"}}}})
 	if err != nil {
 		return err
 	}

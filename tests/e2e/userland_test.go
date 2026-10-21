@@ -17,6 +17,7 @@ func TestPyPIInstallPersistsAcrossExecutions(t *testing.T) {
 	requireUserland(t)
 	target := startTarget(t, targetOptions{isolation: "dorm"})
 	const load = `python -c 'import cowsay; print("HOSTEL_PIP_PATH=" + cowsay.__file__)'`
+	must2xx(t, "declare Bed", target.client.createBed(t, "pypi"))
 	install, response := target.client.command(t, "pypi", map[string]any{
 		"command": "python -m pip install --no-cache-dir --force-reinstall cowsay==6.1 && " + load,
 		"timeout": 180_000,
@@ -33,6 +34,7 @@ func TestNPMInstallPersistsAcrossExecutions(t *testing.T) {
 	requireUserland(t)
 	target := startTarget(t, targetOptions{isolation: "dorm"})
 	const load = `node -e 'const root = require("child_process").execFileSync("npm", ["root", "-g"], {encoding: "utf8"}).trim(); const modulePath = root + "/is-number"; const isNumber = require(modulePath); if (!isNumber("42")) process.exit(1); console.log("HOSTEL_NPM_PATH=" + require.resolve(modulePath));'`
+	must2xx(t, "declare Bed", target.client.createBed(t, "npm"))
 	install, response := target.client.command(t, "npm", map[string]any{
 		"command": "npm install --global --force --prefer-online --no-audit --no-fund is-number@7.0.0 && " + load,
 		"timeout": 180_000,
@@ -57,6 +59,8 @@ func TestChromiumOperationsAndArtifact(t *testing.T) {
 	target := startTarget(t, targetOptions{isolation: "dorm"})
 	c := target.client
 	bedID := "chromium"
+	must2xx(t, "declare Bed", c.createBed(t, bedID))
+
 	post := func(action string, body any, out any) httpResult {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)

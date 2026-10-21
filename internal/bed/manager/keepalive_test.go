@@ -116,7 +116,7 @@ func TestKeepaliveRenewDoesNotDirtyDurableBed(t *testing.T) {
 		}
 	})
 	m.SetBedIdleTTL(time.Minute)
-	b, err := m.Ensure(t.Context(), "durable-renew")
+	b, err := declareTestBed(m, t.Context(), "durable-renew")
 	if err != nil {
 		t.Fatal(err)
 	}

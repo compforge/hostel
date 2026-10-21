@@ -17,6 +17,7 @@ func TestExecutionLifecycle(t *testing.T) {
 	target := startTarget(t, targetOptions{isolation: "dorm"})
 	c := target.client
 
+	must2xx(t, "declare Bed", c.createBed(t, "execution-bed"))
 	background, response := c.command(t, "execution-bed", map[string]any{
 		"command":    "printf 'stdout-before-stop\\n'; printf 'stderr-before-stop\\n' >&2; sleep 30",
 		"background": true,
@@ -89,6 +90,7 @@ func TestStatefulSessionLifecycle(t *testing.T) {
 	c := target.client
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	must2xx(t, "declare Bed", c.createBed(t, "session-bed"))
 	var created struct {
 		SessionID string `json:"session_id"`
 	}

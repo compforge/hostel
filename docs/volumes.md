@@ -43,7 +43,7 @@ pillows:
 同一卷只声明一次挂载。Pillow 之间不继承挂载，文件 API 与执行共用所选 Pillow 的视图。
 
 全新 Bed 省略卷声明时展开默认 workspace 卷，其 persistence 由 daemon 默认同步配置解析并固定。
-省略 Pillow 列表时创建 main，并在存在 workspace 卷时挂载到 `/workspace`；显式 Pillow
+Pillow 列表必须显式声明，Hostel 不推断任何挂载；每个 Pillow
 只获得自己声明的 mounts。workdir 只决定 cwd 和相对路径基准，不决定持久化范围。
 
 ## 本地数据与生命周期

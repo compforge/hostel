@@ -24,11 +24,11 @@ func TestBedEnvExecutionAndSessionOwnership(t *testing.T) {
 	defer m.Close(context.Background())
 	m.SetCarrierEnvironment([]string{"PATH=/usr/bin:/bin", "LANG=C", "VALUE=carrier"})
 	declared := map[string]string{"VALUE": "base", "BASE_ONLY": "present"}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: declared}}}); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: declared}}}); err != nil {
 		t.Fatal(err)
 	}
 	declared["VALUE"] = "caller-mutated"
-	b, err := m.Ensure(t.Context(), "env")
+	b, err := declareTestBed(m, t.Context(), "env")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestBedEnvExecutionAndSessionOwnership(t *testing.T) {
 	if m.executorManager.Current(b.Bed).ID() == oldExecutor.ID() {
 		t.Fatal("executor was not replaced")
 	}
-	other, err := m.Ensure(t.Context(), "other")
+	other, err := declareTestBed(m, t.Context(), "other")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,19 +101,19 @@ func TestBedEnvDeclarationConflictAndRecovery(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
 	want := map[string]string{"VALUE": "local-only-value"}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "recover-env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: want}}}); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "recover-env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: want}}}); err != nil {
 		t.Fatal(err)
 	}
-	b, err := m.Ensure(t.Context(), "recover-env")
+	b, err := declareTestBed(m, t.Context(), "recover-env")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, env := range []map[string]string{nil, {}, {"VALUE": "changed"}} {
-		if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: env}}}); !errors.Is(err, ErrPillowsConflict) {
+		if _, err := m.InitializeBed(t.Context(), b.Name, CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: env}}}); !errors.Is(err, ErrPillowsConflict) {
 			t.Fatalf("changed declaration accepted: %v", err)
 		}
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: want}}}); err != nil {
+	if _, err := m.InitializeBed(t.Context(), b.Name, CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: want}}}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(m.identityPath(b.Name))
@@ -149,8 +149,11 @@ func TestBedEnvDeclarationConflictAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer next.Close(context.Background())
-	if _, err := next.InitializeBedWithOptions(t.Context(), b.Name, CreateOptions{}); !errors.Is(err, ErrPillowsConflict) {
+	if _, err := next.InitializeBed(t.Context(), b.Name, CreateOptions{Pillows: testWorkspacePillows()}); !errors.Is(err, ErrPillowsConflict) {
 		t.Fatalf("recovery accepted changed declaration: %v", err)
+	}
+	if _, err := next.InitializeBed(t.Context(), b.Name, CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: want}}}); err != nil {
+		t.Fatal(err)
 	}
 	recovered, err := next.Ensure(t.Context(), b.Name)
 	if err != nil {
@@ -166,7 +169,7 @@ func TestBedEnvDeclarationConflictAndRecovery(t *testing.T) {
 	if ok, err := next.Evict(t.Context(), b.Name); err != nil || !ok {
 		t.Fatalf("evict: %v %v", ok, err)
 	}
-	fresh, err := next.Ensure(t.Context(), b.Name)
+	fresh, err := declareTestBed(next, t.Context(), b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,10 +182,10 @@ func TestPillowDoesNotInheritBedExecutionEnv(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
 	m.SetCarrierEnvironment([]string{"PATH=/usr/bin:/bin", "VALUE=carrier"})
-	if _, err := m.InitializeBedWithOptions(t.Context(), "pillow-env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: map[string]string{"BASE_ONLY": "private", "VALUE": "base"}}}}); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "pillow-env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: map[string]string{"BASE_ONLY": "private", "VALUE": "base"}}}}); err != nil {
 		t.Fatal(err)
 	}
-	b, err := m.Ensure(t.Context(), "pillow-env")
+	b, err := declareTestBed(m, t.Context(), "pillow-env")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +212,7 @@ func TestCreateBedRejectsInvalidEnvBeforeAdmission(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
 	for _, env := range []map[string]string{{"HOSTEL_SECRET": "x"}, {"BED_ID": "x"}, {"PLAYWRIGHT_MCP_CDP_ENDPOINT": "x"}, {"bad-name": "x"}, {"VALUE": "x\x00y"}} {
-		if _, err := m.InitializeBedWithOptions(t.Context(), "invalid-env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: env}}}); !errors.Is(err, ErrInvalidEnvironment) {
+		if _, err := m.InitializeBed(t.Context(), "invalid-env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: env}}}); !errors.Is(err, ErrInvalidEnvironment) {
 			t.Fatalf("invalid environment accepted: %v", err)
 		}
 	}
@@ -229,7 +232,7 @@ func TestBedEnvInFlightDeclarationIsImmutable(t *testing.T) {
 	defer m.Close(context.Background())
 	defer close(backend.release)
 	declared := map[string]string{"VALUE": "initial"}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "pending", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: declared}}}); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "pending", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: declared}}}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -237,10 +240,10 @@ func TestBedEnvInFlightDeclarationIsImmutable(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("initialization did not reach Store")
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "pending", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: declared}}}); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "pending", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: declared}}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "pending", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: map[string]string{"VALUE": "different"}}}}); !errors.Is(err, ErrPillowsConflict) {
+	if _, err := m.InitializeBed(t.Context(), "pending", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: map[string]string{"VALUE": "different"}}}}); !errors.Is(err, ErrPillowsConflict) {
 		t.Fatalf("in-flight declaration changed: %v", err)
 	}
 	if m.OccupiedBedCount() != 1 {

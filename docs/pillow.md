@@ -7,7 +7,7 @@ Pillow 是 Bed 内的命名执行环境，在具体进程之前声明 env、配�
 ## 声明与消费
 
 BedSpec.pillows 是有序、不可变的声明，首项为默认 Pillow；名称在 Bed 内唯一。
-省略整个字段时创建 main，显式空列表拒绝。普通命令、Session 和文件 API 默认使用首项。
+创建 Bed 必须显式声明至少一个 Pillow；缺失、null 和空列表均拒绝。普通命令、Session 和文件 API 默认使用首项。
 内部可信管理入口可以按名称选择 Pillow，数据面没有任意切换到管理 Pillow 的 header。
 列表顺序只决定默认对象，不表达启动依赖。
 

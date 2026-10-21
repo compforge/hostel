@@ -45,6 +45,9 @@ func newTestServer(t *testing.T) *testServer {
 			t.Errorf("close manager: %v", err)
 		}
 	})
+	if _, err := declareTestBed(mgr, t.Context(), "default"); err != nil {
+		t.Fatal(err)
+	}
 	return NewServer(mgr)
 }
 
@@ -61,7 +64,7 @@ func do(t *testing.T, s *testServer, method, path string, body io.Reader, hdr ma
 
 func createBedAndWait(t *testing.T, s *testServer, id string) *httptest.ResponseRecorder {
 	t.Helper()
-	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"`+id+`"}`), map[string]string{"Content-Type": "application/json"})
+	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"`+id+`","pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`), map[string]string{"Content-Type": "application/json"})
 	if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
 		t.Fatalf("create bed %s = %d %s", id, rec.Code, rec.Body.String())
 	}

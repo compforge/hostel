@@ -69,12 +69,6 @@ func (m *Manager) pillowsChanged(b *model.Bed) {
 }
 
 func checkPillows(options CreateOptions, actual []model.PillowSpec) error {
-	if options.lookup {
-		return nil
-	}
-	if len(actual) == 0 && len(options.Pillows) == 0 {
-		return nil
-	}
 	normalized, err := pillow.Normalize(actual)
 	if err != nil {
 		return err

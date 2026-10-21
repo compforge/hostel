@@ -25,7 +25,7 @@ func TestManagedVolumeRoundTrip(t *testing.T) {
 			source := startTarget(t, targetOptions{store: kind, maxBeds: 8, bedsRoot: root}).client
 			payloads := map[string][]byte{}
 			for _, id := range []string{"bed1", "bed2"} {
-				createVolumeBed(t, source, id, "/workspace")
+				createVolumeBed(t, source, id, "/workspace", false)
 				payloads[id] = bytes.Repeat([]byte(id+"\x00\xff\n"), 32768)
 				must2xx(t, "write workspace", source.upload(t, id, "/workspace/result.bin", payloads[id]))
 				must2xx(t, "write second volume", source.upload(t, id, "/memory/note", []byte("memory-"+id)))
@@ -42,7 +42,10 @@ func TestManagedVolumeRoundTrip(t *testing.T) {
 			}
 			destination := startTarget(t, targetOptions{store: "auto", maxBeds: 8}).client
 			for _, id := range []string{"bed1", "bed2"} {
-				createVolumeBed(t, destination, id, "/data")
+				if response := destination.download(t, id, "/data/result.bin"); response.Status != http.StatusNotFound {
+					t.Fatalf("undeclared Bed access restored data: %d", response.Status)
+				}
+				createVolumeBed(t, destination, id, "/data", true)
 				got := destination.download(t, id, "/data/result.bin")
 				if got.Status != http.StatusOK || !bytes.Equal(got.Body, payloads[id]) {
 					t.Fatalf("%s workspace restore mismatch: status=%d bytes=%d", id, got.Status, len(got.Body))
@@ -66,18 +69,23 @@ func TestManagedVolumeRoundTrip(t *testing.T) {
 }
 
 func volumeRequest(id, policy string) map[string]any {
-	return map[string]any{"id": id, "volumes": []map[string]any{{"name": "workspace", "managed": map[string]string{"persistence": policy}}}}
+	return map[string]any{"id": id, "volumes": []map[string]any{{"name": "workspace", "managed": map[string]string{"persistence": policy}}}, "pillows": workspacePillows()}
 }
 
-func createVolumeBed(t *testing.T, c *apiClient, id, mount string) {
+func createVolumeBed(t *testing.T, c *apiClient, id, mount string, restore bool) {
 	t.Helper()
 	request := volumeRequest(id, "sync")
+	request["volumes"].([]map[string]any)[0]["name"] = "data"
 	request["volumes"] = append(request["volumes"].([]map[string]any),
 		map[string]any{"name": "memory", "managed": map[string]string{"persistence": "sync"}},
 		map[string]any{"name": "runtime", "managed": map[string]string{"persistence": "none"}})
 	request["pillows"] = []map[string]any{{"name": "agent", "workdir": mount, "mounts": []map[string]any{
-		{"volume": "workspace", "path": mount}, {"volume": "memory", "path": "/memory"}, {"volume": "runtime", "path": "/run/shared"},
+		{"volume": "data", "path": mount}, {"volume": "memory", "path": "/memory"}, {"volume": "runtime", "path": "/run/shared"},
 	}}}
+	// Restoration supplies workload configuration while Store supplies the Volume contract.
+	if restore {
+		delete(request, "volumes")
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	response, err := c.json(ctx, "POST", "/v1/beds", "", request, nil)

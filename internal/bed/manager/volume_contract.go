@@ -13,7 +13,7 @@ import (
 var ErrPathsConflict = errors.New("bed: volume declaration cannot change")
 
 func checkBedPaths(options CreateOptions, actual model.Spec) error {
-	if !options.lookup && options.Volumes != nil && !reflect.DeepEqual(options.Volumes, actual.Volumes) {
+	if options.Volumes != nil && !reflect.DeepEqual(options.Volumes, actual.Volumes) {
 		return fmt.Errorf("%w: volumes", ErrPathsConflict)
 	}
 	return nil

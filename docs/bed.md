@@ -21,7 +21,7 @@ Lifecycle 状态是初始化进度与调度视图的唯一来源；Store 统一�
 观察自身退出并更新状态，Network 串行提交同一 Bed 的策略与状态，避免旧结果覆盖新结果。
 
 BedSpec 包含有序 Pillows、命名 Volumes、端口及网络需求。本地生命周期内执行环境声明固定，
-重复创建须匹配已有声明，原生 Ensure 加入已有初始化。运行期网络策略通过专用接口更新。
+创建必须显式提供至少一个 Pillow；重复创建须匹配已有声明，原生 Ensure 仅加入已有初始化。运行期网络策略通过专用接口更新。
 远端卷快照保存数据契约；跨实例重建时，调用方重新提交 Pillow 和宿主资源引用。
 
 ## 请求、Bed 与实例状态
@@ -98,10 +98,14 @@ Run 启动 Store 同步、Resource 采样与 Bed 回收循环，并在取消或�
 
 管理 API 接受 desired state：`POST /v1/beds` 为新任务返回 202，后台准备数据与运行环境，
 已 Ready 返回 200。Store Stat/Restore 延迟属于数据准备，不占住创建连接。原生数据面通过
-Ensure 加入同一任务并等待 Ready；远端故障不能被当成空 Bed，也不能暴露半恢复目录。
+Ensure 仅等待已经声明的任务就绪；Bed 不存在时返回 404，不创建、不恢复、不重试失败任务。远端故障不能被当成空 Bed，也不能暴露半恢复目录。
 
 同 Name 初始化合并为一个任务，在任何 Store I/O 前预占容量。原生请求通过 header/query
 选择 Bed，省略时使用 default；isolated-session 映射非 default Bed，不维护平行生命周期。
+daemon 启动时通过同一创建入口声明 default Bed 的 main Pillow 与工作区挂载。
+它不计入 tenant 容量，但初始化或驻留期间仍使实例为 retained，不能把空 tenant 列表当作可释放。
+恢复快照时，调用方仍须声明 Pillow 及 mounts；Store 只提供 Volume 契约和数据。
+卷契约解析后再验证挂载、准备执行环境并发布 Ready，恢复过程不补执行配置。
 数量上限与 carrier 资源准入见 [resource.md](resource.md)，default 不参与 tenant 容量计数。
 
 Ready 必须等到 Store Stage-in、BedFS、身份、已启用的网络及初始策略、资源记账、设施切片、Pillow 环境

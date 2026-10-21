@@ -177,7 +177,7 @@ func TestExecdLocalOperationsKeepAuthentication(t *testing.T) {
 	if rec.Code != 202 && rec.Code != 201 && rec.Code != 200 {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	if _, err := s.mgr.Ensure(context.Background(), "secured"); err != nil {
+	if _, err := declareTestBed(s.mgr, context.Background(), "secured"); err != nil {
 		t.Fatal(err)
 	}
 	for _, base := range []string{"/execd", "/v1/beds/secured/execd"} {

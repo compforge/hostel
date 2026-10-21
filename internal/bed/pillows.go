@@ -44,7 +44,7 @@ func ClonePillows(in []PillowSpec) []PillowSpec {
 // +spec=`Pillow order is semantic: the first declaration is the default. Names are stable identities.`
 func (s Spec) DefaultPillow() PillowSpec {
 	if len(s.Pillows) == 0 {
-		return PillowSpec{Name: "main", Workdir: "/workspace"}
+		return PillowSpec{}
 	}
 	return s.Pillows[0]
 }

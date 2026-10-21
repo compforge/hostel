@@ -37,9 +37,13 @@ make build
 ./bin/hostel --isolation dorm --beds-root ./.workspace --addr 127.0.0.1:8872
 ```
 
-In another terminal, run a command and download its output file:
+In another terminal, declare a Bed, run a command and download its output file:
 
 ```bash
+curl -fsS http://localhost:8872/v1/beds \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"agent-1","pillows":[{"name":"agent","mounts":[{"volume":"workspace","path":"/workspace"}]}]}'
+
 curl -fsSN http://localhost:8872/command \
   -H 'Content-Type: application/json' \
   -H 'X-Hostel-Bed: agent-1' \
@@ -49,8 +53,9 @@ curl -fsS 'http://localhost:8872/files/download?path=/workspace/hello.txt' \
   -H 'X-Hostel-Bed: agent-1'
 ```
 
-The first command creates the bed on demand. Use the same `X-Hostel-Bed` header
-for subsequent commands and file requests; omitting it selects the `default` bed.
+Create a Bed with at least one explicit Pillow before accessing it. Data requests
+wait for initialization and return 404 for undeclared Beds. Use the same
+`X-Hostel-Bed` header for subsequent requests; omitting it selects the daemon-declared `default` bed.
 Ordinary commands run in fresh processes; `/session` creates a persistent shell.
 Use `cwd` and relative paths in commands: file API paths are bed-relative, while
 absolute paths inside shell text follow the selected process environment.

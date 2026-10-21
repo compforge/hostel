@@ -31,6 +31,8 @@ func TestVolumePersistenceOverridesInstanceDefault(t *testing.T) {
 	t.Setenv("HOSTEL_S3_ACCESS_KEY_ID", "e2e-key")
 	t.Setenv("HOSTEL_S3_SECRET_ACCESS_KEY", "e2e-secret")
 	c := startTarget(t, targetOptions{store: "cas"}).client
+	c.waitBed(t, "default", func(b bedView) bool { return b.Status.Phase == "failed" }, "daemon default Store denial")
+	startupRequests := storageRequests.Load()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	created, err := c.json(ctx, "POST", "/v1/beds", "", volumeRequest("noop-bed", "none"), nil)
@@ -61,10 +63,10 @@ func TestVolumePersistenceOverridesInstanceDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	must2xx(t, "purge noop", response)
-	if got := storageRequests.Load(); got != 0 {
-		t.Fatalf("noop made %d S3 requests", got)
+	if got := storageRequests.Load(); got != startupRequests {
+		t.Fatalf("noop made %d S3 requests", got-startupRequests)
 	}
-	created, err = c.json(ctx, "POST", "/v1/beds", "", map[string]string{"id": "default-bed"}, nil)
+	created, err = c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "default-bed", "pillows": workspacePillows()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

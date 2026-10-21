@@ -31,7 +31,7 @@ func TestCreateBedEnvironmentContract(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("idempotent create: %d", rec.Code)
 	}
-	for _, body := range []string{`{"id":"env-bed"}`, `{"id":"env-bed","pillows":[{"name":"main","env":{}}]}`, `{"id":"env-bed","pillows":[{"name":"main","env":{"VALUE":"different"}}]}`} {
+	for _, body := range []string{`{"id":"env-bed","pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`, `{"id":"env-bed","pillows":[{"name":"main","env":{}}]}`, `{"id":"env-bed","pillows":[{"name":"main","env":{"VALUE":"different"}}]}`} {
 		rec = do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(body), nil)
 		if rec.Code != http.StatusConflict || strings.Contains(rec.Body.String(), "private-base-value") || strings.Contains(rec.Body.String(), "different") {
 			t.Fatalf("conflicting create: %d %s", rec.Code, rec.Body.String())

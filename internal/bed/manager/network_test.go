@@ -71,7 +71,7 @@ func TestInitializationRollsBackNetworkBeforeCompletion(t *testing.T) {
 				done:      make(chan struct{}), cancel: cancel,
 			}
 			initialization.model = initialization.local.bed
-			model.SpecWriter{}.Update(initialization.model, func(s *model.Spec) { s.StoreKind = store.SyncNoop })
+			model.SpecWriter{}.Update(initialization.model, func(s *model.Spec) { s.StoreKind = store.SyncNoop; s.Pillows = testWorkspacePillows() })
 			m.owners.Lifecycle.Set(initialization.model, model.LifecycleStatus{Phase: PhaseInitializing})
 			m.initializations["rollback"] = initialization
 			n := &initializationNetwork{releasing: make(chan struct{}), resume: make(chan struct{})}
@@ -104,7 +104,7 @@ func TestInitializationRollsBackNetworkBeforeCompletion(t *testing.T) {
 			default:
 			}
 			if failure != "publication" {
-				current, resident, err := m.beginInitialization(context.Background(), "rollback", CreateOptions{})
+				current, resident, err := m.beginInitialization(context.Background(), "rollback", CreateOptions{Pillows: testWorkspacePillows()})
 				if err != nil || current != initialization || resident != nil {
 					t.Fatalf("identity released during rollback: current=%p resident=%v err=%v", current, resident, err)
 				}
@@ -122,6 +122,9 @@ func TestInitializationRollsBackNetworkBeforeCompletion(t *testing.T) {
 			}
 			retryCtx, retryCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer retryCancel()
+			if _, err := m.InitializeBed(retryCtx, "rollback", CreateOptions{Pillows: testWorkspacePillows()}); err != nil {
+				t.Fatal(err)
+			}
 			resident, err := m.Ensure(retryCtx, "rollback")
 			if err != nil {
 				t.Fatalf("reinitialize: %v", err)
@@ -142,7 +145,7 @@ func TestEvictionFencesSameIDUntilDirectoryCleanup(t *testing.T) {
 	m := newTestManager(t)
 	n := &initializationNetwork{releasing: make(chan struct{}), resume: make(chan struct{})}
 	m.SetNetworkManager(network.WithProvider(n, m.owners.Network))
-	b, err := m.Ensure(context.Background(), "reused")
+	b, err := declareTestBed(m, context.Background(), "reused")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +160,7 @@ func TestEvictionFencesSameIDUntilDirectoryCleanup(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("cleanup did not start")
 	}
-	if _, err := m.Ensure(context.Background(), b.Name); !errors.Is(err, ErrBedUnavailable) {
+	if _, err := declareTestBed(m, context.Background(), b.Name); !errors.Is(err, ErrBedUnavailable) {
 		t.Fatalf("same-ID init during cleanup: %v", err)
 	}
 	if _, err := m.BeginOperation(b, OpFile, time.Second); !errors.Is(err, ErrBedUnavailable) {
@@ -170,7 +173,7 @@ func TestEvictionFencesSameIDUntilDirectoryCleanup(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	next, err := m.Ensure(context.Background(), b.Name)
+	next, err := declareTestBed(m, context.Background(), b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +229,7 @@ func TestInitialPolicyIsAppliedBeforeResidentPublication(t *testing.T) {
 	n := &policyInitializationNetwork{entered: make(chan struct{}), proceed: make(chan struct{})}
 	m.SetNetworkManager(network.WithProvider(n, m.owners.Network))
 	initial := &network.Policy{DefaultAction: "deny"}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "policy-bed", CreateOptions{Volumes: testWorkspaceVolume("none"), NetworkPolicy: initial}); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "policy-bed", CreateOptions{Volumes: testWorkspaceVolume("none"), NetworkPolicy: initial, Pillows: testWorkspacePillows()}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -240,28 +243,28 @@ func TestInitialPolicyIsAppliedBeforeResidentPublication(t *testing.T) {
 	close(n.proceed)
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	if _, err := m.Ensure(ctx, "policy-bed"); err != nil {
+	if _, err := declareTestBed(m, ctx, "policy-bed"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, "policy-bed", CreateOptions{Volumes: testWorkspaceVolume("none"), NetworkPolicy: initial}); err != nil {
+	if _, err := m.InitializeBed(ctx, "policy-bed", CreateOptions{Volumes: testWorkspaceVolume("none"), NetworkPolicy: initial, Pillows: testWorkspacePillows()}); err != nil {
 		t.Fatal(err)
 	}
 	if n.applied.Load() != 1 {
 		t.Fatal("create retry reset effective policy")
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, "policy-bed", CreateOptions{NetworkPolicy: &network.Policy{DefaultAction: "allow"}}); !errors.Is(err, network.ErrInvalidPolicy) {
+	if _, err := m.InitializeBed(ctx, "policy-bed", CreateOptions{NetworkPolicy: &network.Policy{DefaultAction: "allow"}, Pillows: testWorkspacePillows()}); !errors.Is(err, network.ErrInvalidPolicy) {
 		t.Fatalf("conflicting initial policy: %v", err)
 	}
 }
 func TestInitialPolicyFailureNeverPublishesBed(t *testing.T) {
 	m := newTestManager(t)
 	m.SetNetworkManager(network.WithProvider(&policyInitializationNetwork{fail: true}, m.owners.Network))
-	if _, err := m.InitializeBedWithOptions(t.Context(), "policy-failed", CreateOptions{Volumes: testWorkspaceVolume("none"), NetworkPolicy: &network.Policy{DefaultAction: "deny"}}); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "policy-failed", CreateOptions{Volumes: testWorkspaceVolume("none"), NetworkPolicy: &network.Policy{DefaultAction: "deny"}, Pillows: testWorkspacePillows()}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	if _, err := m.Ensure(ctx, "policy-failed"); err == nil {
+	if _, err := declareTestBed(m, ctx, "policy-failed"); err == nil {
 		t.Fatal("failed initial policy published Bed")
 	}
 	if _, ok := m.Get("policy-failed"); ok {

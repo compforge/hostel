@@ -19,9 +19,6 @@ var identifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 // Normalize validates caller-owned pillow units, applies stable defaults and
 // pins the resulting desired state for local recovery.
 func Normalize(specs []bed.PillowSpec) ([]bed.PillowSpec, error) {
-	if specs == nil {
-		specs = []bed.PillowSpec{{Name: "main"}}
-	}
 	if len(specs) == 0 {
 		return nil, fmt.Errorf("pillows must not be empty")
 	}

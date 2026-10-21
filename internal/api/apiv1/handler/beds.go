@@ -95,7 +95,7 @@ func (s *Handler) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Volumes: req.Volumes, PortMappings: req.PortMappings, NetworkPolicy: req.NetworkPolicy, Pillows: req.Pillows})
+	status, err := s.mgr.InitializeBed(c.Request.Context(), id, bed.CreateOptions{Volumes: req.Volumes, PortMappings: req.PortMappings, NetworkPolicy: req.NetworkPolicy, Pillows: req.Pillows})
 	if err != nil {
 		if errors.Is(err, network.ErrUnavailable) {
 			respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, "bed network policy is unavailable")

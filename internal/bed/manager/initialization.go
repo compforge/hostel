@@ -26,6 +26,7 @@ import (
 	"reflect"
 	"time"
 
+	hostel "github.com/qiankunli/hostel/internal"
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/store"
@@ -78,11 +79,7 @@ const (
 // InitializeBed accepts the desired Bed identity and starts its initialization
 // exactly once. Slow Store work continues independently of the initiating HTTP
 // request; callers observe progress through InitializationStatus.
-func (m *Manager) InitializeBed(ctx context.Context, id string) (InitializationStatus, error) {
-	return m.InitializeBedWithOptions(ctx, id, CreateOptions{})
-}
-
-func (m *Manager) InitializeBedWithOptions(ctx context.Context, id string, options CreateOptions) (InitializationStatus, error) {
+func (m *Manager) InitializeBed(ctx context.Context, id string, options CreateOptions) (InitializationStatus, error) {
 	initialization, resident, err := m.beginInitialization(ctx, id, options)
 	if err != nil {
 		return InitializationStatus{}, err
@@ -96,13 +93,37 @@ func (m *Manager) InitializeBedWithOptions(ctx context.Context, id string, optio
 	return status, nil
 }
 
-// Ensure preserves the native API's create-on-first-use behavior. It shares
-// the same initialization as POST /v1/beds, but waits for readiness before
-// returning a Bed so no operation can observe a partial BedFS.
+// Ensure waits for an explicitly declared Bed; access never creates or retries it.
+// +spec=`Every initialized Bed has at least one caller-declared Pillow. Data access cannot synthesize workload configuration.`
+// +link:doc=docs/bed.md
 func (m *Manager) Ensure(ctx context.Context, id string) (*managedBed, error) {
-	initialization, resident, err := m.beginInitialization(ctx, id, CreateOptions{lookup: true})
-	if err != nil || resident != nil {
-		return resident, err
+	if id == "" {
+		id = m.defaultBed
+	}
+	if err := validBedID(id); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return nil, ErrBedUnavailable
+	}
+	if m.purges[id] != nil {
+		m.mu.Unlock()
+		return nil, ErrBedPurging
+	}
+	if resident := m.beds[id]; resident != nil {
+		m.mu.Unlock()
+		return resident, nil
+	}
+	if m.retirements[id] != nil {
+		m.mu.Unlock()
+		return nil, ErrBedUnavailable
+	}
+	initialization := m.initializations[id]
+	m.mu.Unlock()
+	if initialization == nil {
+		return nil, hostel.WrapError(hostel.ErrNotFound, "bed", nil)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -177,20 +198,14 @@ func (m *Manager) beginInitialization(
 		return nil, nil, err
 	}
 	options.PortMappings = ports
-	if err := m.Start(ctx); err != nil {
-		return nil, nil, err
-	}
-	if options.Pillows == nil {
-		options.Pillows = []model.PillowSpec{{Name: "main"}}
-		if options.Volumes == nil || model.HasVolume(options.Volumes, "workspace") {
-			options.Pillows[0].Mounts = []model.VolumeMount{{Volume: "workspace", Path: "/workspace"}}
-		}
-	}
 	resolvedPillows, err := m.pillows.Resolve(options.Pillows, options.PortMappings)
 	if err != nil {
 		return nil, nil, err
 	}
 	options.Pillows = resolvedPillows
+	if err := m.Start(ctx); err != nil {
+		return nil, nil, err
+	}
 	requestedSync := ""
 	if options.Volumes != nil {
 		requestedSync = string(store.SyncNoop)
@@ -285,7 +300,7 @@ func (m *Manager) beginInitialization(
 		m.mu.Unlock()
 		return nil, nil, fmt.Errorf("%w: managed persistence=sync requires a durable Store", ErrSyncInvalid)
 	}
-	if local := m.localIdentities[id]; local != nil {
+	if local := m.localIdentities[id]; local != nil && len(local.bed.Spec().Pillows) > 0 {
 		actual := local.bed.Spec()
 		if err := errors.Join(checkPillows(options, actual.Pillows), checkBedPaths(options, actual), checkBedPorts(options, actual)); err != nil {
 			m.mu.Unlock()
@@ -575,7 +590,6 @@ type CreateOptions struct {
 	Volumes       []model.VolumeSpec
 	PortMappings  []model.PortMappingSpec
 	Pillows       []model.PillowSpec
-	lookup        bool // native Ensure joins desired state; an explicit create compares it
 	NetworkPolicy *network.Policy
 }
 

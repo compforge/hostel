@@ -184,7 +184,7 @@ func newTransferTestServer(t *testing.T, fixture *transferS3Fixture) (*testServe
 			t.Error(err)
 		}
 	})
-	b, err := mgr.Ensure(t.Context(), "one")
+	b, err := declareTestBed(mgr, t.Context(), "one")
 	if err != nil {
 		t.Fatal(err)
 	}

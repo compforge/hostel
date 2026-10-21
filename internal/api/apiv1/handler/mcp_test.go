@@ -43,6 +43,8 @@ func TestMCPBedConfigurationLifecycle(t *testing.T) {
 		_ = mgr.Close(ctx)
 	})
 	s := NewServer(mgr)
+	createBedAndWait(t, s, "a")
+	createBedAndWait(t, s, "b")
 	body := `{"revision":"v1","servers":{"remote":{"url":"http://127.0.0.1:1"}}}`
 	h := map[string]string{BedHeader: "a", "Content-Type": "application/json"}
 	out := do(t, s, http.MethodPut, "/v1/mcp/config", strings.NewReader(body), h)
@@ -71,6 +73,7 @@ func TestMCPBedConfigurationLifecycle(t *testing.T) {
 	if out.Code != 404 {
 		t.Fatalf("restored bed config survived: %d %s", out.Code, out.Body.String())
 	}
+	createBedAndWait(t, s, "a")
 	out = do(t, s, http.MethodPost, "/v1/mcp/servers/remote/tools/call", strings.NewReader(`{"name":"echo","bundle":{"revision":"a","servers":{"remote":{"url":"http://example","transport":"stdio"}}}}`), h)
 	if out.Code != 400 {
 		t.Fatalf("unsupported transport: %d %s", out.Code, out.Body.String())

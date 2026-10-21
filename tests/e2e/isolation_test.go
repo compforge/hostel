@@ -47,6 +47,8 @@ func TestIsolationLevels(t *testing.T) {
 				t.Fatalf("selected workspace view reported unavailable: %+v", health.ProcessView)
 			}
 
+			must2xx(t, "declare Bed", c.createBed(t, "isolation-a"))
+			must2xx(t, "declare Bed", c.createBed(t, "isolation-b"))
 			write, response := c.command(t, "isolation-a", map[string]any{
 				"command": "printf secret-a > secret.txt; pwd",
 				"timeout": 30_000,
@@ -59,7 +61,7 @@ func TestIsolationLevels(t *testing.T) {
 
 			read, response := c.command(t, "isolation-b", map[string]any{
 				"command": "cat \"$TARGET\"",
-				"envs":    map[string]string{"TARGET": filepath.Join(target.bedsRoot, "isolation-a", "data", "workspace", "secret.txt")},
+				"envs":    map[string]string{"TARGET": filepath.Join(target.bedsRoot, "isolation-a", "volumes", "workspace", "secret.txt")},
 				"timeout": 30_000,
 			})
 			must2xx(t, "cross-bed isolation probe", response)
@@ -154,6 +156,7 @@ func TestHelperProbeFailureKeepsCommandAPIAvailable(t *testing.T) {
 	if health.ProcessView.Mode != "carrier" || health.ProcessView.Available || health.ProcessView.Reason == "" {
 		t.Fatalf("fallback workspace view = %+v", health.ProcessView)
 	}
+	must2xx(t, "declare Bed", c.createBed(t, "fallback-bed"))
 	run, response := c.command(t, "fallback-bed", map[string]any{"command": "printf available", "timeout": 30_000})
 	must2xx(t, "fallback command", response)
 	assertCommandExit(t, run, 0)
@@ -217,6 +220,8 @@ func TestPathshimProbeFailureFallsBackToProot(t *testing.T) {
 func assertCanonicalWorkspaceView(t *testing.T, c *apiClient, mode string) {
 	t.Helper()
 	const bedID = "workspace-view"
+	must2xx(t, "declare Bed", c.createBed(t, bedID))
+
 	run, response := c.command(t, bedID, map[string]any{
 		"command": "printf mapped > from-cwd.txt; test \"$HOME\" = /workspace; pwd",
 		"cwd":     "/workspace/subdir",

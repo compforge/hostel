@@ -30,7 +30,7 @@ func TestCloseJoinsBackgroundBeforeReleasingBeds(t *testing.T) {
 	m := newTestManager(t)
 	a := &joiningAdmission{Admitter: resource.NoopAdmission("test"), entered: make(chan struct{}), canceled: make(chan struct{}), finish: make(chan struct{})}
 	m.SetResourceAdmission(a)
-	b, err := m.Ensure(t.Context(), "retained")
+	b, err := declareTestBed(m, t.Context(), "retained")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestCloseJoinsBackgroundBeforeReleasingBeds(t *testing.T) {
 	if !b.Bed.Status().Filesystem.Prepared {
 		t.Fatal("resources released before background controller exited")
 	}
-	if _, err := m.Ensure(t.Context(), "new"); !errors.Is(err, ErrBedUnavailable) {
+	if _, err := declareTestBed(m, t.Context(), "new"); !errors.Is(err, ErrBedUnavailable) {
 		t.Fatalf("new work accepted during shutdown: %v", err)
 	}
 	if _, err := m.BeginOperation(b, OpFile, time.Second); !errors.Is(err, ErrBedUnavailable) {
@@ -84,7 +84,7 @@ func TestStartFailureDoesNotAdmitBeds(t *testing.T) {
 	if err := m.Start(t.Context()); err == nil {
 		t.Fatal("invalid root accepted")
 	}
-	if _, err := m.Ensure(t.Context(), "a"); err == nil {
+	if _, err := declareTestBed(m, t.Context(), "a"); err == nil {
 		t.Fatal("admitted after failed startup")
 	}
 	if len(m.components) != 0 {

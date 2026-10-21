@@ -21,7 +21,7 @@ func renewalBed(t *testing.T, ttl time.Duration) (*Manager, *Resident) {
 			t.Error(err)
 		}
 	})
-	b, err := m.Ensure(t.Context(), "renew")
+	b, err := declareTestBed(m, t.Context(), "renew")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestRenewExpirationRejectsInvalidAndUnavailableBeds(t *testing.T) {
 	if _, err := m.Evict(t.Context(), b.Name); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := m.Ensure(t.Context(), b.Name)
+	replacement, err := declareTestBed(m, t.Context(), b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,10 +137,10 @@ func TestRenewExpirationFencesIdleCollection(t *testing.T) {
 func TestRenewExpirationKeepsPillowExecution(t *testing.T) {
 	m, specs, _ := testPillowManager(t)
 	m.SetBedIdleTTL(time.Minute)
-	if _, err := m.InitializeBedWithOptions(t.Context(), "renew-pillow", testPillowOptions(specs)); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "renew-pillow", testPillowOptions(specs)); err != nil {
 		t.Fatal(err)
 	}
-	b, err := m.Ensure(t.Context(), "renew-pillow")
+	b, err := declareTestBed(m, t.Context(), "renew-pillow")
 	if err != nil {
 		t.Fatal(err)
 	}

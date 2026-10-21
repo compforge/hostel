@@ -36,8 +36,7 @@ func (m *Manager) localIdentityLocked(id string) *localIdentity {
 	if local := m.localIdentities[id]; local != nil {
 		return local
 	}
-	pillows, _ := pillow.Normalize([]model.PillowSpec{{Name: "main", Mounts: []model.VolumeMount{{Volume: "workspace", Path: "/workspace"}}}})
-	local := &localIdentity{bed: model.New(id, "", model.Spec{Pillows: pillows, Dir: filepath.Join(m.root, id), RecoveryDirs: []string{
+	local := &localIdentity{bed: model.New(id, "", model.Spec{Dir: filepath.Join(m.root, id), RecoveryDirs: []string{
 		filepath.Join(m.root, id, "rootfs"), filepath.Join(m.root, gcTmpPrefix+id, "rootfs"),
 	}})}
 	m.localIdentities[id] = local
@@ -90,9 +89,12 @@ func (m *Manager) recoverLocalIdentities() error {
 			if err := json.Unmarshal(data, &record); err != nil {
 				return fmt.Errorf("read bed %s identity: %w", local.bed.Name, err)
 			}
-			record.Pillows, err = pillow.Normalize(record.Pillows)
-			if err != nil {
-				return fmt.Errorf("recover bed %s paths: %w", local.bed.Name, err)
+			// A directory without a declaration is only a cleanup identity.
+			if len(record.Pillows) > 0 {
+				record.Pillows, err = pillow.Normalize(record.Pillows)
+				if err != nil {
+					return fmt.Errorf("recover bed %s pillows: %w", local.bed.Name, err)
+				}
 			}
 			id := record.ID
 			spec.Pillows = record.Pillows

@@ -20,7 +20,7 @@ func TestPillowVolumesSurviveRestartAndAreRemovedWithBed(t *testing.T) {
 	options := testPillowOptions(specs)
 	options.Volumes = []model.VolumeSpec{{Name: "shared", Managed: &model.ManagedVolume{Persistence: "none"}}}
 	options.Pillows[0].Mounts = []model.VolumeMount{{Volume: "shared", Path: "/shared"}}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "volumes", options); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "volumes", options); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "volumes")
@@ -84,7 +84,7 @@ func TestVolumeDeclarationRecoveryPreservesLocalTemporaryData(t *testing.T) {
 	st := newFakeStore()
 	m := storeTestManager(t, root, st)
 	options := CreateOptions{Volumes: []model.VolumeSpec{{Name: "exchange", Managed: &model.ManagedVolume{Persistence: "none"}}}, Pillows: []model.PillowSpec{{Name: "main", Mounts: []model.VolumeMount{{Volume: "exchange", Path: "/exchange"}}}}}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "recover", options); err != nil {
+	if _, err := m.InitializeBed(t.Context(), "recover", options); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "recover")
@@ -99,6 +99,9 @@ func TestVolumeDeclarationRecoveryPreservesLocalTemporaryData(t *testing.T) {
 	}
 	next := storeTestManager(t, root, st)
 	defer next.Close(t.Context())
+	if _, err := next.InitializeBed(t.Context(), "recover", options); err != nil {
+		t.Fatal(err)
+	}
 	restored, err := next.Ensure(t.Context(), "recover")
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +112,7 @@ func TestVolumeDeclarationRecoveryPreservesLocalTemporaryData(t *testing.T) {
 	if got, err := restored.filesystem.Read("/exchange/old-token"); err != nil || string(got) != "old" {
 		t.Fatalf("local temporary volume lost: %v", err)
 	}
-	if _, err := next.InitializeBedWithOptions(t.Context(), "recover", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Mounts: []model.VolumeMount{}}}}); !errors.Is(err, ErrPillowsConflict) {
+	if _, err := next.InitializeBed(t.Context(), "recover", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Mounts: []model.VolumeMount{}}}}); !errors.Is(err, ErrPillowsConflict) {
 		t.Fatalf("live mount mutation accepted: %v", err)
 	}
 }

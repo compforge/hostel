@@ -1,7 +1,9 @@
 package protocol
 
 // PillowSpec is the immutable, non-secret definition of a named execution environment
-// and its optional supervised main process. Runtime addresses and generated credentials never enter it.
+// and its optional supervised main process. A Bed must explicitly declare at least
+// one Pillow; its first declaration is the default. Runtime addresses and generated
+// credentials never enter it.
 type PillowSpec struct {
 	Mounts         []VolumeMount                  `json:"mounts,omitempty"`
 	PortMapping    string                         `json:"port_mapping,omitempty"`

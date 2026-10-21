@@ -299,7 +299,7 @@ func (c *apiClient) createBed(t *testing.T, id string) httpResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var bed bedView
-	result, err := c.json(ctx, "POST", "/v1/beds", "", map[string]string{"id": id}, &bed)
+	result, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": id, "pillows": workspacePillows()}, &bed)
 	if err != nil {
 		t.Fatalf("create bed %s: %v", id, err)
 	}
@@ -420,4 +420,8 @@ func assertInventory(t *testing.T, inventory inventoryView) {
 			t.Fatalf("inventory activity %s=%d, bed facts=%d: %+v", name, inventory.Instance.ActivityCount[name], activity[name], inventory)
 		}
 	}
+}
+
+func workspacePillows() []map[string]any {
+	return []map[string]any{{"name": "main", "mounts": []map[string]string{{"volume": "workspace", "path": "/workspace"}}}}
 }

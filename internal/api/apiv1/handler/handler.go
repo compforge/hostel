@@ -153,6 +153,10 @@ func (s *Handler) RegisterRoutes(e *gin.Engine) {
 // respondBedError maps bed resolution/admission failures: a full or
 // resource-pressured instance is 429 backpressure, anything else is a bad id.
 func respondBedError(c *gin.Context, err error) {
+	if errors.Is(err, hostel.ErrNotFound) {
+		respondError(c, http.StatusNotFound, apiview.ErrBedInvalid, "bed not found")
+		return
+	}
 	if errors.Is(err, hostel.ErrInvalidArgument) {
 		var detail *hostel.Error
 		if errors.As(err, &detail) {
@@ -187,8 +191,8 @@ func respondBedError(c *gin.Context, err error) {
 const resolvedBedContextKey = "hostel.resolved-bed"
 
 // bedOf resolves the target bed from the request (header/query → default),
-// creating it on first use. Adapters that require an existing bed may inject a
-// pre-resolved value, which also prevents their read paths from creating one.
+// waiting for its explicit declaration to become ready. Adapters may inject a
+// pre-resolved value; no data path creates a Bed.
 // On invalid id it writes an error and returns nil.
 func (s *Handler) bedOf(c *gin.Context) *bed.Resident {
 	if resolved, ok := c.Get(resolvedBedContextKey); ok {

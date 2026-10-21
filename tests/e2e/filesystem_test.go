@@ -20,6 +20,7 @@ func TestFilesystemAPIContract(t *testing.T) {
 		moved   = "/workspace/e2e-tree/result.txt"
 	)
 
+	must2xx(t, "declare filesystem Bed", c.createBed(t, bedID))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	created, err := c.json(ctx, "POST", "/directories", bedID, map[string]string{"path": root + "/nested"}, nil)
 	cancel()

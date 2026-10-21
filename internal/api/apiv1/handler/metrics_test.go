@@ -54,6 +54,7 @@ func TestMetricsEndpoint(t *testing.T) {
 	s := newTestServer(t)
 	tracker := &fakeResourceTracker{}
 	s.mgr.SetResourceTracker(tracker)
+	createBedAndWait(t, s, "metrics-bed")
 	s.metricSampleInterval = 10 * time.Millisecond
 	started := time.Now().Add(-time.Second).UnixMilli()
 	rec := do(t, s, http.MethodGet, "/metrics", nil, map[string]string{BedHeader: "metrics-bed"})
