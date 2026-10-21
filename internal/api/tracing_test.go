@@ -45,7 +45,7 @@ func TestTracingMiddlewareExtractsParentAndSkipsHealth(t *testing.T) {
 
 	root := t.TempDir()
 	host := hostfacts.Collect()
-	mgr, err := bed.NewManager(host, root, "default", "/bin/bash", isolation.New(host, "shared", root), nil, 0, nil)
+	mgr, err := bed.NewManager(host, root, "/bin/bash", isolation.New(host, "shared", root), nil, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -51,7 +51,7 @@ func (t *fakeResourceTracker) Usage(bedID string) (resource.Usage, error) {
 func (t *fakeResourceTracker) Release(string) error { return nil }
 
 func TestMetricsEndpoint(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	tracker := &fakeResourceTracker{}
 	s.mgr.SetResourceTracker(tracker)
 	createBedAndWait(t, s, "metrics-bed")
@@ -94,7 +94,7 @@ func TestMetricsEndpoint(t *testing.T) {
 }
 
 func TestMetricsWatchHeaders(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	req := httptest.NewRequest(http.MethodGet, "/metrics/watch", nil).WithContext(ctx)

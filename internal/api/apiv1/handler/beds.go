@@ -172,10 +172,6 @@ func (s *Handler) bedDelete(c *gin.Context) {
 				respondBedError(c, err)
 				return
 			}
-			if errors.Is(err, bed.ErrPurgeDefault) {
-				badRequest(c, err.Error())
-				return
-			}
 			runtimeError(c, err.Error())
 			return
 		}

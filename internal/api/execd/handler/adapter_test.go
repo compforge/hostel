@@ -13,7 +13,7 @@ import (
 )
 
 func TestAdapterFileContract(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	createBedAndWait(t, s, "files")
 	for _, base := range []string{"/execd", "/v1/beds/files/execd"} {
 		t.Run(base, func(t *testing.T) {
@@ -90,7 +90,7 @@ func TestAdapterFileContract(t *testing.T) {
 	}
 }
 func TestAdapterSessionAndBackground(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	createBedAndWait(t, s, "a")
 	createBedAndWait(t, s, "b")
 	for _, base := range []string{"/execd", "/v1/beds/a/execd"} {
@@ -187,7 +187,7 @@ func TestAdapterSessionAndBackground(t *testing.T) {
 	}
 }
 func TestAdapterLargeBackgroundOutput(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	createBedAndWait(t, s, "large")
 	raw, _ := json.Marshal(map[string]any{"command": fmt.Sprintf("printf '%%0100000d' 0"), "background": true})
 	rec := do(t, s, "POST", "/v1/beds/large/execd/command", bytes.NewReader(raw), nil)
@@ -204,7 +204,7 @@ func TestAdapterLargeBackgroundOutput(t *testing.T) {
 }
 
 func TestAdapterCannotInterruptPillow(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	createBedAndWait(t, s, "pillow")
 	b, _ := s.mgr.Get("pillow")
 	e, err := s.mgr.StartExecution(t.Context(), b, bed.ExecutionMain, "sleep 30", "", "", nil, 0, nil, nil)

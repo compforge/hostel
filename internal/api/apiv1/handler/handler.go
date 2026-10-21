@@ -15,7 +15,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/resource"
 )
 
-// BedHeader carries the caller-owned Bed.Name; empty means the default Bed.
+// BedHeader carries the explicit caller-owned Bed.Name.
 const BedHeader = "X-Hostel-Bed"
 
 // Handler queries domain owners and assembles their results into API views.
@@ -190,7 +190,7 @@ func respondBedError(c *gin.Context, err error) {
 
 const resolvedBedContextKey = "hostel.resolved-bed"
 
-// bedOf resolves the target bed from the request (header/query → default),
+// bedOf resolves the target bed from an explicit request header or query,
 // waiting for its explicit declaration to become ready. Adapters may inject a
 // pre-resolved value; no data path creates a Bed.
 // On invalid id it writes an error and returns nil.
@@ -203,6 +203,10 @@ func (s *Handler) bedOf(c *gin.Context) *bed.Resident {
 	id := c.GetHeader(BedHeader)
 	if id == "" {
 		id = c.Query("bed")
+	}
+	if id == "" {
+		badRequest(c, "Bed is required: set X-Hostel-Bed or the bed query parameter")
+		return nil
 	}
 	b, err := s.mgr.Ensure(c.Request.Context(), id)
 	if err != nil {
@@ -276,7 +280,6 @@ func (s *Handler) healthz(c *gin.Context) {
 		},
 		"resource_admission": resourceAdmissionView(s.mgr.ResourceAdmissionReport()),
 		"isolation":          s.mgr.RoomStatus(),
-		"default_bed":        s.mgr.DefaultBedID(),
 		// Watermarks only — live luggage bytes require a scan; poll
 		// /v1/beds for those.
 		"luggage_high_bytes": high,

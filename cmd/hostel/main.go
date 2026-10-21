@@ -149,7 +149,7 @@ func main() {
 		log.Fatalf("hostel: init store: %v", err)
 	}
 
-	mgr, err := bed.NewManager(host, cfg.BedsRoot, cfg.DefaultBed, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
+	mgr, err := bed.NewManager(host, cfg.BedsRoot, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
 		bed.WithRuntimeSelection(selection),
 		bed.WithPillows(ports),
 		bed.WithConfiguration(cfg.Bed.Configuration),
@@ -239,13 +239,6 @@ func main() {
 		iso.Name(), networks.Status().Backend, mgr.ExecutorBackend(), userReport.Strategy,
 		userReport.UID, userReport.GID, userReport.UIDMin, userReport.UIDMax)
 
-	// The standalone default is a daemon-owned declaration, never a data-plane side effect.
-	if _, err := mgr.InitializeBed(context.Background(), cfg.DefaultBed, bed.CreateOptions{
-		Pillows: []bedmodel.PillowSpec{{Name: "main", Mounts: []bedmodel.VolumeMount{{Volume: "workspace", Path: "/workspace"}}}},
-	}); err != nil {
-		log.Fatalf("hostel: declare default bed: %v", err)
-	}
-
 	// Carrier pressure gates tenant work, not the startup capability probe.
 	mgr.SetResourceAdmission(resourceAdmission)
 
@@ -265,8 +258,8 @@ func main() {
 	).Handler()}
 	serverDone := make(chan error, 1)
 	go func() {
-		log.Printf("hostel: listening on %s (isolation=%s, beds-root=%s, default-bed=%s)",
-			cfg.Addr, iso.Name(), cfg.BedsRoot, cfg.DefaultBed)
+		log.Printf("hostel: listening on %s (isolation=%s, beds-root=%s)",
+			cfg.Addr, iso.Name(), cfg.BedsRoot)
 		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverDone <- err
 		}

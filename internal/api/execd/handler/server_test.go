@@ -31,10 +31,10 @@ func NewServer(mgr *bed.Manager) *testServer {
 	return &testServer{h, engine}
 }
 func (s *testServer) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.engine.ServeHTTP(w, r) }
-func newTestServer(t *testing.T) *testServer {
+func newTestServerWithBed(t *testing.T) *testServer {
 	t.Helper()
 	root := t.TempDir()
-	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, nil)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -45,7 +45,7 @@ func newTestServer(t *testing.T) *testServer {
 			t.Errorf("close manager: %v", err)
 		}
 	})
-	if _, err := declareTestBed(mgr, t.Context(), "default"); err != nil {
+	if _, err := declareTestBed(mgr, t.Context(), "test-bed"); err != nil {
 		t.Fatal(err)
 	}
 	return NewServer(mgr)
@@ -54,6 +54,10 @@ func newTestServer(t *testing.T) *testServer {
 func do(t *testing.T, s *testServer, method, path string, body io.Reader, hdr map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, body)
+	// Select the explicitly declared fixture Bed; query/header overrides still win.
+	if req.URL.Query().Get("bed") == "" {
+		req.Header.Set(BedHeader, "test-bed")
+	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
@@ -98,5 +102,22 @@ func waitBedReady(t *testing.T, s *testServer, id string) *httptest.ResponseReco
 			t.Fatalf("bed %s did not become ready: %s", id, rec.Body.String())
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestDataRequestRequiresExplicitBed(t *testing.T) {
+	s := newTestServerWithBed(t)
+	for _, path := range []string{"/execd/command", "/execd/files/info?path=/workspace"} {
+		method := http.MethodGet
+		if strings.HasSuffix(path, "/command") {
+			method = http.MethodPost
+		}
+		req := httptest.NewRequest(method, path, strings.NewReader(`{"command":"true"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Bed is required") {
+			t.Fatalf("missing Bed %s: %d %s", path, rec.Code, rec.Body.String())
+		}
 	}
 }

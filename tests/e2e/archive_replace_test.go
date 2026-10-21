@@ -31,15 +31,6 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 				t.Fatalf("requested real pathshim coverage but selected %+v", health.ProcessView)
 			}
 
-			probe, response := c.command(t, "", map[string]any{
-				"command": "command -v unzip >/dev/null",
-				"timeout": 30_000,
-			})
-			must2xx(t, "probe unzip", response)
-			if probe.Result == nil || probe.Result.Process.ExitCode == nil || *probe.Result.Process.ExitCode != 0 {
-				t.Skipf("target for %s does not provide unzip", requested)
-			}
-
 			t.Logf("requested=%s effective=%s process_view=%s", requested, health.Isolation.Effective, health.ProcessView.Mode)
 			type bedCase struct {
 				id       string
@@ -56,6 +47,16 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 				c.waitBed(t, bedID, func(b bedView) bool {
 					return b.Status.Phase == "resident" && b.Status.Readiness.Ready
 				}, "resident and ready")
+				if i == 0 {
+					probe, response := c.command(t, bedID, map[string]any{
+						"command": "command -v unzip >/dev/null",
+						"timeout": 30_000,
+					})
+					must2xx(t, "probe unzip", response)
+					if probe.Result == nil || probe.Result.Process.ExitCode == nil || *probe.Result.Process.ExitCode != 0 {
+						t.Skipf("target for %s does not provide unzip", requested)
+					}
+				}
 				archive := concurrentReplaceArchive(t, expected)
 				must2xx(t, "upload unzip archive", c.upload(t, bedID, "/workspace/.concurrent-replace.zip", archive))
 				beds = append(beds, bedCase{id: bedID, expected: expected})

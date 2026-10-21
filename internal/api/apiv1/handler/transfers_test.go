@@ -173,7 +173,7 @@ func newTransferTestServer(t *testing.T, fixture *transferS3Fixture) (*testServe
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, stores)
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, stores)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +358,7 @@ func TestTransfersCancelAndPurgeJoinBeforeBedRemoval(t *testing.T) {
 }
 
 func TestTransfersWithoutS3AndInvalidTimeout(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	req := transferRequest{ID: "one", Source: transferEndpoint{Type: "bed", Path: "/workspace"}, Destination: transferEndpoint{Type: "s3", Key: "export/"}}
 	startTestTransfer(t, s, req, 503)
 	req.TimeoutMs = 1 << 62

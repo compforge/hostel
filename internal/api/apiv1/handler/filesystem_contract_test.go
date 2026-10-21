@@ -7,7 +7,7 @@ import (
 )
 
 func TestBedWorkdirUsesBedPath(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	for _, name := range []string{"one", "two"} {
 		b, err := declareTestBed(s.mgr, t.Context(), name)
 		if err != nil {
@@ -31,7 +31,7 @@ func TestBedWorkdirUsesBedPath(t *testing.T) {
 }
 
 func TestProcessViewHTTPContract(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	for _, endpoint := range []string{"/healthz", "/v1/beds/capabilities"} {
 		rec := do(t, s, http.MethodGet, endpoint, nil, nil)
 		var body map[string]any

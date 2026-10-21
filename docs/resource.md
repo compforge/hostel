@@ -24,7 +24,7 @@ Hostel 的资源治理分成四层：**采集事实 → 汇报事实 → 执行�
 
 ### 2. carrier 与 bed 是两个资源粒度
 
-- **carrier 粒度**：Hostel 所在容器的总盘子，包含 daemon、amenity、default bed 和所有 tenant
+- **carrier 粒度**：Hostel 所在容器的总盘子，包含 daemon、amenity 和所有 Bed
   bed。容量准入看这一层，因为这些消耗最终共享同一个 CPU/内存上限。
 - **bed 粒度**：每个 bed 的用量归因和未来硬限额。它适合解释谁消耗了资源、保护邻居，但不能
   代替 carrier 总量判断。
@@ -110,7 +110,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 - noop 下没有待完成的远端同步步骤，瞬时 operation 结束即释放 pinned 名额。
 - `bed_pressure` 是提前扩容和新 placement 避让的软信号；已有 Bed 继续由当前 carrier 承接。
 - 新 Bed 在任何 Store I/O 前预占 `occupied_beds`，防止并发 initialization 穿透 `max_beds`。
-- 已接纳的 bed 不会因采样越线被暂停或杀死；default bed 也不参与资源准入。
+- 已接纳的 bed 不会因采样越线被暂停或杀死。
 - 采集失败、无有限 limit 或非 Linux 环境均诚实上报 unavailable，并 fail-open 到数量策略。
 
 `--bed-pressure-threshold-percent`、`--cpu-pressure-threshold`、`--memory-pressure-threshold`、`--admission-cpu-threshold` 与 `--admission-memory-threshold` 只表达策略水位；具体默认值和当前字段 shape 以配置代码及 README 为准，避免设计文档随调参漂移。
@@ -133,11 +133,11 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 
 三个聚合的包含关系为 `pinned_beds ⊆ resident_beds ⊆ occupied_beds`：
 
-- `occupied_beds`：正在占用 `max_beds` 名额的 tenant Bed，包含 initializing、resident 和 evicting。
-- `resident_beds`：已在当前 Node 准备好 BedFS/运行境的 tenant Bed，包含 resident 和仍在持久化复核的 evicting；不包含 initializing 或已停止准入的 CleanupPending。
+- `occupied_beds`：正在占用 `max_beds` 名额的 Bed，包含 initializing、resident 和 evicting。
+- `resident_beds`：已在当前 Node 准备好 BedFS/运行境的 Bed，包含 resident 和仍在持久化复核的 evicting；不包含 initializing 或已停止准入的 CleanupPending。
 - `pinned_beds`：其中有 operation，或 durable store 下 `data_synced=false` 的 Bed；它们暂时只能由当前 carrier 承接。noop 只在 operation 进行期间 pinned。
 
-`phase_counts.initializing` 仍表达生命周期，`activity_counts.active|idle` 仍只表达已 resident Bed 的操作态；不为了“凑总数”把 initializing 塞进 activity。兼容 default Bed 不参与上述三项 tenant 容量计数。
+`phase_counts.initializing` 仍表达生命周期，`activity_counts.active|idle` 仍只表达已 resident Bed 的操作态；不为了“凑总数”把 initializing 塞进 activity。
 
 ![Bed 状态变化与 Node 容量计数](assets/bed-state-counts.svg)
 

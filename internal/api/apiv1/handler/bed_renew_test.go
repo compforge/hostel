@@ -11,7 +11,7 @@ import (
 )
 
 func TestBedRenewExpirationHTTP(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	s.mgr.SetBedIdleTTL(time.Minute)
 	createBedAndWait(t, s, "renew")
 	until := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
@@ -45,7 +45,7 @@ func TestBedRenewExpirationHTTP(t *testing.T) {
 }
 
 func TestBedRenewExpirationBadRequests(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	createBedAndWait(t, s, "renew")
 	for _, body := range []string{"{", `{"expiresAt":123}`, `{"expiresAt":"not-a-date"}`, `{"expiresAt":"0001-01-01T00:00:00Z"}`, `{"expiresAt":"2000-01-01T00:00:00Z"}`} {
 		rec := do(t, s, http.MethodPost, "/v1/beds/renew/renew-expiration", strings.NewReader(body), nil)
@@ -56,7 +56,7 @@ func TestBedRenewExpirationBadRequests(t *testing.T) {
 }
 
 func TestBedRenewExpirationUnlimitedHTTP(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	createBedAndWait(t, s, "renew")
 	body := `{"expiresAt":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"}`
 	rec := do(t, s, http.MethodPost, "/v1/beds/renew/renew-expiration", strings.NewReader(body), nil)
@@ -66,7 +66,7 @@ func TestBedRenewExpirationUnlimitedHTTP(t *testing.T) {
 }
 
 func TestBedRenewExpirationWithoutTimestampHTTP(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	s.mgr.SetBedIdleTTL(time.Minute)
 	createBedAndWait(t, s, "renew")
 	for _, body := range []string{"", "{}", `{"expiresAt":null}`} {

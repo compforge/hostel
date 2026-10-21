@@ -68,7 +68,7 @@ Bed 和 Pillow 主进程响应，检查 readiness 与执行身份。在 `protoco
 Hostel 在 API 层适配 OpenSandbox Execd，内部仍由 Bed Manager、Executor 和 BedFS
 拥有执行与文件状态。原生 API 使用 Hostel 的执行协议。
 
-`/execd/...` 从 `X-Hostel-Bed` 读取 Bed Name，缺省使用 default；
+`/execd/...` 从 `X-Hostel-Bed` 读取 Bed Name，缺失返回 400；
 `/v1/beds/:bedId/execd/...` 从路径读取同一标识。两组路由共用 handler，入口只负责
 绑定已有 Bed。路径优先于 header，不存在的 Bed 返回 404，不会隐式创建。
 

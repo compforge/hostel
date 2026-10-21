@@ -18,7 +18,7 @@ func TestLinuxNetworkPolicyAPI(t *testing.T) {
 	if os.Getenv("HOSTEL_NETWORK_TEST") != "enabled" {
 		t.Skip("requires disposable Linux container")
 	}
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	manager := network.New(t.Context())
 	if err := manager.Start(t.Context()); err != nil {
 		t.Fatal(err)

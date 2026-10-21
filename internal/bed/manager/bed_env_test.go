@@ -144,7 +144,7 @@ func TestBedEnvDeclarationConflictAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := hostfacts.Collect()
-	next, err := NewManager(host, m.root, "default", "/bin/bash", isolation.New(host, "shared", m.root), nil, 0, nil)
+	next, err := NewManager(host, m.root, "/bin/bash", isolation.New(host, "shared", m.root), nil, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestBedEnvInFlightDeclarationIsImmutable(t *testing.T) {
 	root := t.TempDir()
 	backend := &initializationBlockingStore{fakeStore: newFakeStore(), started: make(chan struct{}, 1), release: make(chan struct{})}
 	host := hostfacts.Collect()
-	m, err := NewManager(host, root, "default", "/bin/bash", isolation.New(host, "shared", root), nil, 1, store.NewManagerWithStores(backend))
+	m, err := NewManager(host, root, "/bin/bash", isolation.New(host, "shared", root), nil, 1, store.NewManagerWithStores(backend))
 	if err != nil {
 		t.Fatal(err)
 	}

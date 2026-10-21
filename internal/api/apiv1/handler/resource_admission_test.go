@@ -41,16 +41,16 @@ func (rejectingResourceAdmission) Report() resource.AdmissionReport {
 }
 
 func TestResourcePressureBackpressureAndReporting(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	s.mgr.SetResourceAdmission(rejectingResourceAdmission{})
 
 	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"new-tenant","pillows":[{"name":"agent"}]}`), nil)
 	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "RESOURCE_PRESSURE") {
 		t.Fatalf("resource pressure = %d %s", rec.Code, rec.Body.String())
 	}
-	// The compatibility default bed remains available even under pressure.
-	if rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, nil); rec.Code != http.StatusOK {
-		t.Fatalf("default bed under pressure = %d %s", rec.Code, rec.Body.String())
+	// Resource pressure rejects operations on a synced idle Bed.
+	if rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, nil); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("idle Bed under pressure = %d %s", rec.Code, rec.Body.String())
 	}
 
 	rec = do(t, s, http.MethodGet, "/healthz", nil, nil)
@@ -75,7 +75,7 @@ func TestResourcePressureBackpressureAndReporting(t *testing.T) {
 }
 
 func TestStatusReportsResourcePressure(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	s.mgr.SetResourceAdmission(rejectingResourceAdmission{})
 	rec := do(t, s, http.MethodGet, "/v1/status", nil, nil)
 	var status struct {

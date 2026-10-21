@@ -23,10 +23,6 @@ import (
 	"time"
 )
 
-// ErrPurgeDefault marks a client mistake (4xx), not a server failure: the
-// default bed is the single-tenant fallback and cannot be purged.
-var ErrPurgeDefault = errors.New("bed: refusing to purge the default bed")
-
 // ErrBedPurging prevents a create from acquiring the same Bed identity while
 // its local and durable data are still being deleted.
 var ErrBedPurging = errors.New("bed: identity is being purged")
@@ -44,9 +40,6 @@ type bedPurge struct {
 // purge fence remains visible for the whole transition, so no concurrent
 // InitializeBed can recreate the identity before deletion commits.
 func (m *Manager) Purge(ctx context.Context, id string) error {
-	if id == "" || id == m.defaultBed {
-		return ErrPurgeDefault
-	}
 	if err := validBedID(id); err != nil {
 		return err
 	}
@@ -155,9 +148,7 @@ func (m *Manager) purgeOwned(ctx context.Context, id string) error {
 		b.purging = true
 		m.retirements[id] = b
 		delete(m.beds, id)
-		if id != m.defaultBed {
-			m.residentBeds.Add(-1)
-		}
+		m.residentBeds.Add(-1)
 		if b.pinnedLocked() {
 			m.pinnedBeds.Add(-1)
 		}

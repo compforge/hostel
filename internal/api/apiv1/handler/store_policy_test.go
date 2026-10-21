@@ -7,7 +7,7 @@ import (
 )
 
 func TestBedStoreAPISelectionAndConflict(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	headers := map[string]string{"Content-Type": "application/json"}
 	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"one","volumes":[{"name":"workspace","managed":{"persistence":"none"}}],"pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`), headers)
 	if rec.Code != 202 || !strings.Contains(rec.Body.String(), `"sync":"noop"`) {
@@ -38,7 +38,7 @@ func TestBedStoreAPISelectionAndConflict(t *testing.T) {
 }
 
 func TestManagedSyncRequiresDurableBackend(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(`{"id":"durable","volumes":[{"name":"workspace","managed":{"persistence":"sync"}}],"pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`), map[string]string{"Content-Type": "application/json"})
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "durable Store") {
 		t.Fatalf("create=%d %s", rec.Code, rec.Body.String())

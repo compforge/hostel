@@ -97,9 +97,6 @@ func (m *Manager) InitializeBed(ctx context.Context, id string, options CreateOp
 // +spec=`Every initialized Bed has at least one caller-declared Pillow. Data access cannot synthesize workload configuration.`
 // +link:doc=docs/bed.md
 func (m *Manager) Ensure(ctx context.Context, id string) (*managedBed, error) {
-	if id == "" {
-		id = m.defaultBed
-	}
 	if err := validBedID(id); err != nil {
 		return nil, err
 	}
@@ -139,9 +136,6 @@ func (m *Manager) Ensure(ctx context.Context, id string) (*managedBed, error) {
 // Initialization returns an in-flight initialization, purge, or recently
 // failed initialization. Resident beds are deliberately read through Get.
 func (m *Manager) Initialization(id string) (InitializationStatus, bool) {
-	if id == "" {
-		id = m.defaultBed
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.pruneFailedInitializationsLocked(time.Now())
@@ -226,9 +220,6 @@ func (m *Manager) beginInitialization(
 			return nil, nil, network.ErrUnavailable
 		}
 		options.NetworkPolicy = &normalized
-	}
-	if id == "" {
-		id = m.defaultBed
 	}
 	if err := validBedID(id); err != nil {
 		return nil, nil, err
@@ -321,17 +312,13 @@ func (m *Manager) beginInitialization(
 	// observable until this explicit desired-state signal arrives.
 	delete(m.initializations, id)
 
-	// The default Bed is the single-tenant fallback and remains exempt from
-	// tenant capacity and pressure admission.
-	if m.maxBeds > 0 && id != m.defaultBed && m.tenantOccupiedBedsLocked() >= m.maxBeds {
+	if m.maxBeds > 0 && m.occupiedBedsLocked() >= m.maxBeds {
 		m.mu.Unlock()
 		return nil, nil, ErrBedLimit
 	}
-	if id != m.defaultBed {
-		if err := m.resourceAdmissionErrorLocked(); err != nil {
-			m.mu.Unlock()
-			return nil, nil, err
-		}
+	if err := m.resourceAdmissionErrorLocked(); err != nil {
+		m.mu.Unlock()
+		return nil, nil, err
 	}
 
 	now := time.Now()
@@ -430,12 +417,10 @@ func (m *Manager) publishInitializedBed(initialization *bedInitialization, resid
 	m.setLifecycle(resident.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: ready, Reason: reason, UpdatedAt: time.Now()})
 	m.beds[resident.Name] = resident
 	delete(m.initializations, resident.Name)
-	if resident.Name != m.defaultBed {
-		m.residentBeds.Add(1)
-		if resident.pinnedLocked() {
-			m.pinnedBeds.Add(1)
-			m.RequestStoreSync()
-		}
+	m.residentBeds.Add(1)
+	if resident.pinnedLocked() {
+		m.pinnedBeds.Add(1)
+		m.RequestStoreSync()
 	}
 	return nil
 }

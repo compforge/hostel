@@ -18,6 +18,8 @@ and bound Tenant reports, read-only status polling, and new Tenant identity
 after recreating a same-name Bed. It also covers remote MCP configuration, list/call, metadata,
 call-scoped overrides and cross-bed isolation over SSE and Streamable HTTP.
 
+`TestExplicitBedIdleRelease` verifies empty startup, required Bed selectors, Bed capacity and idle reclamation, and return to `releasable` after expiry or purge.
+
 The core profile covers health and capability reporting, asynchronous bed
 creation, inventory invariants, capacity, foreground/background execution,
 status/log/interrupt control, stateful and isolated sessions, the complete

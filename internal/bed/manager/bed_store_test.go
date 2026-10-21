@@ -44,7 +44,7 @@ func (s *countedStore) Delete(ctx context.Context, id string) error {
 
 func storeTestManager(t *testing.T, root string, st store.Store) *Manager {
 	t.Helper()
-	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, store.NewManagerWithStores(st))
+	m, err := NewManager(hostfacts.Collect(), root, "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, store.NewManagerWithStores(st))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(durable.Workdir(), "restored.txt")); err != nil {
-		t.Fatalf("default bed did not restore: %v", err)
+		t.Fatalf("Bed using the instance Store did not restore: %v", err)
 	}
 	if err := m.Purge(ctx, b.Name); err != nil {
 		t.Fatal(err)
@@ -257,7 +257,7 @@ func TestDurableBedSyncsWithNoopInstanceDefault(t *testing.T) {
 	defer cancel()
 	st := newFakeStore()
 	root := t.TempDir()
-	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, store.NewManagerWithStores(store.Noop{}, st))
+	m, err := NewManager(hostfacts.Collect(), root, "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, store.NewManagerWithStores(store.Noop{}, st))
 	if err != nil {
 		t.Fatal(err)
 	}

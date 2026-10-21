@@ -31,8 +31,12 @@ func TestVolumePersistenceOverridesInstanceDefault(t *testing.T) {
 	t.Setenv("HOSTEL_S3_ACCESS_KEY_ID", "e2e-key")
 	t.Setenv("HOSTEL_S3_SECRET_ACCESS_KEY", "e2e-secret")
 	c := startTarget(t, targetOptions{store: "cas"}).client
-	c.waitBed(t, "default", func(b bedView) bool { return b.Status.Phase == "failed" }, "daemon default Store denial")
-	startupRequests := storageRequests.Load()
+	if got := c.inventory(t); len(got.Beds) != 0 || got.Instance.Status != "releasable" {
+		t.Fatalf("daemon created a Bed before declaration: %+v", got)
+	}
+	if got := storageRequests.Load(); got != 0 {
+		t.Fatalf("empty daemon contacted the Bed Store: %d requests", got)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	created, err := c.json(ctx, "POST", "/v1/beds", "", volumeRequest("noop-bed", "none"), nil)
@@ -63,17 +67,17 @@ func TestVolumePersistenceOverridesInstanceDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	must2xx(t, "purge noop", response)
-	if got := storageRequests.Load(); got != startupRequests {
-		t.Fatalf("noop made %d S3 requests", got-startupRequests)
+	if got := storageRequests.Load(); got != 0 {
+		t.Fatalf("noop made %d S3 requests", got)
 	}
-	created, err = c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "default-bed", "pillows": workspacePillows()}, nil)
+	created, err = c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "inherited-store", "pillows": workspacePillows()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	must2xx(t, "create default", created)
-	c.waitBed(t, "default-bed", func(b bedView) bool { return b.Status.Phase == "failed" && b.Sync == "cas" }, "default Store denial")
+	must2xx(t, "create Bed with inherited Store", created)
+	c.waitBed(t, "inherited-store", func(b bedView) bool { return b.Status.Phase == "failed" && b.Sync == "cas" }, "default Store denial")
 	if storageRequests.Load() == 0 {
-		t.Fatal("default Bed did not use configured S3")
+		t.Fatal("Bed did not inherit the configured S3 Store")
 	}
 	// Reverse direction: an API-selected S3 Bed also overrides a noop default.
 	reverse := startTarget(t, targetOptions{store: "noop"}).client

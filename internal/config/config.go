@@ -55,19 +55,16 @@ type Config struct {
 	// BedsRoot is the carrier parent directory for per-Bed identity and data
 	// (<root>/<bed name>). It is independent of the Bed workdir.
 	BedsRoot string
-	// DefaultBed is the bed id used when a request omits one — lets simple
-	// single-tenant callers ignore the bed concept entirely.
-	DefaultBed string
 	// BedIdleTTL is the retention added after a bed's latest accepted operation.
 	// Zero disables automatic expiry.
 	BedIdleTTL time.Duration
 	// MaxBeds caps how many beds may exist at once (0 = unlimited). Applies to
-	// NEW bed creation only, never to the default bed; the 429 it produces is
+	// new Bed creation; the 429 it produces is
 	// the backpressure/placement signal for an upstream scheduler.
 	MaxBeds int
-	// MaxPinnedBeds is the reference capacity for tenant beds that are running
+	// MaxPinnedBeds is the reference capacity for Beds that are running
 	// work or whose latest data has not reached the durable store. It is not an
-	// admission limit. Zero inherits MaxBeds; the default bed is exempt.
+	// admission limit. Zero inherits MaxBeds.
 	MaxPinnedBeds int
 	// BedPressureThresholdPercent is the shared high-watermark percentage for
 	// occupied/max-beds and pinned/max-pinned-beds. Zero disables the signal.
@@ -118,11 +115,10 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs.StringVar(&c.BedsRoot, "beds-root", osx.EnvStr("HOSTEL_BEDS_ROOT", "/workspace"), "carrier parent dir for per-bed data")
 	fs.StringVar(&c.Bed.RoomType, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "Bed room type: dorm | room | suite | auto (auto=highest available profile)")
 	fs.StringVar(&c.Bed.Filesystem.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")
-	fs.StringVar(&c.DefaultBed, "default-bed", osx.EnvStr("HOSTEL_DEFAULT_BED", "default"), "bed id used when a request omits one")
 	fs.StringVar(&c.ShellPath, "shell", osx.EnvStr("HOSTEL_SHELL", "/bin/bash"), "shell for bed sessions")
 	idle := fs.Duration("bed-idle-timeout", osx.EnvDuration("HOSTEL_BED_IDLE_TIMEOUT", 30*time.Minute), "reap a bed after this idle duration (0=never)")
-	fs.IntVar(&c.MaxBeds, "max-beds", osx.EnvInt("HOSTEL_MAX_BEDS", 0), "max concurrent beds, 0=unlimited (default bed exempt)")
-	fs.IntVar(&c.MaxPinnedBeds, "max-pinned-beds", osx.EnvInt("HOSTEL_MAX_PINNED_BEDS", 0), "pinned-bed pressure reference, 0=inherit max-beds (default bed exempt)")
+	fs.IntVar(&c.MaxBeds, "max-beds", osx.EnvInt("HOSTEL_MAX_BEDS", 0), "max concurrent beds, 0=unlimited")
+	fs.IntVar(&c.MaxPinnedBeds, "max-pinned-beds", osx.EnvInt("HOSTEL_MAX_PINNED_BEDS", 0), "pinned-bed pressure reference, 0=inherit max-beds")
 	fs.IntVar(&c.BedPressureThresholdPercent, "bed-pressure-threshold-percent", osx.EnvInt("HOSTEL_BED_PRESSURE_THRESHOLD_PERCENT", defaultPressureThresholdPercent), "occupied/pinned bed pressure threshold percent, 0=disabled")
 	fs.IntVar(&c.Bed.Resource.Admission.CPUPressureThresholdPercent, "cpu-pressure-threshold", osx.EnvInt("HOSTEL_CPU_PRESSURE_THRESHOLD", defaultPressureThresholdPercent), "report carrier CPU pressure at this usage percent, 0=disabled")
 	fs.IntVar(&c.Bed.Resource.Admission.MemoryPressureThresholdPercent, "memory-pressure-threshold", osx.EnvInt("HOSTEL_MEMORY_PRESSURE_THRESHOLD", defaultPressureThresholdPercent), "report carrier memory pressure at this usage percent, 0=disabled")

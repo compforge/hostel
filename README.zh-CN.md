@@ -50,7 +50,7 @@ curl -fsS 'http://localhost:8872/files/download?path=/workspace/hello.txt' \
 ```
 
 创建 Bed 必须显式声明至少一个 Pillow。数据请求等待已声明 Bed 就绪，未声明返回 404。
-后续命令和文件请求使用相同的 `X-Hostel-Bed`；省略时使用 daemon 启动时声明的 `default` bed。
+后续命令和文件请求使用相同的 `X-Hostel-Bed`；省略 Bed 标识返回 400。使用前须先声明 Bed。
 普通命令各自在新进程中执行，`/session` 用于创建常驻 shell。
 命令中建议使用 `cwd` 和相对路径：文件 API 的路径归属于 bed，shell 文本中的绝对路径则由实际进程环境解释。
 

@@ -47,7 +47,6 @@ type Options struct {
 	OTLPTracesHTTPEndpoint      *string
 	Addr                        *string
 	BedsRoot                    *string
-	DefaultBed                  *string
 	BedIdleTTL                  *time.Duration
 	MaxBeds                     *int
 	MaxPinnedBeds               *int
@@ -75,7 +74,6 @@ func (o Options) apply(c *Config) {
 	apply(&c.Addr, o.Addr)
 	apply(&c.BedsRoot, o.BedsRoot)
 	apply(&c.Bed.Filesystem.DormReadFallbackRoot, o.Bed.Filesystem.DormReadFallbackRoot)
-	apply(&c.DefaultBed, o.DefaultBed)
 	apply(&c.BedIdleTTL, o.BedIdleTTL)
 	apply(&c.MaxBeds, o.MaxBeds)
 	apply(&c.MaxPinnedBeds, o.MaxPinnedBeds)

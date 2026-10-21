@@ -82,9 +82,11 @@ smoke: build ## Boot on a scratch port and curl the core endpoints end to end
 	sleep 1; \
 	curl -sf localhost:44799/ping >/dev/null; \
 	curl -sf localhost:44799/healthz >/dev/null; \
-	curl -sfN -XPOST localhost:44799/command -H 'Content-Type: application/json' \
+	curl -sf -XPOST localhost:44799/v1/beds -H 'Content-Type: application/json' \
+	  -d '{"id":"smoke","pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}' >/dev/null; \
+	curl -sfN -XPOST localhost:44799/command -H 'X-Hostel-Bed: smoke' -H 'Content-Type: application/json' \
 	  -d '{"command":"echo smoke > s.txt && cat s.txt"}' | grep -q smoke; \
-	curl -sf 'localhost:44799/files/download?path=/workspace/s.txt' | grep -q smoke; \
+	curl -sf 'localhost:44799/files/download?path=/workspace/s.txt' -H 'X-Hostel-Bed: smoke' | grep -q smoke; \
 	curl -sf -o /dev/null -w '%{http_code}' 'localhost:44799/files/download?path=/workspace/s.txt' \
 	  -H 'X-Hostel-Bed: other' | grep -q 404; \
 	echo "smoke OK"

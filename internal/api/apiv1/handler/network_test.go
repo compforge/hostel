@@ -8,7 +8,7 @@ import (
 )
 
 func TestNetworkDiagnosticsWithoutManager(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	for _, path := range []string{"/healthz", "/v1/status"} {
 		rec := do(t, s, http.MethodGet, path, nil, nil)
 		if rec.Code != http.StatusOK {
@@ -41,7 +41,7 @@ func TestNetworkDiagnosticsWithoutManager(t *testing.T) {
 }
 
 func TestNetworkPolicyUnavailableDoesNotPretendSuccess(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		rec := do(t, s, method, "/v1/beds/missing/network/policy", strings.NewReader(`{}`), nil)
 		// Missing beds must not be allocated by policy requests.
@@ -49,10 +49,10 @@ func TestNetworkPolicyUnavailableDoesNotPretendSuccess(t *testing.T) {
 			t.Fatalf("%s missing bed: %d %s", method, rec.Code, rec.Body)
 		}
 	}
-	if _, err := declareTestBed(s.mgr, t.Context(), "default"); err != nil {
+	if _, err := declareTestBed(s.mgr, t.Context(), "test-bed"); err != nil {
 		t.Fatal(err)
 	}
-	rec := do(t, s, http.MethodPut, "/v1/beds/default/network/policy", strings.NewReader(`{"defaultAction":"deny"}`), nil)
+	rec := do(t, s, http.MethodPut, "/v1/beds/test-bed/network/policy", strings.NewReader(`{"defaultAction":"deny"}`), nil)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("disabled policy: %d %s", rec.Code, rec.Body)
 	}

@@ -18,7 +18,7 @@ import (
 func TestPillowManagementRoutesAndDeclarationConflict(t *testing.T) {
 	root := t.TempDir()
 	host := hostfacts.Collect()
-	m, err := bed.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "shared", root), nil, 0, nil, bed.WithPillows(nil))
+	m, err := bed.NewManager(host, root, "/bin/sh", isolation.New(host, "shared", root), nil, 0, nil, bed.WithPillows(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestPillowManagementRoutesAndDeclarationConflict(t *testing.T) {
 // +case:id=pillow_default_http,desc=`Declare two environment-only Pillows in nonalphabetical order`,expect=`command and relative file APIs use the first Pillow; ambiguous and legacy declarations are rejected`
 // +link:doc=docs/kernel.md
 func TestPillowDefaultHTTPContract(t *testing.T) {
-	s := newTestServer(t)
+	s := newTestServerWithBed(t)
 	for _, body := range []string{
 		`{"id":"invalid","pillows":null}`,
 		`{"id":"invalid","pillows":[]}`,

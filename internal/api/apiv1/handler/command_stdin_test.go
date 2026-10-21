@@ -39,7 +39,7 @@ func TestCommandStdinFileRoundTrip(t *testing.T) {
 			{"large", strings.Repeat("工具结果正文\n", 65536)},
 		} {
 			t.Run(mode+"/"+tc.name, func(t *testing.T) {
-				s := newTestServer(t)
+				s := newTestServerWithBed(t)
 				payload, err := json.Marshal(map[string]any{
 					"command": "umask 077; mkdir -p tool_results && cat > tool_results/result.tmp && mv tool_results/result.tmp tool_results/result",
 					"cwd":     "/workspace", "stdin": tc.input, "background": background, "timeout": 3000,
