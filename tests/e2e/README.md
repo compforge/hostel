@@ -99,6 +99,10 @@ through the Pillow main process's PATH, then verifies their files through a Bed 
 Tools are required for each selected mechanism; unavailable tools are reported
 as skips, not isolation proof.
 
+The rootful regression uses a private Rootfs and a managed `0700` workspace owned by the non-root Bed identity;
+command, Session and Pillow main processes must enter their prepared views with zero
+capabilities and `no_new_privs`. It must not pass by falling back to UID 0.
+
 To require rootful preparation, use a Linux host with the namespace and identity
 management capabilities, plus bwrap. `make e2e` builds the static Hostel helper:
 

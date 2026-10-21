@@ -5,9 +5,8 @@ package filesystem
 import (
 	"context"
 	"debug/elf"
-	"encoding/json"
 	"fmt"
-	"io"
+	"net"
 	"os"
 	"os/exec"
 	"runtime"
@@ -47,10 +46,10 @@ func StaticBootstrap() (string, error) {
 	return path, nil
 }
 
-// PrepareMountNamespace runs bubblewrap with host privileges only during
-// preparation. The sole program it executes is our pinned static helper.
-// No workload arguments, environment or code participate in this stage.
-func PrepareMountNamespace(ctx context.Context, bwrap, helper string, args []string) (*MountNamespace, error) {
+// PrepareMountNamespace prepares resources without accepting a workload or its cwd/env.
+// +spec=`Only a pinned static helper runs with preparation authority; handles are handed off after its capabilities are cleared`
+// +link:doc=docs/isolation.md
+func PrepareMountNamespace(ctx context.Context, bwrap, helper string, mounts []Mount) (*MountNamespace, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	executable, err := os.Open(helper)
@@ -58,77 +57,54 @@ func PrepareMountNamespace(ctx context.Context, bwrap, helper string, args []str
 		return nil, err
 	}
 	defer executable.Close()
-	ready, notify, err := os.Pipe()
+	sockets, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_SEQPACKET|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer ready.Close()
-	defer notify.Close()
-	wait, release, err := os.Pipe()
+	receive := os.NewFile(uintptr(sockets[0]), "mount-receive")
+	send := os.NewFile(uintptr(sockets[1]), "mount-send")
+	defer send.Close()
+	conn, err := net.FileConn(receive)
+	receive.Close()
 	if err != nil {
 		return nil, err
 	}
-	defer wait.Close()
-	defer release.Close()
-	// /proc is a reserved runtime overlay: it resolves the inherited executable
-	// FD without executing a program supplied by the workload rootfs.
-	argv := append([]string(nil), args[:len(args)-1]...)
-	argv = append(argv, "--ro-bind", "/proc", "/proc", "--cap-drop", "ALL", "--",
-		"/proc/self/fd/3", CaptureArg)
+	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	// The private root can belong to a different UID. Keep directory traversal
+	// authority through bwrap's chdir/exec, and SETPCAP to clear the ceiling in
+	// our fixed helper. No Pillow cwd, executable or environment is used here.
+	argv := (Bubblewrap{UTSNamespace: true, IPCNamespace: true, Mounts: mounts, Cwd: "/", DieWithParent: true}).Args()
+	argv = append(argv[:len(argv)-1], "--ro-bind", "/proc", "/proc", "--cap-drop", "ALL",
+		"--cap-add", "CAP_DAC_OVERRIDE", "--cap-add", "CAP_SETPCAP", "--", "/proc/self/fd/3", CaptureArg)
 	cmd := exec.CommandContext(ctx, bwrap, argv...)
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
-	cmd.ExtraFiles = []*os.File{executable, notify, wait}
+	cmd.ExtraFiles = []*os.File{executable, send}
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	notify.Close()
-	wait.Close()
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	// The helper reports readiness only after bwrap has installed the rootfs.
-	// A deadline also bounds a helper/tool that never reaches that point.
-	_ = ready.SetReadDeadline(time.Now().Add(10 * time.Second))
-	var pid int
-	err = json.NewDecoder(ready).Decode(&pid)
-	var ns *MountNamespace
-	if err == nil {
-		ns = &MountNamespace{}
-		ns.executable, err = os.Open(helper)
-		if err == nil {
-			ns.mount, err = os.Open(fmt.Sprintf("/proc/%d/ns/mnt", pid))
-		}
-		if err == nil {
-			ns.root, err = os.Open(fmt.Sprintf("/proc/%d/root", pid))
-		}
-		if err == nil {
-			ns.uts, err = os.Open(fmt.Sprintf("/proc/%d/ns/uts", pid))
-		}
-		if err == nil {
-			ns.ipc, err = os.Open(fmt.Sprintf("/proc/%d/ns/ipc", pid))
-		}
+	send.Close()
+	// SCM_RIGHTS transfers the prepared resources directly, without a PID-based
+	// /proc lookup or keeping a privileged helper alive until the daemon opens them.
+	view, err := receiveMountNamespace(conn.(*net.UnixConn), helper)
+	if err != nil {
+		cancel()
 	}
-	release.Close()
-	select {
-	case waitErr := <-done:
-		if err == nil {
-			err = waitErr
-		}
-	case <-time.After(5 * time.Second):
-		_ = cmd.Process.Kill()
-		<-done
-		if err == nil {
-			err = fmt.Errorf("mount preparation helper did not exit")
-		}
+	waitErr := cmd.Wait()
+	if err == nil {
+		err = waitErr
 	}
 	if err != nil {
-		if ns != nil {
-			_ = ns.Close()
+		if view != nil {
+			_ = view.Close()
 		}
 		return nil, fmt.Errorf("prepare mount namespace: %w: %s", err, stderr.String())
 	}
-	return ns, nil
+	return view, nil
 }
 
 func (n *MountNamespace) Close() error {
@@ -164,15 +140,11 @@ func (n *MountNamespace) Wrap(cmd *exec.Cmd) {
 // RunMountHelper dispatches only trusted internal re-exec operations.
 func RunMountHelper(args []string) error {
 	if len(args) == 1 && args[0] == CaptureArg {
-		ready, wait := os.NewFile(4, "ready"), os.NewFile(5, "release")
-		defer ready.Close()
-		defer wait.Close()
+		runtime.LockOSThread()
+		socket := os.NewFile(4, "mount-send")
+		defer socket.Close()
 		_ = unix.Close(3)
-		if err := json.NewEncoder(ready).Encode(os.Getpid()); err != nil {
-			return err
-		}
-		_, err := io.Copy(io.Discard, wait)
-		return err
+		return finishMountPreparation(int(socket.Fd()))
 	}
 	if len(args) < 5 || (args[0] != BedInitMountArg && args[0] != DeriveMountArg) || args[3] != "--" {
 		return fmt.Errorf("invalid mount helper arguments")
@@ -200,7 +172,7 @@ func RunMountHelper(args []string) error {
 		}
 		// setns/unshare are thread-local. Send the actual handles from this locked
 		// thread, rather than asking the daemon to inspect the thread-group leader.
-		return sendMountHandles(socket)
+		return finishMountPreparation(socket)
 	}
 
 	// Pin the next trusted executable before entering a workload-controlled root.

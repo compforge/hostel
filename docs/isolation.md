@@ -142,21 +142,30 @@ Bed 数据交接给新属主时跳过多硬链接的普通文件，防止改变 
 ### 特权操作顺序
 
 Bed 初始化先恢复或创建 BedFS，再解析并准备 `BedUser`，随后获取网络、文件边界和 Executor 所需的
-资源；全部完成后才发布 Ready。command、session 和 Pillow 主进程统一通过 `manager.Environment` 组装执行环境：
+资源；必需的 Pillow 主进程启动并满足就绪条件后才发布 Ready。command、session 和 Pillow 主进程
+统一通过 `manager.Environment` 组装执行环境：
 
 ```text
-Bed Manager 协调各组件准备 BedFS、身份、namespace 与资源限制
-  → 准备完成后发布 Ready
-  → 执行入口进入已准备的环境
+Bed Manager 协调各组件准备 BedFS、身份、namespace 与资源
+  → 可信启动器进入所属 Pillow 的已准备视图
   → 切换到 BedUser，清空 capability 集合、设置 no_new_privs
-  → 应用用户环境与 cwd，启动 command / session / Pillow 主进程
+  → 应用用户环境与 cwd，启动所需进程
+  → 必需 Pillow 主进程就绪后开放数据面，持续监督、同步与观测
 ```
 
 资源准备和降级决策属于 Bed Manager 及其协调的组件，不属于 Executor。Hostel 优先使用实际拥有的
 权限完成准备，权限不足才尝试无特权机制。最终 BedUser 的低权限不应反过来限制 daemon 的准备能力。
 
-rootful bwrap 在 Bed 初始化时准备 mount namespace，Filesystem 持有 namespace/root 句柄；准备
-进程退出后这些句柄仍保留视图。command、Session 和主进程进入所属 Pillow 的卷挂载视图，
+rootful bwrap 的准备接口只接收挂载描述，不接收 Pillow 的 workdir、命令或环境。准备进程
+以固定 cwd `/` 安装视图；Bed Rootfs 和 managed Volume 可以是其他 UID 拥有的 `0700` 目录，
+因此准备权限不能提前按工作负载身份收缩。bwrap 启动固定的静态 helper 时仅保留
+`CAP_DAC_OVERRIDE` 和 `CAP_SETPCAP`：前者允许进入私有根目录，后者用于清空 capability ceiling。
+helper 先打开本线程的 namespace/root 句柄，再清空 capabilities、设置 no_new_privs，最后通过
+`SCM_RIGHTS` 交接句柄并退出。Filesystem 持有这些句柄，准备进程退出后视图仍然有效。
+句柄交接失败或 helper 非正常退出均使准备失败，已接收的资源必须关闭。Executor 派生视图
+也遵守先捕获资源、清空准备权限、再交接句柄的顺序。
+
+command、Session 和主进程进入所属 Pillow 的卷挂载视图，
 并最终降权；普通执行不重复准备挂载。释放顺序是先停止所有执行，再关闭句柄。Bed 的视图模板
 在 Executor 替换时保留；若 Executor 要求私有 PID namespace，则重新派生匹配 procfs 的最终视图，
 见 [Filesystem](volumes.md#进程视图与访问保证)。

@@ -60,6 +60,12 @@ const carrierSoftwareRoot = "/usr/local"
 // process-env builder, so isolation mechanisms never inherit or filter it.
 // +why=`A private internal data mount only fixes structured API paths; native processes issue literal absolute paths. The Bed data root must be the default process root, with explicit runtime overlays instead of an inherited carrier root.`
 func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths []string, mappings []bedfs.Mount, runtimeRoots ...string) []string {
+	mounts := buildBwrapMounts(bedsRoot, bedHome, maskPaths, mappings, runtimeRoots...)
+	return (hostfs.Bubblewrap{UserNamespace: true, UTSNamespace: true, IPCNamespace: true, Mounts: mounts, Cwd: cwd, DieWithParent: true}).Args()
+}
+
+// buildBwrapMounts describes a Pillow view independently of how a process enters it.
+func buildBwrapMounts(bedsRoot, bedHome string, maskPaths []string, mappings []bedfs.Mount, runtimeRoots ...string) []hostfs.Mount {
 	mounts := []hostfs.Mount{
 		{Kind: hostfs.Bind, Source: bedHome, Target: "/"},
 	}
@@ -96,8 +102,7 @@ func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths [
 	// The final trusted re-exec restores workload configuration only after
 	// resource entry and credential drop. Its image is never Bed-controlled.
 	mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: hostprocess.Executable(), Target: hostprocess.BedInitPath})
-	argv := (hostfs.Bubblewrap{UserNamespace: true, UTSNamespace: true, IPCNamespace: true, Mounts: mounts, Cwd: cwd, DieWithParent: true}).Args()
-	return argv
+	return mounts
 }
 
 func systemFileArgs(fs *bedfs.FS) []string {

@@ -28,7 +28,7 @@ func canPrepareRootful(facts hostfacts.Snapshot) bool {
 	if facts.EUID != 0 {
 		return false
 	}
-	for _, capability := range []uint{unix.CAP_SYS_ADMIN, unix.CAP_SYS_CHROOT, unix.CAP_SETUID, unix.CAP_SETGID, unix.CAP_SETPCAP} {
+	for _, capability := range []uint{unix.CAP_SYS_ADMIN, unix.CAP_SYS_CHROOT, unix.CAP_SETUID, unix.CAP_SETGID, unix.CAP_SETPCAP, unix.CAP_DAC_OVERRIDE} {
 		if !facts.HasCap(capability) {
 			return false
 		}
@@ -55,17 +55,18 @@ func (b *bwrap) Prepare(ctx context.Context, fs *bedfs.FS) error {
 			return fmt.Errorf("rootful filesystem: /proc is reserved for runtime preparation")
 		}
 	}
-	args := b.args(fs.Rootfs(), fs.Workdir(), fs.ClientWorkdir(), fs.Mounts())
-	args = append(args[:len(args)-1], systemFileArgs(fs)...)
-	args = append(args, "--")
-	view, err := hostfs.PrepareMountNamespace(ctx, b.path, b.rootful.helper, args)
+	mounts := buildBwrapMounts(b.root, fs.Rootfs(), b.maskPaths, fs.Mounts(), existingRuntimePaths()...)
+	for _, file := range fs.SystemFiles() {
+		mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: file.Source, Target: file.Target})
+	}
+	view, err := hostfs.PrepareMountNamespace(ctx, b.path, b.rootful.helper, mounts)
 	if err != nil {
 		return err
 	}
 	b.rootful.mu.Lock()
 	b.rootful.views[fs] = view
 	b.rootful.mu.Unlock()
-	log.Printf("filesystem: prepared Bed mount namespace mode=rootful")
+	log.Printf("filesystem: prepared Pillow mount view mode=rootful root=%s mounts=%d", fs.Rootfs(), len(mounts))
 	return nil
 }
 

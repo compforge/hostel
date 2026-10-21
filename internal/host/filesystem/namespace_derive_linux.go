@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"time"
 
+	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 	"golang.org/x/sys/unix"
 )
 
@@ -41,10 +42,14 @@ func (n *MountNamespace) Derive(ctx context.Context, start func(*exec.Cmd) error
 		return nil, err
 	}
 	send.Close()
+	return receiveMountNamespace(conn.(*net.UnixConn), fmt.Sprintf("/proc/self/fd/%d", n.executable.Fd()))
+}
+
+func receiveMountNamespace(conn *net.UnixConn, helper string) (*MountNamespace, error) {
 	rights := make([]byte, unix.CmsgSpace(4*4))
-	_, size, flags, _, err := conn.(*net.UnixConn).ReadMsgUnix(make([]byte, 1), rights)
+	_, size, flags, _, err := conn.ReadMsgUnix(make([]byte, 1), rights)
 	if err != nil {
-		return nil, fmt.Errorf("receive Executor mount view: %w", err)
+		return nil, fmt.Errorf("receive mount view: %w", err)
 	}
 	messages, err := unix.ParseSocketControlMessage(rights[:size])
 	if err != nil {
@@ -67,9 +72,9 @@ func (n *MountNamespace) Derive(ctx context.Context, start func(*exec.Cmd) error
 		fds = append(fds, received...)
 	}
 	if flags&unix.MSG_CTRUNC != 0 || len(fds) != 4 {
-		return nil, fmt.Errorf("invalid Executor mount handles: count=%d flags=%d", len(fds), flags)
+		return nil, fmt.Errorf("invalid mount handles: count=%d flags=%d", len(fds), flags)
 	}
-	executable, err := os.Open(fmt.Sprintf("/proc/self/fd/%d", n.executable.Fd()))
+	executable, err := os.Open(helper)
 	if err != nil {
 		return nil, err
 	}
@@ -79,21 +84,42 @@ func (n *MountNamespace) Derive(ctx context.Context, start func(*exec.Cmd) error
 	return view, nil
 }
 
-func sendMountHandles(socket int) error {
-	var handles []*os.File
-	defer func() {
-		for _, handle := range handles {
-			_ = handle.Close()
-		}
-	}()
-	var fds []int
-	for _, path := range []string{"/proc/thread-self/ns/mnt", "/proc/thread-self/ns/uts", "/proc/thread-self/ns/ipc", "/"} {
-		handle, err := os.Open(path)
+// openMountNamespace captures this locked thread's actual view, including private roots.
+func openMountNamespace() (*MountNamespace, error) {
+	view := &MountNamespace{}
+	for _, entry := range []struct {
+		path string
+		file **os.File
+	}{
+		{"/proc/thread-self/ns/mnt", &view.mount},
+		{"/proc/thread-self/ns/uts", &view.uts},
+		{"/proc/thread-self/ns/ipc", &view.ipc},
+		{"/", &view.root},
+	} {
+		var err error
+		*entry.file, err = os.Open(entry.path)
 		if err != nil {
-			return err
+			view.Close()
+			return nil, err
 		}
-		handles = append(handles, handle)
-		fds = append(fds, int(handle.Fd()))
 	}
-	return unix.Sendmsg(socket, []byte{1}, unix.UnixRights(fds...), nil, 0)
+	return view, nil
+}
+
+func (n *MountNamespace) send(socket int) error {
+	return unix.Sendmsg(socket, []byte{1}, unix.UnixRights(int(n.mount.Fd()), int(n.uts.Fd()), int(n.ipc.Fd()), int(n.root.Fd())), nil, 0)
+}
+
+// finishMountPreparation hands off resources only after the trusted preparer
+// has relinquished its authority. Both template and derived views use this boundary.
+func finishMountPreparation(socket int) error {
+	view, err := openMountNamespace()
+	if err != nil {
+		return err
+	}
+	defer view.Close()
+	if err := hostprivilege.DropCredentials(os.Getuid(), os.Getgid()); err != nil {
+		return fmt.Errorf("finish mount preparation: %w", err)
+	}
+	return view.send(socket)
 }

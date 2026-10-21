@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
+// +case:id=rootful_private_volume,desc=`Prepare a non-root private managed workspace and enter it from command, Session and Pillow main`,expect=`workloads retain their Bed identity, zero capabilities and no_new_privs across prepared views`
 // Opt-in because this asserts host-privileged preparation, not a rootless
 // substitute. Existing Bed-root cases exercise the same workloads in both modes.
 func TestRootfulPreparedMount(t *testing.T) {
@@ -29,12 +31,34 @@ func TestRootfulPreparedMount(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			options := restrictedOptions()
 			options.Bed.Filesystem.Bwrap = value(tool.Required)
-			c := startTarget(t, targetOptions{isolation: "suite", executor: backend, config: &options}).client
+			target := startTarget(t, targetOptions{isolation: "suite", executor: backend, config: &options})
+			c := target.client
 			const bed = "rootful"
+			// Seed a private root as existing local data. Bed preparation must retain
+			// its mode while handing ownership to the selected non-root identity.
+			if err := os.MkdirAll(filepath.Join(target.bedsRoot, bed), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(target.bedsRoot, bed, "rootfs"), 0700); err != nil {
+				t.Fatal(err)
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{
 				"id":      bed,
-				"pillows": append([]map[string]any{{"name": "workspace", "env": map[string]string{"MARKER": "workload-env", "GODEBUG": "inittrace=0"}}}, []map[string]any{{"name": "observer", "command": []string{"/bin/sh", "-c", `readlink /proc/self/ns/mnt > /workspace/pillow-mount; id -u > /workspace/pillow-uid; grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status > /workspace/pillow-caps; exec sleep 300`}, "required": true, "restart_policy": "never", "stop_seconds": 1}}...),
+				"volumes": []map[string]any{{"name": "workspace", "managed": map[string]any{"persistence": "none"}}},
+				"pillows": []map[string]any{
+					{"name": "workspace", "workdir": "/workspace",
+						"mounts": []map[string]any{{"volume": "workspace", "path": "/workspace"}},
+						"env":    map[string]string{"MARKER": "workload-env", "GODEBUG": "inittrace=0"}},
+					{"name": "observer", "workdir": "/workspace",
+						"mounts": []map[string]any{{"volume": "workspace", "path": "/workspace"}},
+						"command": []string{"/bin/sh", "-c", `set -eu
+readlink /proc/self/ns/mnt > /workspace/pillow-mount
+id -u > /workspace/pillow-uid
+grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status > /workspace/pillow-caps
+exec sleep 300`},
+						"required": true, "restart_policy": "never", "stop_seconds": 1},
+				},
 			}, nil)
 			cancel()
 			if err != nil {
@@ -52,14 +76,17 @@ func TestRootfulPreparedMount(t *testing.T) {
 				must2xx(t, "purge prepared Bed", response)
 			})
 			c.waitBed(t, bed, func(b bedView) bool { return b.Status.Readiness.Ready }, "rootful Pillow ready")
-			// Different executions must enter the same prepared mount namespace,
-			// including the resident Pillow and session shell.
+			// Commands and sessions reuse their Pillow's prepared view. Another
+			// Pillow has its own view even when both mount the same data volume.
 			const script = `set -eu
 test "$MARKER" = workload-env
 for i in 1 2 3 4 5; do test -s /workspace/pillow-caps && break; sleep 0.1; done
 test "$(id -u)" != 0
 test "$(id -u)" = "$(cat /workspace/pillow-uid)"
-test "$(readlink /proc/self/ns/mnt)" = "$(cat /workspace/pillow-mount)"
+test "$(readlink /proc/self/ns/mnt)" != "$(cat /workspace/pillow-mount)"
+test "$(stat -c %a /)" = 700
+test "$(stat -c %a /workspace)" = 700
+test "$(stat -c %u /workspace)" = "$(id -u)"
 readlink /proc/self/ns/mnt
 grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status
 cat /workspace/pillow-caps`
@@ -107,7 +134,7 @@ cat /workspace/pillow-caps`
 			result, response := c.stream(t, "/session/"+url.PathEscape(session.ID)+"/run", bed, map[string]any{"command": script, "timeout": 5000})
 			must2xx(t, "prepared session", response)
 			check(result)
-			t.Log(fmt.Sprintf("shared prepared mount=%s; command/session/Pillow credentials verified", namespace))
+			t.Log(fmt.Sprintf("default Pillow prepared mount=%s; command/session/Pillow credentials verified", namespace))
 		})
 	}
 }
