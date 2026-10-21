@@ -24,7 +24,7 @@ func (m *Manager) PillowFiles(b *bed.Bed) map[string]*bedfs.FS {
 }
 
 // prepareVolumes resolves sources before publishing any consumer view. Managed sources live in the Bed tree; opening them preserves restored data.
-// +link:doc=docs/filesystem.md
+// +link:doc=docs/volumes.md
 func (m *Manager) prepareVolumes(b *bed.Bed, ordinary *bedfs.FS) error {
 	spec := b.Spec()
 	if err := bed.ValidateVolumeMounts(spec); err != nil {

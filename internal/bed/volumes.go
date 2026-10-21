@@ -14,7 +14,7 @@ import (
 // VolumeSpec names a data source independently of any consumer's view.
 // +rule=`Exactly one source is required. Managed owns local data and its persistence policy; HostPath borrows an existing Carrier directory without changing its ownership or deleting it.`
 // +spec=`Managed data survives Executor and Pillow replacement; only persistence=sync enters snapshots.`
-// +link:doc=docs/filesystem.md
+// +link:doc=docs/volumes.md
 type VolumeSpec = protocol.VolumeSpec
 type ManagedVolume = protocol.ManagedVolume
 type HostPathVolume = protocol.HostPathVolume

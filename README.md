@@ -57,9 +57,8 @@ absolute paths inside shell text follow the selected process environment.
 
 Bed management responses expose Hostel's generated local lifetime `id` and the
 caller-owned routing `name`. Recreating a destroyed Bed changes its ID; restarting
-with retained local data preserves it. Existing request `id` parameters and Bed
-paths still accept Name. Callers upgrading from the old response must route using
-`name` instead of `id`; see [the public Bed contract](docs/protocol.md).
+with retained local data preserves it. Request `id` parameters and Bed
+paths accept Name. Route using the response `name`; see [the public Bed contract](docs/protocol.md).
 
 For a local container build:
 

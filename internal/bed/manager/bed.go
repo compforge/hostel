@@ -105,7 +105,7 @@ type ResidentStatus struct {
 	RetainUntil        time.Time
 	Inflight           int
 	// Operations breaks Inflight down by kind; Sessions counts open stateful
-	// holds by kind (docs/kernel.md: sessions never raise Activity).
+	// holds by kind (docs/bed.md: sessions never raise Activity).
 	Operations map[OperationKind]int
 	Sessions   map[SessionKind]int
 	Usage      Usage

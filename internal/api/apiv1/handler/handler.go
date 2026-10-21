@@ -135,7 +135,7 @@ func (s *Handler) RegisterRoutes(e *gin.Engine) {
 		v1.POST("/:bedId/transfers", s.startTransfer)
 		v1.GET("/:bedId/transfers/:transferId", s.transferStatus)
 		v1.DELETE("/:bedId/transfers/:transferId", s.cancelTransfer)
-		// Browser amenity verbs (docs/amenity.md §2) — bed-scoped actions,
+		// Browser amenity verbs (docs/amenity.md#通过-bed-入口访问共享设施) — bed-scoped actions,
 		// never a raw CDP passthrough.
 		v1.POST("/:bedId/browser/goto", s.browserGoto)
 		v1.POST("/:bedId/browser/screenshot", s.browserScreenshot)
@@ -210,7 +210,7 @@ func (s *Handler) bedOf(c *gin.Context) *bed.Resident {
 
 // withOp wraps a request-scoped handler in one operation of the given kind:
 // the bed is resolved, held for the handler's lifetime and released on return
-// (docs/kernel.md: an operation's span is one request). Explicit
+// (docs/bed.md: an operation's span is one request). Explicit
 // BeginOperation is reserved for work whose span is NOT the request —
 // background /command outlives it, foreground runs take their timeout from
 // the request body, isolatedCreate creates the bed it then holds.

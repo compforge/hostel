@@ -47,7 +47,7 @@ type Usage struct {
 	LastRestoreMs int64 `json:"last_restore_ms,omitempty"`
 }
 
-// bedMeta is hostel's durable per-bed bookkeeping (docs/store.md §4).
+// bedMeta is hostel's durable per-bed bookkeeping (docs/volumes.md#本地数据与生命周期).
 type bedMeta struct {
 	Volumes []model.VolumeSpec `json:"volumes"`
 	Sync    store.SyncKind     `json:"sync,omitempty"`
@@ -60,7 +60,7 @@ type bedMeta struct {
 	// dirty tracking never mistakes a failed upload for a fresh snapshot.
 	LastPersistedAt time.Time `json:"last_persisted_at,omitzero"`
 	// Generation counts persist attempts, monotonically; it is the freshness
-	// token for local copies (docs/store.md): luggage is current iff its
+	// token for local copies (docs/volumes.md): luggage is current iff its
 	// generation >= the snapshot's. Bumped BEFORE packing so the snapshot
 	// carries its own generation; a failed upload leaves the local copy ahead,
 	// which reads as "locally dirty" — accurate, and the next persist re-bumps.

@@ -11,7 +11,7 @@ three permission layers separate:
 | Layer | Requirement |
 | --- | --- |
 | sandbox-server ServiceAccount | RBAC permission to create Pods in the carrier namespace; a narrowly scoped PSA/admission exception when the selected Pod security setting is otherwise denied. |
-| Created Hostel container | Apply the Bed identity and selected feature requirements defined in [`privilege.md`](../../docs/privilege.md), using `/v1/status` as the runtime verdict. |
+| Created Hostel container | Apply the Bed identity and selected feature requirements defined in [`isolation.md`](../../docs/isolation.md), using `/v1/status` as the runtime verdict. |
 | Carrier node/runtime | Actually support the requested operation: user namespaces and mount policy for bubblewrap, or ptrace for PRoot. |
 
 The sandbox-server container itself does not need either setting. Its
@@ -256,7 +256,7 @@ is already selected, PRoot remains discovered but is not smoke-tested, so
 ## Apply the Hostel privilege profile
 
 The authority for daemon/Bed identity, capability requirements and feature-specific runtime
-preconditions is [`docs/privilege.md`](../../docs/privilege.md). This section only translates that
+preconditions is [`docs/isolation.md`](../../docs/isolation.md). This section only translates that
 contract into Kubernetes configuration. ServiceAccount RBAC cannot grant a Linux capability or an
 AppArmor profile to the Hostel container.
 
@@ -292,6 +292,6 @@ securityContext:
     type: RuntimeDefault
 ```
 
-Hostel carrier 本身不调用 Kubernetes API，建议 `automountServiceAccountToken: false`。负责创建 carrier Pod 的 sandbox-server ServiceAccount 只需要目标 namespace 中 Pod 生命周期所需的普通 RBAC（如 create/get/list/watch/delete）；Pod 能否声明 `Unconfined` 或额外 capability 最终由 Pod Security Admission、ValidatingAdmissionPolicy/Gatekeeper/Kyverno 等准入层决定，而不是由 RBAC verb 决定。各房型、workspace view 和 network backend 的完整前提及缺失行为不在本部署示例中重复，统一见 [`privilege.md`](../../docs/privilege.md)。
+Hostel carrier 本身不调用 Kubernetes API，建议 `automountServiceAccountToken: false`。负责创建 carrier Pod 的 sandbox-server ServiceAccount 只需要目标 namespace 中 Pod 生命周期所需的普通 RBAC（如 create/get/list/watch/delete）；Pod 能否声明 `Unconfined` 或额外 capability 最终由 Pod Security Admission、ValidatingAdmissionPolicy/Gatekeeper/Kyverno 等准入层决定，而不是由 RBAC verb 决定。各房型、workspace view 和 network backend 的完整前提及缺失行为不在本部署示例中重复，统一见 [`isolation.md`](../../docs/isolation.md)。
 
 参考 Kubernetes 官方文档：[AppArmor](https://kubernetes.io/docs/tutorials/security/apparmor/)、[Pod Security Standards](https://kubernetes.io/docs/concepts/security/pod-security-standards/)、[Security Context](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)。

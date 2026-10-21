@@ -54,7 +54,7 @@ func (s *Handler) viewFromStatus(b *bed.Resident, status bed.ResidentStatus) pro
 	}
 }
 
-// instanceStatus is the hostel-layer status (docs/kernel.md): the only way
+// instanceStatus is the hostel-layer status (docs/bed.md): the only way
 // a hostel says "you may release me". The verdict is computed here so upstream
 // reads a conclusion instead of reassembling phase/activity counts and luggage.
 // GET /v1/beds — the scheduler's one-poll picture: instance capacity plus

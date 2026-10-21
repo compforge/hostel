@@ -69,7 +69,7 @@ directories to the target `PATH`. Hostel itself has no per-helper path setting.
 HostPath volumes/mounts, file API fallback, command/session interoperability, and external
 source retention after purge. It runs with automatically selected filesystem
 features and a separate carrier-view control. Use the same test selector across
-the Kubernetes permission profiles in [E2E environments](e2e-environments.md#rootfs-与-pathmappings-权限矩阵).
+the Kubernetes permission profiles in [E2E environments](e2e-environments.md#rootfs-与-hostpath-volumesmounts-权限矩阵).
 
 ```sh
 make e2e E2E_ARGS='-run TestFilesystemPermissions -timeout 3m'
@@ -278,7 +278,7 @@ cover explicit S3 and zero-valued settings overriding environment defaults.
 
 Configuration restrictions exercise selection; they do not prove kernel permission
 rejection or failure halfway through allocation. Keep real restricted-container
-cases alongside these deterministic tests. See [configuration design](../../docs/configuration.md).
+cases alongside these deterministic tests. See [configuration design](../../docs/isolation.md).
 
 Status schema 8 reports component tool selection under `tools`, groups boot-time host facts under `host.fact` and managed port
 allocations under `host.status.ports`. It separates `healthz.isolation` (requested/effective room profile) from
