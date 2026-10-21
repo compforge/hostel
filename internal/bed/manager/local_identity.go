@@ -15,7 +15,7 @@ import (
 	"github.com/qiankunli/go-stdx/osx"
 
 	model "github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bed/configuration"
+	"github.com/qiankunli/hostel/internal/bed/pillow"
 )
 
 // A local identity owns the shared Bed even while it has no resident runtime. Renaming its data
@@ -36,7 +36,8 @@ func (m *Manager) localIdentityLocked(id string) *localIdentity {
 	if local := m.localIdentities[id]; local != nil {
 		return local
 	}
-	local := &localIdentity{bed: model.New(id, "", model.Spec{Dir: filepath.Join(m.root, id), RecoveryDirs: []string{
+	pillows, _ := pillow.Normalize(nil)
+	local := &localIdentity{bed: model.New(id, "", model.Spec{Pillows: pillows, Dir: filepath.Join(m.root, id), RecoveryDirs: []string{
 		filepath.Join(m.root, id, "data"), filepath.Join(m.root, gcTmpPrefix+id, "data"),
 	}})}
 	m.localIdentities[id] = local
@@ -91,18 +92,20 @@ func (m *Manager) recoverLocalIdentities() error {
 				if err := json.Unmarshal(data, &record); err != nil {
 					return fmt.Errorf("read bed %s identity: %w", local.bed.Name, err)
 				}
-				id = record.ID
-				if err := configuration.Validate(model.Configuration{Env: record.Env, EnvFiles: record.EnvFiles, EnvFrom: record.EnvFrom, EnvValueFrom: record.EnvValueFrom}); err != nil {
-					return fmt.Errorf("recover bed %s environment: %w", local.bed.Name, err)
+				if err := record.upgrade(); err != nil {
+					return fmt.Errorf("recover bed %s paths: %w", local.bed.Name, err)
 				}
-				spec.Env = record.Env
-				spec.EnvFiles, spec.EnvFrom, spec.EnvValueFrom = record.EnvFiles, record.EnvFrom, record.EnvValueFrom
-				spec.Services = record.Services
+				id = record.ID
+				spec.Pillows = record.Pillows
+				spec.Volumes, err = model.NormalizeVolumes(record.Volumes)
+				if err != nil {
+					return fmt.Errorf("recover bed %s volumes: %w", local.bed.Name, err)
+				}
 				spec.PortMappings, err = model.NormalizePortMappings(record.PortMappings)
 				if err != nil {
 					return fmt.Errorf("recover bed %s ports: %w", local.bed.Name, err)
 				}
-				spec.PathMappings, spec.SyncPaths, err = model.NormalizePaths(record.PathMappings, record.SyncPaths)
+				spec.SyncPaths, err = model.NormalizeSyncPaths(record.SyncPaths)
 				if err != nil {
 					return fmt.Errorf("recover bed %s paths: %w", local.bed.Name, err)
 				}
@@ -135,7 +138,7 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 		return err
 	}
 	spec := local.bed.Spec()
-	data, err := json.Marshal(localIdentityRecord{PortMappings: spec.PortMappings, PathMappings: spec.PathMappings, SyncPaths: spec.SyncPaths, ID: local.bed.ID.String(), Env: spec.Env, EnvFiles: spec.EnvFiles, EnvFrom: spec.EnvFrom, EnvValueFrom: spec.EnvValueFrom, Services: spec.Services})
+	data, err := json.Marshal(localIdentityRecord{Volumes: spec.Volumes, PortMappings: spec.PortMappings, SyncPaths: spec.SyncPaths, ID: local.bed.ID.String(), Pillows: spec.Pillows})
 	if err != nil {
 		return err
 	}
@@ -143,15 +146,18 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 }
 
 type localIdentityRecord struct {
+	Services     []legacyServiceSpec                  `json:"services,omitempty"`
+	Volumes      []model.VolumeSpec                   `json:"volumes,omitempty"`
+	Mounts       []model.VolumeMount                  `json:"mounts,omitempty"`
 	PortMappings []model.PortMappingSpec              `json:"port_mappings,omitempty"`
-	PathMappings []model.PathMapping                  `json:"path_mappings"`
+	PathMappings []legacyPathMapping                  `json:"path_mappings,omitempty"`
 	SyncPaths    []string                             `json:"sync_paths"`
 	EnvFiles     map[string]string                    `json:"env_files,omitempty"`
 	EnvFrom      []string                             `json:"env_from,omitempty"`
 	EnvValueFrom map[string]model.ConfigurationKeyRef `json:"env_value_from,omitempty"`
 	Env          map[string]string                    `json:"env,omitempty"`
 	ID           string                               `json:"id"`
-	Services     []model.ServiceSpec                  `json:"services,omitempty"`
+	Pillows      []model.PillowSpec                   `json:"pillows,omitempty"`
 }
 
 // waitForLocalCleanup only joins an active attempt. An idle/failed cleanup is

@@ -1,4 +1,4 @@
-package service
+package pillow
 
 import (
 	"strings"
@@ -7,8 +7,8 @@ import (
 	"github.com/qiankunli/hostel/internal/bed"
 )
 
-func TestNormalizePinsCompleteServiceSpec(t *testing.T) {
-	input := []bed.ServiceSpec{
+func TestNormalizePinsCompletePillowSpec(t *testing.T) {
+	input := []bed.PillowSpec{
 		{Name: "b", Command: []string{"worker", "--label=b"}, Env: map[string]string{"LABEL": "two"}},
 		{Name: "a", Command: []string{"worker"}},
 	}
@@ -16,40 +16,40 @@ func TestNormalizePinsCompleteServiceSpec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved[0].Name != "a" || resolved[0].SpecDigest == "" || resolved[0].Directory != "/workspace" || resolved[0].Restart != "never" {
+	if resolved[0].Name != "b" || resolved[0].SpecDigest == "" || resolved[0].Workdir != "/workspace" || resolved[0].RestartPolicy != "never" {
 		t.Fatalf("unexpected normalized spec: %+v", resolved[0])
 	}
 	input[0].Command[0] = "changed"
 	input[0].Env["LABEL"] = "changed"
-	if resolved[1].Command[0] != "worker" || resolved[1].Env["LABEL"] != "two" {
+	if resolved[0].Command[0] != "worker" || resolved[0].Env["LABEL"] != "two" {
 		t.Fatal("normalized specs share caller-owned storage")
 	}
 	recovered, err := Normalize(resolved)
 	if err != nil || recovered[0].SpecDigest != resolved[0].SpecDigest {
 		t.Fatalf("stable recovery failed: %+v %v", recovered, err)
 	}
-	changed := bed.CloneServices(resolved)
+	changed := bed.ClonePillows(resolved)
 	changed[0].Command = []string{"different"}
 	if _, err := Normalize(changed); err == nil || !strings.Contains(err.Error(), "definition changed") {
 		t.Fatalf("changed pinned definition accepted: %v", err)
 	}
 }
 
-func TestNormalizeRejectsInvalidServiceSpecs(t *testing.T) {
-	tests := []bed.ServiceSpec{
+func TestNormalizeRejectsInvalidPillowSpecs(t *testing.T) {
+	tests := []bed.PillowSpec{
 		{Name: "", Command: []string{"worker"}},
-		{Name: "worker"},
+		{Name: "worker", Args: []string{"orphan"}},
 		{Name: "worker", Command: []string{"worker"}, Env: map[string]string{"HOSTEL_ADDR": "bad"}},
 		{Name: "worker", Command: []string{"worker"}, EnvFiles: map[string]string{"SECRET": "relative"}},
-		{Name: "worker", Command: []string{"worker"}, HTTP: &bed.ServiceHTTPSpec{ReadyPath: "ready"}},
+		{Name: "worker", Command: []string{"worker"}, HTTP: &bed.PillowHTTPSpec{ReadyPath: "ready"}},
 	}
 	for _, spec := range tests {
-		if _, err := Normalize([]bed.ServiceSpec{spec}); err == nil {
+		if _, err := Normalize([]bed.PillowSpec{spec}); err == nil {
 			t.Fatalf("accepted invalid spec: %+v", spec)
 		}
 	}
-	if _, err := Normalize([]bed.ServiceSpec{{Name: "worker", Command: []string{"one"}}, {Name: "worker", Command: []string{"two"}}}); err == nil {
-		t.Fatal("accepted duplicate service names")
+	if _, err := Normalize([]bed.PillowSpec{{Name: "worker", Command: []string{"one"}}, {Name: "worker", Command: []string{"two"}}}); err == nil {
+		t.Fatal("accepted duplicate pillow names")
 	}
 }
 
@@ -77,7 +77,7 @@ func TestNormalizeAuthentication(t *testing.T) {
 		{name: "empty environment", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}, env: map[string]string{"TOKEN": ""}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			input := []bed.ServiceSpec{{Name: "web", PortMapping: "http", Command: []string{"server"}, Env: tc.env, EnvFiles: tc.files, HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: tc.auth}}}
+			input := []bed.PillowSpec{{Name: "web", PortMapping: "http", Command: []string{"server"}, Env: tc.env, EnvFiles: tc.files, HTTP: &bed.PillowHTTPSpec{ReadyPath: "/ready", Authentication: tc.auth}}}
 			resolved, err := Normalize(input)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%t, err=%v", tc.valid, err)
@@ -85,7 +85,7 @@ func TestNormalizeAuthentication(t *testing.T) {
 			if err != nil || tc.auth == nil {
 				return
 			}
-			cloned := bed.CloneServices(resolved)
+			cloned := bed.ClonePillows(resolved)
 			cloned[0].HTTP.Authentication.TokenEnv = "OTHER_TOKEN"
 			if resolved[0].HTTP.Authentication.TokenEnv != "TOKEN" || input[0].HTTP.Authentication.TokenEnv != "TOKEN" {
 				t.Fatal("authentication aliases caller-owned storage")
@@ -100,26 +100,26 @@ func TestNormalizeAuthentication(t *testing.T) {
 func TestResolvePortMappingConsumers(t *testing.T) {
 	m, _ := httpTestManager(t)
 	mappings := []bed.PortMappingSpec{{Name: "http", Protocol: "tcp", Publish: true}}
-	spec := bed.ServiceSpec{Name: "web", PortMapping: "http", Command: []string{"server"}, HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/"}}
-	if _, err := m.Resolve([]bed.ServiceSpec{spec}, nil); err == nil {
+	spec := bed.PillowSpec{Name: "web", PortMapping: "http", Command: []string{"server"}, HTTP: &bed.PillowHTTPSpec{ReadyPath: "/"}}
+	if _, err := m.Resolve([]bed.PillowSpec{spec}, nil); err == nil {
 		t.Fatal("undeclared mapping accepted")
 	}
 	other := spec
 	other.Name = "other"
-	if _, err := m.Resolve([]bed.ServiceSpec{spec, other}, mappings); err == nil {
+	if _, err := m.Resolve([]bed.PillowSpec{spec, other}, mappings); err == nil {
 		t.Fatal("shared consumer ownership accepted")
 	}
-	if _, err := m.Resolve([]bed.ServiceSpec{spec}, mappings); err != nil {
+	if _, err := m.Resolve([]bed.PillowSpec{spec}, mappings); err != nil {
 		t.Fatal(err)
 	}
 	spec.PortMapping = ""
-	if _, err := Normalize([]bed.ServiceSpec{spec}); err == nil {
+	if _, err := Normalize([]bed.PillowSpec{spec}); err == nil {
 		t.Fatal("HTTP without mapping accepted")
 	}
 }
 func TestNonHTTPPortMapping(t *testing.T) {
 	m, _ := httpTestManager(t)
-	b := bed.New("tcp", "", bed.Spec{PortMappings: []bed.PortMappingSpec{{Name: "tcp", Protocol: "tcp"}}, Services: []bed.ServiceSpec{{Name: "tcp", PortMapping: "tcp", Command: []string{"worker"}, Env: map[string]string{"LISTEN": "${LISTEN_ADDR}"}, Required: true}}})
+	b := bed.New("tcp", "", bed.Spec{PortMappings: []bed.PortMappingSpec{{Name: "tcp", Protocol: "tcp"}}, Pillows: []bed.PillowSpec{{Name: "tcp", PortMapping: "tcp", Command: []string{"worker"}, Env: map[string]string{"LISTEN": "${LISTEN_ADDR}"}, Required: true}}})
 	runtime := &fakeRuntime{}
 	if err := m.PrepareBed(t.Context(), b, runtime); err != nil {
 		t.Fatal(err)

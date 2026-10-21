@@ -8,10 +8,10 @@ import (
 	model "github.com/qiankunli/hostel/internal/bed"
 )
 
-// Service Beds have background writers even when operation count is zero.
+// Pillow Beds have background writers even when operation count is zero.
 // Their final snapshot therefore uses a closed admission fence and quiesces
 // supervision. The cleanup gate serializes this with daemon shutdown/retries.
-func (m *Manager) evictServiceBed(ctx context.Context, b *Resident, cutoff *time.Time) (evicted bool, retErr error) {
+func (m *Manager) evictPillowBed(ctx context.Context, b *Resident, cutoff *time.Time) (evicted bool, retErr error) {
 	if err := b.cleanupMu.Acquire(ctx, 1); err != nil {
 		return false, err
 	}
@@ -45,18 +45,18 @@ func (m *Manager) evictServiceBed(ctx context.Context, b *Resident, cutoff *time
 		if quiesced {
 			recovery, cancel := context.WithTimeout(m.cleanupCtx, initializationTimeout)
 			defer cancel()
-			if err := m.services.Release(recovery, b.Bed); err != nil {
+			if err := m.pillows.Release(recovery, b.Bed); err != nil {
 				retErr = errors.Join(retErr, err)
 			} else {
-				retErr = errors.Join(retErr, m.services.PrepareBed(recovery, b.Bed, serviceRuntime{manager: m, bed: b}))
+				retErr = errors.Join(retErr, m.pillows.PrepareBed(recovery, b.Bed, pillowRuntime{manager: m, bed: b}))
 			}
 		}
 		// Failed cleanup remains non-ready and retryable via another eviction;
-		// never publish a stopped required service as Initialized.
+		// never publish a stopped required pillow as Initialized.
 		m.setLifecycle(b.Bed, model.LifecycleStatus{Phase: PhaseResident, UpdatedAt: time.Now()})
-		m.servicesChanged(b.Bed)
+		m.pillowsChanged(b.Bed)
 	}()
-	if err := trace.stage("stop_services", func() error { return m.services.Stop(ctx, b.Bed) }); err != nil {
+	if err := trace.stage("stop_pillows", func() error { return m.pillows.Stop(ctx, b.Bed) }); err != nil {
 		return false, err
 	}
 	quiesced = true

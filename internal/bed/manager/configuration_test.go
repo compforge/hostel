@@ -18,7 +18,7 @@ import (
 
 func TestConfigurationLifecycleAndProcessConsumers(t *testing.T) {
 	root, source := t.TempDir(), t.TempDir()
-	for key, value := range map[string]string{"MAIN_VALUE": "main-private", "SERVICE_VALUE": "service-private"} {
+	for key, value := range map[string]string{"MAIN_VALUE": "main-private", "SERVICE_VALUE": "pillow-private"} {
 		if err := os.WriteFile(filepath.Join(source, key), []byte(value), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -31,9 +31,9 @@ func TestConfigurationLifecycleAndProcessConsumers(t *testing.T) {
 	}
 	defer m.Close(context.Background())
 	request := CreateOptions{
-		EnvValueFrom: map[string]model.ConfigurationKeyRef{"MAIN_VALUE": {Source: "runtime", Key: "MAIN_VALUE"}},
-		Services: []model.ServiceSpec{{Name: "worker", Command: []string{"/bin/sh", "-c", "test -z \"$MAIN_VALUE\" && printf '%s' \"$SERVICE_VALUE\" > service-config; exec sleep 60"},
-			EnvValueFrom: map[string]model.ConfigurationKeyRef{"SERVICE_VALUE": {Source: "runtime", Key: "SERVICE_VALUE"}}, Required: true}},
+
+		Pillows: append([]model.PillowSpec{{Name: "workspace", EnvValueFrom: map[string]model.ConfigurationKeyRef{"MAIN_VALUE": {Source: "runtime", Key: "MAIN_VALUE"}}}}, []model.PillowSpec{{Name: "worker", Command: []string{"/bin/sh", "-c", "test -z \"$MAIN_VALUE\" && printf '%s' \"$SERVICE_VALUE\" > pillow-config; exec sleep 60"},
+			EnvValueFrom: map[string]model.ConfigurationKeyRef{"SERVICE_VALUE": {Source: "runtime", Key: "SERVICE_VALUE"}}, Required: true}}...),
 	}
 	if _, err := m.InitializeBedWithOptions(t.Context(), "configured", request); err != nil {
 		t.Fatal(err)
@@ -44,12 +44,12 @@ func TestConfigurationLifecycleAndProcessConsumers(t *testing.T) {
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		data, err := os.ReadFile(filepath.Join(b.Workdir(), "service-config"))
-		if err == nil && string(data) == "service-private" {
+		data, err := os.ReadFile(filepath.Join(b.Workdir(), "pillow-config"))
+		if err == nil && string(data) == "pillow-private" {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("service did not receive independent config: %v", err)
+			t.Fatalf("pillow did not receive independent config: %v", err)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -66,7 +66,7 @@ func TestConfigurationLifecycleAndProcessConsumers(t *testing.T) {
 	if err != nil || envMap(env)["MAIN_VALUE"] != "" || envMap(env)["SERVICE_VALUE"] != "" {
 		t.Fatal("configuration leaked to plain Bed")
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "configured", CreateOptions{Services: request.Services}); !errors.Is(err, ErrEnvConflict) {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "configured", CreateOptions{Pillows: model.ClonePillows(request.Pillows[1:])}); !errors.Is(err, ErrPillowsConflict) {
 		t.Fatalf("source declaration mutation: %v", err)
 	}
 	data, err := os.ReadFile(m.identityPath("configured"))
@@ -75,7 +75,7 @@ func TestConfigurationLifecycleAndProcessConsumers(t *testing.T) {
 	}
 	status, _ := json.Marshal(m.Status())
 	for _, raw := range []string{string(data), string(status)} {
-		if strings.Contains(raw, "main-private") || strings.Contains(raw, "service-private") {
+		if strings.Contains(raw, "main-private") || strings.Contains(raw, "pillow-private") {
 			t.Fatal("resolved values persisted or reported")
 		}
 	}

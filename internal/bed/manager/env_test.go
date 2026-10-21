@@ -154,9 +154,9 @@ func TestTemporaryEnvironmentOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := m.buildBedEnv(b, map[string]string{"TMPDIR": "/custom/service"})
-	if err != nil || envMap(env)["TMPDIR"] != "/custom/service" {
-		t.Fatalf("service overlay: %v %v", env, err)
+	env, err := m.buildBedEnv(b, map[string]string{"TMPDIR": "/custom/pillow"})
+	if err != nil || envMap(env)["TMPDIR"] != "/custom/pillow" {
+		t.Fatalf("pillow overlay: %v %v", env, err)
 	}
 	env, err = m.buildExecutionEnv(b, map[string]string{"TMPDIR": "/custom/request"})
 	if err != nil || envMap(env)["TMPDIR"] != "/custom/request" {

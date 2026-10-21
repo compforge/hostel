@@ -3,11 +3,13 @@ package manager
 import (
 	"context"
 	"errors"
-	model "github.com/qiankunli/hostel/internal/bed"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
+
+	model "github.com/qiankunli/hostel/internal/bed"
 )
 
 func TestBedSyncPathsSurviveRestartAndSnapshotRestore(t *testing.T) {
@@ -89,8 +91,13 @@ func TestLocalIdentityKeepsMappingsOutOfPortableMetadata(t *testing.T) {
 	m.mu.Lock()
 	local := m.localIdentityLocked("paths")
 	m.mu.Unlock()
-	expected := []model.PathMapping{{HostPath: "/carrier/volume", BedPath: "/project", ReadOnly: true}}
-	model.SpecWriter{}.Update(local.bed, func(s *model.Spec) { s.PathMappings = expected; s.SyncPaths = []string{} })
+	expected := []model.VolumeSpec{{Name: "project", HostPath: &model.HostPathVolume{Path: "/carrier/volume"}}}
+	mounts := []model.VolumeMount{{Volume: "project", Path: "/project", ReadOnly: true}}
+	model.SpecWriter{}.Update(local.bed, func(s *model.Spec) {
+		s.Volumes = expected
+		s.Pillows = []model.PillowSpec{{Name: "main", Mounts: mounts}}
+		s.SyncPaths = []string{}
+	})
 	if err := m.saveLocalIdentity(local); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +113,7 @@ func TestLocalIdentityKeepsMappingsOutOfPortableMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	actual := next.localIdentities["paths"].bed.Spec()
-	if !slices.Equal(actual.PathMappings, expected) || actual.SyncPaths == nil {
+	if !reflect.DeepEqual(actual.Volumes, expected) || !slices.Equal(actual.DefaultPillow().Mounts, mounts) || actual.SyncPaths == nil {
 		t.Fatalf("local declaration=%+v", actual)
 	}
 	meta, ok := loadMeta(home)

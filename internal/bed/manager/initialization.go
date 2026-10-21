@@ -22,13 +22,11 @@ import (
 	"github.com/qiankunli/hostel/protocol"
 
 	"log"
-	"maps"
 	"path/filepath"
 	"reflect"
 	"time"
 
 	model "github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bed/configuration"
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/store"
 )
@@ -54,9 +52,10 @@ type Readiness = protocol.Readiness
 // Bed is returned with PhaseResident and Ready=true; an accepted asynchronous
 // initialization returns PhaseInitializing.
 type InitializationStatus struct {
-	ID   model.ID
-	Name string
-	Sync store.SyncKind
+	Workdir string
+	ID      model.ID
+	Name    string
+	Sync    store.SyncKind
 	BedStatus
 	StartedAt time.Time
 }
@@ -168,31 +167,29 @@ func (m *Manager) beginInitialization(
 	id string,
 	options CreateOptions,
 ) (*bedInitialization, *managedBed, error) {
-	mappings, syncPaths, pathsErr := model.NormalizePaths(options.PathMappings, options.SyncPaths)
+	volumes, err := model.NormalizeVolumes(options.Volumes)
+	if err != nil {
+		return nil, nil, err
+	}
+	options.Volumes = volumes
+	syncPaths, pathsErr := model.NormalizeSyncPaths(options.SyncPaths)
 	if pathsErr != nil {
 		return nil, nil, pathsErr
 	}
-	options.PathMappings, options.SyncPaths = mappings, syncPaths
+	options.SyncPaths = syncPaths
 	ports, err := model.NormalizePortMappings(options.PortMappings)
 	if err != nil {
 		return nil, nil, err
 	}
 	options.PortMappings = ports
-	if err := configuration.Validate(options.configuration()); err != nil {
-		return nil, nil, err
-	}
-	options.Env = maps.Clone(options.Env)
-	options.EnvFiles = maps.Clone(options.EnvFiles)
-	options.EnvFrom = append([]string(nil), options.EnvFrom...)
-	options.EnvValueFrom = maps.Clone(options.EnvValueFrom)
 	if err := m.Start(ctx); err != nil {
 		return nil, nil, err
 	}
-	resolvedServices, err := m.services.Resolve(options.Services, options.PortMappings)
+	resolvedPillows, err := m.pillows.Resolve(options.Pillows, options.PortMappings)
 	if err != nil {
 		return nil, nil, err
 	}
-	options.Services = resolvedServices
+	options.Pillows = resolvedPillows
 	requestedSync := options.Sync
 	if options.NetworkPolicy != nil {
 		normalized, err := network.NormalizePolicy(*options.NetworkPolicy)
@@ -251,8 +248,7 @@ func (m *Manager) beginInitialization(
 		return nil, resident, errors.Join(
 			checkBedSync(requestedSync, selected, actual.Sync),
 			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
-			checkServices(options, actual.Services),
-			checkBedConfiguration(options, actual),
+			checkPillows(options, actual.Pillows),
 			checkBedPaths(options, actual),
 			checkBedPorts(options, actual),
 		)
@@ -263,8 +259,7 @@ func (m *Manager) beginInitialization(
 		return current, nil, errors.Join(
 			checkBedSync(requestedSync, selected, actual.Sync),
 			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
-			checkServices(options, actual.Services),
-			checkBedConfiguration(options, actual),
+			checkPillows(options, actual.Pillows),
 			checkBedPaths(options, actual),
 			checkBedPorts(options, actual),
 		)
@@ -279,25 +274,23 @@ func (m *Manager) beginInitialization(
 	}
 	if local := m.localIdentities[id]; local != nil {
 		actual := local.bed.Spec()
-		if err := errors.Join(checkServices(options, actual.Services), checkBedConfiguration(options, actual), checkBedPaths(options, actual), checkBedPorts(options, actual)); err != nil {
+		if err := errors.Join(checkPillows(options, actual.Pillows), checkBedPaths(options, actual), checkBedPorts(options, actual)); err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
-		resolved, err := m.services.Resolve(actual.Services, actual.PortMappings)
+		resolved, err := m.pillows.Resolve(actual.Pillows, actual.PortMappings)
 		if err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
-		options.Services = resolved
+		options.Pillows = resolved
 		options.PortMappings = actual.PortMappings
-		if options.PathMappings == nil {
-			options.PathMappings = actual.PathMappings
+		if options.Volumes == nil {
+			options.Volumes = actual.Volumes
 		}
 		if options.SyncPaths == nil {
 			options.SyncPaths = actual.SyncPaths
 		}
-		options.Env = actual.Env
-		options.EnvFiles, options.EnvFrom, options.EnvValueFrom = actual.EnvFiles, actual.EnvFrom, actual.EnvValueFrom
 	}
 	// A new request retries a failed initialization. Its previous status remains
 	// observable until this explicit desired-state signal arrives.
@@ -326,11 +319,10 @@ func (m *Manager) beginInitialization(
 	}
 	localMeta, localPresent := loadMeta(filepath.Join(m.root, id))
 	spec := model.Spec{Dir: filepath.Join(m.root, id), Sync: selected, CreatedAt: localMeta.CreatedAt, LocalPresent: localPresent, LocalGeneration: localMeta.Generation}
-	spec.PathMappings, spec.SyncPaths = options.PathMappings, options.SyncPaths
-	spec.Services = options.Services
+	spec.Volumes = options.Volumes
+	spec.SyncPaths = options.SyncPaths
+	spec.Pillows = options.Pillows
 	spec.PortMappings = options.PortMappings
-	spec.Env = options.Env
-	spec.EnvFiles, spec.EnvFrom, spec.EnvValueFrom = options.EnvFiles, options.EnvFrom, options.EnvValueFrom
 	if options.NetworkPolicy != nil {
 		spec.NetworkPolicy = network.ToModel(*options.NetworkPolicy)
 	}
@@ -405,10 +397,10 @@ func (m *Manager) publishInitializedBed(initialization *bedInitialization, resid
 	if _, exists := m.beds[resident.Name]; exists {
 		return fmt.Errorf("bed %s became resident during initialization", resident.Name)
 	}
-	ready := m.services.Ready(resident.Bed)
+	ready := m.pillows.Ready(resident.Bed)
 	reason := "Initialized"
 	if !ready {
-		reason = "RequiredServiceUnavailable"
+		reason = "RequiredPillowUnavailable"
 	}
 	m.keepaliveLocked(resident, time.Now())
 	m.setLifecycle(resident.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: ready, Reason: reason, UpdatedAt: time.Now()})
@@ -558,6 +550,7 @@ func (m *Manager) pruneFailedInitializationsLocked(now time.Time) {
 func residentInitializationStatus(resident *managedBed) InitializationStatus {
 	status := resident.Status()
 	return InitializationStatus{
+		Workdir:   resident.Spec().DefaultPillow().Workdir,
 		ID:        resident.ID,
 		Name:      resident.Name,
 		Sync:      resident.Spec().Sync,
@@ -565,19 +558,15 @@ func residentInitializationStatus(resident *managedBed) InitializationStatus {
 	}
 }
 
-// CreateOptions declares a Bed. Env and Services are immutable for its local
+// CreateOptions declares a Bed. Pillows and resources are immutable for its local
 // lifetime; explicit creates must repeat the same declaration (nil Env means
 // empty). Native Ensure instead joins the existing declaration. After eviction,
 // callers must repeat overrides because the local identity has been removed.
 type CreateOptions struct {
+	Volumes       []model.VolumeSpec
 	PortMappings  []model.PortMappingSpec
-	PathMappings  []model.PathMapping
 	SyncPaths     []string
-	Env           map[string]string
-	EnvFiles      map[string]string
-	EnvFrom       []string
-	EnvValueFrom  map[string]model.ConfigurationKeyRef
-	Services      []model.ServiceSpec
+	Pillows       []model.PillowSpec
 	lookup        bool // native Ensure joins desired state; an explicit create compares it
 	Sync          string
 	NetworkPolicy *network.Policy
@@ -611,7 +600,7 @@ func checkBedSync(requested string, selected, current store.SyncKind) error {
 }
 
 func retirementStatus(b *managedBed) InitializationStatus {
-	return InitializationStatus{ID: b.ID, Name: b.Name, Sync: b.Spec().Sync, BedStatus: lifecycleView(b.Bed.Status().Lifecycle)}
+	return InitializationStatus{Workdir: b.Spec().DefaultPillow().Workdir, ID: b.ID, Name: b.Name, Sync: b.Spec().Sync, BedStatus: lifecycleView(b.Bed.Status().Lifecycle)}
 }
 
 func checkInitialPolicy(requested *network.Policy, initial *model.NetworkPolicy) error {
@@ -623,7 +612,7 @@ func checkInitialPolicy(requested *network.Policy, initial *model.NetworkPolicy)
 
 // snapshot projects lifecycle from the single shared model, including progress.
 func (i *bedInitialization) snapshot() InitializationStatus {
-	return InitializationStatus{ID: i.model.ID, Name: i.model.Name, Sync: i.model.Spec().Sync, BedStatus: lifecycleView(i.model.Status().Lifecycle), StartedAt: i.startedAt}
+	return InitializationStatus{Workdir: i.model.Spec().DefaultPillow().Workdir, ID: i.model.ID, Name: i.model.Name, Sync: i.model.Spec().Sync, BedStatus: lifecycleView(i.model.Status().Lifecycle), StartedAt: i.startedAt}
 }
 func lifecycleView(s model.LifecycleStatus) BedStatus {
 	return BedStatus{Phase: s.Phase, Readiness: Readiness{Ready: s.Ready, Reason: s.Reason, Message: s.Message, UpdatedAt: s.UpdatedAt}}

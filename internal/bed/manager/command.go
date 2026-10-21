@@ -30,17 +30,31 @@ import (
 //
 // +rule=`Treat command as opaque bash source; apply cwd through the process view and never rewrite caller text.`
 func (m *Manager) buildCommand(b *managedBed, command, cwd string, envs map[string]string) (*exec.Cmd, error) {
-	// The interpreter is daemon configuration, unlike Service workload argv.
+	return m.buildPillowCommand(b, b.Spec().DefaultPillow().Name, command, cwd, envs)
+}
+func (m *Manager) buildPillowCommand(b *managedBed, name, command, cwd string, envs map[string]string) (*exec.Cmd, error) {
+	environment, err := b.pillowEnvironment(name)
+	if err != nil {
+		return nil, err
+	}
+	// The interpreter is daemon configuration, unlike Pillow workload argv.
 	if _, err := exec.LookPath(m.shellPath); err != nil {
 		return nil, err
 	}
 	m.touchBed(b)
 	cmd := exec.Command(m.shellPath, shellCommandArgs(m.shellPath, command)...)
-	env, err := m.buildExecutionEnv(b, envs)
+	base, err := m.configurations.Pillow(b.Bed, name)
+	if err != nil {
+		return nil, err
+	}
+	env, err := m.buildBedEnvWithView(b, environment.View(), base, envs)
 	if err != nil {
 		return nil, err
 	}
 	cmd.Env = env
+	if cwd == "" {
+		cwd = environment.fs.Workdir()
+	}
 	cmd.Dir = cwd
 	return cmd, nil
 }
@@ -48,7 +62,7 @@ func (m *Manager) buildCommand(b *managedBed, command, cwd string, envs map[stri
 // startOneShot builds and launches an isolated one-shot command in the Bed's
 // current Executor. Explicit pipes preserve output across the supervisor IPC seam.
 func (m *Manager) startOneShot(ctx context.Context, b *managedBed, command, cwdInBed string, envs map[string]string, stdin *os.File) (executor.Process, executor.Executor, *os.File, *os.File, error) {
-	cmd, err := m.buildCommand(b, command, cwdInBed, envs)
+	cmd, err := m.buildPillowCommand(b, selectedPillow(ctx, b), command, cwdInBed, envs)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -102,6 +116,7 @@ func (m *Manager) StartExecution(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = withPillow(ctx, selectedPillow(ctx, b))
 	finishOperation, err := m.BeginOperation(b, OpExec, timeout)
 	if err != nil {
 		return nil, err

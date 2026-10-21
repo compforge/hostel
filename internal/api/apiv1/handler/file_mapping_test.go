@@ -35,14 +35,23 @@ func TestCarrierMappingAPIAndCommandPaths(t *testing.T) {
 		}
 	})
 	s := NewServer(mgr)
+	for _, body := range []string{
+		`{"id":"old-declaration","path_mappings":[]}`,
+		`{"id":"dual-source","volumes":[{"name":"v","empty_dir":{},"host_path":{"path":"/data"}}]}`,
+	} {
+		rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(body), map[string]string{"Content-Type": "application/json"})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid declaration accepted: %d %s", rec.Code, rec.Body.String())
+		}
+	}
 	source := t.TempDir()
 	if err := os.WriteFile(filepath.Join(source, "input.txt"), []byte("shared-source"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"one", "two"} {
 		body, _ := json.Marshal(map[string]any{
-			"id":            name,
-			"path_mappings": []map[string]any{{"host_path": source, "bed_path": "/project"}},
+			"id":      name,
+			"volumes": []map[string]any{{"name": "project", "host_path": map[string]any{"path": source}}}, "pillows": []map[string]any{{"name": "main", "mounts": []map[string]any{{"volume": "project", "path": "/project"}}}},
 		})
 		headers := map[string]string{"Content-Type": "application/json", "X-Hostel-Bed": name}
 		rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(string(body)), headers)

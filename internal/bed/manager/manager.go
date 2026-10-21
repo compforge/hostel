@@ -32,9 +32,9 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/filesystem"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"github.com/qiankunli/hostel/internal/bed/network"
+	"github.com/qiankunli/hostel/internal/bed/pillow"
 	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/resource"
-	"github.com/qiankunli/hostel/internal/bed/service"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
@@ -47,9 +47,9 @@ type Manager struct {
 	configurations      *configuration.Manager
 	configurationConfig configuration.Config
 	ports               *hostnetwork.PortManager
-	services            *service.Manager
-	serviceStatusMu     sync.Mutex
-	serviceHolds        map[string]*serviceHold
+	pillows             *pillow.Manager
+	pillowStatusMu      sync.Mutex
+	pillowHolds         map[string]*pillowHold
 	hostFacts           hostfacts.Snapshot
 	startMu             sync.Mutex
 	closeMu             *semaphore.Weighted
@@ -194,11 +194,11 @@ func NewManager(host hostfacts.Snapshot, root, defaultBed, shellPath string, iso
 		return nil, configErr
 	}
 	m.configurations = configurations
-	if m.services == nil {
+	if m.pillows == nil {
 		m.portMappings = network.NewPortMappings(nil)
-		m.services = service.NewManager(m.portMappings, m.servicesChanged)
+		m.pillows = pillow.NewManager(m.portMappings, m.pillowsChanged)
 	}
-	m.services.SetConfigurationManager(configurations)
+	m.pillows.SetConfigurationManager(configurations)
 	m.files = filesystem.NewManager(iso, m.owners.Filesystem)
 	m.executorManager = executor.NewManager(m.executorFactory, m.owners.Executor)
 	m.resourceManager = resource.NewManager(m.resources, m.owners.Resource)
@@ -509,8 +509,8 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 		}
 		return false, nil // not resident; nothing to evict
 	}
-	if len(b.Spec().Services) > 0 {
-		return m.evictServiceBed(ctx, b, expiryCutoff)
+	if b.Spec().HasMainProcesses() {
+		return m.evictPillowBed(ctx, b, expiryCutoff)
 	}
 	trace := beginLifecycle(ctx, id, lifecycleEvict)
 	defer func() {

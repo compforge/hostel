@@ -1,9 +1,10 @@
 package config
 
 import (
-	"github.com/qiankunli/hostel/internal/bed/tool"
 	"os"
 	"testing"
+
+	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
 func TestBedUserConfig(t *testing.T) {
@@ -24,7 +25,7 @@ func TestBedUserConfig(t *testing.T) {
 	}
 }
 
-func TestIsolationAndManagedServiceConfigContract(t *testing.T) {
+func TestIsolationAndManagedPillowConfigContract(t *testing.T) {
 	// The three north-facing room types are configuration values; resolution to
 	// a host mechanism is deliberately tested in internal/isolation.
 	for _, mode := range []string{"dorm", "room", "suite", "auto"} {
@@ -37,7 +38,7 @@ func TestIsolationAndManagedServiceConfigContract(t *testing.T) {
 			t.Fatalf("profile %s maps to files %s, want %s", mode, c.Bed.Filesystem.Level, wantFiles)
 		}
 	}
-	// Managed services are optional and configured independently of isolation;
+	// Pillow main processes are optional and configured independently of isolation;
 	// Chromium launch and attach forms are mutually exclusive deployment
 	// contracts, both of which must survive config loading.
 	launch := mustLoad(t, []string{"-chromium-path", "/usr/bin/chromium", "-chromium-debug-port", "9333"})

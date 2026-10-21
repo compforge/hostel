@@ -45,7 +45,7 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 		Name         string    `json:"name"`
 		LastActiveAt time.Time `json:"last_active_at"`
 		Status       struct {
-			Services     []json.RawMessage          `json:"services"`
+			Pillows      []json.RawMessage          `json:"pillows"`
 			PortMappings []json.RawMessage          `json:"port_mappings"`
 			Lifecycle    bedLifecycleView           `json:"lifecycle"`
 			Components   map[string]json.RawMessage `json:"components"`
@@ -64,7 +64,7 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 		return d
 	}
 	before := read()
-	if before.Name != name || before.ID == "" || before.ID == name || !before.Status.Lifecycle.Readiness.Ready || before.Status.Services == nil || before.Status.PortMappings == nil {
+	if before.Name != name || before.ID == "" || before.ID == name || !before.Status.Lifecycle.Readiness.Ready || before.Status.Pillows == nil || before.Status.PortMappings == nil {
 		t.Fatalf("detail: %+v", before)
 	}
 	assertComponents("bed", before.Status.Components,

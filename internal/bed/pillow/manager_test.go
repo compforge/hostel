@@ -1,4 +1,4 @@
-package service
+package pillow
 
 import (
 	"context"
@@ -84,7 +84,7 @@ func (p *fakeProcess) Stop(context.Context, time.Duration) error {
 func testController(t *testing.T, required bool) (*Manager, *bed.Bed) {
 	t.Helper()
 	m := newTestManager(nil, nil)
-	b := newServiceTestBed("test", "", bed.Spec{Services: []bed.ServiceSpec{{Name: "worker", Command: []string{"worker"}, Required: required, MaxRestarts: 1}}})
+	b := newPillowTestBed("test", "", bed.Spec{Pillows: []bed.PillowSpec{{Name: "worker", Command: []string{"worker"}, Required: required, MaxRestarts: 1}}})
 	t.Cleanup(func() {
 		if err := m.Close(context.Background()); err != nil {
 			t.Error(err)
@@ -104,13 +104,13 @@ func TestRequiredAndOptionalStartupFailure(t *testing.T) {
 				t.Fatalf("required=%t, result=%v", required, err)
 			}
 			if required && m.Ready(b) {
-				t.Fatal("failed required service published ready")
+				t.Fatal("failed required pillow published ready")
 			}
 		})
 	}
 }
 
-func TestExecutorLossRecoversDesiredServiceEvenWithNeverRestart(t *testing.T) {
+func TestExecutorLossRecoversDesiredPillowEvenWithNeverRestart(t *testing.T) {
 	m, b := testController(t, true)
 	runtime := &fakeRuntime{}
 	if err := m.PrepareBed(t.Context(), b, runtime); err != nil {
@@ -131,10 +131,10 @@ func TestExecutorLossRecoversDesiredServiceEvenWithNeverRestart(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("service not recovered: %+v", m.Status(b))
+	t.Fatalf("pillow not recovered: %+v", m.Status(b))
 }
 
-func TestBedScopedHTTPServiceWithUnavailableInspection(t *testing.T) {
+func TestBedScopedHTTPPillowWithUnavailableInspection(t *testing.T) {
 	ports, err := hostnetwork.NewPortManager(25101, 25200)
 	if err != nil {
 		t.Fatal(err)
@@ -168,10 +168,10 @@ func TestBedScopedHTTPServiceWithUnavailableInspection(t *testing.T) {
 		process.stop = func() { _ = server.Close() }
 		return process, nil
 	}}
-	b := newServiceTestBed("scoped", "", bed.Spec{Services: []bed.ServiceSpec{{
+	b := newPillowTestBed("scoped", "", bed.Spec{Pillows: []bed.PillowSpec{{
 		Name: "worker", Command: []string{"worker"}, Env: map[string]string{"SERVICE_LISTEN": "${LISTEN_ADDR}"},
 		Required: true, MaxRestarts: 1, StartupSeconds: 2, StopSeconds: 1,
-		HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "SERVICE_TOKEN"}},
+		HTTP: &bed.PillowHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "SERVICE_TOKEN"}},
 	}}})
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
@@ -180,17 +180,17 @@ func TestBedScopedHTTPServiceWithUnavailableInspection(t *testing.T) {
 	}
 	status := m.Status(b)[0]
 	if status.Phase != "running" || !status.Ready || status.Restarts != 0 || m.mappings.Status(b)[0].HostPort == 0 || status.Listener.State != hostnetwork.ListenerUnavailable {
-		t.Fatalf("scoped service status = %+v", status)
+		t.Fatalf("scoped pillow status = %+v", status)
 	}
 	// Network scope is not reported as process ownership, including steady state.
 	time.Sleep(1100 * time.Millisecond)
 	current := m.Status(b)[0]
 	if current.Phase != "running" || !current.Ready || current.ExecutionID != status.ExecutionID {
-		t.Fatalf("scoped service lost readiness: before=%+v after=%+v", status, current)
+		t.Fatalf("scoped pillow lost readiness: before=%+v after=%+v", status, current)
 	}
 }
 
-func TestReleaseAndPrepareKeepsNewServiceGroup(t *testing.T) {
+func TestReleaseAndPrepareKeepsNewPillowGroup(t *testing.T) {
 	m, b := testController(t, true)
 	if err := m.PrepareBed(t.Context(), b, &fakeRuntime{}); err != nil {
 		t.Fatal(err)
@@ -213,12 +213,12 @@ func TestReleaseAndPrepareKeepsNewServiceGroup(t *testing.T) {
 func TestReadinessIsIndependentFromRunningPhase(t *testing.T) {
 	for _, required := range []bool{false, true} {
 		m := newTestManager(nil, nil)
-		g := &group{bed: newServiceTestBed("status", "", bed.Spec{}), changed: make(chan struct{})}
-		r := &record{spec: bed.ServiceSpec{Required: required}, status: Status{ServiceStatus: protocol.ServiceStatus{Phase: "running"}}}
+		g := &group{bed: newPillowTestBed("status", "", bed.Spec{}), changed: make(chan struct{})}
+		r := &record{spec: bed.PillowSpec{Required: required}, status: Status{PillowStatus: protocol.PillowStatus{Phase: "running"}}}
 		g.records = []*record{r}
 		ready, failed := groupReadiness(g)
 		if ready == required || failed != "" {
-			t.Fatalf("running unready service: required=%t ready=%t failed=%s", required, ready, failed)
+			t.Fatalf("running unready pillow: required=%t ready=%t failed=%s", required, ready, failed)
 		}
 		m.update(g, r, func(s *Status) { s.Ready = true })
 		if ready, _ := groupReadiness(g); !ready {

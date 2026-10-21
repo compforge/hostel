@@ -7,7 +7,6 @@ import (
 	"slices"
 	"testing"
 
-	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 )
 
@@ -28,9 +27,9 @@ func TestHelpersOnlyRedirectSupportedMappings(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := fs.SetPathMappings([]model.PathMapping{
-		{HostPath: rw, BedPath: "/project"},
-		{HostPath: ro, BedPath: "/reference", ReadOnly: true},
+	if err := fs.SetMounts([]bedfs.Mount{
+		{Source: rw, Target: "/project"},
+		{Source: ro, Target: "/reference", ReadOnly: true},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +79,7 @@ func TestExplicitTemporaryMappingReplacesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.SetPathMappings([]model.PathMapping{{HostPath: source, BedPath: "/tmp"}}); err != nil {
+	if err := fs.SetMounts([]bedfs.Mount{{Source: source, Target: "/tmp"}}); err != nil {
 		t.Fatal(err)
 	}
 	count := 0

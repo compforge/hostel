@@ -1,6 +1,7 @@
 package bed
 
 import (
+	"slices"
 	"time"
 
 	"github.com/qiankunli/hostel/protocol"
@@ -50,7 +51,11 @@ type StoreStatus = protocol.StoreStatus
 type ExecutorStatus = protocol.ExecutorStatus
 type ResourceStatus = protocol.ResourceStatus
 
-func cloneStatus(s Status) Status { s.Network.Policy = clonePolicy(s.Network.Policy); return s }
+func cloneStatus(s Status) Status {
+	s.Network.Policy = clonePolicy(s.Network.Policy)
+	s.Filesystem.Mounts = slices.Clone(s.Filesystem.Mounts)
+	return s
+}
 
 // StatusWriter grants access to one typed section. Update works on detached
 // values so retained callback pointers cannot mutate the published snapshot.
@@ -85,11 +90,13 @@ type Owners struct {
 }
 
 func NewOwners() Owners {
+	filesystem := writer(func(s *Status) *FilesystemStatus { return &s.Filesystem })
+	filesystem.clone = func(s FilesystemStatus) FilesystemStatus { s.Mounts = slices.Clone(s.Mounts); return s }
 	network := writer(func(s *Status) *NetworkStatus { return &s.Network })
 	network.clone = func(s NetworkStatus) NetworkStatus { s.Policy = clonePolicy(s.Policy); return s }
 	return Owners{
 		Lifecycle:  writer(func(s *Status) *LifecycleStatus { return &s.Lifecycle }),
-		Filesystem: writer(func(s *Status) *FilesystemStatus { return &s.Filesystem }),
+		Filesystem: filesystem,
 		Privilege:  writer(func(s *Status) *PrivilegeStatus { return &s.Privilege }),
 		Network:    network,
 		Store:      writer(func(s *Status) *StoreStatus { return &s.Store }),

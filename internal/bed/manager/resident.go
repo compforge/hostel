@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/qiankunli/hostel/internal/bed/executor"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/bed/executor"
 
 	"github.com/qiankunli/go-stdx/filepathx"
 	model "github.com/qiankunli/hostel/internal/bed"
@@ -118,13 +119,23 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		return nil, err
 	}
 	b.environment = bindEnvironment(m.iso, b.filesystem, m.network.Attachment(b.Bed), m.privileges.User(b.Bed))
+	b.environment.name = b.Spec().DefaultPillow().Name
+	b.environment.pillows = map[string]*Environment{}
+	for name, fs := range m.files.PillowFiles(b.Bed) {
+		if fs == b.filesystem {
+			b.environment.pillows[name] = b.environment
+			continue
+		}
+		b.environment.pillows[name] = bindEnvironment(m.iso, fs, b.environment.network, b.environment.user)
+		b.environment.pillows[name].name = name
+	}
 	if err := m.executorManager.Bind(b.Bed, func(ctx context.Context, e executor.Executor) (executor.Executor, error) {
 		return b.environment.bindExecutor(ctx, e, m.executorFactory.Status().Tools["pidns"].Selected)
 	}); err != nil {
 		return nil, err
 	}
-	m.updateInitialization(init, "PreparingServices", "starting declared Bed services")
-	if err := m.services.PrepareBed(ctx, b.Bed, serviceRuntime{manager: m, bed: b}); err != nil {
+	m.updateInitialization(init, "PreparingPillows", "starting declared Bed pillows")
+	if err := m.pillows.PrepareBed(ctx, b.Bed, pillowRuntime{manager: m, bed: b}); err != nil {
 		return nil, err
 	}
 	return b, nil

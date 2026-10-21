@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/tool"
 	"golang.org/x/sync/semaphore"
-	"sync"
-	"time"
 )
 
 type Status struct {

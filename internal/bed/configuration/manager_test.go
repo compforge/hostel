@@ -136,7 +136,7 @@ func TestAtomicProjectionAndSourceConfinement(t *testing.T) {
 func TestPreparedConfigurationLifetime(t *testing.T) {
 	dir := source(t, map[string]string{"TOKEN": "initial"})
 	m, _ := NewManager(Config{Sources: map[string]string{"source": dir}})
-	b := bed.New("one", "", bed.Spec{EnvFrom: []string{"source"}})
+	b := bed.New("one", "", bed.Spec{Pillows: []bed.PillowSpec{{Name: "main", EnvFrom: []string{"source"}}}})
 	other := bed.New("two", "", bed.Spec{})
 	if err := m.Prepare(t.Context(), b); err != nil {
 		t.Fatal(err)
@@ -148,21 +148,21 @@ func TestPreparedConfigurationLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, _ := m.Main(b)
-	if first["TOKEN"] != "initial" {
-		t.Fatal("main changed without reinitialization")
+	if first["TOKEN"] != "updated" {
+		t.Fatal("Pillow launch did not refresh configuration")
 	}
 	first["TOKEN"] = "caller-mutated"
 	again, _ := m.Main(b)
-	if again["TOKEN"] != "initial" {
+	if again["TOKEN"] != "updated" {
 		t.Fatal("main config leaked mutable state")
 	}
 	unused, _ := m.Main(other)
 	if len(unused) != 0 {
 		t.Fatal("configuration crossed Bed boundary")
 	}
-	service, err := m.Resolve(bed.Configuration{EnvFrom: []string{"source"}})
-	if err != nil || service["TOKEN"] != "updated" {
-		t.Fatal("new service launch did not refresh")
+	pillow, err := m.Resolve(bed.Configuration{EnvFrom: []string{"source"}})
+	if err != nil || pillow["TOKEN"] != "updated" {
+		t.Fatal("new pillow launch did not refresh")
 	}
 	if err := m.Release(t.Context(), b); err != nil {
 		t.Fatal(err)

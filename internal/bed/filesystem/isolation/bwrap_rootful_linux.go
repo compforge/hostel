@@ -50,12 +50,12 @@ func (b *bwrap) Prepare(ctx context.Context, fs *bedfs.FS) error {
 	}
 	// /proc supplies the trusted executable FD during preparation. Silently
 	// overriding a requested mapping would violate the caller's data contract.
-	for _, mapping := range fs.PathMappings() {
-		if model.PathsOverlap(mapping.BedPath, "/proc") {
+	for _, mapping := range fs.Mounts() {
+		if model.PathsOverlap(mapping.Target, "/proc") {
 			return fmt.Errorf("rootful filesystem: /proc is reserved for runtime preparation")
 		}
 	}
-	args := b.args(fs.Rootfs(), fs.Workdir(), bedfs.DefaultWorkdir, fs.PathMappings())
+	args := b.args(fs.Rootfs(), fs.Workdir(), fs.ClientWorkdir(), fs.Mounts())
 	args = append(args[:len(args)-1], systemFileArgs(fs)...)
 	args = append(args, "--")
 	view, err := hostfs.PrepareMountNamespace(ctx, b.path, b.rootful.helper, args)

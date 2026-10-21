@@ -6,7 +6,7 @@
 
 ## 一、定位
 
-Bed 在文件系统领域以 Rootfs、Workdir 和 PathMappings 提供类似 Container 的 API 体验：
+Bed 在文件系统领域以 Bed Rootfs、Volumes 与 Pillow Workdir/Mounts 提供类似 Container 的 API 体验：
 拥有自己的根文件空间与默认工作目录，并显式接入 Carrier（Host/Pod）的数据。
 这些语义先于具体隔离机制成立；产品背景见 [核心架构](kernel.md#一定位与目标)。
 
@@ -18,7 +18,7 @@ Bed 在文件系统领域以 Rootfs、Workdir 和 PathMappings 提供类似 Cont
 
 bwrap 与 PRoot 将 Bed 数据根作为进程的默认 `/`，再接入 Carrier 的系统程序和工具链。
 因此 `/mnt/jobs`、`/tmp` 或进程新建的根目录子树都属于当前 Bed，普通命令、session 与
-常驻 Service 使用同一数据视图，不需要为这些 Bed 自有目录声明外部映射。
+常驻 Pillow 主进程使用同一数据视图，不需要为这些 Bed 自有目录声明外部映射。
 `/usr`、`/bin`、`/lib*`、`/sbin`、`/etc`、`/opt`、`/sys` 以及内核设备接口属于运行依赖覆盖，
 不是 Bed 私有数据；文件 API 仍只拥有 Bed 数据及显式外部映射，不自动开放 Carrier 系统文件。
 
@@ -28,33 +28,67 @@ bwrap 与 PRoot 将 Bed 数据根作为进程的默认 `/`，再接入 Carrier �
 
 ### Workdir
 
-Workdir 是 Bed 的默认工作目录，当前为 `/workspace`，也是 API 相对路径的解析基准。
+Workdir 是 Pillow 的默认工作目录，缺省为 `/workspace`，也是该 Pillow 文件 API 相对路径的解析基准。
 它是 Bed 根文件空间中的普通目录；具体进程的 cwd 可以覆盖默认值，常驻 shell 也可通过
 `cd` 改变当前目录。Store 默认同步 `/workspace` 是独立策略，不由 Workdir 的身份推导。
 
-Bed 管理 API 的 `workdir` 返回 Bed 路径 `/workspace`，不返回 Carrier 目录。
-Isolated session 的创建请求与状态同样使用 `workdir` 字符串；省略时使用 `/workspace`，
-当前不支持其他默认工作目录，未识别的创建字段会被拒绝。只读要求归属具体数据映射，Workdir 不承载访问模式或 overlay 机制。
+Bed 管理 API 的 `workdir` 返回默认 Pillow 的 Bed 路径，不返回 Carrier 目录。
+Isolated session 的 `workdir` 表达该次执行目录；省略时沿用默认 Pillow 的工作目录。
+Pillow 声明及文件 API 使用同一工作目录基准，未识别的创建字段会被拒绝。只读要求归属具体数据映射，Workdir 不承载访问模式或 overlay 机制。
 `/workspace` 只是默认路径值，Workspace 不再是独立的 Bed 概念。
 
 Carrier 上所有 Bed 目录的父目录由 `--beds-root` / `HOSTEL_BEDS_ROOT` 配置，
 默认值也为 `/workspace`，但属于 Carrier 路径空间，与 Bed 的 Workdir 分别解释。
 
-### PathMappings
+### Bed 卷与执行方挂载
 
-Bed 需要接入任务输入或与 Carrier 共享数据，因此通过 PathMappings 声明将 Carrier 已有
-文件或目录接入指定 Bed 路径。Docker 将这类接入称为
-[bind mount](https://docs.docker.com/engine/storage/bind-mounts/)；Hostel 使用 PathMapping
-表达声明，使其不依赖是否具备真实 mount 能力。当前实现支持目录映射。
+`volumes` 命名 Bed 声明的数据来源；每个 Pillow 的 `mounts` 声明如何访问它。
+command、Session、主进程及文件 API 共用所属 Pillow 的挂载视图，Pillow 之间不继承挂载。
+这些视图共享同一 Bed 根，卷挂载路径、访问权限可以不同。每个 Volume 必须且只能选择一种来源：
 
-每项映射声明 HostPath、BedPath 和只读要求，数据的准备、归属与回收仍由提供方负责。
-多个 Bed 可以显式接入同一份 Carrier 数据，这种共享不改变各自 rootfs 的身份。
-`SyncPaths` 另行决定 Store 自动同步哪些 Bed 数据；路径映射本身不承诺持久化。
+| 来源 | 数据归属与生命周期 |
+|---|---|
+| `empty_dir: {}` | Hostel 分配临时目录，随 Bed 驻留实例创建和回收 |
+| `host_path: {path: ...}` | 引用 daemon 可见的已有目录，由外部管理；Hostel 不创建、不改变属主、不删除源数据 |
+
+HostPath 是 Carrier 路径；Hostel 跑在 Pod 内时，它可以指向已经挂入 Pod 的 PVC 目录。
+多个 Bed 可显式引用同一外部数据。声明独立于实际 mount 机制；是否具备原生路径映射能力由状态披露。
+
+```json
+{
+  "id": "shared-data",
+  "volumes": [{"name": "exchange", "empty_dir": {}}],
+  "pillows": [{"name":"workspace", "mounts":[{"volume":"exchange", "path":"/exchange", "read_only":true}]}, {
+    "name": "writer",
+    "command": ["/bin/sh", "-c", "printf ready > /output/result; exec sleep 300"],
+    "mounts": [{"volume": "exchange", "path": "/output"}]
+  }]
+}
+```
+
+EmptyDir 是 Bed 驻留期间的临时数据：Pillow 主进程重启和 Executor 替换保留数据，Bed 回收时由
+既有本地目录清理流程删除；重新初始化分配新的空目录。声明保存在本地身份记录中，数据位于
+Rootfs 外，不进入 Store 快照。HostPath 源必须存在且为目录，不能覆盖 Hostel 工作目录，
+不同卷的源目录不能重叠或通过 symlink 互为别名。挂载目标不能与 SyncPaths、其他挂载或运行时保留路径重叠；同一视图
+对同一卷只声明一次挂载，避免读写别名绕过只读意图。声明在本地 Bed 生命周期内固定。
+
+Filesystem 持有各 Pillow 的文件视图模板，Executor 创建时分别派生所需的最终
+视图，进程启动时选取对应视图。身份和网络仍按 Bed 归属；文件视图不同不代表进程之间已完整隔离。
+
+读写卷按所选机制兑现进程路径，不支持时保留文件 API 能力并报告缺口。显式 `read_only`
+挂载同时要求 API 与进程只读；当前由可用的 bwrap 挂载路径兑现，无法兑现时初始化失败，
+不静默改成可写；两种来源遵守同一规则。
+`status.components.filesystem.mounts` 按执行方报告挂载、只读声明与 `process_mapped`，不暴露宿主源路径。
+
+
+Filesystem 统一准备 Volume 来源，并把每个 Pillow 的 mounts 编译为内部挂载句柄。
+来源校验、所有权与回收归 Volume；目标路径与读写权限归 Pillow mounts。
+API 路径解析和隔离机制共用同一份解析结果，底层 process_view.path_mappings 状态只表达机制能力。
 
 ### API 体验与进程视图
 
 设计目标是即使 Carrier 无法完整建立类似 Container 的进程文件视图，Bed 文件 API 仍尽力
-完成操作。PathMapping 在进程中未生效，不应直接等同于对应数据在 API 层不可读取。
+完成操作。读写挂载在进程中未生效，不应直接等同于对应数据在 API 层不可读取。
 
 例如声明 `/volumes/project → /project`，映射未在所选进程视图中兑现时，调用
 `read_file("/project/a.txt")` 先读取当前 Bed 数据根下的 `project/a.txt`，读取失败时再尝试
@@ -63,17 +97,17 @@ Bed 需要接入任务输入或与 Carrier 共享数据，因此通过 PathMappi
 
 映射在进程视图中已兑现时，API 直接读取声明的源，保持与进程视图一致。本地候选数据会
 保留以支持同一 Bed 的恢复。候选读取不合并多个目录树；写入与 Transfer 仍使用声明的
-HostPath，API 始终检查 ReadOnly。进程侧未兑现只读时，不宣称外部数据已被进程只读保护。
+卷来源，API 始终检查 ReadOnly。显式只读挂载在进程侧无法兑现时拒绝初始化。
 
 Reader 根据所选文件视图的映射支持选择读取策略；这与独占 Carrier 的显式只读 fallback
-分别处理，命中 PathMapping 的请求不会继续尝试全局 fallback root。具体进程根回退条件
+分别处理，命中卷挂载的请求不会继续尝试全局 fallback root。具体进程根回退条件
 见「结构化路径与命令文本」。
 
 ### 目标与兑现程度
 
 | 层次 | 文件领域的含义 |
 |---|---|
-| 目标／声明 | Bed 自己的 rootfs，以及需要接入的 HostPath、BedPath 和只读要求 |
+| 目标／声明 | Bed 自己的 rootfs，以及 Volume 来源和每个执行方的 Mount 路径、只读要求 |
 | Fact | Carrier 实际具备的内核能力、权限、工具与目录访问条件 |
 | Tool | 根据事实和配置采用的机制，如 bwrap、PRoot、pathshim、Landlock 或 UID/DAC |
 | Level 与实际状态 | 经组合验证后提供的隔离保证，以及路径视图、映射和只读要求的支持情况 |
@@ -88,13 +122,14 @@ Reader 根据所选文件视图的映射支持选择读取策略；这与独占 
 数据模型、进程视图和访问屏障在同一领域内协作；跨领域的网络进入、身份切换与执行组合
 由 Bed Manager 协调。能力不足时可以选择可用档位，已选机制执行失败则明确报错。
 
-`BedFS` 是 Bed 持有的数据域，不是一次请求里的路径工具。Bed 创建时建立一个 BedFS；Executor 丢失、替换或重建时，BedFS 的身份、数据和已准备的 mount 视图不变。
+`BedFS` 持有文件视图和数据句柄。Filesystem 为每个 Pillow 建立独立 BedFS，
+共享 Bed 根并接入各自声明的卷。Executor 替换保留数据和 Bed 视图模板；要求私有 PID namespace 时，重新派生匹配 procfs 的最终视图。
 
 BedFS 统一拥有以下语义：
 
 - `bed_home`：客户端 `/` 对应的数据根；
-- Workdir：Bed 默认工作目录 `/workspace`，Carrier 数据路径为 `bed_home/workspace`；
-- PathMappings：调用方为 Bed 声明的 `HostPath → BedPath` 共享数据映射；未命中时，结构化路径归属当前 Bed 的 `bed_home`；
+- Workdir：当前 Pillow 的默认工作目录；缺省 `/workspace` 对应 `bed_home/workspace`，也可位于声明的卷内；
+- 解析后的卷挂载：由 Volume 来源与当前执行方的 Mount 生成的内部 `HostPath → BedPath` 投影；未命中时，路径归属当前 Bed 的 `bed_home`；
 - client path → carrier path：file API、cwd 等结构化路径的存放位置；
 - carrier path → Executor path：不同隔离机制下进程应使用的路径；
 - Bed 内文件操作、属主交接与 symlink 防逃逸边界。
@@ -133,13 +168,13 @@ PRoot/pathshim 尽量让命令中的工作区路径也指向 BedFS，但它们�
 **private 从 Bed 根建立视图**。不继承 Carrier 的整个 `/`，避免数据路径误读邻居或落到
 只读 Carrier 目录。现存的系统运行依赖只读接入，`/usr/local` 保留 Carrier 级可写软件环境；
 若运行依赖覆盖重新暴露了 Bed 父目录，必须在挂回工作目录与显式映射前遮蔽它。
-`/tmp` 来自同一 BedFS，跨临时命令、session 和 Service 共享，但不因此自动进入 Store 快照。
+`/tmp` 来自同一 BedFS，跨临时命令、session 和 Pillow 主进程共享，但不因此自动进入 Store 快照。
 
 bwrap 优先使用 Hostel 已有的管理权限准备挂载，权限不足时再尝试无特权 user namespace。
 两条路径默认绑定已有 `/proc`，以适应容器内受限的 procfs。要求 Executor 私有 PID
 namespace 时，Bed 保留 rootful 文件视图模板；Bed Manager 在每个 Executor 创建后，
-由 Filesystem 在该进程域中派生一次 mount namespace 并挂载匹配的 procfs。可信 helper
-传回实际 namespace/root 句柄，command、session 和 Service 只进入这份最终视图。
+由 Filesystem 在该进程域中为各文件视图派生 mount namespace 并挂载匹配的 procfs。可信 helper
+传回实际 namespace/root 句柄，command/session 与各 Pillow 主进程进入自己对应的最终视图。
 Executor 退出后释放派生视图，替换时重新派生；Bed 模板与数据保持不变。
 进程隔离由 Executor 单独要求，私有文件视图本身不等于完整的进程不可见性。机制及参数顺序
 锚点在 `internal/bed/filesystem/isolation/bwrap_args.go`；部署权限示例见
@@ -171,7 +206,7 @@ UID backend 以独立进程身份兑现 confined 的数据访问边界，目录�
 | `a` | `<bed_home>/workspace/a` |
 
 上表描述当前 BedFS 的数据路径解析规则：路径先在当前 Bed 的客户端路径空间中规范化，
-命中 PathMapping 时使用声明的 Carrier 目录，否则解析到该 Bed 自己的 `bed_home` 下。
+命中 卷挂载 时使用声明的 Carrier 目录，否则解析到该 Bed 自己的 `bed_home` 下。
 返回路径使用对应的逆转换。`BedPath=/ → HostPath=<bed_home>` 只是这条默认解析规则的
 简写：Bed A 和 Bed B 分别使用自己的 bed_home，不会修改 Carrier 全局的 `/`。
 bwrap/PRoot 在各自进程视图里兑现这条默认根规则，系统运行依赖覆盖仍按前述边界解释。
@@ -181,17 +216,21 @@ Bed 创建请求示例：
 ```json
 {
   "id": "example",
-  "path_mappings": [
-    {"host_path": "/volumes/project", "bed_path": "/project"},
-    {"host_path": "/volumes/reference", "bed_path": "/reference", "read_only": true}
+  "volumes": [
+    {"name": "project", "host_path": {"path": "/volumes/project"}},
+    {"name": "reference", "host_path": {"path": "/volumes/reference"}}
+  ],
+  "mounts": [
+    {"volume": "project", "path": "/project"},
+    {"volume": "reference", "path": "/reference", "read_only": true}
   ],
   "sync_paths": ["/workspace", "/memory"]
 }
 ```
 
-`HostPath` 是 daemon 可见的已有目录，例如 Pod 级 PVC 挂载点；Hostel 不创建、接管属主或删除它。调用方负责授权来源目录、挂载和访问权限。额外映射在文件 API、command/session/Service 的结构化路径与执行视图中指向同一份数据；映射本身不声明自动持久化。执行后端只读取当前 BedFS 的映射，不再持有独立的 projection 声明或配置 Option。
+`HostPath` 是 daemon 可见的已有目录，例如 Pod 级 PVC 挂载点；Hostel 不创建、接管属主或删除它。调用方负责授权来源目录、挂载和访问权限。挂载同一卷的执行方在结构化路径与执行视图中访问同一份数据；映射本身不声明自动持久化。执行后端只读取当前 BedFS 的映射，不再持有独立的 projection 声明或配置 Option。
 
-额外 `BedPath` 必须绝对、非根，不能与其他映射、内置 `/workspace`、内核目录或内部挂载点重叠。`HostPath` 不得覆盖 Hostel 工作区或彼此重叠。映射保留目标位置原有的 BedFS 目录数据；进程映射生效时源目录优先，未生效时 API 可读取本地候选。映射不能与 SyncPaths 重叠。默认根由 Hostel 建立，不在 Spec 中重复提交。
+挂载 `path` 必须绝对、非根，不能与其他映射、内置 `/workspace`、内核目录或内部挂载点重叠。`HostPath` 不得覆盖 Hostel 工作区或彼此重叠。映射保留目标位置原有的 BedFS 目录数据；进程映射生效时源目录优先，未生效时 API 可读取本地候选。映射不能与 SyncPaths 重叠。默认根由 Hostel 建立，不在 Spec 中重复提交。
 
 文件 API 为每个选中目录持有独立的 `os.Root` 句柄，禁止 symlink 逃出该目录；删除或重命名映射根及其父目录会失败。跨映射 rename 不支持；Transfer 应显式选择一个映射目录，跨映射父目录的导入/导出会失败。删除 Bed 只删除默认根的数据，不触碰额外映射的目录。
 
@@ -199,7 +238,7 @@ Bed 创建请求示例：
 
 ### shared / confined 文件
 
-Executor 与 daemon 共享 mount namespace。Hostel 启动时从 `PATH` 发现 `proot`、`pathshim`，探测内置工作区路径视图，并按 PRoot → pathshim → Carrier 选择后端。额外 PathMappings 在 Bed 初始化时接入。Carrier 视图不能重定向进程路径，Landlock 当前也未允许外部数据进入其规则；这些组合保留 API 映射，报告进程映射不可用，仍允许 Bed 就绪。实际目录不存在或无法打开等准备错误仍会失败。
+Executor 与 daemon 共享 mount namespace。Hostel 启动时从 `PATH` 发现 `proot`、`pathshim`，探测内置工作区路径视图，并按 PRoot → pathshim → Carrier 选择后端。卷挂载在 Bed 初始化时按执行方接入。Carrier 视图不能重定向进程路径，Landlock 当前也未允许外部数据进入其规则；这些组合为读写卷保留 API 映射，报告进程映射不可用，仍允许 Bed 就绪；显式只读卷无法兑现时拒绝初始化。实际目录不存在或无法打开等准备错误仍会失败。
 
 PRoot 使用原生 rootfs 参数将未被运行依赖或显式映射覆盖的路径指向 Bed 根，并在启动
 探测中验证进程写入能由 BedFS 读回。它依赖 ptrace，但不保证系统覆盖只读或防止恶意逃逸。
@@ -217,7 +256,7 @@ private/rootful: Bed Manager 预备 mount view → 进入视图 → selected Bed
 private/rootless: selected BedUser → bwrap(user namespace) → command
 ```
 
-PRoot 与 pathshim 将 Bed 的映射目录接入声明路径，没有 COW、whiteout 或每次调用的私有副本。多个 command/session 访问同一目录时，遵守底层文件系统的并发语义。它们提供用户态路径视图，不提供 mount namespace 或安全边界；当前只在访问边界允许时应用读写映射，只读映射的进程保护由 bwrap 提供。不支持的声明保留为 API 映射，helper 不把它当作已兑现的进程路径。
+PRoot 与 pathshim 将 Bed 的映射目录接入声明路径，没有 COW、whiteout 或每次调用的私有副本。多个 command/session 访问同一目录时，遵守底层文件系统的并发语义。它们提供用户态路径视图，不提供 mount namespace 或安全边界；当前只在访问边界允许时应用读写映射，只读映射的进程保护由 bwrap 提供。不支持的读写挂载保留为 API 映射，helper 不把它当作已兑现的进程路径；无法满足的只读挂载拒绝初始化。
 
 ### private 文件
 
@@ -227,13 +266,13 @@ bwrap 以同一 BedFS 构造 mount 视图。rootful 路径在 Bed Manager 初始
 - 整个 `bed_home` bind 到 `/`，原生数据路径和结构化路径使用相同拼写；
 - 只读接入现存系统运行依赖，保留共享软件目录的可写性，并遮蔽被这些覆盖重新暴露的敏感路径；
 - `bed_home/workspace` 额外 bind 到稳定的 `/workspace`，保持 OpenSandbox 与 agent 工具链约定；
-- 每个 PathMapping 将已有 HostPath bind 到 BedPath；ReadOnly 使用只读 bind；
+- 每个 卷挂载 将已有 HostPath bind 到 BedPath；ReadOnly 使用只读 bind；
 - 数据路径不再绕经内部挂载点；例如 `cwd="/"` 的实际工作目录就是 `/`。
 
-Carrier 上不在系统运行依赖目录内的工具，应通过显式 PathMapping 接入，或放入 BedFS 后执行。
+Carrier 上不在系统运行依赖目录内的工具，应通过显式 卷挂载 接入，或放入 BedFS 后执行。
 不能为了让任意可执行文件可见，自动挂回它的 Carrier 父目录，否则会绕过跨 Bed 数据边界。
 
-rootful 准备阶段保留 `/proc` 作为运行时目录，不接受覆盖它的 PathMapping；拒绝而非静默改写声明。
+rootful 准备阶段保留 `/proc` 作为运行时目录，不接受覆盖它的 卷挂载；拒绝而非静默改写声明。
 准备过程只执行经文件描述符固定的静态 Hostel helper。`bedinit` 进入已准备的 namespace 后，
 先降权再解析用户 cwd 和执行用户程序，不通过 Bed 文件系统查找特权程序。
 
@@ -249,9 +288,9 @@ Hostel 解析 file API 的 `path`、命令的 `cwd` 等结构化字段，因此�
 
 bwrap/PRoot 的原生数据路径指向 BedFS；pathshim 仅重定向 `/workspace` 和已支持的配置目标，
 其余绝对路径仍由 Carrier 进程视图解释。helper 全部失败时可尝试 Carrier 视图，Hostel
-如实报告降级；完整组合仍须可执行。不能把较弱视图的 API 成功当作原生 Service 路径已兑现。
+如实报告降级；完整组合仍须可执行。不能把较弱视图的 API 成功当作原生 Pillow 主进程路径已兑现。
 
-shared 文件视图与 carrier 共享 mount namespace，命令中的字面绝对路径可能成功写到进程根，而不是 BedFS。独占 carrier 可显式配置沿用原名称的 `--dorm-read-fallback-root /`：只读 file API 在 未命中额外映射且 BedFS 路径不存在时，把客户端绝对路径按该进程根作为第二候选重试；两处都存在时始终以 BedFS 为准。相对路径不回退，因为它本来就以 Bed Workdir 为执行与 API 基准。
+shared 文件视图与 carrier 共享 mount namespace，命令中的字面绝对路径可能成功写到进程根，而不是 BedFS。独占 carrier 可显式配置沿用原名称的 `--dorm-read-fallback-root /`：只读 file API 在 未命中额外映射且 BedFS 路径不存在时，把客户端绝对路径按该进程根作为第二候选重试；两处都存在时始终以 BedFS 为准。相对路径不回退，因为它本来就以 当前 Pillow Workdir 为执行与 API 基准。
 
 这是一条默认关闭的只读候选策略，不是第二套路径映射或写入语义。上传、替换、改权限、移动和删除始终只操作 BedFS；confined/private 文件也不启用回退。配置的 root 会暴露给 file API 读取，因此共享 carrier 不得开启，也不得把它理解为隔离保证。
 
@@ -265,10 +304,11 @@ Bed Manager 统一驱动组件的 `bed.BedLifecycle`；文件机制统一实现
 初始化先准备数据和身份，再分配网络及其 resolver，最后组装文件视图并绑定 Environment。
 rootful mount 在此时完成；降级到 PRoot/pathshim 或无特权 bwrap 时，同样由 Bed Manager
 选定并绑定 `bedinit` 的执行方案，只是具体 helper 必须随进程启动。Executor 不探测、不分配、不决定降级，
-只按 Environment 启动和监督 command、session、Service。回收先停止进程，再释放文件视图，
+只按 Environment 启动和监督 command、session、Pillow 主进程。回收先停止进程，再释放文件视图，
 最后删除它引用的网络配置。
 
-- Bed owns BedFS：`bed_home`、Workdir、generation 与快照身份随 Bed 存续；
+- Bed owns data：`bed_home`、Volumes、generation 与快照身份随 Bed 存续；
+- Pillow owns its view：Workdir 与 Mounts 定义环境内的文件路径；
 - Executor owns process realm：只持有 BedFS View，可丢失和替换；
 - Shell owns its Executor View：session run 的结构化 cwd 由 Shell 投影并更新持久 cwd；
 - Store consumes Bed SyncPaths：快照始终包含 `meta.json`，并包含 `Bed.Spec.SyncPaths` 选择的默认映射子树（默认 `/workspace`）；
@@ -279,18 +319,18 @@ daemon 文件 API 先做客户端路径规范化，再以选中映射的目录�
 
 ## Bed 临时目录
 
-`/tmp` 默认属于当前 BedFS，与 command、session 和 Service 共用；Executor 重建不清空它，
+`/tmp` 默认属于当前 BedFS，与 command、session 和 Pillow 主进程共用；Executor 重建不清空它，
 默认 Store 同步不包含它，Bed 本地数据回收时一并删除。默认目录具有 sticky bit，
-显式 PathMapping 的外部目录仍由调用方管理权限和生命周期。
+显式卷挂载的外部目录仍由调用方管理权限和生命周期。
 
 mount/PRoot 的根视图以及 pathshim 的默认映射让进程 `/tmp` 与文件 API 指向同一份数据。
 显式 `/tmp` 映射替换默认落点，子路径映射沿用更具体的路径声明。pathshim 仅提供路径兼容，
 不因此获得完整根视图或更强隔离。
 
-统一进程环境把 `TMPDIR` 设置为当前视图可访问的 Bed 临时目录；Bed、Service 和请求的
-显式环境继续按原有优先级覆盖它。Carrier 视图使用 Bed 私有目录的宿主路径，无法重定向
+统一进程环境把 `TMPDIR` 设置为当前视图可访问的 Bed 临时目录；Pillow 配置和单次请求的
+显式环境按顺序覆盖它。Carrier 视图使用 Bed 私有目录的宿主路径，无法重定向
 程序硬编码的 `/tmp`。依赖原生 `/tmp` 的调用方必须选择支持该路径的进程视图，不能以
 只读下载回退代替文件修改、删除和进程路径的一致性。
 
-启动组合探测通过 command、session 和 Service 写临时文件并从 BedFS 核验；选中机制无法
+启动组合探测通过 command、session 和 Pillow 主进程写临时文件并从 BedFS 核验；选中机制无法
 兑现时，按已有探测失败流程处理，不把文件上传成功当作进程路径可用。

@@ -2,13 +2,14 @@ package manager
 
 import (
 	"errors"
-	model "github.com/qiankunli/hostel/internal/bed"
 	"testing"
+
+	model "github.com/qiankunli/hostel/internal/bed"
 )
 
 func TestPortMappingDeclarationIsImmutable(t *testing.T) {
-	m, specs, _ := testServiceManager(t)
-	options := testServiceOptions(specs[:1])
+	m, specs, _ := testPillowManager(t)
+	options := testPillowOptions(specs[:1])
 	if _, err := m.InitializeBedWithOptions(t.Context(), "mapping", options); err != nil {
 		t.Fatal(err)
 	}

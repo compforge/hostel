@@ -2,8 +2,9 @@ package manager
 
 import (
 	"context"
-	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"os/exec"
+
+	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/network"
@@ -11,8 +12,10 @@ import (
 )
 
 // Environment binds the selected file view and one network allocation to a
-// resident Bed. Executor replacement does not replace this environment.
+// resident Pillow. Executor replacement does not replace this environment.
 type Environment struct {
+	name    string
+	pillows map[string]*Environment
 	files   isolation.Isolator
 	fs      *bedfs.FS
 	network network.Attachment
@@ -40,7 +43,7 @@ func (e *Environment) Close(ctx context.Context) error {
 	return e.network.Close(ctx)
 }
 
-// Wrap is the single command/session/Service composition entry. The caller must
+// Wrap is the single command/session/Pillow composition entry. The caller must
 // finalize cmd.Env first: privileged entry carries it as inert payload until
 // the workload credential transition. Never replace cmd.Env after this call.
 // +rule=`Bed Manager owns resource preparation; execution only enters the prepared environment and drops privilege before user code. A selected environment never falls back on execution failure.`

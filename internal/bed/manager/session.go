@@ -86,7 +86,7 @@ func (m *Manager) OpenSession(b *managedBed, kind SessionKind, closeFn func()) (
 		cancel()
 		return nil, ErrBedUnavailable
 	}
-	if len(b.Spec().Services) > 0 && (b.Bed.Status().Lifecycle.Phase != PhaseResident || !b.Bed.Status().Lifecycle.Ready) {
+	if b.Spec().HasMainProcesses() && (b.Bed.Status().Lifecycle.Phase != PhaseResident || !b.Bed.Status().Lifecycle.Ready) {
 		b.mu.Unlock()
 		m.mu.Unlock()
 		cancel()

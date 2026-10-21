@@ -5,9 +5,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/qiankunli/hostel/internal/config"
 	"io"
 	"os"
+
+	"github.com/qiankunli/hostel/internal/config"
 )
 
 // Only the test build accepts internal startup configuration. Helpers still

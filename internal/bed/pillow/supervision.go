@@ -1,4 +1,4 @@
-package service
+package pillow
 
 import (
 	"context"
@@ -23,7 +23,7 @@ var readinessClient = &http.Client{
 	CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 }
 
-var errBindingConflict = errors.New("service port occupied by another process")
+var errBindingConflict = errors.New("pillow port occupied by another process")
 
 var probeSlots = make(chan struct{}, 16)
 
@@ -46,7 +46,7 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 			return
 		}
 		failure := err != nil || outcome.Kind != executor.ProcessExited || outcome.ExitCode != 0
-		automatic := r.spec.Restart == "always" || (r.spec.Restart == "on-failure" && failure) || outcome.Kind == executor.ProcessLost
+		automatic := r.spec.RestartPolicy == "always" || (r.spec.RestartPolicy == "on-failure" && failure) || outcome.Kind == executor.ProcessLost
 		if explicit {
 			restarts = 0
 			continue
@@ -57,7 +57,7 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 			if err != nil {
 				failureReason = err.Error()
 			}
-			log.Printf("hostel service restart scheduled: bed=%s id=%s service=%s restart=%d reason=%q outcome=%s exit_code=%d signal=%d", g.bed.Name, g.bed.ID, r.spec.Name, restarts, failureReason, outcome.Kind, outcome.ExitCode, outcome.Signal)
+			log.Printf("hostel pillow restart scheduled: bed=%s id=%s pillow=%s restart=%d reason=%q outcome=%s exit_code=%d signal=%d", g.bed.Name, g.bed.ID, r.spec.Name, restarts, failureReason, outcome.Kind, outcome.ExitCode, outcome.Signal)
 			m.update(g, r, func(s *Status) {
 				s.Phase = "backoff"
 				s.Restarts = restarts
@@ -77,6 +77,9 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 		}
 		m.update(g, r, func(s *Status) {
 			s.Phase = "failed"
+			if !failure {
+				s.Phase = "completed"
+			}
 			s.Reason = "ProcessExited"
 			if err != nil {
 				s.Reason = err.Error()
@@ -100,7 +103,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 	}
 	m.update(g, r, func(s *Status) { s.Phase = "starting"; s.Listener = nil })
 	spec := r.spec
-	env, err := m.configurations.Resolve(spec.Configuration())
+	env, err := m.configurations.Resolve(bed.PillowConfiguration(spec))
 	if err != nil {
 		return false, outcome, err
 	}
@@ -111,7 +114,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 		switch auth.TokenSource {
 		case bed.TokenSourceGenerated:
 			if _, exists := env[auth.TokenEnv]; exists {
-				return false, outcome, fmt.Errorf("service %s generated token conflicts with resolved configuration", spec.Name)
+				return false, outcome, fmt.Errorf("pillow %s generated token conflicts with resolved configuration", spec.Name)
 			}
 			token = randx.Hex(32)
 			env[auth.TokenEnv] = token
@@ -120,7 +123,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 			// even if the credential file changes while it is running.
 			token = env[auth.TokenEnv]
 			if token == "" {
-				return false, outcome, fmt.Errorf("service %s token env %s is empty", spec.Name, auth.TokenEnv)
+				return false, outcome, fmt.Errorf("pillow %s token env %s is empty", spec.Name, auth.TokenEnv)
 			}
 		}
 	}
@@ -153,7 +156,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 		address = mapping.ProbeAddress()
 	}
 
-	command := append([]string(nil), spec.Command...)
+	command := append(append([]string(nil), spec.Command...), spec.Args...)
 	if mapping != nil {
 		replace := strings.NewReplacer("${PORT}", strconv.Itoa(mapping.Port()), "${LISTEN_ADDR}", mapping.ListenAddress())
 		for i, v := range command {
@@ -166,9 +169,9 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 			}
 		}
 	}
-	proc, err := g.runtime.Start(ctx, Launch{Command: command, Directory: spec.Directory, Env: env})
+	proc, err := g.runtime.Start(ctx, Launch{Name: spec.Name, Command: command, Directory: spec.Workdir, Env: env})
 	if err != nil {
-		return false, outcome, fmt.Errorf("service process start failed: %w", err)
+		return false, outcome, fmt.Errorf("pillow process start failed: %w", err)
 	}
 	defer func() {
 		// Withdraw discovery before terminating; existing forwarding connections
@@ -233,7 +236,7 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 		select {
 		case <-startup.Done():
 			timer.Stop()
-			return false, outcome, fmt.Errorf("service readiness timeout")
+			return false, outcome, fmt.Errorf("pillow readiness timeout")
 		case <-proc.Done():
 			timer.Stop()
 			return false, proc.Outcome(), fmt.Errorf("process exited before readiness")

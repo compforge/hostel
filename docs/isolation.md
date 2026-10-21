@@ -51,7 +51,7 @@ Hostel 常在已有 Pod 内运行，Bed 的核心需求是独立工作空间；�
 | suite | private：独立文件视图，并限制跨 Bed 文件访问 |
 
 文件等级由 Filesystem 根据机制探测和实际组合验证确定，房型在用户请求档位内映射该等级。
-显式 PathMappings 表达允许共享的数据；PRoot/pathshim 只改善路径兼容性，不提高隔离等级。
+显式 Volumes/Mounts 表达各执行方允许共享的数据；PRoot/pathshim 只改善路径兼容性，不提高隔离等级。
 共享身份、网络或 PID namespace 不降低已兑现的文件房型，也不能提高弱文件边界的房型。
 例如 private 文件与共享网络、private 文件与独立网络，都可以满足 suite。
 
@@ -90,20 +90,20 @@ Resource 管资源记账与准入。各领域持有并清理自己的资源。
 - **准备完成才可服务**：不能把半恢复目录或尚未分配的必需网络当成 Ready。
 - **特权步骤先于最终降权**：网络进入、文件视图准备和用户身份切换须按依赖顺序完成，
   再把控制权交给用户命令。任何单一组件都不能提前丢掉后续准备仍需要的能力。
-- **同一 Bed 的执行入口一致**：一次性命令、常驻 shell 和 Bed Service 应使用同一套能力组合；共享设施
+- **同一 Bed 的执行入口一致**：一次性命令、常驻 shell 和 Pillow 主进程应使用同一套能力组合；共享设施
   没有进入该进程树时，必须单独说明其边界，不能自动继承 Bed 命令的隔离声明。
 - **释放中的资源不再服务新执行**：失败清理仍需有人负责，但不能因此继续被视为可用。
   同 ID 的重新初始化不得复用残缺资源，也不得被上一轮清理回收。
 
 `manager.Environment` 绑定一个 resident Bed 的文件视图、具体网络 allocation 和最终
-`BedUser`，命令、shell 和 Service 都通过它组装。Bed Manager 协调资源准备；rootful 文件视图在 Bed
+`BedUser`，命令、shell 和 Pillow 主进程都通过它组装。Bed Manager 协调资源准备；rootful 文件视图在 Bed
 初始化时建立，启用私有 PID namespace 时由每个 Executor 派生并持有最终文件视图；执行时只进入已准备的网络和文件环境，再切换身份、清除 capability 并运行用户程序。
 无特权文件机制在 Bed 身份下应用；Executor 不负责选择、准备或降级资源。BedUser 的选择、UID
 租约、capability 要求与回收契约由 [privilege.md](privilege.md) 统一定义。Store、Network 和
 Executor 仍各自提供能力，Bed 协调其生命周期。共享 Chromium 位于 Bed 进程树之外，不从某个
 BedUser 派生运行身份。
 
-实例选择期间，以临时 Bed 走真实命令、常驻 shell 和 Service 进程入口的子目录读写路径，并核对 file API
+实例选择期间，以临时 Bed 走真实命令、常驻 shell 和 Pillow 主进程入口的子目录读写路径，并核对 file API
 可见同一产物，同时核对最终 UID/GID、实际 capability 集合与 `NoNewPrivs`；拥有 SETPCAP 时
 清空 bounding set，继承 UID 0 的基线必须证明 bounding set 也为空。失败组合在清理成功后可有限回退；
 required、清理失败、候选耗尽或期限耗尽会阻止 HTTP 服务启动。选定后不在 live Bed 中降级。
@@ -133,7 +133,7 @@ conda、本地 node_modules 等生态机制解决。共享软件的更改可能�
 ### 网络与资源独立演进
 
 网络由 Network 按默认偏好和显式策略选择，不从实际文件 backend 推导。suite/auto 尽力使用 private 网络；dorm/room 默认 shared。
-实例探测 netns 可用且实际选用时为 Bed 分配网络，命令、shell 和 Service 共用，
+实例探测 netns 可用且实际选用时为 Bed 分配网络，命令、shell 和 Pillow 主进程共用，
 Executor 替换不改变该 resident Bed 的网络身份；能力不可用时共享 Carrier 网络。
 当前 netns 作用域是 Bed 进程，Chromium/MCP 的出站仍来自 Carrier。BrowserContext
 切分浏览器状态，不构成 OS 网络边界；机制、DNS、诊断与出站约束见 [network.md](network.md)。
@@ -172,7 +172,7 @@ health / capabilities 还报告资源记账、准入与设施可用性。各投�
 
 - 三档使用相同的结构化路径用例，验证数据落点与回显一致；
 - 两个 Bed 验证自己的数据可用、邻居访问符合实际机制，并检查共享路径的边界；
-- 一次性命令、后台执行、session 和 Service 验证同一套身份、网络与文件视图；
+- 一次性命令、后台执行、session 和 Pillow 主进程验证同一套身份、网络与文件视图；
 - 在候选机制及其组合上验证真实准备、降权和执行，纯 argv 测试不代表内核隔离已生效；
 - 验证初始化取消、部分清理失败、同 ID 重建与 Executor 替换，不把残缺资源发布为可用。
 

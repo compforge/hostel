@@ -66,7 +66,7 @@ directories to the target `PATH`. Hostel itself has no per-helper path setting.
 ## Compare filesystem behavior under permissions
 
 `TestFilesystemPermissions` checks two Beds' root data, read-write/read-only
-PathMappings, file API fallback, command/session interoperability, and external
+HostPath volumes/mounts, file API fallback, command/session interoperability, and external
 source retention after purge. It runs with automatically selected filesystem
 features and a separate carrier-view control. Use the same test selector across
 the Kubernetes permission profiles in [E2E environments](e2e-environments.md#rootfs-与-pathmappings-权限矩阵).
@@ -77,7 +77,7 @@ make e2e E2E_ARGS='-run TestFilesystemPermissions -timeout 3m'
 
 ## Verify Bed port mappings
 
-`TestBedPortMappings` starts two HTTP Services with the same preferred Bed port.
+`TestBedPortMappings` starts two HTTP Pillows with the same preferred Bed port.
 For local and supervisor executors it checks per-Bed status and access agreement,
 external HTTP access, Bed-command access through loopback and the discovered `bed_port`, restart
 identity, distinct Host ports, and allocation cleanup on eviction. It requires the
@@ -91,11 +91,11 @@ make e2e E2E_ARGS='-run TestBedPortMappings -timeout 3m'
 HOSTEL_E2E_REQUIRE_NETWORK=1 make e2e E2E_ARGS='-run TestBedPortMappings -timeout 3m'
 ```
 
-## Run native Bed root and Service cooperation
+## Run native Bed root and Pillow main process cooperation
 
-`TestServiceExecutableUsesBedView` covers mount/PRoot × local/supervisor.
-It starts Services by absolute path, relative path and a bare name found only
-through the Service's PATH, then verifies their files through a Bed command.
+`TestPillowExecutableUsesBedView` covers mount/PRoot × local/supervisor.
+It starts Pillows by absolute path, relative path and a bare name found only
+through the Pillow main process's PATH, then verifies their files through a Bed command.
 Tools are required for each selected mechanism; unavailable tools are reported
 as skips, not isolation proof.
 
@@ -106,16 +106,16 @@ management capabilities, plus bwrap. `make e2e` builds the static Hostel helper:
 HOSTEL_E2E_REQUIRE_ROOTFUL=1 make e2e E2E_ARGS='-run ^TestRootfulPreparedMount -timeout 2m'
 ```
 
-This checks that separate commands, a session and a Service share one prepared
+This checks that separate commands, a session and a Pillow main process share one prepared
 mount namespace, run with non-root Bed identity, empty capability sets and
 `NoNewPrivs=1`, and receive the workload environment. Running it with the host's
 unprivileged user namespace switch disabled proves the rootful path without
 altering that switch. Missing required support fails rather than skips.
 
-`TestBedRootServiceCommandFiles` uses two live Bed Services with identical
+`TestBedRootPillowCommandFiles` uses two live Pillow main processes with identical
 absolute paths under `/mnt`, `/tmp`, and a new root-level directory. The
 `file-api` and `executor` subcases each run three rounds with distinct per-Bed
-inputs. They verify Executor/file API writes → Service reads and writes →
+inputs. They verify Executor/file API writes → Pillow main process reads and writes →
 Executor/file API reads. Inputs and outputs are rechecked after both Beds have
 written, detecting cross-Bed overwrites and reads of another Bed's input.
 It covers local/supervisor executors with bwrap and PRoot,
@@ -124,7 +124,7 @@ On non-Linux it skips; an absent helper skips unless explicitly supplied. Run on
 a disposable Linux runner with the required helpers:
 
 ```sh
-make e2e E2E_ARGS='-run ^TestBedRootServiceCommandFiles -timeout 3m'
+make e2e E2E_ARGS='-run ^TestBedRootPillowCommandFiles -timeout 3m'
 ```
 
 This is a native filesystem contract, not a proof of pathshim root redirection,
@@ -223,7 +223,7 @@ command/session APIs. Keep the runner executable at a path readable inside the
 Bed (for example `/usr/local/lib/hostel-e2e/e2e.test` when mounting compiled
 binaries into a container). The private root view inherits runtime directories
 such as `/usr`; an arbitrary carrier path such as `/hostel-test` is not visible
-inside the Bed without an explicit PathMapping. No curl, Python, external website or public Internet is required.
+inside the Bed without an explicit volume mount. No curl, Python, external website or public Internet is required.
 
 The case verifies initial deny before Ready, explicit IP/CIDR allows, overlapping
 deny precedence, PATCH/DELETE changes, POST/PUT replacement, rejected updates
@@ -251,7 +251,7 @@ HOSTEL_E2E_REQUIRE_NETWORK=1 make e2e E2E_ARGS='-run ^TestNetworkNAT$ -timeout 2
 ```
 
 `TestRootfulNetworkResolver` requires both rootful and network profiles. It checks
-that command and Service see the same Bed gateway resolver and can resolve
+that command and Pillow main process see the same Bed gateway resolver and can resolve
 `example.com`. Unlike the local policy traffic case, this requires working
 upstream DNS and `getent` in the runner. Missing prerequisites fail the requested
 profile; the test never installs tools or changes host forwarding settings.
@@ -289,7 +289,7 @@ These cases require an explicit E2E run; compile-only validation is not executio
 ## Bed temporary directories
 
 `TestBedTemporaryDirectory` verifies command output capture, session reads of API uploads,
-Service cooperation, Execd downloads, API deletion observed by a later command, and identical
+Pillow main process cooperation, Execd downloads, API deletion observed by a later command, and identical
 file names in two Beds. It runs carrier/pathshim/PRoot/mount with local and Linux supervisor
 executors, requires each selected mechanism, and purges its Beds. Carrier uses the generated
 `TMPDIR`; the other modes additionally require literal `/tmp`. Explicit helper inputs require
@@ -318,7 +318,7 @@ HOSTEL_E2E_REQUIRE_PID_NAMESPACE=1 make e2e E2E_ARGS='-run TestPrivatePIDNamespa
 
 The cases require the supervisor, bwrap and Python 3. They check two distinct
 Bed PID namespaces, matching procfs, one retained mount namespace shared by
-commands/sessions/Services, real control-path bind mounts, and HTTP Service
+commands/sessions/Pillows, real control-path bind mounts, and HTTP Pillow main process
 listener ownership. The recovery case observes its own API-issued Executor ID,
 kills only that supervisor, verifies the old process tree is dead, then checks
 replacement namespace identity, retained Bed data and reuse of the new view. Missing prerequisites fail
@@ -329,6 +329,18 @@ path is built into Hostel.
 
 `TestSuiteWithSharedCapabilities` 在 rootful binary profile 下验证私有文件视图配合共享身份、
 网络和 PID namespace 仍为 suite；通过 run-owned nft 失败验证真实网络探测降级，检查命令、
-session、Service 与 file API 的一致性、跨 Bed 文件拒绝访问，以及显式 NetworkPolicy 不被忽略。
+session、Pillow main process 与 file API 的一致性、跨 Bed 文件拒绝访问，以及显式 NetworkPolicy 不被忽略。
 该用例与 `TestPrivatePIDNamespaceRecovery` 共同覆盖静态组合和 Executor 替换后的房型保证。
 `TestFeatureRequiredStartupFailure/missing-network` 验证缺少网络组件时 required 拒绝启动。
+
+### Shared volumes and consumer views
+
+`TestBedVolumeConsumers` covers empty_dir/host_path × bwrap × local/supervisor with two Beds. It verifies
+Pillow main process writes, read-only Pillow main process/command/file API access, cross-Bed separation,
+Pillow main process restart preserving volume data, and Bed purge through the existing cleanup.
+Run on a disposable Linux runner with bwrap; unavailable prerequisites skip or fail,
+never count as successful mount validation:
+
+```sh
+make e2e E2E_ARGS='-run ^TestBedVolumeConsumers -timeout 3m'
+```

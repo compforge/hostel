@@ -27,8 +27,9 @@ import (
 	"sync"
 	"syscall"
 
-	hostel "github.com/qiankunli/hostel/internal"
 	"time"
+
+	hostel "github.com/qiankunli/hostel/internal"
 
 	"golang.org/x/sys/unix"
 
@@ -168,8 +169,8 @@ type processRecord struct {
 	status        *ExitStatus
 }
 
-// reap dispatches exit codes and collects adopted orphans. A service leader's
-// wait4 is delegated exclusively to drainService while cleaning is set;
+// reap dispatches exit codes and collects adopted orphans. A main process leader's
+// wait4 is delegated exclusively to drainMain while cleaning is set;
 // os/exec is deliberately unused in this process.
 func (s *server) reap(sigc <-chan os.Signal) {
 	for range sigc {
@@ -177,7 +178,7 @@ func (s *server) reap(sigc <-chan os.Signal) {
 			s.mu.Lock()
 			progress := false
 			// Wait individual children, including adopted orphans. Wait4(-1)
-			// could reap a service leader whose group cleanup still pins it.
+			// could reap a main process leader whose group cleanup still pins it.
 			for _, pid := range childrenOf(os.Getpid()) {
 				process := s.byPID[pid]
 				if process != nil && process.drainGroup {
@@ -185,7 +186,7 @@ func (s *server) reap(sigc <-chan os.Signal) {
 						var info unix.Siginfo
 						if err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOWAIT|unix.WNOHANG, nil); err == nil && info.Signo != 0 {
 							process.cleaning = true
-							go s.drainService(process)
+							go s.drainMain(process)
 						}
 					}
 					continue
@@ -205,12 +206,12 @@ func (s *server) reap(sigc <-chan os.Signal) {
 	}
 }
 
-func (s *server) drainService(process *processRecord) {
+func (s *server) drainMain(process *processRecord) {
 	for {
 		if err := hostprocess.DrainGroup(process.pid); err == nil {
 			break
 		} else {
-			log.Printf("supervisor: service group cleanup pending: pid=%d err=%v", process.pid, err)
+			log.Printf("supervisor: main process group cleanup pending: pid=%d err=%v", process.pid, err)
 		}
 		time.Sleep(time.Second)
 	}

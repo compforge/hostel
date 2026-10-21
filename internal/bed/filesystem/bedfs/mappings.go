@@ -10,74 +10,81 @@ import (
 )
 
 type mappedRoot struct {
-	mapping model.PathMapping
+	mapping Mount
 	fs      *FS
+	owned   bool
 }
 
-// SetPathMappings opens existing carrier directories; it never owns, creates or
-// changes ownership of external storage. Call before publishing the FS.
-func (o *FS) SetPathMappings(mappings []model.PathMapping) error {
-	normalized, _, err := model.NormalizePaths(mappings, nil)
-	if err != nil {
-		return err
-	}
-	carrierRoot, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(o.Rootfs())))
-	if err != nil {
-		return err
-	}
-	for _, m := range normalized {
-		source, err := filepath.EvalSymlinks(m.HostPath)
+// Mount is an internal, prepared filesystem binding. Volume owns admission and lifecycle.
+// Owned is set only for runtime-allocated empty directories, never host_path sources.
+type Mount struct {
+	Source, Target  string
+	ReadOnly, Owned bool
+}
+
+// SetMounts binds prepared Volume sources to one Pillow view before publication.
+func (o *FS) SetMounts(mounts []Mount) error {
+	for _, m := range mounts {
+		source, err := filepath.EvalSymlinks(m.Source)
 		if err != nil {
-			return fmt.Errorf("bedfs: mapping source: %w", err)
+			return err
 		}
-		if model.PathsOverlap(source, carrierRoot) {
-			return fmt.Errorf("bedfs: mapping source overlaps Hostel workspace root")
+		if !filepath.IsAbs(source) || source == "/" {
+			return fmt.Errorf("bedfs: invalid mount source")
 		}
-		for _, previous := range o.mappings {
-			if model.PathsOverlap(source, previous.mapping.HostPath) {
-				return fmt.Errorf("bedfs: mapping sources alias each other")
+		if _, err := model.NormalizeMounts([]model.VolumeMount{{Volume: "prepared", Path: m.Target}}); err != nil {
+			return err
+		}
+		carrierRoot, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(o.Rootfs())))
+		if err != nil {
+			return err
+		}
+		if !m.Owned && model.PathsOverlap(source, carrierRoot) {
+			return fmt.Errorf("bedfs: external mount overlaps Hostel workspace root")
+		}
+		for _, prior := range o.mappings {
+			if model.PathsOverlap(m.Target, prior.mapping.Target) || model.PathsOverlap(source, prior.mapping.Source) {
+				return fmt.Errorf("bedfs: mounts overlap")
 			}
 		}
 		child, err := New(source)
 		if err != nil {
 			return err
 		}
-		// External storage permissions belong to its owner, including newly written files.
-		child.uid, child.gid = -1, -1
-		child.paths.prefix, child.readOnly = m.BedPath, m.ReadOnly
-		m.HostPath = source
-		o.mappings = append(o.mappings, mappedRoot{m, child})
-		// Local data can survive an unredirected process view. Preserve it on
-		// reopen; realized mappings hide it and API fallback can still read it.
-		target, err := o.paths.FromClient(m.BedPath)
+		if !m.Owned {
+			child.uid, child.gid = -1, -1
+		}
+		child.paths.prefix, child.paths.workdir, child.readOnly = m.Target, o.paths.workdir, m.ReadOnly
+		m.Source = source
+		o.mappings = append(o.mappings, mappedRoot{mapping: m, fs: child, owned: m.Owned})
+		target, err := o.paths.FromClient(m.Target)
 		if err != nil {
 			return err
 		}
-		if err := o.mkdirAllOwned(target); err != nil {
+		if err = o.mkdirAllOwned(target); err != nil {
 			return err
 		}
 	}
 	return nil
 }
-
-func (o *FS) PathMappings() []model.PathMapping {
-	result := make([]model.PathMapping, 0, len(o.mappings))
+func (o *FS) Mounts() []Mount {
+	out := make([]Mount, 0, len(o.mappings))
 	for _, m := range o.mappings {
-		result = append(result, m.mapping)
+		out = append(out, m.mapping)
 	}
-	return result
+	return out
 }
 
-func clientPath(p string) string {
+func (o *FS) clientPath(p string) string {
 	if !path.IsAbs(p) {
-		return path.Join(DefaultWorkdir, p)
+		return path.Join(o.ClientWorkdir(), p)
 	}
 	return path.Clean(p)
 }
 func (o *FS) mapped(p string) *FS {
-	p = clientPath(p)
+	p = o.clientPath(p)
 	for _, m := range o.mappings {
-		if _, ok := relativeTo(m.mapping.BedPath, p); ok {
+		if _, ok := relativeTo(m.mapping.Target, p); ok {
 			return m.fs
 		}
 	}
@@ -96,13 +103,13 @@ func (o *FS) route(p string, write bool) (*FS, error) {
 
 // Destructive tree operations cannot remove or replace a mapping or its parent.
 func (o *FS) guardMappingRoot(p string) error {
-	p = clientPath(p)
+	p = o.clientPath(p)
 	if o.paths.prefix != "" && p == o.paths.prefix {
 		return fmt.Errorf("bedfs: cannot replace mapping root")
 	}
 	for _, m := range o.mappings {
-		if _, ok := relativeTo(p, m.mapping.BedPath); ok {
-			return fmt.Errorf("bedfs: operation crosses mapping root %s", m.mapping.BedPath)
+		if _, ok := relativeTo(p, m.mapping.Target); ok {
+			return fmt.Errorf("bedfs: operation crosses mapping root %s", m.mapping.Target)
 		}
 	}
 	return nil
@@ -116,8 +123,8 @@ func (o *FS) transferRoute(p string, write bool) (*FS, error) {
 	// select a mapped tree explicitly, avoiding partial exports/imports at parents.
 	if target == o {
 		for _, m := range o.mappings {
-			if _, ok := relativeTo(clientPath(p), m.mapping.BedPath); ok {
-				return nil, fmt.Errorf("bedfs: transfer must select mapping %s explicitly", m.mapping.BedPath)
+			if _, ok := relativeTo(o.clientPath(p), m.mapping.Target); ok {
+				return nil, fmt.Errorf("bedfs: transfer must select mapping %s explicitly", m.mapping.Target)
 			}
 		}
 	}

@@ -16,8 +16,8 @@ import (
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
-// PortMappings owns runtime port resources for Bed consumers. Service readiness
-// stays with Service; this registry neither probes nor starts application code.
+// PortMappings owns runtime port resources for Bed consumers. Pillow readiness
+// stays with Pillow; this registry neither probes nor starts application code.
 type PortMappings struct {
 	mu    sync.Mutex
 	ports *hostnetwork.PortManager
@@ -31,7 +31,7 @@ type PortMappings struct {
 type PortMappingStatus = protocol.PortMappingStatus
 
 // PortMapping is an exact allocation handle; release never addresses resources
-// by reusable Bed name, port number or Service name alone.
+// by reusable Bed name, port number or Pillow name alone.
 type PortMapping struct {
 	mu           sync.Mutex
 	owner        *PortMappings
@@ -50,7 +50,7 @@ func (m *PortMappings) Available() bool {
 	return m != nil && m.ports != nil
 }
 
-func (m *PortMappings) Reserve(b *bed.Bed, name, service, scope, host string, avoidPreferred bool) (*PortMapping, error) {
+func (m *PortMappings) Reserve(b *bed.Bed, name, pillow, scope, host string, avoidPreferred bool) (*PortMapping, error) {
 	var spec bed.PortMappingSpec
 	for _, s := range b.Spec().PortMappings {
 		if s.Name == name {
@@ -97,7 +97,7 @@ func (m *PortMappings) Reserve(b *bed.Bed, name, service, scope, host string, av
 		mode = "private"
 	}
 	p := &PortMapping{owner: m, bed: b, spec: spec, allocation: allocation, probeAddress: net.JoinHostPort(host, strconv.Itoa(allocation.Port())), status: PortMappingStatus{
-		Name: name, Protocol: spec.Protocol, Service: service, Network: mode, State: "reserved", BedPort: allocation.Port(), Reason: reason,
+		Name: name, Protocol: spec.Protocol, Pillow: pillow, Network: mode, State: "reserved", BedPort: allocation.Port(), Reason: reason,
 	}}
 	if m.beds[b] == nil {
 		m.beds[b] = make(map[string]*PortMapping)

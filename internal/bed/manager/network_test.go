@@ -3,10 +3,11 @@ package manager
 import (
 	"context"
 	"errors"
-	model "github.com/qiankunli/hostel/internal/bed"
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	model "github.com/qiankunli/hostel/internal/bed"
 
 	"sync/atomic"
 	"testing"

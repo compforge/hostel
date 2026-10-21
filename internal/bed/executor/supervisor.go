@@ -18,13 +18,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/qiankunli/hostel/internal/bed/tool"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/bed/tool"
 
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/hostel/internal/bed/executor/supervisor"
@@ -242,7 +243,7 @@ func (e *supervisedExecutor) Start(ctx context.Context, processID string, cmd *e
 	return e.start(ctx, processID, cmd, false)
 }
 
-func (e *supervisedExecutor) StartService(ctx context.Context, processID string, cmd *exec.Cmd) (Process, error) {
+func (e *supervisedExecutor) StartMain(ctx context.Context, processID string, cmd *exec.Cmd) (Process, error) {
 	return e.start(ctx, processID, cmd, true)
 }
 
@@ -287,7 +288,7 @@ func (e *supervisedExecutor) start(ctx context.Context, processID string, cmd *e
 	var pid int
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if drainGroup {
-			pid, err = e.client.StartService(processID, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr, cmd.ExtraFiles...)
+			pid, err = e.client.StartMain(processID, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr, cmd.ExtraFiles...)
 		} else {
 			pid, err = e.client.Start(processID, argv, cmd.Dir, cmd.Env, stdin, stdout, stderr, cmd.ExtraFiles...)
 		}
@@ -305,7 +306,7 @@ func (e *supervisedExecutor) start(ctx context.Context, processID string, cmd *e
 		if errors.As(err, &requestErr) {
 			// A locally rejected Start says nothing about supervisor health.
 			// Retrying the same specification or replacing the shared Executor
-			// would only disrupt its unrelated commands and services.
+			// would only disrupt its unrelated commands and pillows.
 			return nil, err
 		}
 		select {

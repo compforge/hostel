@@ -103,15 +103,37 @@ func checkFilesystemPermissions(t *testing.T, c *apiClient, source string, view 
 	// Unique Bed spellings cannot accidentally resolve to existing carrier data.
 	rw, ro := "/"+filepath.Base(source)+"-rw", "/"+filepath.Base(source)+"-ro"
 	native := filepath.ToSlash(filepath.Join(source, "native"))
+	mounts := []map[string]any{{"volume": "rw", "path": rw}}
+	if view.PathMappings.ReadOnly {
+		mounts = append(mounts, map[string]any{"volume": "ro", "path": ro, "read_only": true})
+	} else {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{
+			"id": "requires-ro", "volumes": []map[string]any{{"name": "ro", "host_path": map[string]any{"path": filepath.Join(source, "ro")}}}, "pillows": []map[string]any{{"name": "main", "mounts": []map[string]any{{"volume": "ro", "path": ro, "read_only": true}}}},
+		}, nil)
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		must2xx(t, "declare required read-only volume", response)
+		c.waitBed(t, "requires-ro", func(b bedView) bool { return b.Status.Phase == "failed" && !b.Status.Readiness.Ready }, "unsupported read-only volume rejected")
+		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
+		response, err = c.json(ctx, "DELETE", "/v1/beds/requires-ro?purge=true", "", nil, nil)
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		must2xx(t, "purge rejected read-only Bed", response)
+	}
 	beds := []string{"files-a", "files-b"}
 	for _, bed := range beds {
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{
 			"id": bed,
-			"path_mappings": []map[string]any{
-				{"host_path": filepath.Join(source, "rw"), "bed_path": rw},
-				{"host_path": filepath.Join(source, "ro"), "bed_path": ro, "read_only": true},
-			},
+			"volumes": []map[string]any{
+				{"name": "rw", "host_path": map[string]any{"path": filepath.Join(source, "rw")}},
+				{"name": "ro", "host_path": map[string]any{"path": filepath.Join(source, "ro")}},
+			}, "pillows": []map[string]any{{"name": "main", "mounts": mounts}},
 		}, nil)
 		cancel()
 		if err != nil {
@@ -164,17 +186,24 @@ func checkFilesystemPermissions(t *testing.T, c *apiClient, source string, view 
 			t.Logf("bed=%s native_root_read_exit=%d stdout=%q", bed, *result.Result.Process.ExitCode, result.Stdout)
 		}
 		readAPI(bed, rw+"/seed", "carrier-rw")
-		readAPI(bed, ro+"/seed", "carrier-ro")
+		if view.PathMappings.ReadOnly {
+			readAPI(bed, ro+"/seed", "carrier-ro")
+		}
 		must2xx(t, "API writes mapped source", c.upload(t, bed, rw+"/"+bed, []byte(bed)))
-		denied := c.upload(t, bed, ro+"/api-write", []byte("must-not-write"))
-		if denied.Status < http.StatusBadRequest || !strings.Contains(string(denied.Body), "write read-only mapping") {
-			t.Fatalf("read-only API write: status=%d body=%s", denied.Status, denied.Body)
+		if view.PathMappings.ReadOnly {
+			denied := c.upload(t, bed, ro+"/api-write", []byte("must-not-write"))
+			if denied.Status < http.StatusBadRequest || !strings.Contains(string(denied.Body), "write read-only mapping") {
+				t.Fatalf("read-only API write: status=%d body=%s", denied.Status, denied.Body)
+			}
 		}
 		for _, mapping := range []struct {
 			path      string
 			supported bool
 			seed      string
 		}{{rw, view.PathMappings.ReadWrite, "carrier-rw"}, {ro, view.PathMappings.ReadOnly, "carrier-ro"}} {
+			if mapping.path == ro && !view.PathMappings.ReadOnly {
+				continue
+			}
 			result := run(bed, "cat "+mapping.path+"/seed", "/workspace")
 			if mapping.supported {
 				assertCommandExit(t, result, 0)
@@ -217,12 +246,6 @@ func checkFilesystemPermissions(t *testing.T, c *apiClient, source string, view 
 			if result.Result == nil || result.Result.Process.ExitCode == nil || *result.Result.Process.ExitCode == 0 {
 				t.Fatalf("read-only process mapping allowed write: %+v", result)
 			}
-		} else if view.Rootfs {
-			// An unrealized mapping has a Bed-local candidate. API reads use
-			// it when present and fall back to the external source otherwise.
-			result := run(bed, "printf local-"+bed+" > "+ro+"/seed", "/workspace")
-			assertCommandExit(t, result, 0)
-			readAPI(bed, ro+"/seed", "local-"+bed)
 		}
 	}
 	// Read after both Beds write: root data stays separate, explicit mappings

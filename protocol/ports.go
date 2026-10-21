@@ -5,7 +5,7 @@ package protocol
 type PortMappingStatus struct {
 	Name        string `json:"name"`
 	Protocol    string `json:"protocol"`
-	Service     string `json:"service"`
+	Pillow      string `json:"pillow"`
 	ExecutionID string `json:"execution_id,omitempty"`
 	Network     string `json:"network"`
 	State       string `json:"state"`

@@ -21,15 +21,15 @@ import (
 	"github.com/qiankunli/go-stdx/shellx"
 )
 
-type servicePortsView struct {
+type pillowPortsView struct {
 	Status struct {
 		Components map[string]json.RawMessage `json:"components"`
-		Services   []struct {
+		Pillows    []struct {
 			Name        string `json:"name"`
 			Ready       bool   `json:"ready"`
 			ExecutionID string `json:"execution_id"`
 			PortMapping string `json:"port_mapping"`
-		} `json:"services"`
+		} `json:"pillows"`
 		PortMappings []struct {
 			Name        string `json:"name"`
 			Network     string `json:"network"`
@@ -42,9 +42,9 @@ type servicePortsView struct {
 	} `json:"status"`
 }
 
-// This fixture is an ordinary HTTP program launched through the Service API.
+// This fixture is an ordinary HTTP program launched through the Pillow API.
 // The same endpoints are checked from both a Bed command and an external client.
-const portServiceProgram = `import http.server, os
+const portPillowProgram = `import http.server, os
 class Handler(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
   self.send_response(200)
@@ -95,19 +95,19 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 		must2xx(t, path, response)
 		return response
 	}
-	read := func(name string) servicePortsView {
+	read := func(name string) pillowPortsView {
 		t.Helper()
-		var d servicePortsView
+		var d pillowPortsView
 		request("GET", "/v1/beds/"+name, nil, &d)
 		return d
 	}
-	check := func(name string) servicePortsView {
+	check := func(name string) pillowPortsView {
 		t.Helper()
 		d := read(name)
-		if d.Status.Components["services"] != nil || d.Status.Components["network"] == nil || len(d.Status.Services) != 1 || len(d.Status.PortMappings) != 1 {
+		if d.Status.Components["pillows"] != nil || d.Status.Components["network"] == nil || len(d.Status.Pillows) != 1 || len(d.Status.PortMappings) != 1 {
 			t.Fatalf("status layout: %+v", d)
 		}
-		s, p := d.Status.Services[0], d.Status.PortMappings[0]
+		s, p := d.Status.Pillows[0], d.Status.PortMappings[0]
 		if !s.Ready || p.State != "listening" || p.Network != mode || p.ExecutionID != s.ExecutionID || p.Name != "http" {
 			t.Fatalf("runtime identity: %+v", d)
 		}
@@ -130,7 +130,7 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 				ID string `json:"id"`
 			} `json:"hold"`
 		}
-		request("POST", "/v1/beds/"+name+"/services/web/access", map[string]int{"hold_seconds": 30}, &access)
+		request("POST", "/v1/beds/"+name+"/pillows/web/access", map[string]int{"hold_seconds": 30}, &access)
 		if access.Access.PortMapping.HostPort != p.HostPort || access.Access.PortMapping.BedPort != p.BedPort || access.Access.PortMapping.Name != s.PortMapping || access.Access.PortMapping.ExecutionID != s.ExecutionID || access.Hold.ID == "" {
 			t.Fatalf("access disagrees with status: %+v", access)
 		}
@@ -150,34 +150,34 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 		body, err := io.ReadAll(response.Body)
 		response.Body.Close()
 		if err != nil || response.StatusCode != 200 || string(body) != name {
-			t.Fatalf("external service: status=%d body=%s err=%v", response.StatusCode, body, err)
+			t.Fatalf("external pillow: status=%d body=%s err=%v", response.StatusCode, body, err)
 		}
 		script := fmt.Sprintf("import urllib.request; print(urllib.request.urlopen(%q, timeout=3).read().decode())", "http://"+net.JoinHostPort("127.0.0.1", strconv.Itoa(access.Access.PortMapping.BedPort)))
 		result, responseCommand := c.command(t, name, map[string]any{"command": shellx.Quote(python) + " -c " + shellx.Quote(script), "timeout": 5000})
-		must2xx(t, "internal service", responseCommand)
+		must2xx(t, "internal pillow", responseCommand)
 		assertCommandExit(t, result, 0)
 		if strings.TrimSpace(result.Stdout) != name {
-			t.Fatalf("internal service: %+v", result)
+			t.Fatalf("internal pillow: %+v", result)
 		}
-		request("DELETE", "/v1/beds/"+name+"/service-holds/"+access.Hold.ID, nil, nil)
+		request("DELETE", "/v1/beds/"+name+"/pillow-holds/"+access.Hold.ID, nil, nil)
 		return d
 	}
 	for _, name := range []string{"ports-a", "ports-b"} {
 		request("POST", "/v1/beds", map[string]any{"id": name,
 			"port_mappings": []any{map[string]any{"name": "http", "bed_port": 8080, "publish": true}},
-			"services":      []any{map[string]any{"name": "web", "port_mapping": "http", "command": []string{python, "-u", "-c", portServiceProgram}, "env": map[string]string{"SERVICE_PORT": "${PORT}", "LABEL": name}, "required": true, "http": map[string]string{"ready_path": "/"}}},
+			"pillows":       []any{map[string]any{"name": "web", "port_mapping": "http", "command": []string{python, "-u", "-c", portPillowProgram}, "env": map[string]string{"SERVICE_PORT": "${PORT}", "LABEL": name}, "required": true, "http": map[string]string{"ready_path": "/"}}},
 		}, nil)
-		c.waitBed(t, name, func(b bedView) bool { return b.Status.Readiness.Ready }, "service ready")
+		c.waitBed(t, name, func(b bedView) bool { return b.Status.Readiness.Ready }, "pillow ready")
 	}
 	a, b := check("ports-a"), check("ports-b")
 	if a.Status.PortMappings[0].HostPort == b.Status.PortMappings[0].HostPort {
 		t.Fatal("Beds share host port")
 	}
-	request("POST", "/v1/beds/ports-a/services/web/restart", nil, nil)
+	request("POST", "/v1/beds/ports-a/pillows/web/process/restart", nil, nil)
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		current := read("ports-a")
-		if len(current.Status.Services) == 1 && current.Status.Services[0].Ready && current.Status.Services[0].ExecutionID != a.Status.Services[0].ExecutionID {
+		if len(current.Status.Pillows) == 1 && current.Status.Pillows[0].Ready && current.Status.Pillows[0].ExecutionID != a.Status.Pillows[0].ExecutionID {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -202,7 +202,7 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 	request("GET", "/v1/status", nil, &status)
 	for _, p := range status.Host.Status.Ports {
 		if strings.Contains(p.Owner, "/port/") {
-			t.Fatalf("eviction leaked service port: %+v", p)
+			t.Fatalf("eviction leaked pillow port: %+v", p)
 		}
 	}
 }

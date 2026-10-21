@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-func TestServiceCompletionDrainsStubbornChildGroup(t *testing.T) {
-	e, err := NewLocalFactory(nil).Create(t.Context(), "service-bed")
+func TestPillowCompletionDrainsStubbornChildGroup(t *testing.T) {
+	e, err := NewLocalFactory(nil).Create(t.Context(), "pillow-bed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestServiceCompletionDrainsStubbornChildGroup(t *testing.T) {
 	cmd := exec.Command("/bin/sh", "-c", `trap 'exit 0' TERM; sh -c 'trap "" TERM; echo $$ > child; while :; do sleep 1; done' & wait`)
 	cmd.Dir = dir
 	cmd.Env = os.Environ()
-	p, err := e.(*localExecutor).StartService(t.Context(), "service", cmd)
+	p, err := e.(*localExecutor).StartMain(t.Context(), "pillow", cmd)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,9 +18,9 @@ Network 定义 shared/private 两级：dorm/room 预期 shared，suite/auto 预�
 
 ## Bed PortMapping
 
-`Bed.Spec.PortMappings` 是命名的 TCP 端口需求；与 PathMapping 一样，调用方声明逻辑关系，
-Hostel 根据实际能力兑现。Service 通过 `port_mapping` 引用其中一项，不再自行持有端口分配策略。
-当前由托管 Service 消费映射，每项最多绑定一个 Service；没有消费者的声明不预占运行端口。
+`Bed.Spec.PortMappings` 是命名的 TCP 端口需求；与 Volume/Mount 声明一样，调用方声明逻辑关系，
+Hostel 根据实际能力兑现。Pillow 主进程通过 `port_mapping` 引用其中一项，不再自行持有端口分配策略。
+当前由托管 Pillow 主进程消费映射，每项最多绑定一个 Pillow 主进程；没有消费者的声明不预占运行端口。
 
 ```yaml
 port_mappings:
@@ -29,7 +29,7 @@ port_mappings:
     bed_port: 8080
     require_bed_port: false
     publish: true
-services:
+pillows:
   - name: workspace-api
     port_mapping: workspace-http
     # command / env 通过 ${PORT} 或 ${LISTEN_ADDR} 接收实际监听地址
@@ -55,14 +55,14 @@ services:
 
 ### 发现、归属与回收
 
-Bed 详情直接返回 `status.services` 和 `status.port_mappings`；`status.components.network`
-继续描述隔离能力与网络状态。每项映射报告 `name`、`protocol`、`service`、`execution_id`、
+Bed 详情直接返回 `status.pillows` 和 `status.port_mappings`；`status.components.network`
+继续描述隔离能力与网络状态。每项映射报告 `name`、`protocol`、`pillow`、`execution_id`、
 `network`、`state`、`bed_port`、`host_port` 和降级 `reason`。`host_port` 仅在发布时存在。
-端口事实只由 PortMapping 持有；Service 状态通过 `port_mapping` 名称引用它。
+端口事实只由 PortMapping 持有；Pillow 主进程状态通过 `port_mapping` 名称引用它。
 地址和应用 URL 是派生值，不作为独立状态或 API 字段，避免同一绑定出现多个信息源。
 
-HTTP Service 的 access 返回当前 `port_mapping` 完整快照和可选 token，映射内包含
-`execution_id` 与实际端口。快照与凭据在同一 Service 锁内读取，调用方无需另外查询
+HTTP Pillow 主进程的 access 返回当前 `port_mapping` 完整快照和可选 token，映射内包含
+`execution_id` 与实际端口。快照与凭据在同一 Pillow 主进程锁内读取，调用方无需另外查询
 映射来拼接本次执行的地址。它不是另一份运行时状态，也不保证服务不会随后重启。
 
 调用方按以下规则推导地址；HTTP 服务再加 `http://`：
@@ -87,8 +87,8 @@ Bed 内访问不承诺独立 netns 或固定端口；`require_bed_port=true` 无
 端口属于当前 execution，重启后必须重新发现，不能将端口当成稳定身份。
 
 `internal/bed/network.PortMappings` 复用 Host PortManager/TCPForwarder，拥有 reserve、publish、
-withdraw、release；Service 仅负责进程、HTTP readiness 和重启，并绑定具体映射句柄。
-准备顺序是网络就绪 → 预留 Bed 端口 → 启动进程 → Service 就绪 → 发布 Host 入口。
+withdraw、release；Pillow 主进程仅负责进程、HTTP readiness 和重启，并绑定具体映射句柄。
+准备顺序是网络就绪 → 预留 Bed 端口 → 启动进程 → Pillow 主进程就绪 → 发布 Host 入口。
 纯 TCP 服务没有 HTTP readiness 时，发布以进程存活为准，不宣称应用已能服务请求。
 
 Readiness 暂时丢失保留本次运行及连接，但拒绝新 access。真正停止时先撤销发现与转发、
@@ -106,11 +106,11 @@ Bed 初始化完成数据准备后获取具体 `Attachment`，保存到 resident
 `manager.Environment`，准备完成后才发布 Ready。命令和 shell 共用这个组合入口：
 网络进入发生在最终降权之前；Network Manager 只负责进入所分配的 netns，完整的身份切换、
 文件视图与用户程序启动顺序由 [权限模型](privilege.md#特权操作顺序) 统一定义。
-实例在 HTTP 启动前还会实测选中的完整 command/session/Service 组合；自动候选可在完整清理后有限回退，required 或清理失败则阻止启动。
+实例在 HTTP 启动前还会实测选中的完整 command/session/Pillow 主进程组合；自动候选可在完整清理后有限回退，required 或清理失败则阻止启动。
 
 网络分配提供 Bed resolver 文件，Bed Manager 在组装 mount 视图前交给 Filesystem，
 只读挂到 `/etc/resolv.conf`。这样进入已准备的 mount namespace 不会丢失 `ip netns exec`
-临时挂入的 resolver。该文件属于网络 allocation，不是用户 PathMapping；显式映射与其
+临时挂入的 resolver。该文件属于网络 allocation，不是用户 VolumeMount；显式映射与其
 目标冲突时拒绝准备，不静默覆盖。PRoot/Carrier 视图沿用外层 netns 的 resolver。
 
 回收先停止 Bed 的命令和 shell、释放 amenity、资源组与文件视图，再删除网络。关闭失败的

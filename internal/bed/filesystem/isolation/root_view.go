@@ -62,9 +62,9 @@ func rootExecutable(fs *bedfs.FS, executable string, support bedfs.MappingSuppor
 		guest, _ := bedfs.RootedView(fs, support).Path(executable)
 		return guest
 	}
-	for _, m := range fs.PathMappings() {
-		if support.Supports(m.ReadOnly) && beneath(executable, m.HostPath) {
-			return m.BedPath + strings.TrimPrefix(executable, m.HostPath)
+	for _, m := range fs.Mounts() {
+		if support.Supports(m.ReadOnly) && beneath(executable, m.Source) {
+			return m.Target + strings.TrimPrefix(executable, m.Source)
 		}
 	}
 	return executable

@@ -1,16 +1,16 @@
-# Bed 进程配置
+# 配置来源与 Pillow 消费
 
 ## 配置与来源
 
-`Configuration` 统一描述普通执行和 Service 的环境变量需求；Configuration Manager
-负责读取宿主配置来源、解析变量并管理 Bed 生命周期内的配置值。Bed 不认识 Kubernetes
+`Configuration` 描述 Pillow 的环境变量需求；Configuration Manager
+负责读取宿主配置来源，在每次消费者启动时解析变量，并管理 Bed 的配置准备状态。Bed 不认识 Kubernetes
 Secret 或 ConfigMap：部署方将它们或普通文件目录提供给 daemon，注册为命名来源。
 
 daemon 通过 `--configuration-sources` 或 `HOSTEL_CONFIGURATION_SOURCES` 接收 JSON 对象，
 将来源名映射到绝对目录，例如 `{"application":"/run/config/application"}`。
 仅注册来源不会将内容注入所有 Bed，也不会把该目录挂载或复制进 BedFS。
 
-创建 Bed 与声明 Service 使用相同的配置字段，独立选择所需值：
+每个 Pillow 使用以下字段选择所需配置：
 
 - `env`：直接提供变量，仅放允许进入持久化声明的非敏感值。
 - `env_from`：按顺序导入命名目录，以文件名为变量名；后面的来源覆盖前面的同名变量。
@@ -31,10 +31,13 @@ Configuration Manager 是 Bed 组件，不只是声明转换器：启动时以 d
 未被使用的来源缺失不会阻止 daemon 或其它 Bed 工作；实际消费者引用的来源不可用时，
 该次准备或服务启动失败，不静默跳过。状态查询读取已有观测，不临时读取配置文件。
 
-普通执行的配置在 Bed 初始化时解析并保留到释放，单次执行的变量可覆盖其默认值。
-Service 每次启动独立解析自己的配置，不隐式继承普通执行配置；已运行的进程不自动刷新变量。
-先停止消费者，再释放 Bed 的配置值。持久化身份只保存声明与来源引用，恢复时重新解析；
-从文件读取的值不会写回声明、状态或 Bed 快照。
+Bed 初始化检查所有 Pillow 引用的配置能否解析；启动每个消费者时重新读取所选 Pillow 的来源，
+单次命令 env 可覆盖非保留变量。Session 保留创建时的进程环境，主进程重启重新解析，
+已运行进程不自动刷新。Pillow 之间不隐式继承配置。
+
+先停止消费者，再释放 Bed 配置准备状态。持久化身份只保存非敏感声明与来源引用；
+从文件读取的值不会写回声明、状态或快照。主进程自动生成的鉴权值属于该次 Execution，
+不加入同 Pillow 普通命令的基础环境。
 
 ## 安全边界
 

@@ -66,7 +66,7 @@ func testNetworkPolicyTraffic(t *testing.T, executor string) {
 		t.Fatal(err)
 	}
 	address := net.JoinHostPort(ip.String(), fmt.Sprint(listener.Addr().(*net.TCPAddr).Port))
-	// Both Beds reach this same listening service. A denial is meaningful only
+	// Both Beds reach this same listening pillow. A denial is meaningful only
 	// after the control Bed proves the fixture and the carrier path are healthy.
 	assertPolicyConnection(t, c, "policy-b", "", address, true)
 	assertPolicyConnection(t, c, "policy-a", "", address, false)

@@ -23,7 +23,6 @@ import (
 	"strings"
 	"testing"
 
-	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
@@ -55,7 +54,7 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer fs.Close()
-	if err := fs.SetPathMappings([]model.PathMapping{{HostPath: source, BedPath: "/mnt/memory"}}); err != nil {
+	if err := fs.SetMounts([]bedfs.Mount{{Source: source, Target: "/mnt/memory"}}); err != nil {
 		t.Fatal(err)
 	}
 

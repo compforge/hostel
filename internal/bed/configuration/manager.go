@@ -45,13 +45,13 @@ type SourceStatus struct {
 	ObservedAt        time.Time `json:"observed_at,omitzero"`
 }
 
-// Manager owns main-process values for a resident Bed. Service restarts resolve
-// their own declaration independently; no values enter the Bed's persisted Spec.
+// Manager validates Pillow configuration and resolves values at consumer launch.
+// Resolved values never enter the Bed's persisted Spec.
 type Manager struct {
 	bed.Noop
 	sources      map[string]string
 	mu           sync.RWMutex
-	main         map[*bed.Bed]map[string]string
+	prepared     map[*bed.Bed]struct{}
 	observations map[string]SourceStatus
 }
 
@@ -59,7 +59,7 @@ func NewManager(c Config) (*Manager, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	return &Manager{sources: maps.Clone(c.Sources), main: make(map[*bed.Bed]map[string]string), observations: make(map[string]SourceStatus)}, nil
+	return &Manager{sources: maps.Clone(c.Sources), prepared: make(map[*bed.Bed]struct{}), observations: make(map[string]SourceStatus)}, nil
 }
 
 // Start observes source directories under the daemon's real host identity.
@@ -81,37 +81,50 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	env, err := m.Resolve(b.Spec().MainConfiguration())
-	if err != nil {
-		return err
+	for _, p := range b.Spec().Pillows {
+		if _, err := m.Resolve(bed.PillowConfiguration(p)); err != nil {
+			return fmt.Errorf("pillow %s configuration: %w", p.Name, err)
+		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.main[b] = env
+	m.prepared[b] = struct{}{}
 	return nil
 }
 
 func (m *Manager) Main(b *bed.Bed) (map[string]string, error) {
+	return m.Pillow(b, b.Spec().DefaultPillow().Name)
+}
+func (m *Manager) Pillow(b *bed.Bed, name string) (map[string]string, error) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	env, ok := m.main[b]
+	_, ok := m.prepared[b]
+	m.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("Bed configuration is not prepared")
 	}
-	return maps.Clone(env), nil
+	for _, p := range b.Spec().Pillows {
+		if p.Name == name {
+			return m.Resolve(bed.PillowConfiguration(p))
+		}
+	}
+	p := b.Spec().DefaultPillow()
+	if p.Name == name {
+		return m.Resolve(bed.PillowConfiguration(p))
+	}
+	return nil, fmt.Errorf("unknown pillow %q", name)
 }
 
 func (m *Manager) Release(_ context.Context, b *bed.Bed) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.main, b)
+	delete(m.prepared, b)
 	return nil
 }
 
 func (m *Manager) Close(context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	clear(m.main)
+	clear(m.prepared)
 	return nil
 }
 
@@ -127,7 +140,7 @@ func (m *Manager) Status() Report {
 		sources = append(sources, status)
 	}
 	slices.SortFunc(sources, func(a, b SourceStatus) int { return strings.Compare(a.Name, b.Name) })
-	return Report{Sources: sources, PreparedBeds: len(m.main)}
+	return Report{Sources: sources, PreparedBeds: len(m.prepared)}
 }
 
 var _ bed.Component[Report] = (*Manager)(nil)

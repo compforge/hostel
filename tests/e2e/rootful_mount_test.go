@@ -33,8 +33,8 @@ func TestRootfulPreparedMount(t *testing.T) {
 			const bed = "rootful"
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{
-				"id": bed, "env": map[string]string{"MARKER": "workload-env", "GODEBUG": "inittrace=0"},
-				"services": []map[string]any{{"name": "observer", "command": []string{"/bin/sh", "-c", `readlink /proc/self/ns/mnt > /workspace/service-mount; id -u > /workspace/service-uid; grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status > /workspace/service-caps; exec sleep 300`}, "required": true, "restart": "never", "stop_seconds": 1}},
+				"id":      bed,
+				"pillows": append([]map[string]any{{"name": "workspace", "env": map[string]string{"MARKER": "workload-env", "GODEBUG": "inittrace=0"}}}, []map[string]any{{"name": "observer", "command": []string{"/bin/sh", "-c", `readlink /proc/self/ns/mnt > /workspace/pillow-mount; id -u > /workspace/pillow-uid; grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status > /workspace/pillow-caps; exec sleep 300`}, "required": true, "restart_policy": "never", "stop_seconds": 1}}...),
 			}, nil)
 			cancel()
 			if err != nil {
@@ -51,18 +51,18 @@ func TestRootfulPreparedMount(t *testing.T) {
 				}
 				must2xx(t, "purge prepared Bed", response)
 			})
-			c.waitBed(t, bed, func(b bedView) bool { return b.Status.Readiness.Ready }, "rootful Service ready")
+			c.waitBed(t, bed, func(b bedView) bool { return b.Status.Readiness.Ready }, "rootful Pillow ready")
 			// Different executions must enter the same prepared mount namespace,
-			// including the resident Service and session shell.
+			// including the resident Pillow and session shell.
 			const script = `set -eu
 test "$MARKER" = workload-env
-for i in 1 2 3 4 5; do test -s /workspace/service-caps && break; sleep 0.1; done
+for i in 1 2 3 4 5; do test -s /workspace/pillow-caps && break; sleep 0.1; done
 test "$(id -u)" != 0
-test "$(id -u)" = "$(cat /workspace/service-uid)"
-test "$(readlink /proc/self/ns/mnt)" = "$(cat /workspace/service-mount)"
+test "$(id -u)" = "$(cat /workspace/pillow-uid)"
+test "$(readlink /proc/self/ns/mnt)" = "$(cat /workspace/pillow-mount)"
 readlink /proc/self/ns/mnt
 grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status
-cat /workspace/service-caps`
+cat /workspace/pillow-caps`
 			var namespace string
 			check := func(result commandResult) {
 				assertCommandExit(t, result, 0)
@@ -107,7 +107,7 @@ cat /workspace/service-caps`
 			result, response := c.stream(t, "/session/"+url.PathEscape(session.ID)+"/run", bed, map[string]any{"command": script, "timeout": 5000})
 			must2xx(t, "prepared session", response)
 			check(result)
-			t.Log(fmt.Sprintf("shared prepared mount=%s; command/session/Service credentials verified", namespace))
+			t.Log(fmt.Sprintf("shared prepared mount=%s; command/session/Pillow credentials verified", namespace))
 		})
 	}
 }

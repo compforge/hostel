@@ -2,8 +2,9 @@ package manager
 
 import (
 	"errors"
-	model "github.com/qiankunli/hostel/internal/bed"
 	"slices"
+
+	model "github.com/qiankunli/hostel/internal/bed"
 )
 
 var ErrPortsConflict = errors.New("bed: port mapping declaration cannot change")

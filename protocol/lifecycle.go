@@ -53,7 +53,7 @@ const (
 	OpMCP        OperationKind = "mcp"
 	OpCheckpoint OperationKind = "checkpoint"
 	OpControl    OperationKind = "control"
-	OpService    OperationKind = "service"
+	OpPillow     OperationKind = "pillow"
 )
 
 const (

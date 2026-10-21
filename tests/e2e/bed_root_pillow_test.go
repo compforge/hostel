@@ -16,10 +16,10 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
-// A Service is a supervised execution in the same Bed filesystem as commands.
+// A Pillow is a supervised execution in the same Bed filesystem as commands.
 // Both Beds use identical absolute paths, including a previously absent root
 // directory; no external mapping or pre-populated carrier directory is supplied.
-func TestBedRootServiceCommandFiles(t *testing.T) {
+func TestBedRootPillowCommandFiles(t *testing.T) {
 	requireTestBinary(t)
 	if runtime.GOOS != "linux" {
 		t.Skip("native Bed root views require Linux bwrap or PRoot")
@@ -58,13 +58,13 @@ func TestBedRootServiceCommandFiles(t *testing.T) {
 				if health.ProcessView.Mode != mode || !health.ProcessView.Rootfs {
 					t.Fatalf("root view degraded: %+v", health)
 				}
-				checkBedRootServiceFiles(t, c)
+				checkBedRootPillowFiles(t, c)
 			})
 		}
 	}
 }
 
-func checkBedRootServiceFiles(t *testing.T, c *apiClient) {
+func checkBedRootPillowFiles(t *testing.T, c *apiClient) {
 	t.Helper()
 	const worker = `set -eu
 mkdir -p /mnt/jobs /session-cache /tmp
@@ -91,10 +91,10 @@ done`
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{
 			"id": id,
-			"services": []map[string]any{{
+			"pillows": []map[string]any{{
 				"name": "writer", "command": []string{"/bin/sh", "-c", worker},
 				"env": map[string]string{"MARKER": id}, "required": true,
-				"restart": "never", "stop_seconds": 1,
+				"restart_policy": "never", "stop_seconds": 1,
 			}},
 		}, nil)
 		cancel()
@@ -104,7 +104,7 @@ done`
 		must2xx(t, "create Bed with worker", response)
 	}
 	for _, id := range beds {
-		c.waitBed(t, id, func(b bedView) bool { return b.Status.Readiness.Ready }, "required Service ready")
+		c.waitBed(t, id, func(b bedView) bool { return b.Status.Readiness.Ready }, "required Pillow ready")
 	}
 	for _, writer := range []string{"file-api", "executor"} {
 		t.Run(writer, func(t *testing.T) {
@@ -120,7 +120,7 @@ func checkBedRootFileRounds(t *testing.T, c *apiClient, beds []string, writer st
 		input := fmt.Sprintf("%s-round-%d", writer, round)
 		// Both workers remain live while requests and assertions are interleaved.
 		for _, id := range beds {
-			// Different payloads also detect a Service reading the other Bed's
+			// Different payloads also detect a Pillow reading the other Bed's
 			// input, even when its output happens to be correctly isolated.
 			if writer == "file-api" {
 				for _, dir := range dirs {
@@ -135,7 +135,7 @@ for dir in /mnt/jobs /session-cache /tmp; do
 done`,
 					"envs": map[string]string{"INPUT": id + ":" + input}, "cwd": "/", "timeout": 5000,
 				})
-				must2xx(t, "Executor writes Service input", response)
+				must2xx(t, "Executor writes Pillow input", response)
 				assertCommandExit(t, result, 0)
 			}
 		}

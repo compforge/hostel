@@ -9,13 +9,13 @@ import (
 	"testing"
 
 	model "github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bed/service"
+	"github.com/qiankunli/hostel/internal/bed/pillow"
 )
 
-func TestBedServiceOptionalAuthentication(t *testing.T) {
+func TestBedPillowOptionalAuthentication(t *testing.T) {
 	for _, mode := range []string{"none", "environment", "file"} {
 		t.Run(mode, func(t *testing.T) {
-			m, specs, _ := testServiceManager(t)
+			m, specs, _ := testPillowManager(t)
 			spec := &specs[0]
 			spec.HTTP.Authentication = nil
 			token := ""
@@ -33,14 +33,14 @@ func TestBedServiceOptionalAuthentication(t *testing.T) {
 					spec.EnvFiles["SERVICE_TOKEN"] = credential
 				}
 			}
-			if _, err := m.InitializeBedWithOptions(t.Context(), "authentication", testServiceOptions(specs[:1])); err != nil {
+			if _, err := m.InitializeBedWithOptions(t.Context(), "authentication", testPillowOptions(specs[:1])); err != nil {
 				t.Fatal(err)
 			}
 			b, err := m.Ensure(t.Context(), "authentication")
 			if err != nil {
 				t.Fatal(err)
 			}
-			first, err := m.services.Access(b.Bed, "main")
+			first, err := m.pillows.Access(b.Bed, "main")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -55,7 +55,7 @@ func TestBedServiceOptionalAuthentication(t *testing.T) {
 				t.Fatal("unauthenticated access includes token")
 			}
 			if mode == "file" {
-				for _, body := range [][]byte{mustReadIdentity(t, m, b.Name), mustMarshalServiceStatus(t, m, b)} {
+				for _, body := range [][]byte{mustReadIdentity(t, m, b.Name), mustMarshalPillowStatus(t, m, b)} {
 					if strings.Contains(string(body), token) {
 						t.Fatal("credential leaked to metadata/status")
 					}
@@ -64,12 +64,12 @@ func TestBedServiceOptionalAuthentication(t *testing.T) {
 					t.Fatal(err)
 				}
 				// Changing the file must not change credentials for a running execution.
-				current, err := m.services.Access(b.Bed, "main")
+				current, err := m.pillows.Access(b.Bed, "main")
 				if err != nil || current.Token != token {
 					t.Fatal("access read credentials ahead of process restart")
 				}
 			}
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testServiceURL(first.PortMapping.HostPort)+"/ready", nil)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testPillowURL(first.PortMapping.HostPort)+"/ready", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -84,13 +84,13 @@ func TestBedServiceOptionalAuthentication(t *testing.T) {
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("direct access status=%d", resp.StatusCode)
 			}
-			if err := m.services.Restart(b.Bed, "main"); err != nil {
+			if err := m.pillows.Restart(b.Bed, "main"); err != nil {
 				t.Fatal(err)
 			}
-			waitService(t, m, b, "main", func(s service.Status) bool {
+			waitPillow(t, m, b, "main", func(s pillow.Status) bool {
 				return s.Phase == "running" && s.Ready && s.ExecutionID != first.PortMapping.ExecutionID
 			})
-			current, err := m.services.Access(b.Bed, "main")
+			current, err := m.pillows.Access(b.Bed, "main")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -113,9 +113,9 @@ func mustReadIdentity(t *testing.T, m *Manager, name string) []byte {
 	return body
 }
 
-func mustMarshalServiceStatus(t *testing.T, m *Manager, b *Resident) []byte {
+func mustMarshalPillowStatus(t *testing.T, m *Manager, b *Resident) []byte {
 	t.Helper()
-	body, err := json.Marshal(m.services.Status(b.Bed))
+	body, err := json.Marshal(m.pillows.Status(b.Bed))
 	if err != nil {
 		t.Fatal(err)
 	}

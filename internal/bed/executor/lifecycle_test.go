@@ -3,8 +3,9 @@ package executor
 import (
 	"context"
 	"errors"
-	"github.com/qiankunli/hostel/internal/bed"
 	"testing"
+
+	"github.com/qiankunli/hostel/internal/bed"
 )
 
 type stalledExecutor struct {

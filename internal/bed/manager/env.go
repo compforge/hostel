@@ -16,19 +16,18 @@ package manager
 
 import (
 	"context"
-	"errors"
-	"github.com/qiankunli/hostel/internal/bed/configuration"
 	"maps"
 	"net/url"
 	"slices"
 	"strings"
+
+	"github.com/qiankunli/hostel/internal/bed/configuration"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 )
 
 // ErrInvalidEnvironment marks a caller- or deployment-supplied environment
 // that cannot safely become part of a bed process.
 var ErrInvalidEnvironment = configuration.ErrInvalid
-
-var ErrEnvConflict = errors.New("bed: cannot change declared environment")
 
 // processEnv is the immutable carrier environment shared by every bed. Hostel
 // keeps only its own namespaces private; deployment owners are responsible for
@@ -81,9 +80,10 @@ func ValidateRequestEnv(env map[string]string) error {
 	return configuration.ValidateEnv(env)
 }
 
-// buildExecutionEnv applies the Bed's ordinary execution defaults before the
-// invocation overlay. Existing session shells retain their own process state.
-// +spec=`Bed Env belongs to ordinary executions and session shells; services never implicitly inherit it.`
+// buildExecutionEnv applies the default Pillow environment before the invocation
+// overlay. Existing session shells retain their own process state.
+// +spec=`Every execution uses its Pillow configuration; Pillows never inherit each other's environment.`
+// +link:doc=docs/pillow.md
 func (m *Manager) buildExecutionEnv(b *managedBed, requestEnv map[string]string) ([]string, error) {
 	env, err := m.configurations.Main(b.Bed)
 	if err != nil {
@@ -93,11 +93,14 @@ func (m *Manager) buildExecutionEnv(b *managedBed, requestEnv map[string]string)
 }
 
 // buildBedEnv composes carrier software and Bed context with ordered overlays.
-// Service launch passes only its own resolved environment here.
+// Pillow launch passes only its own resolved environment here.
 //
 // +spec=`Every execution inherits the Carrier environment except Hostel-reserved variables; deployment owners are responsible for all other inherited values.`
 // +case:id=carrier_software_persists,desc=`Install PyPI and npm packages, then run a new execution`,expect=`both executions resolve the carrier-owned /usr/local installation`
 func (m *Manager) buildBedEnv(b *managedBed, overlays ...map[string]string) ([]string, error) {
+	return m.buildBedEnvWithView(b, b.environment.View(), overlays...)
+}
+func (m *Manager) buildBedEnvWithView(b *managedBed, view bedfs.ProcessView, overlays ...map[string]string) ([]string, error) {
 	for _, overlay := range overlays {
 		if err := ValidateRequestEnv(overlay); err != nil {
 			return nil, err
@@ -108,7 +111,6 @@ func (m *Manager) buildBedEnv(b *managedBed, overlays ...map[string]string) ([]s
 		env[name] = value
 	}
 
-	view := b.environment.View()
 	temporary, err := view.Tempdir()
 	if err != nil {
 		return nil, err

@@ -1,4 +1,4 @@
-package service
+package pillow
 
 import (
 	"context"
@@ -40,10 +40,10 @@ func httpTestManager(t *testing.T) (*Manager, *hostnetwork.PortManager) {
 }
 
 func httpTestBed(name string) *bed.Bed {
-	return newServiceTestBed(name, "", bed.Spec{Services: []bed.ServiceSpec{{
+	return newPillowTestBed(name, "", bed.Spec{Pillows: []bed.PillowSpec{{
 		Name: "web", Command: []string{"server"}, Env: map[string]string{"LISTEN": "${LISTEN_ADDR}"},
-		Required: true, Restart: "never", StartupSeconds: 1, StopSeconds: 1,
-		HTTP: &bed.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}},
+		Required: true, RestartPolicy: "never", StartupSeconds: 1, StopSeconds: 1,
+		HTTP: &bed.PillowHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}},
 	}}})
 }
 
@@ -67,7 +67,7 @@ func unavailableInspection(context.Context, int, string) (hostnetwork.ListenerIn
 	return hostnetwork.ListenerInspection{State: hostnetwork.ListenerUnavailable, Method: "proc", Reason: "permission_denied"}, nil
 }
 
-func TestSharedHTTPServiceDegradesAfterReadyAndRestarts(t *testing.T) {
+func TestSharedHTTPPillowDegradesAfterReadyAndRestarts(t *testing.T) {
 	m, ports := httpTestManager(t)
 	var degraded atomic.Bool
 	m.inspectListener = func(ctx context.Context, pid int, addr string) (hostnetwork.ListenerInspection, error) {
@@ -91,9 +91,9 @@ func TestSharedHTTPServiceDegradesAfterReadyAndRestarts(t *testing.T) {
 	waitHTTPStatus(t, m, b, func(s Status) bool { return s.Listener != nil && s.Listener.State == hostnetwork.ListenerUnavailable })
 	status := m.Status(b)[0]
 	if status.Phase != "running" || !status.Ready || status.ExecutionID != first.PortMapping.ExecutionID || status.Restarts != 0 {
-		t.Fatalf("inspection failure killed service: %+v", status)
+		t.Fatalf("inspection failure killed pillow: %+v", status)
 	}
-	resp, err := http.Get(testServiceURL(first.PortMapping.HostPort) + "/ready")
+	resp, err := http.Get(testPillowURL(first.PortMapping.HostPort) + "/ready")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestSharedHTTPServiceDegradesAfterReadyAndRestarts(t *testing.T) {
 	}
 }
 
-func TestSharedHTTPServicesHaveDistinctEndpoints(t *testing.T) {
+func TestSharedHTTPPillowsHaveDistinctEndpoints(t *testing.T) {
 	m, _ := httpTestManager(t)
 	m.inspectListener = unavailableInspection
 	var wg sync.WaitGroup
@@ -141,7 +141,7 @@ func TestSharedHTTPServicesHaveDistinctEndpoints(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			endpoints <- testServiceURL(a.PortMapping.HostPort)
+			endpoints <- testPillowURL(a.PortMapping.HostPort)
 		}()
 	}
 	wg.Wait()
@@ -194,7 +194,7 @@ func TestUnavailableInspectionStillRequiresHTTPReadiness(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	if err := m.PrepareBed(ctx, b, runtime); err == nil {
-		t.Fatal("unhealthy service ready")
+		t.Fatal("unhealthy pillow ready")
 	}
 	status := m.Status(b)[0]
 	if len(m.mappings.Status(b)) != 0 || !strings.Contains(status.Reason, "readiness timeout") {
@@ -249,7 +249,7 @@ func TestExitDuringProbeDoesNotPublishOrRetryAsConflict(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	if err := m.PrepareBed(ctx, b, runtime); err == nil {
-		t.Fatal("exited service published ready")
+		t.Fatal("exited pillow published ready")
 	}
 	status := m.Status(b)[0]
 	if len(m.mappings.Status(b)) != 0 || status.Reason != "process exited before readiness" {
@@ -272,5 +272,5 @@ func waitHTTPStatus(t *testing.T, m *Manager, b *bed.Bed, predicate func(Status)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("service status did not converge: %+v", m.Status(b))
+	t.Fatalf("pillow status did not converge: %+v", m.Status(b))
 }

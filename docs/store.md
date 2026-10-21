@@ -269,11 +269,11 @@ noop 只是 `Persist/Restore/Stat/Delete` 的空实现，不改变 lifecycle：B
     <other>/   # 运行期数据，不跨 carrier 恢复
 ```
 
-**默认快照内容 = `meta.json + data/workspace/**`**：`meta.json` 始终保存；BedFS 数据由 `Bed.Spec.SyncPaths` 选择，只同步默认 `/ → bed_home` 映射中的绝对非根路径。新 Bed 未指定该字段时默认 `[/workspace]`，显式 `[]` 只保存元数据；新增路径或 PathMapping 不会扩大同步范围。
+**默认快照内容 = `meta.json + data/workspace/**`**：`meta.json` 始终保存；BedFS 数据由 `Bed.Spec.SyncPaths` 选择，只同步默认 `/ → bed_home` 映射中的绝对非根路径。新 Bed 未指定该字段时默认 `[/workspace]`，显式 `[]` 只保存元数据；新增路径或卷挂载 不会扩大同步范围。
 
 同步范围是 Bed 的不可变数据契约。共享 Store 在每次 Persist 时接收该 Bed 的 SyncPaths，所有快照格式和 auto 阈值判断使用同一份过滤规则，不在共享 Store 上切换配置。`sync_paths` 随 `meta.json` 进入快照；恢复时先采用快照声明，再准备文件系统和进程，调用方显式声明与快照冲突则初始化失败。
 
-`path_mappings` 与 `sync_paths` 都保存在本地身份记录中，以便重启恢复。HostPath 不可移植，不进入远端快照；跨实例恢复由调用方重新声明映射。额外映射的数据由 PVC 或其他存储方负责持久化，不能与 SyncPaths 交叉。
+`volumes`、各 Pillow 的 `mounts` 与 `sync_paths` 保存在本地身份记录中。卷声明和卷数据不进入远端快照；跨实例恢复由调用方重新声明。`host_path` 数据由外部存储方持久化，Hostel 回收 Bed 不删除它；`empty_dir` 重新初始化时为空。所有挂载目标均不能与 SyncPaths 交叉。
 
 重复创建省略路径字段表示复用已有声明，显式字段必须与已有声明一致。路径配置不再有实例级 env、CLI 或默认模板入口；调用方在创建 Bed 时提交自己的模板。
 

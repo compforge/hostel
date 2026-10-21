@@ -3,14 +3,14 @@ package view
 import (
 	"encoding/json"
 
-	"github.com/qiankunli/hostel/internal/bed/service"
+	"github.com/qiankunli/hostel/internal/bed/pillow"
 	"github.com/qiankunli/hostel/protocol"
 )
 
-// ServiceStatusFrom exposes the same service facts without exporting executor
+// PillowStatusFrom exposes the same pillow facts without exporting executor
 // implementation types or private transport diagnostics.
-func ServiceStatusFrom(status service.Status) protocol.ServiceStatus {
-	snapshot := status.ServiceStatus
+func PillowStatusFrom(status pillow.Status) protocol.PillowStatus {
+	snapshot := status.PillowStatus
 	if status.Outcome != nil {
 		// ProcessOutcome consists only of scalar fields and is always JSON encodable.
 		outcome := *status.Outcome

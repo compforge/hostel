@@ -18,7 +18,6 @@ import (
 	"slices"
 	"testing"
 
-	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
@@ -110,11 +109,11 @@ func TestBuildBwrapArgsUsesProjectedCwd(t *testing.T) {
 }
 
 func TestBuildBwrapArgsAddsBedMappingsAfterWorkspace(t *testing.T) {
-	mapping := model.PathMapping{HostPath: "/volume", BedPath: "/mnt/memory"}
+	mapping := bedfs.Mount{Source: "/volume", Target: "/mnt/memory"}
 	argv := buildBwrapArgs(
 		"/ws", "/ws/b/data", "/ws/b/data/workspace",
 		bedfs.DefaultWorkdir, nil,
-		[]model.PathMapping{mapping})
+		[]bedfs.Mount{mapping})
 	workspaceBind := indexOfSeq(argv, "--bind", "/ws/b/data/workspace", bedfs.DefaultWorkdir)
 	mappingBind := indexOfSeq(argv, "--bind", "/volume", "/mnt/memory")
 	if workspaceBind < 0 || mappingBind <= workspaceBind {
@@ -133,9 +132,9 @@ func TestDirectUsesCarrierView(t *testing.T) {
 }
 
 func TestBuildBwrapArgsUsesBedMappings(t *testing.T) {
-	mappings := []model.PathMapping{
-		{HostPath: "/volumes/project", BedPath: "/project"},
-		{HostPath: "/usr/local/reference", BedPath: "/reference", ReadOnly: true},
+	mappings := []bedfs.Mount{
+		{Source: "/volumes/project", Target: "/project"},
+		{Source: "/usr/local/reference", Target: "/reference", ReadOnly: true},
 	}
 	argv := buildBwrapArgs("/beds", "/beds/b/data", "/beds/b/data/workspace", "/project", nil, mappings)
 	if indexOfSeq(argv, "--bind", "/volumes/project", "/project") < 0 {

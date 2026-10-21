@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"slices"
 
 	model "github.com/qiankunli/hostel/internal/bed"
@@ -16,8 +17,8 @@ func checkBedPaths(options CreateOptions, actual model.Spec) error {
 	if options.lookup {
 		return nil
 	}
-	if options.PathMappings != nil && !slices.Equal(options.PathMappings, actual.PathMappings) {
-		return fmt.Errorf("%w: path_mappings", ErrPathsConflict)
+	if options.Volumes != nil && !reflect.DeepEqual(options.Volumes, actual.Volumes) {
+		return fmt.Errorf("%w: volumes", ErrPathsConflict)
 	}
 	if options.SyncPaths != nil && !slices.Equal(options.SyncPaths, actual.SyncPaths) {
 		return fmt.Errorf("%w: sync_paths", ErrPathsConflict)
@@ -46,7 +47,7 @@ func (m *Manager) preparePaths(init *bedInitialization) error {
 		if restored == nil {
 			restored = []string{"/workspace"}
 		}
-		_, restored, err := model.NormalizePaths(nil, restored)
+		restored, err := model.NormalizeSyncPaths(restored)
 		if err != nil {
 			return err
 		}
@@ -58,10 +59,13 @@ func (m *Manager) preparePaths(init *bedInitialization) error {
 	if paths == nil {
 		paths = []string{"/workspace"}
 	}
-	mappings, paths, err := model.NormalizePaths(spec.PathMappings, paths)
+	paths, err := model.NormalizeSyncPaths(paths)
 	if err != nil {
 		return err
 	}
-	model.SpecWriter{}.Update(b, func(s *model.Spec) { s.PathMappings, s.SyncPaths = mappings, paths })
+	model.SpecWriter{}.Update(b, func(s *model.Spec) { s.SyncPaths = paths })
+	if err := model.ValidateVolumeMounts(b.Spec()); err != nil {
+		return err
+	}
 	return m.saveLocalIdentity(init.local)
 }

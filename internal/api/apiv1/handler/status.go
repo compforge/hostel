@@ -48,9 +48,9 @@ func (o statusObserver) BedStatus(b *bed.Bed, lifecycle manager.BedStatus) proto
 	report.Components.Store = state.Store
 	report.Components.Executor = state.Executor
 	report.Components.Resource = state.Resource
-	report.Services = []protocol.ServiceStatus{}
-	for _, status := range o.beds.Services().Status(b) {
-		report.Services = append(report.Services, apiview.ServiceStatusFrom(status))
+	report.Pillows = []protocol.PillowStatus{}
+	for _, status := range o.beds.Pillows().Status(b) {
+		report.Pillows = append(report.Pillows, apiview.PillowStatusFrom(status))
 	}
 	report.PortMappings = o.beds.PortMappings(b)
 	return report

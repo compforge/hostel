@@ -21,14 +21,14 @@ import (
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
-	"github.com/qiankunli/hostel/internal/bed/service"
+	"github.com/qiankunli/hostel/internal/bed/pillow"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
-// The helper is an ordinary foreground HTTP service: no Hostel registration
+// The helper is an ordinary foreground HTTP pillow: no Hostel registration
 // callback. It authenticates requests and observes TERM before returning.
-func TestServiceHelperProcess(t *testing.T) {
+func TestPillowHelperProcess(t *testing.T) {
 	if os.Getenv("SERVICE_TEST_HELPER") != "1" {
 		return
 	}
@@ -36,8 +36,8 @@ func TestServiceHelperProcess(t *testing.T) {
 	if err != nil {
 		os.Exit(32)
 	}
-	_ = os.WriteFile("service-started", []byte(os.Getenv("BED_ID")), 0600)
-	_ = os.WriteFile("service-credential", []byte(os.Getenv("SERVICE_FILE_VALUE")), 0600)
+	_ = os.WriteFile("pillow-started", []byte(os.Getenv("BED_ID")), 0600)
+	_ = os.WriteFile("pillow-credential", []byte(os.Getenv("SERVICE_FILE_VALUE")), 0600)
 	var unavailable atomic.Bool
 	releaseTask := make(chan struct{})
 	var releaseOnce sync.Once
@@ -80,19 +80,19 @@ func TestServiceHelperProcess(t *testing.T) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
 	defer stop()
 	go srv.Serve(listener)
-	fmt.Println("test service started")
+	fmt.Println("test pillow started")
 	<-ctx.Done()
-	_ = os.WriteFile("service-stopped", []byte("graceful"), 0600)
+	_ = os.WriteFile("pillow-stopped", []byte("graceful"), 0600)
 	_ = srv.Close()
 	os.Exit(0)
 }
 
-func testServiceManager(t *testing.T) (*Manager, []model.ServiceSpec, *hostnetwork.PortManager) {
+func testPillowManager(t *testing.T) (*Manager, []model.PillowSpec, *hostnetwork.PortManager) {
 	t.Helper()
 	ports, _ := hostnetwork.NewPortManager(25000, 25100)
 	m := newTestManager(t)
-	WithServices(ports)(m)
-	credential := filepath.Join(t.TempDir(), "service-value")
+	WithPillows(ports)(m)
+	credential := filepath.Join(t.TempDir(), "pillow-value")
 	if err := os.WriteFile(credential, []byte("from-file\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -104,88 +104,88 @@ func testServiceManager(t *testing.T) (*Manager, []model.ServiceSpec, *hostnetwo
 		}
 		ports.Close()
 	})
-	serviceSpec := model.ServiceSpec{
-		Command:        []string{os.Args[0], "-test.run=^TestServiceHelperProcess$"},
+	pillowSpec := model.PillowSpec{
+		Command:        []string{os.Args[0], "-test.run=^TestPillowHelperProcess$"},
 		Env:            map[string]string{"SERVICE_TEST_HELPER": "1", "SERVICE_LISTEN": "${LISTEN_ADDR}", "GORACE": "atexit_sleep_ms=0"},
 		EnvFiles:       map[string]string{"SERVICE_FILE_VALUE": credential},
 		Required:       true,
-		Restart:        "on-failure",
+		RestartPolicy:  "on-failure",
 		MaxRestarts:    2,
 		StartupSeconds: 10,
 		StopSeconds:    1,
-		HTTP:           &model.ServiceHTTPSpec{ReadyPath: "/ready", Authentication: &model.Authentication{Scheme: "bearer", TokenSource: model.TokenSourceGenerated, TokenEnv: "SERVICE_TOKEN"}},
+		HTTP:           &model.PillowHTTPSpec{ReadyPath: "/ready", Authentication: &model.Authentication{Scheme: "bearer", TokenSource: model.TokenSourceGenerated, TokenEnv: "SERVICE_TOKEN"}},
 	}
-	main, tools := serviceSpec, serviceSpec
+	main, tools := pillowSpec, pillowSpec
 	main.Name, tools.Name = "main", "tools"
 	main.PortMapping, tools.PortMapping = "main", "tools"
-	return m, []model.ServiceSpec{main, tools}, ports
+	return m, []model.PillowSpec{main, tools}, ports
 }
 
-func waitService(t *testing.T, m *Manager, b *Resident, name string, predicate func(service.Status) bool) service.Status {
+func waitPillow(t *testing.T, m *Manager, b *Resident, name string, predicate func(pillow.Status) bool) pillow.Status {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		for _, s := range m.services.Status(b.Bed) {
+		for _, s := range m.pillows.Status(b.Bed) {
 			if s.Name == name && predicate(s) {
 				return s
 			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("service state timeout: %+v", m.services.Status(b.Bed))
-	return service.Status{}
+	t.Fatalf("pillow state timeout: %+v", m.pillows.Status(b.Bed))
+	return pillow.Status{}
 }
 
-func TestBedServicesShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
-	m, specs, ports := testServiceManager(t)
-	if _, err := m.InitializeBedWithOptions(t.Context(), "with-services", testServiceOptions(specs)); err != nil {
+func TestBedPillowsShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
+	m, specs, ports := testPillowManager(t)
+	if _, err := m.InitializeBedWithOptions(t.Context(), "with-pillows", testPillowOptions(specs)); err != nil {
 		t.Fatal(err)
 	}
-	b, err := m.Ensure(t.Context(), "with-services")
+	b, err := m.Ensure(t.Context(), "with-pillows")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !b.Bed.Status().Lifecycle.Ready || b.Status().Activity != ActivityIdle {
-		t.Fatalf("services pinned bed: %+v", b.Status())
+		t.Fatalf("pillows pinned bed: %+v", b.Status())
 	}
-	a, _ := m.services.Access(b.Bed, "main")
-	other, _ := m.services.Access(b.Bed, "tools")
-	if testServiceURL(a.PortMapping.HostPort) == testServiceURL(other.PortMapping.HostPort) || a.Token == other.Token || a.PortMapping.ExecutionID == other.PortMapping.ExecutionID {
-		t.Fatal("service instances share runtime identity")
+	a, _ := m.pillows.Access(b.Bed, "main")
+	other, _ := m.pillows.Access(b.Bed, "tools")
+	if testPillowURL(a.PortMapping.HostPort) == testPillowURL(other.PortMapping.HostPort) || a.Token == other.Token || a.PortMapping.ExecutionID == other.PortMapping.ExecutionID {
+		t.Fatal("pillow instances share runtime identity")
 	}
-	data, err := os.ReadFile(filepath.Join(b.Workdir(), "service-started"))
+	data, err := os.ReadFile(filepath.Join(b.Workdir(), "pillow-started"))
 	if err != nil || string(data) != b.Name {
-		t.Fatalf("service did not use Bed environment: %q %v", data, err)
+		t.Fatalf("pillow did not use Bed environment: %q %v", data, err)
 	}
-	data, err = os.ReadFile(filepath.Join(b.Workdir(), "service-credential"))
+	data, err = os.ReadFile(filepath.Join(b.Workdir(), "pillow-credential"))
 	if err != nil || string(data) != "from-file" {
-		t.Fatalf("service did not resolve credential file: %q %v", data, err)
+		t.Fatalf("pillow did not resolve credential file: %q %v", data, err)
 	}
-	if _, err := m.InitializeBed(t.Context(), b.Name); !errors.Is(err, ErrServicesConflict) {
-		t.Fatalf("explicit empty create changed services: %v", err)
+	if _, err := m.InitializeBed(t.Context(), b.Name); !errors.Is(err, ErrPillowsConflict) {
+		t.Fatalf("explicit empty create changed pillows: %v", err)
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, testServiceOptions(specs)); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, testPillowOptions(specs)); err != nil {
 		t.Fatal(err)
 	}
 	plain, err := m.Ensure(t.Context(), "plain")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m.services.Status(plain.Bed)) != 0 || plain.Bed.Status().Executor.ID != "" {
-		t.Fatal("plain Bed eagerly created a service/executor")
+	if len(m.pillows.Status(plain.Bed)) != 1 || m.pillows.Status(plain.Bed)[0].Phase != "prepared" || plain.Bed.Status().Executor.ID != "" {
+		t.Fatal("plain Bed eagerly created a pillow/executor")
 	}
 	if len(ports.Status()) != 2 {
 		t.Fatalf("allocations: %+v", ports.Status())
 	}
-	encoded, _ := json.Marshal(m.services.Status(b.Bed))
+	encoded, _ := json.Marshal(m.pillows.Status(b.Bed))
 	identity, _ := os.ReadFile(m.identityPath(b.Name))
 	if strings.Contains(string(encoded), a.Token) || strings.Contains(string(identity), a.Token) {
 		t.Fatal("runtime credentials leaked to status/local metadata")
 	}
-	if err := m.services.Stop(t.Context(), b.Bed); err != nil {
+	if err := m.pillows.Stop(t.Context(), b.Bed); err != nil {
 		t.Fatal(err)
 	}
-	data, err = os.ReadFile(filepath.Join(b.Workdir(), "service-stopped"))
+	data, err = os.ReadFile(filepath.Join(b.Workdir(), "pillow-stopped"))
 	if err != nil || string(data) != "graceful" {
 		t.Fatalf("TERM not honored: %q %v", data, err)
 	}
@@ -194,9 +194,9 @@ func TestBedServicesShareEnvironmentAndRemainOptionalPerBed(t *testing.T) {
 	}
 }
 
-func TestBedServiceRestartChangesIdentityAndToken(t *testing.T) {
-	m, specs, _ := testServiceManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "restart", testServiceOptions(specs[:1]))
+func TestBedPillowRestartChangesIdentityAndToken(t *testing.T) {
+	m, specs, _ := testPillowManager(t)
+	_, err := m.InitializeBedWithOptions(t.Context(), "restart", testPillowOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,18 +204,18 @@ func TestBedServiceRestartChangesIdentityAndToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, _ := m.services.Access(b.Bed, "main")
-	if err := m.services.Restart(b.Bed, "main"); err != nil {
+	old, _ := m.pillows.Access(b.Bed, "main")
+	if err := m.pillows.Restart(b.Bed, "main"); err != nil {
 		t.Fatal(err)
 	}
-	waitService(t, m, b, "main", func(s service.Status) bool {
+	waitPillow(t, m, b, "main", func(s pillow.Status) bool {
 		return s.Phase == "running" && s.Ready && s.ExecutionID != old.PortMapping.ExecutionID
 	})
-	current, _ := m.services.Access(b.Bed, "main")
+	current, _ := m.pillows.Access(b.Bed, "main")
 	if old.Token == current.Token {
-		t.Fatal("restarted service reused token")
+		t.Fatal("restarted pillow reused token")
 	}
-	req, _ := http.NewRequest(http.MethodGet, testServiceURL(current.PortMapping.HostPort)+"/ready", nil)
+	req, _ := http.NewRequest(http.MethodGet, testPillowURL(current.PortMapping.HostPort)+"/ready", nil)
 	req.Header.Set("Authorization", "Bearer "+old.Token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -225,7 +225,7 @@ func TestBedServiceRestartChangesIdentityAndToken(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatal("old credentials authorized new execution")
 	}
-	if _, err := m.HoldService(b, 150*time.Millisecond); err != nil {
+	if _, err := m.HoldPillow(b, 150*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	if evicted, err := m.Evict(t.Context(), b.Name); err != nil || evicted {
@@ -233,13 +233,13 @@ func TestBedServiceRestartChangesIdentityAndToken(t *testing.T) {
 	}
 	time.Sleep(200 * time.Millisecond)
 	if evicted, err := m.Evict(t.Context(), b.Name); err != nil || !evicted {
-		t.Fatalf("idle service prevented eviction: %t %v", evicted, err)
+		t.Fatalf("idle pillow prevented eviction: %t %v", evicted, err)
 	}
 }
 
-func TestBedServiceExecutionsUseCommonRegistry(t *testing.T) {
-	m, specs, _ := testServiceManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "execution", testServiceOptions(specs[:1]))
+func TestBedPillowExecutionsUseCommonRegistry(t *testing.T) {
+	m, specs, _ := testPillowManager(t)
+	_, err := m.InitializeBedWithOptions(t.Context(), "execution", testPillowOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,12 +247,12 @@ func TestBedServiceExecutionsUseCommonRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	access, _ := m.services.Access(b.Bed, "main")
+	access, _ := m.pillows.Access(b.Bed, "main")
 	e, ok := m.executions.Get(access.PortMapping.ExecutionID)
-	if !ok || e.Mode != ExecutionService || e.ExecutorID != b.Bed.Status().Executor.ID {
-		t.Fatal("service bypassed execution registry")
+	if !ok || e.Mode != ExecutionMain || e.ExecutorID != b.Bed.Status().Executor.ID {
+		t.Fatal("pillow bypassed execution registry")
 	}
-	if err := m.services.Stop(t.Context(), b.Bed); err != nil {
+	if err := m.pillows.Stop(t.Context(), b.Bed); err != nil {
 		t.Fatal(err)
 	}
 	if result := e.Wait(); result.Process.Kind != executor.ProcessExited || result.Process.ExitCode != 0 {
@@ -260,8 +260,8 @@ func TestBedServiceExecutionsUseCommonRegistry(t *testing.T) {
 	}
 }
 
-func TestBedServiceNeverPublishesSquatterAndRetriesBinding(t *testing.T) {
-	m, specs, _ := testServiceManager(t)
+func TestBedPillowNeverPublishesSquatterAndRetriesBinding(t *testing.T) {
+	m, specs, _ := testPillowManager(t)
 	squatter, err := net.Listen("tcp", "0.0.0.0:25000")
 	if err != nil {
 		t.Fatal(err)
@@ -270,22 +270,22 @@ func TestBedServiceNeverPublishesSquatterAndRetriesBinding(t *testing.T) {
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "foreign ready") })}
 	go srv.Serve(squatter)
 	defer srv.Close()
-	if _, err := m.InitializeBedWithOptions(t.Context(), "squatter", testServiceOptions(specs[:1])); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "squatter", testPillowOptions(specs[:1])); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "squatter")
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := m.services.Status(b.Bed)[0]
+	s := m.pillows.Status(b.Bed)[0]
 	if m.PortMappings(b.Bed)[0].HostPort == 25000 || s.Restarts != 0 {
 		t.Fatalf("binding conflict was not retried independently: %+v", s)
 	}
 }
 
-func TestBedServiceHoldCanBeReleasedEarly(t *testing.T) {
-	m, specs, _ := testServiceManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "hold", testServiceOptions(specs[:1]))
+func TestBedPillowHoldCanBeReleasedEarly(t *testing.T) {
+	m, specs, _ := testPillowManager(t)
+	_, err := m.InitializeBedWithOptions(t.Context(), "hold", testPillowOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestBedServiceHoldCanBeReleasedEarly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hold, err := m.HoldService(b, time.Hour)
+	hold, err := m.HoldPillow(b, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,20 +301,20 @@ func TestBedServiceHoldCanBeReleasedEarly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.ReleaseServiceHold(other, hold.ID)
+	m.ReleasePillowHold(other, hold.ID)
 	if b.Status().Activity != ActivityActive {
 		t.Fatal("wrong Bed released hold")
 	}
-	m.ReleaseServiceHold(b, hold.ID)
-	m.ReleaseServiceHold(b, hold.ID)
+	m.ReleasePillowHold(b, hold.ID)
+	m.ReleasePillowHold(b, hold.ID)
 	if b.Status().Activity != ActivityIdle {
 		t.Fatal("hold did not release")
 	}
 }
 
-func TestBedServiceLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
-	m, specs, ports := testServiceManager(t)
-	_, err := m.InitializeBedWithOptions(t.Context(), "recover", testServiceOptions(specs[:1]))
+func TestBedPillowLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
+	m, specs, ports := testPillowManager(t)
+	_, err := m.InitializeBedWithOptions(t.Context(), "recover", testPillowOptions(specs[:1]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestBedServiceLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
 	// The complete desired state lives with the local Bed identity. Recovery no
 	// longer depends on a deployment-owned template catalog.
 	host := hostfacts.Collect()
-	next, err := NewManager(host, m.root, "default", "/bin/sh", isolation.New(host, "shared", m.root), nil, 0, nil, WithServices(ports))
+	next, err := NewManager(host, m.root, "default", "/bin/sh", isolation.New(host, "shared", m.root), nil, 0, nil, WithPillows(ports))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,19 +350,19 @@ func TestBedServiceLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
 	if got := recovered.Spec().PortMappings; len(got) != 1 || got[0].Name != "main" || !got[0].Publish {
 		t.Fatalf("lost port declaration: %+v", got)
 	}
-	if got := recovered.Spec().Services; len(got) != 1 || got[0].Name != "main" || got[0].SpecDigest == "" {
-		t.Fatalf("recovery lost service declaration: %+v", got)
+	if got := recovered.Spec().Pillows; len(got) != 1 || got[0].Name != "main" || got[0].SpecDigest == "" {
+		t.Fatalf("recovery lost pillow declaration: %+v", got)
 	}
 }
 
-func testServiceOptions(specs []model.ServiceSpec) CreateOptions {
-	options := CreateOptions{Services: specs}
+func testPillowOptions(specs []model.PillowSpec) CreateOptions {
+	options := CreateOptions{Pillows: specs}
 	for _, s := range specs {
 		options.PortMappings = append(options.PortMappings, model.PortMappingSpec{Name: s.PortMapping, Protocol: "tcp", Publish: true})
 	}
 	return options
 }
 
-func testServiceURL(port int) string {
+func testPillowURL(port int) string {
 	return fmt.Sprintf("http://127.0.0.1:%d", port)
 }

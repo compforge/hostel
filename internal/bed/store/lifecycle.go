@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+
 	"github.com/qiankunli/hostel/internal/bed"
 )
 

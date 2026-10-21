@@ -1,4 +1,4 @@
-package service
+package pillow
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 )
 
 type Launch struct {
+	Name      string
 	Command   []string
 	Directory string
 	Env       map[string]string
@@ -40,12 +41,12 @@ type Runtime interface {
 
 // Status references its PortMapping; network owns all allocated port facts.
 type Status struct {
-	protocol.ServiceStatus
+	protocol.PillowStatus
 	// The internal outcome retains executor diagnostics. Public snapshots clear Detail.
 	Outcome *executor.ProcessOutcome `json:"outcome,omitempty"`
 }
 
-// Access snapshots the current mapping and credential under the Service lock.
+// Access snapshots the current mapping and credential under the Pillow lock.
 // Clients derive URLs from its ports and their reachable carrier host; storing
 // derived addresses here would create another source of network state.
 type Access struct {
@@ -72,7 +73,7 @@ type group struct {
 }
 type record struct {
 	mapping *network.PortMapping
-	spec    bed.ServiceSpec
+	spec    bed.PillowSpec
 	status  Status
 	token   string
 	restart chan struct{}
@@ -87,7 +88,7 @@ func NewManager(mappings *network.PortMappings, onChange func(*bed.Bed)) *Manage
 
 // SetConfigurationManager binds the shared configuration domain before Start.
 func (m *Manager) SetConfigurationManager(c *configuration.Manager) { m.configurations = c }
-func (m *Manager) Resolve(specs []bed.ServiceSpec, mappings []bed.PortMappingSpec) ([]bed.ServiceSpec, error) {
+func (m *Manager) Resolve(specs []bed.PillowSpec, mappings []bed.PortMappingSpec) ([]bed.PillowSpec, error) {
 	resolved, err := Normalize(specs)
 	if err != nil {
 		return nil, err
@@ -103,21 +104,21 @@ func (m *Manager) Resolve(specs []bed.ServiceSpec, mappings []bed.PortMappingSpe
 		}
 		p, ok := declarations[s.PortMapping]
 		if !ok {
-			return nil, fmt.Errorf("service %s references undeclared port mapping %s", s.Name, s.PortMapping)
+			return nil, fmt.Errorf("pillow %s references undeclared port mapping %s", s.Name, s.PortMapping)
 		}
 		if used[p.Name] {
-			return nil, fmt.Errorf("port mapping %s has multiple service consumers", p.Name)
+			return nil, fmt.Errorf("port mapping %s has multiple pillow consumers", p.Name)
 		}
 		used[p.Name] = true
 		if !m.mappings.Available() {
-			return nil, fmt.Errorf("service %s requires a port manager", s.Name)
+			return nil, fmt.Errorf("pillow %s requires a port manager", s.Name)
 		}
 	}
 	return resolved, nil
 }
 
 func (m *Manager) PrepareBed(ctx context.Context, b *bed.Bed, runtime Runtime) error {
-	specs, err := m.Resolve(b.Spec().Services, b.Spec().PortMappings)
+	specs, err := m.Resolve(b.Spec().Pillows, b.Spec().PortMappings)
 	if err != nil {
 		return err
 	}
@@ -125,19 +126,28 @@ func (m *Manager) PrepareBed(ctx context.Context, b *bed.Bed, runtime Runtime) e
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return fmt.Errorf("service manager closed")
+		return fmt.Errorf("pillow manager closed")
 	}
 	if m.groups[b] != nil {
 		m.mu.Unlock()
-		return fmt.Errorf("services already prepared")
+		return fmt.Errorf("pillows already prepared")
 	}
 	for _, spec := range specs {
-		r := &record{spec: spec, status: Status{ServiceStatus: protocol.ServiceStatus{Name: spec.Name, PortMapping: spec.PortMapping, Required: spec.Required, Phase: "starting"}}, restart: make(chan struct{}, 1), done: make(chan struct{})}
+		r := &record{spec: spec, status: Status{PillowStatus: protocol.PillowStatus{Name: spec.Name, PortMapping: spec.PortMapping, Required: spec.Required, Phase: "starting"}}, restart: make(chan struct{}, 1), done: make(chan struct{})}
 		g.records = append(g.records, r)
 	}
 	m.groups[b] = g
 	// Install every cancel handle before exposing this group to Stop.
 	for _, r := range g.records {
+		if len(r.spec.Command) == 0 {
+			r.status.Phase = "prepared"
+			r.status.Ready = true
+			r.status.Prepared = true
+			r.cancel = func() {}
+			close(r.done)
+			continue
+		}
+		r.status.Prepared = true
 		runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 		r.cancel = cancel
 		go m.supervise(runCtx, g, r)
@@ -149,7 +159,7 @@ func (m *Manager) PrepareBed(ctx context.Context, b *bed.Bed, runtime Runtime) e
 		changed := g.changed
 		g.mu.Unlock()
 		if failed != "" {
-			return fmt.Errorf("required service %s failed", failed)
+			return fmt.Errorf("required pillow %s failed", failed)
 		}
 		if ready {
 			return nil
@@ -166,7 +176,7 @@ func groupReadiness(g *group) (bool, string) {
 	for _, r := range g.records {
 		if r.spec.Required && !r.status.Ready {
 			ready = false
-			if r.status.Phase == "failed" || r.status.Phase == "stopped" {
+			if r.status.Phase == "failed" || r.status.Phase == "stopped" || r.status.Phase == "completed" {
 				return false, r.spec.Name
 			}
 		}
@@ -177,7 +187,7 @@ func (m *Manager) group(b *bed.Bed) *group { m.mu.Lock(); defer m.mu.Unlock(); r
 func (m *Manager) Ready(b *bed.Bed) bool {
 	g := m.group(b)
 	if g == nil {
-		return len(b.Spec().Services) == 0
+		return false
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -210,7 +220,7 @@ func (m *Manager) Status(b *bed.Bed) []Status {
 func (m *Manager) Access(b *bed.Bed, name string) (Access, error) {
 	g := m.group(b)
 	if g == nil {
-		return Access{}, fmt.Errorf("service not found")
+		return Access{}, fmt.Errorf("pillow not found")
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -223,20 +233,23 @@ func (m *Manager) Access(b *bed.Bed, name string) (Access, error) {
 			return Access{PortMapping: p, Token: r.token}, nil
 		}
 	}
-	return Access{}, fmt.Errorf("HTTP service unavailable")
+	return Access{}, fmt.Errorf("HTTP pillow unavailable")
 }
 func (m *Manager) Restart(b *bed.Bed, name string) error {
 	g := m.group(b)
 	if g == nil {
-		return fmt.Errorf("service not found")
+		return fmt.Errorf("pillow not found")
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.stopped {
-		return fmt.Errorf("services stopping")
+		return fmt.Errorf("pillows stopping")
 	}
 	for _, r := range g.records {
 		if r.spec.Name == name {
+			if len(r.spec.Command) == 0 {
+				return fmt.Errorf("pillow %s has no main process", name)
+			}
 			select {
 			case r.restart <- struct{}{}:
 			default:
@@ -244,10 +257,10 @@ func (m *Manager) Restart(b *bed.Bed, name string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("service not found")
+	return fmt.Errorf("pillow not found")
 }
 
-// +rule=`Only a running Service can be ready. Leaving the execution lifecycle withdraws admission, but losing readiness never ends the execution.`
+// +rule=`Only a running Pillow can be ready. Leaving the execution lifecycle withdraws admission, but losing readiness never ends the execution.`
 func (m *Manager) update(g *group, r *record, fn func(*Status)) {
 	g.mu.Lock()
 	before := r.status
@@ -260,7 +273,7 @@ func (m *Manager) update(g *group, r *record, fn func(*Status)) {
 	g.changed = make(chan struct{})
 	g.mu.Unlock()
 	if before.Phase != after.Phase || before.Ready != after.Ready || before.ExecutionID != after.ExecutionID {
-		log.Printf("hostel service transition: bed=%s id=%s service=%s phase=%s ready=%t execution=%s reason=%s", g.bed.Name, g.bed.ID, after.Name, after.Phase, after.Ready, after.ExecutionID, after.Reason)
+		log.Printf("hostel pillow transition: bed=%s id=%s pillow=%s phase=%s ready=%t execution=%s reason=%s", g.bed.Name, g.bed.ID, after.Name, after.Phase, after.Ready, after.ExecutionID, after.Reason)
 	}
 	if m.onChange != nil {
 		m.onChange(g.bed)

@@ -14,12 +14,12 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
-func TestServiceExecutableUsesBedView(t *testing.T) {
+func TestPillowExecutableUsesBedView(t *testing.T) {
 	requireTestBinary(t)
 	if runtime.GOOS != "linux" || os.Getenv(imageEnv) != "" {
 		t.Skip("requires Linux binary fixture")
 	}
-	source, err := os.MkdirTemp("", "hostel-e2e-service-executable-")
+	source, err := os.MkdirTemp("", "hostel-e2e-pillow-executable-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,21 +52,22 @@ func TestServiceExecutableUsesBedView(t *testing.T) {
 					options.Bed.Filesystem.PRoot = value(tool.Required)
 				}
 				c := startTarget(t, targetOptions{isolation: room, executor: backend, config: &options}).client
-				var services []map[string]any
+				var pillows []map[string]any
 				for name, command := range map[string]string{"absolute": "/tools/worker", "relative": "./worker", "path": "worker"} {
-					services = append(services, map[string]any{"name": name, "command": []string{command}, "directory": "/tools", "required": true,
-						"env": map[string]string{"PATH": "/tools:/usr/bin:/bin", "MARKER": "bed-env", "NAME": name}, "restart": "never", "stop_seconds": 1})
+					pillows = append(pillows, map[string]any{"name": name, "command": []string{command}, "workdir": "/tools", "required": true,
+						"mounts": []map[string]any{{"volume": "tools", "path": "/tools"}},
+						"env":    map[string]string{"PATH": "/tools:/usr/bin:/bin", "MARKER": "bed-env", "NAME": name}, "restart_policy": "never", "stop_seconds": 1})
 				}
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-				response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "service-executable", "path_mappings": []map[string]any{{"host_path": source, "bed_path": "/tools"}}, "services": services}, nil)
+				response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "pillow-executable", "volumes": []map[string]any{{"name": "tools", "host_path": map[string]any{"path": source}}}, "pillows": pillows}, nil)
 				cancel()
 				if err != nil {
 					t.Fatal(err)
 				}
-				must2xx(t, "create Bed-local Services", response)
-				c.waitBed(t, "service-executable", func(b bedView) bool { return b.Status.Readiness.Ready }, "Bed-local Services ready")
-				result, response := c.command(t, "service-executable", map[string]any{"command": "set -eu; for n in absolute relative path; do for i in 1 2 3 4 5; do test -s /workspace/$n && break; sleep 0.1; done; test \"$(cat /workspace/$n)\" = bed-env; done", "timeout": 5000})
-				must2xx(t, "read Service files", response)
+				must2xx(t, "create Bed-local Pillows", response)
+				c.waitBed(t, "pillow-executable", func(b bedView) bool { return b.Status.Readiness.Ready }, "Bed-local Pillows ready")
+				result, response := c.command(t, "pillow-executable", map[string]any{"command": "set -eu; for n in absolute relative path; do for i in 1 2 3 4 5; do test -s /workspace/$n && break; sleep 0.1; done; test \"$(cat /workspace/$n)\" = bed-env; done", "timeout": 5000})
+				must2xx(t, "read Pillow files", response)
 				assertCommandExit(t, result, 0)
 			})
 		}

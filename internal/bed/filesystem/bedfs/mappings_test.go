@@ -2,7 +2,6 @@ package bedfs
 
 import (
 	"context"
-	model "github.com/qiankunli/hostel/internal/bed"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +26,7 @@ func mappedFixture(t *testing.T, readOnly bool) (*FS, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
-	if err := fs.SetPathMappings([]model.PathMapping{{HostPath: external, BedPath: "/mnt/project", ReadOnly: readOnly}}); err != nil {
+	if err := fs.SetMounts([]Mount{{Source: external, Target: "/mnt/project", ReadOnly: readOnly}}); err != nil {
 		t.Fatal(err)
 	}
 	return fs, external

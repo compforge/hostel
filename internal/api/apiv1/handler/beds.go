@@ -15,8 +15,10 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -27,7 +29,6 @@ import (
 	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 
 	model "github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/bed/network"
@@ -45,7 +46,7 @@ func (s *Handler) viewFromStatus(b *bed.Resident, status bed.ResidentStatus) pro
 		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
 		Pinned:       status.Pinned,
-		Workdir:      bedfs.DefaultWorkdir,
+		Workdir:      b.Spec().DefaultPillow().Workdir,
 		CreatedAt:    b.Spec().CreatedAt,
 		LastActiveAt: status.LastActiveAt,
 		KeepaliveAt:  status.KeepaliveAt,
@@ -71,17 +72,13 @@ func (s *Handler) bedList(c *gin.Context) {
 }
 
 type createBedRequest struct {
-	PortMappings  []model.PortMappingSpec              `json:"port_mappings,omitempty"`
-	PathMappings  []model.PathMapping                  `json:"path_mappings,omitempty"`
-	SyncPaths     []string                             `json:"sync_paths,omitempty"`
-	EnvFiles      map[string]string                    `json:"env_files,omitempty"`
-	EnvFrom       []string                             `json:"env_from,omitempty"`
-	EnvValueFrom  map[string]model.ConfigurationKeyRef `json:"env_value_from,omitempty"`
-	Env           map[string]string                    `json:"env,omitempty"`
-	Services      []model.ServiceSpec                  `json:"services,omitempty"`
-	NetworkPolicy *network.Policy                      `json:"networkPolicy,omitempty"`
-	ID            string                               `json:"id,omitempty"`
-	Sync          string                               `json:"sync,omitempty"`
+	Volumes       []model.VolumeSpec      `json:"volumes,omitempty"`
+	PortMappings  []model.PortMappingSpec `json:"port_mappings,omitempty"`
+	SyncPaths     []string                `json:"sync_paths,omitempty"`
+	Pillows       pillowDeclarations      `json:"pillows,omitempty"`
+	NetworkPolicy *network.Policy         `json:"networkPolicy,omitempty"`
+	ID            string                  `json:"id,omitempty"`
+	Sync          string                  `json:"sync,omitempty"`
 }
 
 // POST /v1/beds — create (or return existing) a bed. Empty id → server-assigned.
@@ -100,7 +97,7 @@ func (s *Handler) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{PortMappings: req.PortMappings, PathMappings: req.PathMappings, SyncPaths: req.SyncPaths, Env: req.Env, EnvFiles: req.EnvFiles, EnvFrom: req.EnvFrom, EnvValueFrom: req.EnvValueFrom, Sync: req.Sync, NetworkPolicy: req.NetworkPolicy, Services: req.Services})
+	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Volumes: req.Volumes, PortMappings: req.PortMappings, SyncPaths: req.SyncPaths, Sync: req.Sync, NetworkPolicy: req.NetworkPolicy, Pillows: req.Pillows})
 	if err != nil {
 		if errors.Is(err, network.ErrUnavailable) {
 			respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, "bed network policy is unavailable")
@@ -220,7 +217,7 @@ func (s *Handler) capabilities(c *gin.Context) {
 		"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
 		"persistence":                    s.mgr.SyncName(),
 		"bed_sync_selection":             true,
-		"bed_services":                   true,
+		"bed_pillows":                    true,
 		"transfer_syncs":                 []string{"copy", "restic"},
 		"file_transfers":                 s.mgr.TransfersConfigured(),
 		"transfer_instance_id":           s.mgr.TransferInstanceID(),
@@ -263,4 +260,23 @@ func (s *Handler) bedCheckpoint(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"persistence": string(b.Spec().Sync)})
+}
+
+type pillowDeclarations []model.PillowSpec
+
+func (p *pillowDeclarations) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return fmt.Errorf("pillows cannot be null")
+	}
+	var values []model.PillowSpec
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&values); err != nil {
+		return err
+	}
+	if len(values) == 0 {
+		return fmt.Errorf("pillows must not be empty")
+	}
+	*p = values
+	return nil
 }

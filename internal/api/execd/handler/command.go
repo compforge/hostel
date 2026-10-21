@@ -12,7 +12,7 @@ import (
 func (s *Handler) execdExecution(c *gin.Context) (*bed.Execution, bool) {
 	b := s.bedOf(c)
 	e, ok := s.mgr.Executions().Get(c.Param("id"))
-	if !ok || e.BedID != b.Name || e.Mode == bed.ExecutionService {
+	if !ok || e.BedID != b.Name || e.Mode == bed.ExecutionMain {
 		respondError(c, 404, apiview.ErrCommandNotFound, "command not found")
 		return nil, false
 	}

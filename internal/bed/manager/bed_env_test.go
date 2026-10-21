@@ -11,9 +11,10 @@ import (
 	"testing"
 	"time"
 
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
-	"github.com/qiankunli/hostel/internal/bed/service"
+	"github.com/qiankunli/hostel/internal/bed/pillow"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
@@ -23,7 +24,7 @@ func TestBedEnvExecutionAndSessionOwnership(t *testing.T) {
 	defer m.Close(context.Background())
 	m.SetCarrierEnvironment([]string{"PATH=/usr/bin:/bin", "LANG=C", "VALUE=carrier"})
 	declared := map[string]string{"VALUE": "base", "BASE_ONLY": "present"}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "env", CreateOptions{Env: declared}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: declared}}}); err != nil {
 		t.Fatal(err)
 	}
 	declared["VALUE"] = "caller-mutated"
@@ -100,7 +101,7 @@ func TestBedEnvDeclarationConflictAndRecovery(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
 	want := map[string]string{"VALUE": "local-only-value"}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "recover-env", CreateOptions{Env: want}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "recover-env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: want}}}); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(t.Context(), "recover-env")
@@ -108,11 +109,11 @@ func TestBedEnvDeclarationConflictAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, env := range []map[string]string{nil, {}, {"VALUE": "changed"}} {
-		if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, CreateOptions{Env: env}); !errors.Is(err, ErrEnvConflict) {
+		if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: env}}}); !errors.Is(err, ErrPillowsConflict) {
 			t.Fatalf("changed declaration accepted: %v", err)
 		}
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, CreateOptions{Env: want}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), b.Name, CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: want}}}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(m.identityPath(b.Name))
@@ -120,7 +121,7 @@ func TestBedEnvDeclarationConflictAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	var record localIdentityRecord
-	if err := json.Unmarshal(data, &record); err != nil || !maps.Equal(record.Env, want) {
+	if err := json.Unmarshal(data, &record); err != nil || !maps.Equal(record.Pillows[0].Env, want) {
 		t.Fatalf("environment not persisted: %v", err)
 	}
 	info, err := os.Stat(m.identityPath(b.Name))
@@ -148,14 +149,14 @@ func TestBedEnvDeclarationConflictAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer next.Close(context.Background())
-	if _, err := next.InitializeBedWithOptions(t.Context(), b.Name, CreateOptions{}); !errors.Is(err, ErrEnvConflict) {
+	if _, err := next.InitializeBedWithOptions(t.Context(), b.Name, CreateOptions{}); !errors.Is(err, ErrPillowsConflict) {
 		t.Fatalf("recovery accepted changed declaration: %v", err)
 	}
 	recovered, err := next.Ensure(t.Context(), b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recovered.ID != b.ID || !maps.Equal(recovered.Spec().Env, want) {
+	if recovered.ID != b.ID || !maps.Equal(recovered.Spec().DefaultPillow().Env, want) {
 		t.Fatal("recovery lost Bed identity or environment")
 	}
 	env, err := next.buildExecutionEnv(recovered, nil)
@@ -169,37 +170,37 @@ func TestBedEnvDeclarationConflictAndRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fresh.ID == b.ID || len(fresh.Spec().Env) != 0 {
+	if fresh.ID == b.ID || len(fresh.Spec().DefaultPillow().Env) != 0 {
 		t.Fatal("forgotten environment survived a new local Bed lifetime")
 	}
 }
 
-func TestServiceDoesNotInheritBedExecutionEnv(t *testing.T) {
+func TestPillowDoesNotInheritBedExecutionEnv(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
 	m.SetCarrierEnvironment([]string{"PATH=/usr/bin:/bin", "VALUE=carrier"})
-	if _, err := m.InitializeBedWithOptions(t.Context(), "service-env", CreateOptions{Env: map[string]string{"BASE_ONLY": "private", "VALUE": "base"}}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "pillow-env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: map[string]string{"BASE_ONLY": "private", "VALUE": "base"}}}}); err != nil {
 		t.Fatal(err)
 	}
-	b, err := m.Ensure(t.Context(), "service-env")
+	b, err := m.Ensure(t.Context(), "pillow-env")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		env  map[string]string
 		want string
-	}{{nil, "carrier//service-env"}, {map[string]string{"VALUE": "service"}, "service//service-env"}} {
-		process, err := (serviceRuntime{manager: m, bed: b}).Start(t.Context(), service.Launch{Command: []string{"/bin/sh", "-c", `printf '%s/%s/%s' "$VALUE" "$BASE_ONLY" "$BED_ID"`}, Directory: "/workspace", Env: tc.env})
+	}{{nil, "carrier//pillow-env"}, {map[string]string{"VALUE": "pillow"}, "pillow//pillow-env"}} {
+		process, err := (pillowRuntime{manager: m, bed: b}).Start(t.Context(), pillow.Launch{Name: b.Spec().DefaultPillow().Name, Command: []string{"/bin/sh", "-c", `printf '%s/%s/%s' "$VALUE" "$BASE_ONLY" "$BED_ID"`}, Directory: "/workspace", Env: tc.env})
 		if err != nil {
 			t.Fatal(err)
 		}
-		execution := process.(*serviceProcess).execution
+		execution := process.(*pillowProcess).execution
 		if result := execution.Wait(); result.Process.Kind != executor.ProcessExited || result.Process.ExitCode != 0 {
-			t.Fatalf("service result: %+v", result)
+			t.Fatalf("pillow result: %+v", result)
 		}
 		output, _, _, _ := execution.Logs(-1)
 		if executionOutputText(output) != tc.want {
-			t.Fatalf("service environment: %q, want %q", executionOutputText(output), tc.want)
+			t.Fatalf("pillow environment: %q, want %q", executionOutputText(output), tc.want)
 		}
 	}
 }
@@ -208,7 +209,7 @@ func TestCreateBedRejectsInvalidEnvBeforeAdmission(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
 	for _, env := range []map[string]string{{"HOSTEL_SECRET": "x"}, {"BED_ID": "x"}, {"PLAYWRIGHT_MCP_CDP_ENDPOINT": "x"}, {"bad-name": "x"}, {"VALUE": "x\x00y"}} {
-		if _, err := m.InitializeBedWithOptions(t.Context(), "invalid-env", CreateOptions{Env: env}); !errors.Is(err, ErrInvalidEnvironment) {
+		if _, err := m.InitializeBedWithOptions(t.Context(), "invalid-env", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: env}}}); !errors.Is(err, ErrInvalidEnvironment) {
 			t.Fatalf("invalid environment accepted: %v", err)
 		}
 	}
@@ -228,7 +229,7 @@ func TestBedEnvInFlightDeclarationIsImmutable(t *testing.T) {
 	defer m.Close(context.Background())
 	defer close(backend.release)
 	declared := map[string]string{"VALUE": "initial"}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "pending", CreateOptions{Env: declared}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "pending", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: declared}}}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -236,10 +237,10 @@ func TestBedEnvInFlightDeclarationIsImmutable(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("initialization did not reach Store")
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "pending", CreateOptions{Env: declared}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "pending", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: declared}}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "pending", CreateOptions{Env: map[string]string{"VALUE": "different"}}); !errors.Is(err, ErrEnvConflict) {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "pending", CreateOptions{Pillows: []model.PillowSpec{{Name: "main", Env: map[string]string{"VALUE": "different"}}}}); !errors.Is(err, ErrPillowsConflict) {
 		t.Fatalf("in-flight declaration changed: %v", err)
 	}
 	if m.OccupiedBedCount() != 1 {

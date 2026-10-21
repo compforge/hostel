@@ -218,7 +218,7 @@ func isolatedState(b *bed.Resident, shareNet bool) apiview.IsolatedSessionState 
 		LastRunAt:            st.LastActiveAt,
 		IdleRemainingSeconds: remaining,
 		Profile:              "balanced",
-		Workdir:              bedfs.DefaultWorkdir,
+		Workdir:              b.Spec().DefaultPillow().Workdir,
 		ShareNet:             &shareNet,
 	}
 }

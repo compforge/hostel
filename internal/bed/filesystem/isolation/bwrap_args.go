@@ -15,6 +15,8 @@
 package isolation
 
 import (
+	"path/filepath"
+
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
@@ -46,7 +48,7 @@ const carrierSoftwareRoot = "/usr/local"
 //     depth, not part of the data-isolation (path) contract, so we drop it and
 //     bind the host /proc read-only instead. (uts/ipc unshares are cheap and
 //     don't touch mounts.)
-//  2. Bind bed_home to /: command, session and Service data share BedFS paths.
+//  2. Bind bed_home to /: command, session and Pillow data share BedFS paths.
 //  3. Overlay existing carrier runtime directories read-only; /usr/local
 //     remains the carrier-wide writable software installation directory.
 //  4. Fresh /dev and existing read-only /proc (no procfs remount under K8s).
@@ -57,7 +59,7 @@ const carrierSoftwareRoot = "/usr/local"
 // maskPaths are host paths that exist. Environment ownership lives in bed's
 // process-env builder, so isolation mechanisms never inherit or filter it.
 // +why=`A private internal data mount only fixes structured API paths; native processes issue literal absolute paths. The Bed data root must be the default process root, with explicit runtime overlays instead of an inherited carrier root.`
-func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths []string, mappings []model.PathMapping, runtimeRoots ...string) []string {
+func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths []string, mappings []bedfs.Mount, runtimeRoots ...string) []string {
 	mounts := []hostfs.Mount{
 		{Kind: hostfs.Bind, Source: bedHome, Target: "/"},
 	}
@@ -77,7 +79,7 @@ func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths [
 		}
 	}
 	mounts = append(mounts,
-		hostfs.Mount{Kind: hostfs.Bind, Source: workspace, Target: bedfs.DefaultWorkdir},
+		hostfs.Mount{Kind: hostfs.Bind, Source: filepath.Join(bedHome, "workspace"), Target: bedfs.DefaultWorkdir},
 	)
 	for _, m := range mappings {
 		kind := hostfs.Bind
@@ -85,11 +87,11 @@ func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths [
 			kind = hostfs.ReadOnlyBind
 			// /usr/local is otherwise rebound writable for shared software installs.
 			// Protect the carrier spelling too, or the process could bypass ReadOnly.
-			if model.PathsOverlap(m.HostPath, carrierSoftwareRoot) {
-				mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: m.HostPath, Target: m.HostPath})
+			if model.PathsOverlap(m.Source, carrierSoftwareRoot) {
+				mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: m.Source, Target: m.Source})
 			}
 		}
-		mounts = append(mounts, hostfs.Mount{Kind: kind, Source: m.HostPath, Target: m.BedPath})
+		mounts = append(mounts, hostfs.Mount{Kind: kind, Source: m.Source, Target: m.Target})
 	}
 	// The final trusted re-exec restores workload configuration only after
 	// resource entry and credential drop. Its image is never Bed-controlled.
@@ -108,7 +110,7 @@ func systemFileArgs(fs *bedfs.FS) []string {
 
 // defaultMaskCandidates are host paths masked when they exist: host user data
 // and platform-mounted credentials (e.g. K8s serviceaccount tokens). Secrets
-// belong to hostel/managed services, never to arbitrary bed code.
+// belong to Hostel and explicitly configured workloads, never to arbitrary bed code.
 var defaultMaskCandidates = []string{
 	"/root",
 	"/home",

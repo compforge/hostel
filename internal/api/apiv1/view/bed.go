@@ -1,14 +1,13 @@
 package view
 
 import (
-	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/protocol"
 
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
 
 func BedInitialization(status bed.InitializationStatus) protocol.Bed {
-	return protocol.Bed{ID: status.ID, Name: status.Name, Sync: string(status.Sync), Workdir: bedfs.DefaultWorkdir, Status: status.BedStatus}
+	return protocol.Bed{ID: status.ID, Name: status.Name, Sync: string(status.Sync), Workdir: status.Workdir, Status: status.BedStatus}
 }
 
 func ExecutorFromStatus(status *bed.ExecutorStatus) *protocol.Executor {

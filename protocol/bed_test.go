@@ -10,7 +10,7 @@ import (
 	"github.com/qiankunli/hostel/protocol"
 )
 
-// +case:id=public_bed_contract,desc=`A caller imports only protocol and reads a Bed detail with separate ID and Name`,expect=`Lifecycle, services, ports and diagnostic JSON survive without changing field paths or integer precision`
+// +case:id=public_bed_contract,desc=`A caller imports only protocol and reads a Bed detail with separate ID and Name`,expect=`Lifecycle, pillows, ports and diagnostic JSON survive without changing field paths or integer precision`
 func TestBedDetailWireContract(t *testing.T) {
 	wire, err := os.ReadFile("testdata/bed.json")
 	if err != nil {
@@ -26,12 +26,12 @@ func TestBedDetailWireContract(t *testing.T) {
 	if bed.Generation != 9007199254740993 || bed.Status.Components.Store.SnapshotGeneration != 9007199254740992 {
 		t.Fatal("data generation lost integer precision")
 	}
-	if len(bed.Status.Services) != 1 || len(bed.Status.PortMappings) != 1 {
-		t.Fatal("missing service or port mapping")
+	if len(bed.Status.Pillows) != 1 || len(bed.Status.PortMappings) != 1 {
+		t.Fatal("missing pillow or port mapping")
 	}
-	service, port := bed.Status.Services[0], bed.Status.PortMappings[0]
-	if !service.Ready || service.PortMapping != port.Name || service.ExecutionID != port.ExecutionID || port.State != "listening" || port.BedPort != 8080 || port.HostPort != 24000 {
-		t.Fatalf("service/port association: %+v %+v", service, port)
+	pillow, port := bed.Status.Pillows[0], bed.Status.PortMappings[0]
+	if !pillow.Ready || pillow.PortMapping != port.Name || pillow.ExecutionID != port.ExecutionID || port.State != "listening" || port.BedPort != 8080 || port.HostPort != 24000 {
+		t.Fatalf("pillow/port association: %+v %+v", pillow, port)
 	}
 	if bed.Activity.Operations[protocol.OpExec] != 1 || bed.Activity.Sessions[protocol.SessionKindCDP] != 1 {
 		t.Fatal("activity kinds lost")

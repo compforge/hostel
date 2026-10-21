@@ -8,7 +8,7 @@ import (
 
 // setLifecycle changes phase/readiness without erasing the independent
 // retention clock. Keepalive has one writer path and survives cleanup retries
-// and service readiness changes; it is not reconstructed from LastActiveAt.
+// and pillow readiness changes; it is not reconstructed from LastActiveAt.
 func (m *Manager) setLifecycle(b *model.Bed, next model.LifecycleStatus) {
 	m.owners.Lifecycle.Update(b, func(current *model.LifecycleStatus) {
 		next.KeepaliveAt = current.KeepaliveAt
@@ -41,7 +41,7 @@ func (b *managedBed) retainedUntilLocked() time.Time {
 // beginEvictionLocked is the common admission fence for automatic and explicit
 // eviction. Callers hold m.mu then b.mu; no resource I/O runs under these locks.
 // +spec=`Renewal that wins the eviction fence postpones idle GC; renewal after the fence cannot resurrect a Bed.`
-func (m *Manager) beginEvictionLocked(b *managedBed, cutoff *time.Time, stopServices bool) (bool, error) {
+func (m *Manager) beginEvictionLocked(b *managedBed, cutoff *time.Time, stopPillows bool) (bool, error) {
 	if m.closed || m.beds[b.Name] != b || b.purging {
 		return false, ErrBedUnavailable
 	}
@@ -52,9 +52,9 @@ func (m *Manager) beginEvictionLocked(b *managedBed, cutoff *time.Time, stopServ
 	if cutoff != nil && (until.IsZero() || until.After(*cutoff)) {
 		return false, nil
 	}
-	status := model.LifecycleStatus{Phase: PhaseEvicting, Ready: !stopServices, Reason: "Evicting", UpdatedAt: time.Now()}
-	if stopServices {
-		status.Reason = "StoppingServices"
+	status := model.LifecycleStatus{Phase: PhaseEvicting, Ready: !stopPillows, Reason: "Evicting", UpdatedAt: time.Now()}
+	if stopPillows {
+		status.Reason = "StoppingPillows"
 	}
 	m.setLifecycle(b.Bed, status)
 	return true, nil

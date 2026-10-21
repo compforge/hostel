@@ -20,7 +20,7 @@ import (
 )
 
 // This asserts the real kernel contract through public APIs, not a filtered
-// process listing: namespace identity, procfs, sessions, Services and bind mounts.
+// process listing: namespace identity, procfs, sessions, Pillows and bind mounts.
 func TestPrivatePIDNamespace(t *testing.T) {
 	if os.Getenv("HOSTEL_E2E_REQUIRE_PID_NAMESPACE") != "1" {
 		t.Skip("set HOSTEL_E2E_REQUIRE_PID_NAMESPACE=1 on a privileged Linux runner")
@@ -31,7 +31,7 @@ func TestPrivatePIDNamespace(t *testing.T) {
 	}
 	python, err := exec.LookPath("python3")
 	if err != nil {
-		t.Fatal("Python 3 is required for the HTTP Service fixture")
+		t.Fatal("Python 3 is required for the HTTP Pillow fixture")
 	}
 	options := restrictedOptions()
 	options.Bed.Executor.PIDNS = value(tool.Required)
@@ -46,8 +46,9 @@ func TestPrivatePIDNamespace(t *testing.T) {
 		response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{
 			"id":            id,
 			"port_mappings": []map[string]any{{"name": "http", "bed_port": 8080, "publish": true}},
-			"path_mappings": []map[string]any{{"host_path": source, "bed_path": "/run/application-control"}},
-			"services":      []map[string]any{{"name": "worker", "command": []string{"/bin/sh", "-c", `readlink /proc/self/ns/pid > /run/application-control/namespace; readlink /proc/self/ns/mnt > /run/application-control/mount; printf '%s' "$0" > /run/application-control/owner; while :; do sleep 1; done`, id}, "required": true, "restart": "never", "stop_seconds": 1}, {"name": "web", "port_mapping": "http", "command": []string{python, "-u", "-c", portServiceProgram}, "env": map[string]string{"SERVICE_PORT": "${PORT}", "LABEL": id}, "required": true, "http": map[string]string{"ready_path": "/"}}},
+			"volumes":       []map[string]any{{"name": "control", "host_path": map[string]any{"path": source}}},
+
+			"pillows": append([]map[string]any{{"name": "workspace", "mounts": []map[string]any{{"volume": "control", "path": "/run/application-control"}}}}, []map[string]any{{"name": "worker", "mounts": []map[string]any{{"volume": "control", "path": "/run/application-control"}}, "command": []string{"/bin/sh", "-c", `readlink /proc/self/ns/pid > /run/application-control/namespace; readlink /proc/self/ns/mnt > /run/application-control/mount; printf '%s' "$0" > /run/application-control/owner; while :; do sleep 1; done`, id}, "required": true, "restart_policy": "never", "stop_seconds": 1}, {"name": "web", "port_mapping": "http", "command": []string{python, "-u", "-c", portPillowProgram}, "env": map[string]string{"SERVICE_PORT": "${PORT}", "LABEL": id}, "required": true, "http": map[string]string{"ready_path": "/"}}}...),
 		}, nil)
 		cancel()
 		if err != nil {
@@ -71,13 +72,13 @@ func TestPrivatePIDNamespace(t *testing.T) {
 	}
 	namespaces := map[string]bool{hostNamespace: true}
 	for _, id := range []string{"process-a", "process-b"} {
-		c.waitBed(t, id, func(b bedView) bool { return b.Status.Readiness.Ready }, "process Service ready")
-		// The same control mount and PID domain are visible from every command,
-		// session and Service, and procfs exposes only this namespace's processes.
+		c.waitBed(t, id, func(b bedView) bool { return b.Status.Readiness.Ready }, "process Pillow ready")
+		// The shared control data and PID domain are visible from every command,
+		// session and Pillow, and procfs exposes only this namespace's processes.
 		const script = `set -eu
 for i in 1 2 3 4 5; do test -s /run/application-control/namespace && break; sleep 0.1; done
 test "$(readlink /proc/self/ns/pid)" = "$(cat /run/application-control/namespace)"
-test "$(readlink /proc/self/ns/mnt)" = "$(cat /run/application-control/mount)"
+test "$(readlink /proc/self/ns/mnt)" != "$(cat /run/application-control/mount)"
 # PID 1 is the trusted root supervisor; unprivileged workloads cannot read
 # its namespace symlink. Its proc status must expose namespace-local PID 1.
 awk '/^NSpid:/ { found=1; if (NF != 2 || $2 != 1) exit 1 } END { if (!found) exit 1 }' /proc/1/status
@@ -121,14 +122,14 @@ cat /run/application-control/owner`
 			t.Fatal(err)
 		}
 		must2xx(t, "private namespace status", response)
-		var ports servicePortsView
+		var ports pillowPortsView
 		ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
 		response, err = c.json(ctx, "GET", "/v1/beds/"+id, "", nil, &ports)
 		cancel()
 		if err != nil {
 			t.Fatal(err)
 		}
-		must2xx(t, "private Service ports", response)
+		must2xx(t, "private Pillow ports", response)
 		if len(ports.Status.PortMappings) != 1 || ports.Status.PortMappings[0].State != "listening" {
 			t.Fatalf("listener ownership not verified: %+v", ports)
 		}
@@ -148,9 +149,9 @@ cat /run/application-control/owner`
 		body, err := io.ReadAll(reply.Body)
 		reply.Body.Close()
 		if err != nil || reply.StatusCode != 200 || string(body) != id {
-			t.Fatalf("Service endpoint: status=%d body=%q err=%v", reply.StatusCode, body, err)
+			t.Fatalf("Pillow endpoint: status=%d body=%q err=%v", reply.StatusCode, body, err)
 		}
-		t.Logf("Bed %s: namespace=%s Service port=%d", id, lines[0], ports.Status.PortMappings[0].HostPort)
+		t.Logf("Bed %s: namespace=%s Pillow port=%d", id, lines[0], ports.Status.PortMappings[0].HostPort)
 		if !detail.Executor.Private {
 			t.Fatal("realized private PID namespace not reported")
 		}

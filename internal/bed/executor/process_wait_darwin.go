@@ -10,7 +10,7 @@ import (
 )
 
 // kqueue observes exit without reaping, preserving the child identity while
-// a service drains its process group. os/exec remains the sole wait4 owner.
+// a main process drains its process group. os/exec remains the sole wait4 owner.
 func waitCommandBeforeReap(cmd *exec.Cmd, markBeforeReap func(error) error) error {
 	queue, err := unix.Kqueue()
 	if err == nil {

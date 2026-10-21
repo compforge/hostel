@@ -1,4 +1,4 @@
-package service
+package pillow
 
 import (
 	"bufio"
@@ -54,7 +54,7 @@ func TestReadinessRetainsForwardingConnections(t *testing.T) {
 	if len(allocations) != 2 {
 		t.Fatalf("expected backend and forwarder allocations: %+v", allocations)
 	}
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, testServiceURL(first.PortMapping.HostPort)+"/task", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, testPillowURL(first.PortMapping.HostPort)+"/task", nil)
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -68,7 +68,7 @@ func TestReadinessRetainsForwardingConnections(t *testing.T) {
 	unavailable.Store(true)
 	waitHTTPStatus(t, m, b, func(s Status) bool { return !s.Ready && s.Reason == "ReadinessHTTPStatus503" })
 	if _, err := m.Access(b, "web"); err == nil || m.Ready(b) {
-		t.Fatal("unready service admitted access or marked required services ready")
+		t.Fatal("unready pillow admitted access or marked required pillows ready")
 	}
 	currentPorts := ports.Status()
 	if len(currentPorts) != len(allocations) || !slices.Contains(currentPorts, allocations[0]) || !slices.Contains(currentPorts, allocations[1]) {
@@ -126,7 +126,7 @@ func TestTransientObservationsDoNotTerminateExecution(t *testing.T) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	if len(runtime.processes) != 1 {
-		t.Fatal("transient observation restarted the service")
+		t.Fatal("transient observation restarted the pillow")
 	}
 }
 
@@ -138,7 +138,7 @@ func TestActualExitRetainsRestartPolicy(t *testing.T) {
 	}{{"never", 1, false}, {"on-failure", 0, false}, {"on-failure", 1, true}, {"always", 0, true}} {
 		t.Run(fmt.Sprintf("%s/%d", tc.policy, tc.exit), func(t *testing.T) {
 			m, _ := testController(t, true)
-			b := newServiceTestBed("policy", "", bed.Spec{Services: []bed.ServiceSpec{{Name: "worker", Command: []string{"worker"}, Required: true, Restart: tc.policy, MaxRestarts: 1}}})
+			b := newPillowTestBed("policy", "", bed.Spec{Pillows: []bed.PillowSpec{{Name: "worker", Command: []string{"worker"}, Required: true, RestartPolicy: tc.policy, MaxRestarts: 1}}})
 			runtime := &fakeRuntime{}
 			if err := m.PrepareBed(t.Context(), b, runtime); err != nil {
 				t.Fatal(err)
@@ -151,7 +151,11 @@ func TestActualExitRetainsRestartPolicy(t *testing.T) {
 				if tc.restart {
 					return s.Ready && s.ExecutionID != first.id && s.Restarts == 1
 				}
-				return s.Phase == "failed" && !s.Ready && s.Outcome != nil && s.Outcome.ExitCode == tc.exit
+				phase := "failed"
+				if tc.exit == 0 {
+					phase = "completed"
+				}
+				return s.Phase == phase && !s.Ready && s.Outcome != nil && s.Outcome.ExitCode == tc.exit
 			})
 		})
 	}
@@ -175,7 +179,9 @@ func TestRuntimeListenerConflictStillEndsExecution(t *testing.T) {
 	first := runtime.processes[0]
 	runtime.mu.Unlock()
 	foreign.Store(true)
-	waitHTTPStatus(t, m, b, func(s Status) bool { return s.Phase == "failed" && !s.Ready })
+	waitHTTPStatus(t, m, b, func(s Status) bool {
+		return s.Phase == "failed" && !s.Ready
+	})
 	select {
 	case <-first.Done():
 	default:

@@ -203,28 +203,28 @@ func TestAdapterLargeBackgroundOutput(t *testing.T) {
 	}
 }
 
-func TestAdapterCannotInterruptService(t *testing.T) {
+func TestAdapterCannotInterruptPillow(t *testing.T) {
 	s := newTestServer(t)
-	createBedAndWait(t, s, "service")
-	b, _ := s.mgr.Get("service")
-	e, err := s.mgr.StartExecution(t.Context(), b, bed.ExecutionService, "sleep 30", "", "", nil, 0, nil, nil)
+	createBedAndWait(t, s, "pillow")
+	b, _ := s.mgr.Get("pillow")
+	e, err := s.mgr.StartExecution(t.Context(), b, bed.ExecutionMain, "sleep 30", "", "", nil, 0, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { e.RequestStop(bed.CauseInterrupted); e.Wait() }()
-	for _, base := range []string{"/execd", "/v1/beds/service/execd"} {
+	for _, base := range []string{"/execd", "/v1/beds/pillow/execd"} {
 		for _, request := range []struct{ method, path string }{
 			{"DELETE", "/command?id=" + e.ID},
 			{"GET", "/command/status/" + e.ID},
 			{"GET", "/command/" + e.ID + "/logs"},
 		} {
-			rec := do(t, s, request.method, base+request.path, nil, map[string]string{BedHeader: "service"})
+			rec := do(t, s, request.method, base+request.path, nil, map[string]string{BedHeader: "pillow"})
 			if rec.Code != 404 {
 				t.Fatalf("%s %s: %d %s", request.method, request.path, rec.Code, rec.Body.String())
 			}
 		}
 	}
 	if !e.Status().Running {
-		t.Fatal("command adapter stopped a managed service")
+		t.Fatal("command adapter stopped a managed pillow")
 	}
 }

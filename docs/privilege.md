@@ -5,7 +5,7 @@
 ## 理念与信任边界
 
 Hostel 在同一 Carrier 内同时承担两类职责：daemon 管理所有 Bed 的文件、进程、网络和持久化资源，
-Bed 内的 command、session 与 Service 执行调用方代码。daemon 保留完成管理
+Bed 内的 command、session 与 Pillow 主进程执行调用方代码。daemon 保留完成管理
 动作所需的权限；Bed 进程可使用共享或独立 `BedUser`，并在用户代码获得控制权前清空不再需要的
 capability、设置 `no_new_privs`。
 
@@ -47,22 +47,24 @@ Bed 数据交接给新属主时跳过多硬链接的普通文件，防止改变 
 ## 特权操作顺序
 
 Bed 初始化先恢复或创建 BedFS，再解析并准备 `BedUser`，随后获取网络、文件边界和 Executor 所需的
-资源；全部完成后才发布 Ready。command、session 和 Service 统一通过 `manager.Environment` 组装执行环境：
+资源；全部完成后才发布 Ready。command、session 和 Pillow 主进程统一通过 `manager.Environment` 组装执行环境：
 
 ```text
 Bed Manager 协调各组件准备 BedFS、身份、namespace 与资源限制
   → 准备完成后发布 Ready
   → 执行入口进入已准备的环境
   → 切换到 BedUser，清空 capability 集合、设置 no_new_privs
-  → 应用用户环境与 cwd，启动 command / session / Service
+  → 应用用户环境与 cwd，启动 command / session / Pillow 主进程
 ```
 
 资源准备和降级决策属于 Bed Manager 及其协调的组件，不属于 Executor。Hostel 优先使用实际拥有的
 权限完成准备，权限不足才尝试无特权机制。最终 BedUser 的低权限不应反过来限制 daemon 的准备能力。
 
 rootful bwrap 在 Bed 初始化时准备 mount namespace，Filesystem 持有 namespace/root 句柄；准备
-进程退出后这些句柄仍保留视图。command、session 和 Service 只进入同一视图并最终降权，不重复创建
-挂载。释放顺序是先停止所有执行，再关闭句柄；Executor 替换不重建 mount namespace。
+进程退出后这些句柄仍保留视图。command、Session 和主进程进入所属 Pillow 的卷挂载视图，
+并最终降权；普通执行不重复准备挂载。释放顺序是先停止所有执行，再关闭句柄。Bed 的视图模板
+在 Executor 替换时保留；若 Executor 要求私有 PID namespace，则重新派生匹配 procfs 的最终视图，
+见 [Filesystem](filesystem.md#机制的取舍)。
 
 受信任的进入程序使用静态 Hostel 二进制，不从 Bed rootfs 加载 helper 或动态库。用户环境作为不参与
 程序初始化的载荷传递，降权后才交给用户程序，防止 LD_PRELOAD、PATH 等影响特权准备。
@@ -76,7 +78,7 @@ rootful 准备要求静态构建（`CGO_ENABLED=0`，正式镜像已使用）；
 
 ## 能力与部署条件
 
-所有 Linux Bed command/session/Service 使用 `bedinit` 的身份初始化步骤，不再依赖外部
+所有 Linux Bed command/session/Pillow 主进程使用 `bedinit` 的身份初始化步骤，不再依赖外部
 `setpriv`。即使 BedUser 与 daemon 相同，也清空进程 capability 并设置 `no_new_privs`；有
 CAP_SETPCAP 时清空 bounding set，没有时仅允许非 root 身份保留 ceiling，或 root 的 ceiling
 已经为空。有 CAP_SETGID 时清除 supplementary groups。启动探测核对实际身份和 capability，
@@ -142,7 +144,7 @@ Hostel 启动时先读取 daemon UID/GID、有效 capability、seccomp、LSM 与
 smoke。候选缺少前提或 smoke 失败时，可以选择同一维度内可用的较低能力，并如实披露；某个机制一旦
 被选中，运行时失败必须返回错误，不能静默退回更弱路径。
 
-实例在 HTTP 服务启动前还通过临时 Bed 运行真实 command、shell 与 Service 进程，验证 BedFS、网络、最终 UID/GID、
+实例在 HTTP 服务启动前还通过临时 Bed 运行真实 command、shell 与 Pillow 主进程，验证 BedFS、网络、最终 UID/GID、
 capability 清理和 `NoNewPrivs` 的完整组合。自动候选可在完整清理后有限回退；required、清理失败或候选耗尽会阻止服务启动。网络是可选维度：网络启动
 探测失败不影响 Hostel 提供共享网络服务，但显式请求网络策略时会返回不可用。
 
@@ -157,7 +159,7 @@ capability 清理和 `NoNewPrivs` 的完整组合。自动候选可在完整清�
   `preconditions_satisfied` 只表示这些静态前提满足。
 - `host` 与 `components.filesystem.probes`：capability/seccomp/LSM、namespace、内核功能、ptrace 及
   各文件机制的启动探测。
-- `environment.probe_status`：真实 Bed command、shell 与 Service 进程的完整组合是否通过。
+- `environment.probe_status`：真实 Bed command、shell 与 Pillow 主进程的完整组合是否通过。
 
 诊断读取只返回启动时缓存的事实，不重新探测主机，也不授予权限。判断某项能力是否实际可用时，应先
 看所属组件的最终 verdict，再结合 environment 组合结果；不能只凭 capability 存在推导成功。

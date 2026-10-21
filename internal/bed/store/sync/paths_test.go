@@ -23,6 +23,12 @@ func TestSharedStoreUsesEachBedsSyncPaths(t *testing.T) {
 			}
 			src := t.TempDir()
 			writeTree(t, src)
+			if err := os.MkdirAll(filepath.Join(src, ".volumes-owned", "exchange"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(src, ".volumes-owned", "exchange", "token"), []byte("temporary"), 0600); err != nil {
+				t.Fatal(err)
+			}
 			selections := [][]string{nil, {"/memory"}, {}}
 			for i, paths := range selections {
 				id := []string{"default", "custom", "metadata"}[i]
@@ -38,6 +44,9 @@ func TestSharedStoreUsesEachBedsSyncPaths(t *testing.T) {
 				}
 				if _, err := os.Stat(filepath.Join(dst, "meta.json")); err != nil {
 					t.Fatal(err)
+				}
+				if _, err := os.Stat(filepath.Join(dst, ".volumes-owned")); !os.IsNotExist(err) {
+					t.Fatalf("temporary volume entered snapshot: %v", err)
 				}
 				for j, p := range []string{"data/workspace", "data/memory"} {
 					_, err := os.Stat(filepath.Join(dst, p))
