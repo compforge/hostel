@@ -24,9 +24,10 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	}
 	m.stages[b] = StageInResult{}
 	m.mu.Unlock()
-	result, err := m.StageInBedFS(ctx, spec.Sync, StageInRequest{
+	result, err := m.StageInBedFS(ctx, spec.StoreKind, StageInRequest{
 		BedID: b.Name, BedDir: spec.Dir, LocalPresent: spec.LocalPresent,
 		LocalGeneration: spec.LocalGeneration, OnStep: observer,
+		Validate: func(dir string) error { return validateRestoredVolumes(dir, spec.Volumes) },
 	})
 	m.mu.Lock()
 	if m.stages == nil {
@@ -72,14 +73,14 @@ var _ bed.Component[Status] = (*Manager)(nil)
 
 func (m *Manager) PersistBed(ctx context.Context, b *bed.Bed, generation int64) error {
 	spec := b.Spec()
-	if err := m.Persist(ctx, spec.Sync, b.Name, spec.Dir, generation, spec.SyncPaths); err != nil {
+	if err := m.Persist(ctx, spec.StoreKind, b.Name, spec.Dir, generation, bed.PersistentVolumeRoots(spec.Volumes)); err != nil {
 		return err
 	}
 	m.status.Update(b, func(s *bed.StoreStatus) { s.SnapshotGeneration = generation })
 	return nil
 }
 func (m *Manager) StatBed(ctx context.Context, b *bed.Bed) (*SnapshotInfo, error) {
-	snapshot, err := m.Stat(ctx, b.Spec().Sync, b.Name)
+	snapshot, err := m.Stat(ctx, b.Spec().StoreKind, b.Name)
 	if err == nil && snapshot != nil {
 		m.status.Update(b, func(s *bed.StoreStatus) { s.SnapshotGeneration = snapshot.Generation; s.SnapshotBytes = snapshot.Bytes })
 	}

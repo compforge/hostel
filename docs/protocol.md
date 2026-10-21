@@ -47,8 +47,8 @@ Pillow 使用 `prepared` 区分环境准备，`phase`、`ready` 和 execution �
 创建声明使用有序 `pillows`；环境、workdir 和 mounts 归属 Pillow，卷来源归属 Bed。
 首项是默认 Pillow，省略列表创建 main，显式 null 或空列表拒绝。主进程使用直接字段
 `command`、`args`、`restart_policy`，管理路径为 `/v1/beds/:bedId/pillows`。
-旧 HTTP `services`、顶层环境与 PathMappings 不再接受；旧本地身份只在存储读取边界
-校验和升级，新记录只写新模型。接入方须同步更新创建声明、状态读取和主进程管理路径。
+Volume 使用互斥来源 `managed` 或 `host_path`；`managed.persistence` 为 `none` 或 `sync`。
+Pillow 的挂载路径与 Volume 的持久身份独立，完整数据契约见 [filesystem.md](filesystem.md)。
 
 Pillow 主进程的 outcome 保留既有诊断 JSON；底层 executor 类型不成为公开依赖，私有 Detail
 继续清空。Amenity 的 status 是设施拥有的可扩展 JSON 值；公开契约不暴露内部 sealed Tenant

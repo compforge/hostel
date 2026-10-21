@@ -42,7 +42,7 @@ func (s *Handler) viewFromStatus(b *bed.Resident, status bed.ResidentStatus) pro
 	return protocol.Bed{
 		ID:           b.ID,
 		Name:         b.Name,
-		Sync:         string(b.Spec().Sync),
+		Sync:         string(b.Spec().StoreKind),
 		Status:       status.BedStatus,
 		DataSynced:   status.DataSynced,
 		Pinned:       status.Pinned,
@@ -74,11 +74,9 @@ func (s *Handler) bedList(c *gin.Context) {
 type createBedRequest struct {
 	Volumes       []model.VolumeSpec      `json:"volumes,omitempty"`
 	PortMappings  []model.PortMappingSpec `json:"port_mappings,omitempty"`
-	SyncPaths     []string                `json:"sync_paths,omitempty"`
 	Pillows       pillowDeclarations      `json:"pillows,omitempty"`
 	NetworkPolicy *network.Policy         `json:"networkPolicy,omitempty"`
 	ID            string                  `json:"id,omitempty"`
-	Sync          string                  `json:"sync,omitempty"`
 }
 
 // POST /v1/beds — create (or return existing) a bed. Empty id → server-assigned.
@@ -97,7 +95,7 @@ func (s *Handler) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Volumes: req.Volumes, PortMappings: req.PortMappings, SyncPaths: req.SyncPaths, Sync: req.Sync, NetworkPolicy: req.NetworkPolicy, Pillows: req.Pillows})
+	status, err := s.mgr.InitializeBedWithOptions(c.Request.Context(), id, bed.CreateOptions{Volumes: req.Volumes, PortMappings: req.PortMappings, NetworkPolicy: req.NetworkPolicy, Pillows: req.Pillows})
 	if err != nil {
 		if errors.Is(err, network.ErrUnavailable) {
 			respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, "bed network policy is unavailable")
@@ -169,8 +167,8 @@ func (s *Handler) bedDelete(c *gin.Context) {
 			badRequest(c, "use sync to select the Bed synchronization policy")
 			return
 		}
-		if err := s.mgr.PurgeWithSync(c.Request.Context(), id, c.Query("sync")); err != nil {
-			if errors.Is(err, bed.ErrSyncInvalid) || errors.Is(err, bed.ErrSyncConflict) {
+		if err := s.mgr.Purge(c.Request.Context(), id); err != nil {
+			if errors.Is(err, bed.ErrSyncInvalid) {
 				respondBedError(c, err)
 				return
 			}
@@ -216,7 +214,7 @@ func (s *Handler) capabilities(c *gin.Context) {
 		"max_pinned_beds":                s.mgr.MaxPinnedBeds(),
 		"bed_pressure_threshold_percent": s.mgr.BedPressureThresholdPercent(),
 		"persistence":                    s.mgr.SyncName(),
-		"bed_sync_selection":             true,
+		"volume_persistence":             true,
 		"bed_pillows":                    true,
 		"transfer_syncs":                 []string{"copy", "restic"},
 		"file_transfers":                 s.mgr.TransfersConfigured(),
@@ -259,7 +257,7 @@ func (s *Handler) bedCheckpoint(c *gin.Context) {
 		runtimeError(c, "checkpointed bed is no longer resident")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"persistence": string(b.Spec().Sync)})
+	c.JSON(http.StatusOK, gin.H{"persistence": string(b.Spec().StoreKind)})
 }
 
 type pillowDeclarations []model.PillowSpec

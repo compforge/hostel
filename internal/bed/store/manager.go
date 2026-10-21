@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -150,12 +151,12 @@ func (s *Manager) Stat(ctx context.Context, kind SyncKind, bedID string) (*Snaps
 	return implementation.Stat(ctx, bedID)
 }
 
-func (s *Manager) Persist(ctx context.Context, kind SyncKind, bedID, dir string, generation int64, syncPaths []string) error {
+func (s *Manager) Persist(ctx context.Context, kind SyncKind, bedID, dir string, generation int64, volumeRoots []string) error {
 	implementation, err := s.forSync(ctx, kind)
 	if err != nil {
 		return err
 	}
-	return implementation.Persist(ctx, bedID, dir, generation, syncPaths)
+	return implementation.Persist(ctx, bedID, dir, generation, volumeRoots)
 }
 
 func (s *Manager) Delete(ctx context.Context, kind SyncKind, bedID string) error {
@@ -189,4 +190,30 @@ func (s *Manager) remoteLocked(ctx context.Context) (*backend.S3, error) {
 	}
 	s.remote = remote
 	return s.remote, nil
+}
+
+var ErrPersistenceUnavailable = errors.New("managed persistence=sync requires a configured durable Store")
+
+// ResolveDurable selects an implementation for an explicit Volume durability
+// requirement. A daemon's noop default controls omitted declarations only.
+func (s *Manager) ResolveDurable(ctx context.Context) (SyncKind, error) {
+	if s.defaultSync != SyncNoop {
+		return s.defaultSync, nil
+	}
+	s.mu.Lock()
+	for _, kind := range []SyncKind{SyncAuto, SyncCAS, SyncPack, SyncTar, SyncRestic} {
+		if s.stores[kind] != nil {
+			s.mu.Unlock()
+			return kind, nil
+		}
+	}
+	s.mu.Unlock()
+	kind, err := s.Resolve(ctx, string(SyncAuto))
+	if err != nil {
+		return "", err
+	}
+	if kind == SyncNoop {
+		return "", ErrPersistenceUnavailable
+	}
+	return kind, nil
 }

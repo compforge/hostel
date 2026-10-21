@@ -470,14 +470,9 @@ func (m *Manager) List() []*managedBed {
 	return out
 }
 
-// Evict releases a bed's compute: run the configured Store persist step, tear
-// down, delete the local Bed directory, and free the max-beds slot. Durable
-// stores can restore the identity later; noop persists nothing, so a later
-// initialization starts fresh. Returns evicted=false
-// without error when the eviction was CANCELED because the bed saw new
-// activity during the persist window — serving beats reclaiming, and
-// removing runtime state after a mid-persist write would silently drop that
-// write. A persist failure aborts the evict (never destroy the only copy).
+// Evict closes admission, stops writers, persists managed volumes, then releases
+// the Bed's runtime and local data. Active operations postpone eviction; a
+// persistence failure retains the working copy and allows a later retry.
 func (m *Manager) Evict(ctx context.Context, id string) (bool, error) {
 	return m.evict(ctx, id, nil)
 }
@@ -509,70 +504,7 @@ func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time)
 		}
 		return false, nil // not resident; nothing to evict
 	}
-	if b.Spec().HasMainProcesses() {
-		return m.evictPillowBed(ctx, b, expiryCutoff)
-	}
-	trace := beginLifecycle(ctx, id, lifecycleEvict)
-	defer func() {
-		result := lifecycleResult(retErr)
-		if retErr == nil && !evicted {
-			result = lifecycleCanceled
-		}
-		trace.finish(result, retErr)
-	}()
-
-	// Enter EVICTING: remember the activity watermark we snapshot against.
-	m.mu.Lock()
-	b.mu.Lock()
-	started, err := m.beginEvictionLocked(b, expiryCutoff, false)
-	if !started {
-		b.mu.Unlock()
-		m.mu.Unlock()
-		return false, err
-	}
-	activitySeq := b.activitySeq
-	b.mu.Unlock()
-	m.mu.Unlock()
-
-	// Revoke BEFORE persist (docs/kernel.md): stateful sessions cannot be
-	// waited out, so evict actively ends them — and their writes must not race
-	// the snapshot. The wait is bounded, so a stubborn handler stalls the
-	// evict at most sessionRevokeWait.
-	_ = trace.stage("revoke_sessions", func() error {
-		m.revokeSessions(ctx, b)
-		return nil
-	})
-
-	if err := m.persistBed(ctx, b, "evict"); err != nil {
-		b.mu.Lock()
-		m.setLifecycle(b.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: true, Reason: "Initialized", UpdatedAt: time.Now()})
-		b.mu.Unlock()
-		return false, fmt.Errorf("bed: persist before evict %s: %w", id, err)
-	}
-
-	// Atomic re-check: activity during the persist window cancels the evict.
-	// The snapshot we just took is still valid (it's simply not the final
-	// word), so nothing is wasted.
-	// Commit removal under the same lock order as BeginOperation. Either the
-	// operation is admitted first and changes activitySeq/inflight, or this
-	// delete wins and later admission observes a stale Bed pointer.
-	m.mu.Lock()
-	b.mu.Lock()
-	current, present := m.beds[id]
-	if !present || current != b || b.activitySeq != activitySeq || b.inflight > 0 {
-		m.setLifecycle(b.Bed, model.LifecycleStatus{Phase: PhaseResident, Ready: true, Reason: "Initialized", UpdatedAt: time.Now()})
-		b.mu.Unlock()
-		m.mu.Unlock()
-		return false, nil
-	}
-	m.retirements[id] = b
-	delete(m.beds, id)
-	if id != m.defaultBed {
-		m.residentBeds.Add(-1)
-	}
-	b.mu.Unlock()
-	m.mu.Unlock()
-	return m.finishRetirement(ctx, b)
+	return m.evictResidentBed(ctx, b, expiryCutoff)
 }
 
 // finishRetirement releases the identity only after its resources and directory
@@ -664,9 +596,10 @@ func (m *Manager) persistBed(ctx context.Context, b *managedBed, trigger string)
 		var ok bool
 		meta, ok = loadMeta(b.Spec().Dir)
 		if !ok {
-			meta = bedMeta{Version: 1, BedID: b.Name, CreatedAt: b.Spec().CreatedAt, Sync: b.Spec().Sync}
+			meta = bedMeta{Version: 1, BedID: b.Name, CreatedAt: b.Spec().CreatedAt, Sync: b.Spec().StoreKind}
 		}
-		meta.SyncPaths = b.Spec().SyncPaths
+		meta.Version = 2
+		meta.Volumes = model.ManagedVolumes(b.Spec().Volumes)
 		meta.Generation++
 		// Flush counters before packing so they travel with the snapshot.
 		// LastPersistMs necessarily lags one persist behind because this
@@ -758,7 +691,7 @@ func (m *Manager) persistDirty(ctx context.Context, trigger string) ([]string, b
 	var done []string
 	failed := false
 	for _, b := range m.List() {
-		if b.Spec().Sync == store.SyncNoop {
+		if b.Spec().StoreKind == store.SyncNoop {
 			// Mixed carriers still need local disk-size facts for noop Beds, but no
 			// automatic snapshot generation or Store I/O for them.
 			bytes := filepathx.DirBytes(b.Spec().Dir)

@@ -16,7 +16,7 @@ import (
 func TestPillowExecutionOwnership(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
-	options := CreateOptions{Volumes: []model.VolumeSpec{{Name: "shared", EmptyDir: &model.EmptyDirVolume{}}}, Pillows: []model.PillowSpec{
+	options := CreateOptions{Volumes: []model.VolumeSpec{{Name: "shared", Managed: &model.ManagedVolume{Persistence: "none"}}}, Pillows: []model.PillowSpec{
 		{Name: "z-default", Workdir: "/work/default", Env: map[string]string{"VALUE": "default"}, Mounts: []model.VolumeMount{{Volume: "shared", Path: "/reader"}}},
 		{Name: "a-worker", Workdir: "/writer", Env: map[string]string{"VALUE": "worker"}, Mounts: []model.VolumeMount{{Volume: "shared", Path: "/writer"}}, Command: []string{"/bin/sleep"}, Args: []string{"300"}, Required: true, StopSeconds: 1},
 	}}

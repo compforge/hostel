@@ -71,7 +71,7 @@ func TestInitializationRollsBackNetworkBeforeCompletion(t *testing.T) {
 				done:      make(chan struct{}), cancel: cancel,
 			}
 			initialization.model = initialization.local.bed
-			model.SpecWriter{}.Update(initialization.model, func(s *model.Spec) { s.Sync = store.SyncNoop })
+			model.SpecWriter{}.Update(initialization.model, func(s *model.Spec) { s.StoreKind = store.SyncNoop })
 			m.owners.Lifecycle.Set(initialization.model, model.LifecycleStatus{Phase: PhaseInitializing})
 			m.initializations["rollback"] = initialization
 			n := &initializationNetwork{releasing: make(chan struct{}), resume: make(chan struct{})}
@@ -226,7 +226,7 @@ func TestInitialPolicyIsAppliedBeforeResidentPublication(t *testing.T) {
 	n := &policyInitializationNetwork{entered: make(chan struct{}), proceed: make(chan struct{})}
 	m.SetNetworkManager(network.WithProvider(n, m.owners.Network))
 	initial := &network.Policy{DefaultAction: "deny"}
-	if _, err := m.InitializeBedWithOptions(t.Context(), "policy-bed", CreateOptions{Sync: "noop", NetworkPolicy: initial}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "policy-bed", CreateOptions{Volumes: testWorkspaceVolume("none"), NetworkPolicy: initial}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -243,7 +243,7 @@ func TestInitialPolicyIsAppliedBeforeResidentPublication(t *testing.T) {
 	if _, err := m.Ensure(ctx, "policy-bed"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, "policy-bed", CreateOptions{Sync: "noop", NetworkPolicy: initial}); err != nil {
+	if _, err := m.InitializeBedWithOptions(ctx, "policy-bed", CreateOptions{Volumes: testWorkspaceVolume("none"), NetworkPolicy: initial}); err != nil {
 		t.Fatal(err)
 	}
 	if n.applied.Load() != 1 {
@@ -256,7 +256,7 @@ func TestInitialPolicyIsAppliedBeforeResidentPublication(t *testing.T) {
 func TestInitialPolicyFailureNeverPublishesBed(t *testing.T) {
 	m := newTestManager(t)
 	m.SetNetworkManager(network.WithProvider(&policyInitializationNetwork{fail: true}, m.owners.Network))
-	if _, err := m.InitializeBedWithOptions(t.Context(), "policy-failed", CreateOptions{Sync: "noop", NetworkPolicy: &network.Policy{DefaultAction: "deny"}}); err != nil {
+	if _, err := m.InitializeBedWithOptions(t.Context(), "policy-failed", CreateOptions{Volumes: testWorkspaceVolume("none"), NetworkPolicy: &network.Policy{DefaultAction: "deny"}}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)

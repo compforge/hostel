@@ -172,11 +172,6 @@ func (m *Manager) beginInitialization(
 		return nil, nil, err
 	}
 	options.Volumes = volumes
-	syncPaths, pathsErr := model.NormalizeSyncPaths(options.SyncPaths)
-	if pathsErr != nil {
-		return nil, nil, pathsErr
-	}
-	options.SyncPaths = syncPaths
 	ports, err := model.NormalizePortMappings(options.PortMappings)
 	if err != nil {
 		return nil, nil, err
@@ -185,12 +180,28 @@ func (m *Manager) beginInitialization(
 	if err := m.Start(ctx); err != nil {
 		return nil, nil, err
 	}
+	if options.Pillows == nil {
+		options.Pillows = []model.PillowSpec{{Name: "main"}}
+		if options.Volumes == nil || model.HasVolume(options.Volumes, "workspace") {
+			options.Pillows[0].Mounts = []model.VolumeMount{{Volume: "workspace", Path: "/workspace"}}
+		}
+	}
 	resolvedPillows, err := m.pillows.Resolve(options.Pillows, options.PortMappings)
 	if err != nil {
 		return nil, nil, err
 	}
 	options.Pillows = resolvedPillows
-	requestedSync := options.Sync
+	requestedSync := ""
+	if options.Volumes != nil {
+		requestedSync = string(store.SyncNoop)
+		if len(model.PersistentVolumeRoots(options.Volumes)) > 0 {
+			durable, err := m.store.ResolveDurable(ctx)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%w: %v", ErrSyncInvalid, err)
+			}
+			requestedSync = string(durable)
+		}
+	}
 	if options.NetworkPolicy != nil {
 		normalized, err := network.NormalizePolicy(*options.NetworkPolicy)
 		if err != nil {
@@ -246,7 +257,6 @@ func (m *Manager) beginInitialization(
 		m.mu.Unlock()
 		actual := resident.Spec()
 		return nil, resident, errors.Join(
-			checkBedSync(requestedSync, selected, actual.Sync),
 			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
 			checkPillows(options, actual.Pillows),
 			checkBedPaths(options, actual),
@@ -257,7 +267,6 @@ func (m *Manager) beginInitialization(
 		m.mu.Unlock()
 		actual := current.model.Spec()
 		return current, nil, errors.Join(
-			checkBedSync(requestedSync, selected, actual.Sync),
 			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
 			checkPillows(options, actual.Pillows),
 			checkBedPaths(options, actual),
@@ -271,6 +280,10 @@ func (m *Manager) beginInitialization(
 	if selectionErr != nil {
 		m.mu.Unlock()
 		return nil, nil, selectionErr
+	}
+	if len(model.PersistentVolumeRoots(options.Volumes)) > 0 && selected == store.SyncNoop {
+		m.mu.Unlock()
+		return nil, nil, fmt.Errorf("%w: managed persistence=sync requires a durable Store", ErrSyncInvalid)
 	}
 	if local := m.localIdentities[id]; local != nil {
 		actual := local.bed.Spec()
@@ -287,9 +300,6 @@ func (m *Manager) beginInitialization(
 		options.PortMappings = actual.PortMappings
 		if options.Volumes == nil {
 			options.Volumes = actual.Volumes
-		}
-		if options.SyncPaths == nil {
-			options.SyncPaths = actual.SyncPaths
 		}
 	}
 	// A new request retries a failed initialization. Its previous status remains
@@ -318,9 +328,8 @@ func (m *Manager) beginInitialization(
 		cancel:    cancel,
 	}
 	localMeta, localPresent := loadMeta(filepath.Join(m.root, id))
-	spec := model.Spec{Dir: filepath.Join(m.root, id), Sync: selected, CreatedAt: localMeta.CreatedAt, LocalPresent: localPresent, LocalGeneration: localMeta.Generation}
+	spec := model.Spec{Dir: filepath.Join(m.root, id), StoreKind: selected, CreatedAt: localMeta.CreatedAt, LocalPresent: localPresent, LocalGeneration: localMeta.Generation}
 	spec.Volumes = options.Volumes
-	spec.SyncPaths = options.SyncPaths
 	spec.Pillows = options.Pillows
 	spec.PortMappings = options.PortMappings
 	if options.NetworkPolicy != nil {
@@ -384,7 +393,7 @@ func (m *Manager) runInitialization(ctx context.Context, initialization *bedInit
 	published = true
 
 	// The one full-id log line is the grep anchor from an upstream sandbox id.
-	log.Printf("hostel bed resident: bed=%s short=%s sync=%s", bedID, resident.Short(), resident.Spec().Sync)
+	log.Printf("hostel bed resident: bed=%s short=%s sync=%s", bedID, resident.Short(), resident.Spec().StoreKind)
 }
 
 func (m *Manager) publishInitializedBed(initialization *bedInitialization, resident *managedBed) error {
@@ -553,7 +562,7 @@ func residentInitializationStatus(resident *managedBed) InitializationStatus {
 		Workdir:   resident.Spec().DefaultPillow().Workdir,
 		ID:        resident.ID,
 		Name:      resident.Name,
-		Sync:      resident.Spec().Sync,
+		Sync:      resident.Spec().StoreKind,
 		BedStatus: status.BedStatus,
 	}
 }
@@ -565,16 +574,13 @@ func residentInitializationStatus(resident *managedBed) InitializationStatus {
 type CreateOptions struct {
 	Volumes       []model.VolumeSpec
 	PortMappings  []model.PortMappingSpec
-	SyncPaths     []string
 	Pillows       []model.PillowSpec
 	lookup        bool // native Ensure joins desired state; an explicit create compares it
-	Sync          string
 	NetworkPolicy *network.Policy
 }
 
 var (
-	ErrSyncInvalid  = errors.New("bed: unsupported sync kind")
-	ErrSyncConflict = errors.New("bed: cannot change an active bed's sync policy")
+	ErrSyncInvalid = errors.New("bed: unsupported sync kind")
 )
 
 // bedSync uses local metadata for an orphaned Bed. No separate routing record
@@ -591,16 +597,8 @@ func (m *Manager) bedSync(ctx context.Context, id, requested string) (store.Sync
 	return selected, nil
 }
 
-// A create retry may reuse a live Bed, but cannot change its active sync policy.
-func checkBedSync(requested string, selected, current store.SyncKind) error {
-	if requested != "" && selected != current {
-		return ErrSyncConflict
-	}
-	return nil
-}
-
 func retirementStatus(b *managedBed) InitializationStatus {
-	return InitializationStatus{Workdir: b.Spec().DefaultPillow().Workdir, ID: b.ID, Name: b.Name, Sync: b.Spec().Sync, BedStatus: lifecycleView(b.Bed.Status().Lifecycle)}
+	return InitializationStatus{Workdir: b.Spec().DefaultPillow().Workdir, ID: b.ID, Name: b.Name, Sync: b.Spec().StoreKind, BedStatus: lifecycleView(b.Bed.Status().Lifecycle)}
 }
 
 func checkInitialPolicy(requested *network.Policy, initial *model.NetworkPolicy) error {
@@ -612,7 +610,7 @@ func checkInitialPolicy(requested *network.Policy, initial *model.NetworkPolicy)
 
 // snapshot projects lifecycle from the single shared model, including progress.
 func (i *bedInitialization) snapshot() InitializationStatus {
-	return InitializationStatus{Workdir: i.model.Spec().DefaultPillow().Workdir, ID: i.model.ID, Name: i.model.Name, Sync: i.model.Spec().Sync, BedStatus: lifecycleView(i.model.Status().Lifecycle), StartedAt: i.startedAt}
+	return InitializationStatus{Workdir: i.model.Spec().DefaultPillow().Workdir, ID: i.model.ID, Name: i.model.Name, Sync: i.model.Spec().StoreKind, BedStatus: lifecycleView(i.model.Status().Lifecycle), StartedAt: i.startedAt}
 }
 func lifecycleView(s model.LifecycleStatus) BedStatus {
 	return BedStatus{Phase: s.Phase, Readiness: Readiness{Ready: s.Ready, Reason: s.Reason, Message: s.Message, UpdatedAt: s.UpdatedAt}}

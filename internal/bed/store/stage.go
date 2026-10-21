@@ -51,6 +51,7 @@ type StageInRequest struct {
 	LocalPresent    bool
 	LocalGeneration int64
 	OnStep          func(StageInStep)
+	Validate        func(string) error
 }
 
 // StageInResult describes the copy that is ready for BedFS preparation.
@@ -106,6 +107,11 @@ func StageInBedFS(ctx context.Context, backend Store, request StageInRequest) (S
 	if err := backend.Restore(ctx, request.BedID, staging); err != nil {
 		return StageInResult{}, fmt.Errorf("restore snapshot: %w", err)
 	}
+	if request.Validate != nil {
+		if err := request.Validate(staging); err != nil {
+			return StageInResult{}, fmt.Errorf("validate restored volumes: %w", err)
+		}
+	}
 	result.Restored = true
 	result.RestoreDuration = time.Since(startedAt)
 	if err := publishStagedBed(request.BedDir, staging); err != nil {
@@ -114,6 +120,7 @@ func StageInBedFS(ctx context.Context, backend Store, request StageInRequest) (S
 	return result, nil
 }
 
+// publishStagedBed commits a completely prepared Bed tree before any consumers start.
 func publishStagedBed(bedDir, staging string) error {
 	parent := filepath.Dir(bedDir)
 	oldDir := ""

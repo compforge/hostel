@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestBedStoreAPIOverridesInstanceDefault(t *testing.T) {
+func TestVolumePersistenceOverridesInstanceDefault(t *testing.T) {
 	if os.Getenv(binaryEnv) == "" {
 		t.Skip("binary profile required for runner-local S3 endpoint")
 	}
@@ -33,7 +33,7 @@ func TestBedStoreAPIOverridesInstanceDefault(t *testing.T) {
 	c := startTarget(t, targetOptions{store: "cas"}).client
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	created, err := c.json(ctx, "POST", "/v1/beds", "", map[string]string{"id": "noop-bed", "sync": "noop"}, nil)
+	created, err := c.json(ctx, "POST", "/v1/beds", "", volumeRequest("noop-bed", "none"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestBedStoreAPIOverridesInstanceDefault(t *testing.T) {
 		}
 		must2xx(t, action.path, response)
 	}
-	created, err = c.json(ctx, "POST", "/v1/beds", "", map[string]string{"id": "noop-bed", "sync": "noop"}, nil)
+	created, err = c.json(ctx, "POST", "/v1/beds", "", volumeRequest("noop-bed", "none"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,12 +56,7 @@ func TestBedStoreAPIOverridesInstanceDefault(t *testing.T) {
 	if got := c.download(t, "noop-bed", "/workspace/data.txt"); got.Status != 404 {
 		t.Fatalf("noop restored data: %d", got.Status)
 	}
-	evicted, err := c.json(ctx, "DELETE", "/v1/beds/noop-bed", "", nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	must2xx(t, "evict before purge", evicted)
-	response, err := c.json(ctx, "DELETE", "/v1/beds/noop-bed?purge=true&sync=noop", "", nil, nil)
+	response, err := c.json(ctx, "DELETE", "/v1/beds/noop-bed?purge=true", "", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,12 +76,12 @@ func TestBedStoreAPIOverridesInstanceDefault(t *testing.T) {
 	// Reverse direction: an API-selected S3 Bed also overrides a noop default.
 	reverse := startTarget(t, targetOptions{store: "noop"}).client
 	before := storageRequests.Load()
-	explicit, err := reverse.json(ctx, "POST", "/v1/beds", "", map[string]string{"id": "explicit-s3", "sync": "cas"}, nil)
+	explicit, err := reverse.json(ctx, "POST", "/v1/beds", "", volumeRequest("explicit-s3", "sync"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	must2xx(t, "override noop with S3", explicit)
-	reverse.waitBed(t, "explicit-s3", func(b bedView) bool { return b.Status.Phase == "failed" && b.Sync == "cas" }, "explicit S3 denial")
+	reverse.waitBed(t, "explicit-s3", func(b bedView) bool { return b.Status.Phase == "failed" && b.Sync == "auto" }, "explicit S3 denial")
 	if storageRequests.Load() <= before {
 		t.Fatal("API S3 selection did not override noop default")
 	}

@@ -164,10 +164,7 @@ func respondBedError(c *gin.Context, err error) {
 		respondError(c, http.StatusConflict, apiview.ErrBedInvalid, err.Error())
 		return
 	}
-	if errors.Is(err, bed.ErrSyncConflict) {
-		respondError(c, http.StatusConflict, apiview.ErrBedSyncConflict, err.Error())
-		return
-	}
+
 	if errors.Is(err, bed.ErrResourcePressure) {
 		respondError(c, http.StatusTooManyRequests, apiview.ErrResourcePressure, err.Error())
 		return

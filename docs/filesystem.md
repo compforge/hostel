@@ -30,7 +30,7 @@ bwrap 与 PRoot 将 Bed 数据根作为进程的默认 `/`，再接入 Carrier �
 
 Workdir 是 Pillow 的默认工作目录，缺省为 `/workspace`，也是该 Pillow 文件 API 相对路径的解析基准。
 它是 Bed 根文件空间中的普通目录；具体进程的 cwd 可以覆盖默认值，常驻 shell 也可通过
-`cd` 改变当前目录。Store 默认同步 `/workspace` 是独立策略，不由 Workdir 的身份推导。
+`cd` 改变当前目录。默认 workspace 是挂载到 `/workspace` 的 managed 卷；其持久化由卷策略决定。
 
 Bed 管理 API 的 `workdir` 返回默认 Pillow 的 Bed 路径，不返回 Carrier 目录。
 Isolated session 的 `workdir` 表达该次执行目录；省略时沿用默认 Pillow 的工作目录。
@@ -48,7 +48,8 @@ command、Session、主进程及文件 API 共用所属 Pillow 的挂载视图�
 
 | 来源 | 数据归属与生命周期 |
 |---|---|
-| `empty_dir: {}` | Hostel 分配临时目录，随 Bed 驻留实例创建和回收 |
+| `managed: {persistence: none}` | Hostel 分配临时目录，Bed 回收时删除 |
+| `managed: {persistence: sync}` | Hostel 管理本地工作副本，Store 持久化并恢复完整卷 |
 | `host_path: {path: ...}` | 引用 daemon 可见的已有目录，由外部管理；Hostel 不创建、不改变属主、不删除源数据 |
 
 HostPath 是 Carrier 路径；Hostel 跑在 Pod 内时，它可以指向已经挂入 Pod 的 PVC 目录。
@@ -57,7 +58,7 @@ HostPath 是 Carrier 路径；Hostel 跑在 Pod 内时，它可以指向已经�
 ```json
 {
   "id": "shared-data",
-  "volumes": [{"name": "exchange", "empty_dir": {}}],
+  "volumes": [{"name": "exchange", "managed": {"persistence": "none"}}],
   "pillows": [{"name":"workspace", "mounts":[{"volume":"exchange", "path":"/exchange", "read_only":true}]}, {
     "name": "writer",
     "command": ["/bin/sh", "-c", "printf ready > /output/result; exec sleep 300"],
@@ -66,11 +67,12 @@ HostPath 是 Carrier 路径；Hostel 跑在 Pod 内时，它可以指向已经�
 }
 ```
 
-EmptyDir 是 Bed 驻留期间的临时数据：Pillow 主进程重启和 Executor 替换保留数据，Bed 回收时由
-既有本地目录清理流程删除；重新初始化分配新的空目录。声明保存在本地身份记录中，数据位于
-Rootfs 外，不进入 Store 快照。HostPath 源必须存在且为目录，不能覆盖 Hostel 工作目录，
-不同卷的源目录不能重叠或通过 symlink 互为别名。挂载目标不能与 SyncPaths、其他挂载或运行时保留路径重叠；同一视图
-对同一卷只声明一次挂载，避免读写别名绕过只读意图。声明在本地 Bed 生命周期内固定。
+Managed 卷位于 `<beds-root>/<bed-name>/volumes/<volume-name>`，Rootfs 位于旁边的 `rootfs/`。
+Pillow 主进程重启、Executor 替换与本地 daemon 恢复保留卷数据。回收时 sync 卷先完成持久化，
+随后删除本地 Bed 目录；重建时恢复 sync 卷，none 卷重新分配为空。
+HostPath 源必须存在且为目录，不能覆盖 beds-root，不同源不能重叠或通过 symlink 互为别名。
+挂载目标不能与同一 Pillow 的其他挂载或运行时保留路径重叠；`/workspace` 是普通挂载目标。
+同一视图对同一卷只声明一次挂载。声明保存在本地身份记录，managed 数据契约随快照保存。
 
 Filesystem 持有各 Pillow 的文件视图模板，Executor 创建时分别派生所需的最终
 视图，进程启动时选取对应视图。身份和网络仍按 Bed 归属；文件视图不同不代表进程之间已完整隔离。
@@ -193,7 +195,7 @@ UID backend 以独立进程身份兑现 confined 的数据访问边界，目录�
 | 空间 | 示例 | 所有者 |
 |---|---|---|
 | Client | `/`、`/workspace/a`、`/tmp/job`、相对路径 `a` | BedFS；`/` 是 bed_home，相对路径以 Workdir 为基准 |
-| Carrier | `<beds-root>/<bed-id>/data/...` | BedFS；daemon 的文件操作和 Store 使用 |
+| Carrier | `<beds-root>/<bed-name>/rootfs/...` | BedFS；daemon 的文件操作和 Store 使用 |
 | Executor | bwrap/PRoot 保留 Bed 数据绝对路径；pathshim 映射工作目录、`/tmp` 和显式路径；Carrier 使用宿主路径 | BedFS `ProcessView` 定义语义，isolation 实现投影 |
 
 映射规则只有一套：
@@ -217,22 +219,25 @@ Bed 创建请求示例：
 {
   "id": "example",
   "volumes": [
-    {"name": "project", "host_path": {"path": "/volumes/project"}},
-    {"name": "reference", "host_path": {"path": "/volumes/reference"}}
+    {"name": "workspace", "managed": {"persistence": "sync"}},
+    {"name": "reference", "host_path": {"path": "/srv/reference"}}
   ],
-  "mounts": [
-    {"volume": "project", "path": "/project"},
-    {"volume": "reference", "path": "/reference", "read_only": true}
-  ],
-  "sync_paths": ["/workspace", "/memory"]
+  "pillows": [{
+    "name": "agent",
+    "workdir": "/workspace",
+    "mounts": [
+      {"volume": "workspace", "path": "/workspace"},
+      {"volume": "reference", "path": "/reference", "read_only": true}
+    ]
+  }]
 }
 ```
 
 `HostPath` 是 daemon 可见的已有目录，例如 Pod 级 PVC 挂载点；Hostel 不创建、接管属主或删除它。调用方负责授权来源目录、挂载和访问权限。挂载同一卷的执行方在结构化路径与执行视图中访问同一份数据；映射本身不声明自动持久化。执行后端只读取当前 BedFS 的映射，不再持有独立的 projection 声明或配置 Option。
 
-挂载 `path` 必须绝对、非根，不能与其他映射、内置 `/workspace`、内核目录或内部挂载点重叠。`HostPath` 不得覆盖 Hostel 工作区或彼此重叠。映射保留目标位置原有的 BedFS 目录数据；进程映射生效时源目录优先，未生效时 API 可读取本地候选。映射不能与 SyncPaths 重叠。默认根由 Hostel 建立，不在 Spec 中重复提交。
+挂载 `path` 必须绝对、非根，不能与其他映射、内核目录或内部挂载点重叠。`HostPath` 不得覆盖 Hostel 工作区或彼此重叠。映射保留目标位置原有的 BedFS 目录数据；进程映射生效时源目录优先，未生效时 API 可读取本地候选。默认根由 Hostel 建立，不在 Spec 中重复提交。
 
-文件 API 为每个选中目录持有独立的 `os.Root` 句柄，禁止 symlink 逃出该目录；删除或重命名映射根及其父目录会失败。跨映射 rename 不支持；Transfer 应显式选择一个映射目录，跨映射父目录的导入/导出会失败。删除 Bed 只删除默认根的数据，不触碰额外映射的目录。
+文件 API 为每个选中目录持有独立的 `os.Root` 句柄，禁止 symlink 逃出该目录；删除或重命名映射根及其父目录会失败。跨映射 rename 不支持；Transfer 应显式选择一个映射目录，跨映射父目录的导入/导出会失败。删除 Bed 回收 Rootfs 与 managed 卷，不删除 HostPath 来源。
 
 ## 四、Executor 视图
 
@@ -311,7 +316,7 @@ rootful mount 在此时完成；降级到 PRoot/pathshim 或无特权 bwrap 时�
 - Pillow owns its view：Workdir 与 Mounts 定义环境内的文件路径；
 - Executor owns process realm：只持有 BedFS View，可丢失和替换；
 - Shell owns its Executor View：session run 的结构化 cwd 由 Shell 投影并更新持久 cwd；
-- Store consumes Bed SyncPaths：快照始终包含 `meta.json`，并包含 `Bed.Spec.SyncPaths` 选择的默认映射子树（默认 `/workspace`）；
+- Store consumes managed Volumes：快照包含 `meta.json` 与声明为 sync 的完整卷；
 - isolation realizes View：不拥有数据命名和持久化规则；
 - API handler 只选择与房型、部署配置匹配的 BedFS 读取策略：不能自行拼 carrier 路径或 mount point。
 

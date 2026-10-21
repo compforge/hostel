@@ -244,7 +244,7 @@ func (m *Manager) captureInventory() ([]InventoryBed, bool) {
 		entry := InventoryBed{
 			ID:                 b.ID,
 			Name:               b.Name,
-			Sync:               b.Spec().Sync,
+			Sync:               b.Spec().StoreKind,
 			Status:             status.BedStatus,
 			Generation:         status.Generation,
 			SnapshotGeneration: status.SnapshotGeneration,

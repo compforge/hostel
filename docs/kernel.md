@@ -2,10 +2,10 @@
 
 ## 一、定位与目标
 
-Hostel 是面向 AI Agent 的 sandbox runtime，在一个 Carrier（一台机器或一个容器）内，
-用一份重运行环境低成本承载多个 Bed。Hostel / Bed 可类比轻量、尽力实现的 kubelet / Pod：
-面向受限的 Host/Pod，从 API 视角提供尽可能接近 Container 的文件、工作目录与执行体验。
-当前面向可信或半可信代码。
+**Hostel 是面向 Agent 的 Pod 式工作负载运行时，通过 BedSpec 组织执行环境与共享资源，内建工作数据同步，并根据宿主能力分级兑现运行与隔离需求。**
+
+Hostel 在一个 Carrier（一台机器或一个容器）内，用一份重运行环境低成本承载多个 Bed。
+面向受限的 Host/Pod，从 API 视角提供文件、工作目录与执行能力，当前面向可信或半可信代码。
 
 **与 Docker/containerd 的区别在于运行时要解决的核心问题。** 如果把完备的 namespace、
 cgroup 和容器隔离作为统一前提，再围绕这些机制管理执行单元，Hostel 就会趋向于重做
@@ -129,9 +129,41 @@ Pillow 直接包含 command / args 以及主进程监督策略。没有 command 
 或进程 namespace；不同 env/mounts 不代表完整安全隔离。
 
 Filesystem 先准备 Bed Volume 来源，再把 Pillow mounts 编译为文件 API 和进程视图。
-empty_dir 由 Bed 驻留实例拥有，host_path 借用外部目录；具体投影属于文件实现，不另设 Bed
-路径映射声明。只读等明确诉求无法兑现时拒绝，受限宿主下实际降级通过状态披露。
+managed 卷由 Hostel 分配和回收，`managed.persistence: sync` 声明自动持久化，
+`none` 声明临时数据；host_path 引用外部管理的目录。只读等明确诉求无法兑现时拒绝，受限宿主下实际降级通过状态披露。
 Pillow 的监督与管理契约见 [pillow.md](pillow.md)。
+
+### Bed 数据布局与持久化
+
+`beds-root` 是 Hostel 存放所有 Bed 本地数据的父目录，配置为 `--beds-root` /
+`HOSTEL_BEDS_ROOT`，默认 `/workspace`。它与 Pillow 视角的 `/workspace` 分属不同路径空间。
+
+```text
+<beds-root>/
+├── .identities/                 # 本地声明与身份，不进入快照
+├── bed1/
+│   ├── meta.json                # generation 与 managed 卷清单
+│   ├── rootfs/                  # 临时根数据，例如 /tmp
+│   └── volumes/
+│       ├── workspace/           # managed.persistence: sync
+│       └── runtime/             # managed.persistence: none
+└── bed2/
+    ├── meta.json
+    ├── rootfs/
+    └── volumes/
+        └── workspace/
+```
+
+Bed 拥有卷，Pillow 用 mounts 选择路径与权限。bed1 的 agent 可把 workspace 挂到
+`/workspace`，tools 可把同一卷挂到 `/data`；bed2 的同名卷拥有独立数据。
+Workdir 只决定 cwd 和相对路径基准，持久化身份由 Bed Name 与卷名确定。
+
+省略声明时展开默认 workspace 卷与 main Pillow 挂载，持久化默认由 daemon 配置解析并固定。
+显式 Pillow 只获得自己声明的 mounts。Filesystem 负责本地卷与视图，Store 负责同步和恢复，
+Bed Manager 负责生命周期顺序。初始化先恢复并验证卷，再准备视图和进程；回收先关闭准入、
+停止所有写入，再同步并释放本地目录。同步失败保留本地数据，显式 sync 无可用后端时拒绝初始化。
+临时卷跨 Pillow/Executor 替换及本地 daemon 恢复保留，Bed 回收后重新创建为空。
+Rootfs 不进入快照，HostPath 由外部负责持久化与回收。
 
 ### Bed 网络与端口声明
 
@@ -351,10 +383,10 @@ Executor 丢失终结其所属 Execution，不能把传输 EOF 当成正常退�
 ### 数据同步与空闲回收
 
 ```text
-resident → 保留期到期且无 operation → evicting
-  → revoke session → persist → 原子复核活动
-    ├─ 有新活动：取消本次回收
-    └─ 无新活动：停止准入 → Stop → Release → 删除本地目录 → Forget
+resident → 保留期到期且无 operation → 关闭准入 → evicting
+  → 停止 Pillow / Session / Transfer / Executor → persist
+    ├─ 失败：保留本地数据，恢复可用环境或报告未就绪
+    └─ 成功：Release → 删除本地目录 → Forget
 已移除 → 再次初始化 → durable: Restore / noop: fresh → resident
 ```
 
@@ -364,8 +396,8 @@ resident → 保留期到期且无 operation → evicting
 
 CollectExpired 扫描过期 Bed。普通 evict 在 operation 仍存活时拒绝；Transfer 的持有范围
 覆盖整个传输。session 必须先撤销并等待退出，再 persist，避免会话写入与快照并发。
-持久化窗口可能出现新活动，所以删除前必须原子复核 `activitySeq` / `inflight`；有新活动
-就取消回收。persist 失败也中止 evict，因为本地目录可能是唯一副本。
+回收准入屏障拒绝新 operation，停止现有进程和传输后再持久化。删除前仍复核
+`activitySeq` / `inflight`；persist 失败中止 evict，因为本地目录可能是唯一副本。
 
 原子复核通过后，Bed 从 resident 移入待清理集合，继续占用 occupied 名额，以
 `evicting / CleanupPending / not ready` 披露进度。运行资源清理和本地目录删除完成后才
@@ -403,8 +435,8 @@ Hostel。Hostel 没有 drain 接口，也不因空闲自行退出；它通过 `i
 [isolation.md](isolation.md)。
 
 BedFS 负责逻辑数据根及路径投影；Store 管理自动持久化，也提供无业务含义的 [Bed ↔ S3 文件传输](transfers.md)。
-自动持久化负责数据在生命周期之外能否恢复。当前默认只
-持久化 SyncPaths 声明的子树和 Bed 元数据。正常 evict 删除本地工作副本，durable 策略可从快照
+自动持久化按卷名选择 `managed.persistence: sync` 的完整卷和 Bed 元数据，
+多个卷共同发布一个 Bed generation。正常 evict 删除本地工作副本，durable 策略可从快照
 恢复，noop 不保留数据。配置归属与恢复契约见 [store.md](store.md)。
 
 Amenity 是独立设施。Tenant 是 Hostel 为服务 Bed 定义的设施使用单元，具体资源实现由设施隐藏。Chromium 使用 BrowserContext，

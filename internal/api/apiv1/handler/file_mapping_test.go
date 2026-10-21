@@ -37,7 +37,7 @@ func TestCarrierMappingAPIAndCommandPaths(t *testing.T) {
 	s := NewServer(mgr)
 	for _, body := range []string{
 		`{"id":"old-declaration","path_mappings":[]}`,
-		`{"id":"dual-source","volumes":[{"name":"v","empty_dir":{},"host_path":{"path":"/data"}}]}`,
+		`{"id":"dual-source","volumes":[{"name":"v","managed":{},"host_path":{"path":"/data"}}]}`,
 	} {
 		rec := do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(body), map[string]string{"Content-Type": "application/json"})
 		if rec.Code != http.StatusBadRequest {

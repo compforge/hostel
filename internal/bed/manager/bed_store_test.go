@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -60,15 +59,15 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 	st.snaps["ephemeral"] = []byte("old remote contents")
 	m := storeTestManager(t, t.TempDir(), st)
 	defer m.Close(ctx)
-	if _, err := m.InitializeBedWithOptions(ctx, "ephemeral", CreateOptions{Sync: "noop"}); err != nil {
+	if _, err := m.InitializeBedWithOptions(ctx, "ephemeral", CreateOptions{Volumes: testWorkspaceVolume("none")}); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(ctx, "ephemeral")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Spec().Sync != "noop" {
-		t.Fatalf("noop bed sync=%s", b.Spec().Sync)
+	if b.Spec().StoreKind != "noop" {
+		t.Fatalf("noop bed sync=%s", b.Spec().StoreKind)
 	}
 	if err := os.WriteFile(filepath.Join(b.Workdir(), "marker.txt"), []byte("local only"), 0600); err != nil {
 		t.Fatal(err)
@@ -109,14 +108,14 @@ func TestMixedBedStoresKeepNoopOutOfAllBackendIO(t *testing.T) {
 			t.Fatalf("evict %s: %v %v", id, ok, err)
 		}
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, b.Name, CreateOptions{Sync: "noop"}); err != nil {
+	if _, err := m.InitializeBedWithOptions(ctx, b.Name, CreateOptions{Volumes: testWorkspaceVolume("none")}); err != nil {
 		t.Fatal(err)
 	}
 	resumed, err := m.Ensure(ctx, b.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resumed.Spec().Sync != "noop" {
+	if resumed.Spec().StoreKind != "noop" {
 		t.Fatal("recreate ignored explicit store")
 	}
 	if _, err := os.Stat(filepath.Join(resumed.Workdir(), "marker.txt")); !errors.Is(err, os.ErrNotExist) {
@@ -149,7 +148,7 @@ func TestBedStoreUsesLocalMetadataAndDefaultsAfterEviction(t *testing.T) {
 		t.Fatal(err)
 	}
 	// An orphaned working copy retains its own Store across a daemon restart.
-	if err := saveMeta(dir, bedMeta{Version: 1, BedID: "one", Sync: "noop"}); err != nil {
+	if err := saveMeta(dir, bedMeta{Version: 2, BedID: "one", Sync: "noop", Volumes: testWorkspaceVolume("none")}); err != nil {
 		t.Fatal(err)
 	}
 	st := newFakeStore()
@@ -159,10 +158,10 @@ func TestBedStoreUsesLocalMetadataAndDefaultsAfterEviction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Spec().Sync != "noop" {
+	if b.Spec().StoreKind != "noop" {
 		t.Fatal("local metadata lost selection")
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, "one", CreateOptions{Sync: string(st.Name())}); !errors.Is(err, ErrSyncConflict) {
+	if _, err := m.InitializeBedWithOptions(ctx, "one", CreateOptions{Volumes: testWorkspaceVolume("sync")}); !errors.Is(err, ErrPathsConflict) {
 		t.Fatalf("live store switch=%v", err)
 	}
 	if ok, err := m.Evict(ctx, "one"); err != nil || !ok {
@@ -172,7 +171,7 @@ func TestBedStoreUsesLocalMetadataAndDefaultsAfterEviction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Spec().Sync != st.Name() {
+	if b.Spec().StoreKind != st.Name() {
 		t.Fatal("absent Bed without override must inherit default")
 	}
 }
@@ -182,14 +181,7 @@ func TestPurgeAbsentBedUsesAPIStore(t *testing.T) {
 	st := &countedStore{fakeStore: newFakeStore()}
 	m := storeTestManager(t, t.TempDir(), st)
 	defer m.Close(ctx)
-	// Caller-managed data with the same ID must be untouched even without local metadata.
-	st.snaps["absent"] = []byte("external data")
-	if err := m.PurgeWithSync(ctx, "absent", "noop"); err != nil {
-		t.Fatal(err)
-	}
-	if len(st.calls) != 0 {
-		t.Fatalf("noop purge reached default store: %v", st.calls)
-	}
+	st.snaps["absent"] = []byte("durable data")
 	if err := m.Purge(ctx, "absent"); err != nil {
 		t.Fatal(err)
 	}
@@ -207,9 +199,9 @@ func TestBedStoreConflictWhileInitializing(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-st.started
-	_, err := m.InitializeBedWithOptions(ctx, "pending", CreateOptions{Sync: "noop"})
+	_, err := m.InitializeBedWithOptions(ctx, "pending", CreateOptions{Volumes: testWorkspaceVolume("none")})
 	close(st.release)
-	if !errors.Is(err, ErrSyncConflict) {
+	if !errors.Is(err, ErrPathsConflict) {
 		t.Fatalf("concurrent store switch=%v", err)
 	}
 	if _, err := m.Ensure(ctx, "pending"); err != nil {
@@ -246,8 +238,8 @@ func TestOmittedBedStoreInheritsConfiguredBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Spec().Sync != st.Name() {
-		t.Fatalf("unspecified sync=%s", b.Spec().Sync)
+	if b.Spec().StoreKind != st.Name() {
+		t.Fatalf("unspecified sync=%s", b.Spec().StoreKind)
 	}
 	if err := m.Checkpoint(ctx, b.Name); err != nil {
 		t.Fatal(err)
@@ -269,7 +261,7 @@ func TestDurableBedSyncsWithNoopInstanceDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.InitializeBedWithOptions(ctx, "durable", CreateOptions{Sync: "cas"}); err != nil {
+	if _, err := m.InitializeBedWithOptions(ctx, "durable", CreateOptions{Volumes: testWorkspaceVolume("sync")}); err != nil {
 		t.Fatal(err)
 	}
 	b, err := m.Ensure(ctx, "durable")
@@ -337,23 +329,28 @@ func TestPurgeKeepsMetadataUntilSnapshotDeletionSucceeds(t *testing.T) {
 	}
 }
 
-func TestLegacyMetadataKeepsSyncPolicy(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(metaPath(dir), []byte(`{"version":1,"bed_id":"legacy","store":"noop"}`), 0o600); err != nil {
+func TestPurgeAbsentDurableBedWithNoopDefault(t *testing.T) {
+	st := newFakeStore()
+	m := storeTestManager(t, t.TempDir(), st)
+	m.store = store.NewManagerWithStores(store.Noop{}, st)
+	m.store.SetStatusWriter(m.owners.Store)
+	defer m.Close(t.Context())
+	if _, err := m.InitializeBedWithOptions(t.Context(), "persistent", CreateOptions{Volumes: testWorkspaceVolume("sync")}); err != nil {
 		t.Fatal(err)
 	}
-	meta, ok := loadMeta(dir)
-	if !ok || meta.Sync != store.SyncNoop {
-		t.Fatalf("legacy policy lost: %+v", meta)
-	}
-	if err := saveMeta(dir, meta); err != nil {
+	if _, err := m.Ensure(t.Context(), "persistent"); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(metaPath(dir))
-	if err != nil {
+	if ok, err := m.Evict(t.Context(), "persistent"); err != nil || !ok {
+		t.Fatalf("evict=%v %v", ok, err)
+	}
+	if st.generation("persistent") == 0 {
+		t.Fatal("snapshot missing")
+	}
+	if err := m.Purge(t.Context(), "persistent"); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), `"store"`) || !strings.Contains(string(data), `"sync": "noop"`) {
-		t.Fatalf("metadata: %s", data)
+	if st.generation("persistent") != 0 {
+		t.Fatal("purge ignored durable data after local eviction")
 	}
 }

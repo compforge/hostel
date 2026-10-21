@@ -143,7 +143,7 @@ func (b *managedBed) activityLocked() Activity {
 }
 
 func (b *managedBed) dataSyncedLocked() bool {
-	return b.Spec().Sync == store.SyncNoop || !b.lastActiveAt.After(b.persistedAt)
+	return b.Spec().StoreKind == store.SyncNoop || !b.lastActiveAt.After(b.persistedAt)
 }
 
 // pinnedLocked is a compound capacity fact, not another lifecycle state.

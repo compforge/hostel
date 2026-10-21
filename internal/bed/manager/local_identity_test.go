@@ -50,7 +50,7 @@ func assertUserReserved(t *testing.T, m *Manager) {
 }
 func makeIdentityTree(t *testing.T, root, name string) string {
 	t.Helper()
-	path := filepath.Join(root, name, "data")
+	path := filepath.Join(root, name, "rootfs")
 	if err := os.MkdirAll(path, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestPurgeRetainsUIDUntilFailedGCCleanupCompletes(t *testing.T) {
 		t.Fatal("Purge bypassed failed GC cleanup")
 	}
 	assertUserReserved(t, m)
-	if _, err := os.Stat(filepath.Join(m.root, gcTmpPrefix+"same", "data")); err != nil {
+	if _, err := os.Stat(filepath.Join(m.root, gcTmpPrefix+"same", "rootfs")); err != nil {
 		t.Fatal(err)
 	}
 	reports := m.Status().LocalCleanups
@@ -132,7 +132,7 @@ func TestRecoveredGCDoesNotForgetSurvivingColdIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertUserReserved(t, m)
-	if _, err := os.Stat(filepath.Join(root, "same", "data", "secret")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "same", "rootfs", "secret")); err != nil {
 		t.Fatal(err)
 	}
 	// Eviction uses this same terminal cleanup entry after runtime teardown.
@@ -221,7 +221,7 @@ func TestStaleIdentityCleanupCannotForgetReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertUserReserved(t, m)
-	if _, err := os.Stat(filepath.Join(m.root, "same", "data", "secret")); err != nil {
+	if _, err := os.Stat(filepath.Join(m.root, "same", "rootfs", "secret")); err != nil {
 		t.Fatal(err)
 	}
 }

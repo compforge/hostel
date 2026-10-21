@@ -63,7 +63,7 @@ type InventoryStatus struct {
 type InstanceStatus struct {
 	Status             InstanceState  `json:"status"`
 	Sync               string         `json:"sync"`
-	BedSyncSelection   bool           `json:"bed_sync_selection"`
+	VolumePersistence  bool           `json:"volume_persistence"`
 	TransferSyncs      []string       `json:"transfer_syncs"`
 	FileTransfers      bool           `json:"file_transfers"`
 	TransferInstanceID string         `json:"transfer_instance_id"`
@@ -87,7 +87,7 @@ func (m *Manager) InventoryStatus() InventoryStatus {
 	beds, defaultOccupied := m.captureInventory()
 	instance := InstanceStatus{
 		Status: statusOfInstance(beds, defaultOccupied, time.Now()),
-		Sync:   m.SyncName(), BedSyncSelection: true, TransferSyncs: []string{"copy", "restic"},
+		Sync:   m.SyncName(), VolumePersistence: true, TransferSyncs: []string{"copy", "restic"},
 		FileTransfers: m.TransfersConfigured(), TransferInstanceID: m.TransferInstanceID(),
 		Network: m.NetworkReport(), NetworkPolicy: true, Isolation: string(m.RoomStatus().Effective),
 		MaxBeds: m.maxBeds, MaxPinnedBeds: m.maxPinnedBeds,

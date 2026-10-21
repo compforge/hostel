@@ -76,7 +76,7 @@ func (m *Manager) BeginOperation(b *managedBed, kind OperationKind, timeout time
 		m.mu.Unlock()
 		return nil, ErrBedUnavailable
 	}
-	if b.Spec().HasMainProcesses() && b.Bed.Status().Lifecycle.Phase != PhaseResident {
+	if b.Bed.Status().Lifecycle.Phase != PhaseResident {
 		b.mu.Unlock()
 		m.mu.Unlock()
 		return nil, ErrBedUnavailable

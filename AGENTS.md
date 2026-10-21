@@ -20,13 +20,13 @@
 - **bed name**：调用方给定的不透明路由标识，支持中文；HTTP 请求的 bed/id 参数及 `BED_ID` 都表达 Name；管理响应同时返回 `name` 与本地生命周期 `id`，缺省为 `default`。Hostel 不解释其上层业务语义。
 - **bed id**：Hostel 生成的本地身份；本地数据保留期间跨重启恢复，Forget 后同名创建换 ID。领域资源以 ID 归属，远端快照以 Name/快照引用定位。
 - **beds-root**：所有 bed 目录的**父目录**，**可配、不写死**（`--beds-root` / `HOSTEL_BEDS_ROOT`，默认 `/workspace`）；**daemon 启动时创建一次**。
-- **bed 目录**：`{beds-root}/{bed name}`，含 `meta.json`（可移植身份）+ `data/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面首次请求通过 `Ensure` 加入同一初始化并等待，详见 `docs/kernel.md`。
+- **bed 目录**：`{beds-root}/{bed name}`，含 `meta.json`（可移植身份）、`rootfs/` 与 `volumes/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面首次请求通过 `Ensure` 加入同一初始化并等待，详见 `docs/kernel.md`。
 - **BedFS**：Bed 持有的文件系统数据域；提供 Bed Rootfs、Volume 数据与各 Pillow 的 Workdir/Mounts 视图、三个路径空间及文件操作。Executor 替换不改变 BedFS 身份，详见 `docs/filesystem.md`。
-- **bed_home（data 目录）**：BedFS 的宿主根 `{bed 目录}/data`——**Bed 自身数据根**；未命中外部映射的客户端路径解析到它下面，回显保持 Bed 路径。它不整体持久化，也不表示进程已有独立的 `/`。
+- **bed_home（rootfs 目录）**：BedFS 的宿主根 `{bed 目录}/rootfs`——**Bed 自身数据根**；未命中外部映射的客户端路径解析到它下面，回显保持 Bed 路径。它不参与自动持久化，也不表示进程已有独立的 `/`。
 - **Workdir**：Pillow 默认工作目录，当前为 `/workspace`（`bedfs.DefaultWorkdir`），也是 API 相对路径的解析基准；具体进程的 cwd 可以覆盖。Rootfs、Workdir 与 Volumes/Mounts 的关系见 `docs/filesystem.md`。
-- **Volume / Mount**：Bed 声明命名数据来源（empty_dir / host_path）；每个 Pillow 声明自己的 mounts，所属 command、session、主进程和文件 API 共用该视图。共享数据与执行视图分别管理，见 [Filesystem](docs/filesystem.md#bed-卷与执行方挂载)。
+- **Volume / Mount**：Bed 声明命名数据来源（managed / host_path）；每个 Pillow 声明自己的 mounts，所属 command、session、主进程和文件 API 共用该视图。共享数据与执行视图分别管理，见 [Filesystem](docs/filesystem.md#bed-卷与执行方挂载)。
 - **房型（dorm / room / suite）**：以 Bed 文件隔离保证为代表特征的用户分档；其他领域能力独立报告，默认增强偏好不参与房型评级（见 `docs/isolation.md`）。
-- **luggage**：非正常生命周期状态，只表达异常退出或旧版 Hostel 遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
+- **luggage**：非正常生命周期状态，只表达异常退出遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
 - **amenity**：bed 外由 hostel 统一管理、按 bed 分配状态的共享设施（Chromium / Jupyter / MCP 连接池）。
 - **pillow**：Bed 内的命名执行环境，拥有 env、workdir、mounts 与可选主进程，与用户命令共用 Bed Environment/Executor；创建者提交通用完整 `PillowSpec`，Carrier 镜像提供程序与依赖，Hostel 不依赖具体业务服务。端口通过 daemon 级 Port Manager 统一申请，见 `docs/pillow.md`。
 - **executor**：某个 bed 当前的、可替换的进程承载域。bed 持久存在，executor 丢失或关闭后可用新 id 重建；Linux 默认使用 supervisor backend，非 Linux / 显式 local 使用 daemon 直接派生。
@@ -51,15 +51,16 @@ tini (pid1)                       pod 级收尸兜底
 **路径模型**（Rootfs、Volumes 归属 Bed，Workdir、Mounts 归属 Pillow；进程视图与 API 补偿分别兑现，详见 `docs/filesystem.md`）：
 
 ```
-未命中当前 mounts 的客户端路径：/workspace/x → data/workspace/x；/tmp/x → data/tmp/x；相对路径 = Workdir 相对
+未命中当前 mounts 的客户端路径：/tmp/x → rootfs/tmp/x；相对路径 = Workdir 相对
    │  BedFS.Resolve：单射 rebase（回显为其逆映射）
    ▼
 <beds-root>/                 宿主侧，所有 bed 父目录；可配 HOSTEL_BEDS_ROOT，默认 /workspace，daemon 启动建
 └─ <bed name>/                      bed 目录；InitializeBed / Ensure 首次初始化时创建
    ├─ meta.json                   可移植身份
-   └─ data/                       bed_home（客户端的 /）；不整体进快照
-      ├─ workspace/               默认 Workdir；默认 Store 同步子树
-      └─ <other>/                 Bed 自身数据；是否同步由 SyncPaths 声明
+   ├─ rootfs/                     临时根数据
+   └─ volumes/
+      ├─ workspace/               默认工作区卷；persistence 决定是否同步
+      └─ runtime/                 临时共享卷
 
 Executor View：
   private files          → Bed 数据根作为 / + 共享运行依赖 + 当前执行方的卷挂载
@@ -134,7 +135,7 @@ internal/
     - 容量讨论把正交事实组合成互斥的具体状态，再投影为 `pinned_beds ⊆ resident_beds ⊆ occupied_beds`；不把 initializing 混入 `activity_counts`。
     - `generation` 表达数据版本，`retained_until` 表达最早安全回收期限。
     - Bed 级请求分 operation 与 session 两类，详见 `docs/kernel.md`。
-  - **luggage**：正常 evict 在 durable/noop 下都删除本地 Bed 目录；durable 可从快照恢复，noop 再次初始化则从空目录开始。luggage 扫描只处理异常退出/旧版遗留目录，详见 `docs/store.md` §四。
+  - **luggage**：正常 evict 在 durable/noop 下都删除本地 Bed 目录；durable 可从快照恢复，noop 再次初始化则从空目录开始。luggage 扫描只处理异常退出遗留目录，详见 `docs/store.md` §四。
   - **bed 容量准入**：
     - `occupied_beds` 包含 initializing 与 resident/evicting tenant Bed，`--max-beds` 是其唯一数量硬上限。
     - 初始化在任何 Store I/O 前预占名额，避免并发 Stage-in 穿透。
@@ -146,7 +147,7 @@ internal/
 - **隔离按 Bed 的统一目标尽量兑现**：各 domain 拥有 facts、能力状态、配置选择与有限回退；房型只由文件保证决定，其他能力独立增强。Component 组合生命周期和类型化 Status。启动组合验证允许有限回退，required 不丢弃，清理失败终止；live Bed 不重选。当前缺口见 `docs/isolation.md` 与 `docs/backlog.md`。
   - daemon 身份与 BedUser 正交：command/session/Pillow 主进程使用 resident Bed 的同一身份；Privilege 独立决定 shared/dedicated，Filesystem 不分配 UID。配置的 UID/GID 是建议值，不可用时可经验证继承 daemon 身份，并披露实际结果；Linux 子进程仍须通过 capability 清理与 no_new_privs 验证。见 `docs/privilege.md`。
   - BedFS 路径映射在所有档位一致；PRoot/pathshim 改善进程路径体验，不提供安全边界，也不提高文件隔离档位。
-  - Bed.Spec.SyncPaths 声明 Store 自动同步的 BedFS 子树；卷数据不进入快照，详见 `docs/store.md`。
+  - Volume.managed.persistence 声明完整卷的持久化策略；Store 按卷名发布 Bed 级快照，详见 `docs/store.md`。
 - **amenity 通则**：共享设施按 Bed 分配应用状态，产物落对应 Bed 的默认 Pillow Workdir；设施状态、Bed 级凭据与 Bed 生命周期分别管理。北向使用 Bed 级动作或受限代理，不裸透传共享设施的管理协议。应用切分不等于文件、网络或资源完整隔离，当前机制与缺口见 `docs/amenity.md`。
 - **常驻 shell 的坑**：一个 Shell 只能有**一个** stdout reader（否则 run 间串输出——v1 踩过）；Run 之间串行；Shell 持有启动时的 Executor View，session run 的 cwd 必须经 `RunAt` 投影并作为独立控制步骤执行，禁止 Web 拼接 `cd` 或 Executor path；`exit` 会杀死 session，非零退出码用子 shell（`sh -c "exit N"`）。**锁纪律**：`runMu` 串行化 Run 且只有 Run 碰；`mu` 只护 `dead` 标志、纳秒级持有——曾因单锁设计让「shell 死亡+未断开客户端」死锁整个 daemon（含 healthz），别往 `mu` 里加阻塞代码（见 shell.go LOCKING 注释）。
 - **配置在启动入口收敛**：显式 Options > CLI > env > 默认值，组件只读确定的 Config；指针区分未指定与显式零值。按 Component → Tool → Requirements 组织选择与诊断，Tool 使用 auto/off/required，Linux Capabilities 属于实现前提。内部配置不自动扩展成公开参数，见 `docs/configuration.md`。

@@ -30,7 +30,7 @@ func writeAutoTree(t *testing.T, dir string, files int) {
 		t.Fatal(err)
 	}
 	for i := range files {
-		name := filepath.Join(dir, "data", "workspace", "files", string(rune('a'+i))+".txt")
+		name := filepath.Join(dir, "volumes", "workspace", "files", string(rune('a'+i))+".txt")
 		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -65,11 +65,11 @@ func TestAutoDetectsExistingLayout(t *testing.T) {
 			if err := auto.Restore(ctx, "bed1", dst); err != nil {
 				t.Fatal(err)
 			}
-			want, err := os.ReadFile(filepath.Join(src, "data/workspace/files/a.txt"))
+			want, err := os.ReadFile(filepath.Join(src, "volumes/workspace/files/a.txt"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := os.ReadFile(filepath.Join(dst, "data/workspace/files/a.txt"))
+			got, err := os.ReadFile(filepath.Join(dst, "volumes/workspace/files/a.txt"))
 			if err != nil || !bytes.Equal(got, want) {
 				t.Fatalf("restored file = %q, %v; want %q", got, err, want)
 			}
@@ -143,7 +143,7 @@ func TestAutoSwitchesCASToPackAboveThreshold(t *testing.T) {
 	}
 
 	// Once pack is current, falling below the threshold never downshifts.
-	if err := os.Remove(filepath.Join(src, "data/workspace/files/d.txt")); err != nil {
+	if err := os.Remove(filepath.Join(src, "volumes/workspace/files/d.txt")); err != nil {
 		t.Fatal(err)
 	}
 	if err := auto.Persist(ctx, "bed1", src, 3, nil); err != nil {
@@ -202,7 +202,7 @@ func TestAutoRejectsAmbiguousLayoutsAndPurgeDeletesAll(t *testing.T) {
 func TestSnapshotFileThresholdExcludesEphemeralPaths(t *testing.T) {
 	dir := t.TempDir()
 	writeAutoTree(t, dir, 0) // meta.json is the only persistable file.
-	for _, name := range []string{"skip.local", "data/tmp/a", "data/memory/a", "data/cache/nested/b"} {
+	for _, name := range []string{"skip.local", "data/tmp/a", "volumes/memory/a", "data/cache/nested/b"} {
 		full := filepath.Join(dir, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
@@ -214,10 +214,10 @@ func TestSnapshotFileThresholdExcludesEphemeralPaths(t *testing.T) {
 	if exceeded, err := exceedsSnapshotFileThreshold(dir, 1); err != nil || exceeded {
 		t.Fatalf("excluded files exceeded threshold: %v, %v", exceeded, err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "data", "workspace"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "volumes", "workspace"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "data", "workspace", "kept"), []byte("kept"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "volumes", "workspace", "kept"), []byte("kept"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if exceeded, err := exceedsSnapshotFileThreshold(dir, 1); err != nil || !exceeded {
@@ -247,7 +247,7 @@ func TestPoliciesReadAndReplaceOtherLayouts(t *testing.T) {
 				if err := after.Restore(ctx, "bed", restored); err != nil {
 					t.Fatal(err)
 				}
-				name := filepath.Join("data", "workspace", "files", "a.txt")
+				name := filepath.Join("volumes", "workspace", "files", "a.txt")
 				data, err := os.ReadFile(filepath.Join(restored, name))
 				if err != nil || string(data) != "a" {
 					t.Fatalf("restore = %q, %v", data, err)

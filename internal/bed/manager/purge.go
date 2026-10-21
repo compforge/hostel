@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/qiankunli/hostel/internal/bed/store"
+	"path/filepath"
 	"time"
 )
 
@@ -42,12 +44,6 @@ type bedPurge struct {
 // purge fence remains visible for the whole transition, so no concurrent
 // InitializeBed can recreate the identity before deletion commits.
 func (m *Manager) Purge(ctx context.Context, id string) error {
-	return m.PurgeWithSync(ctx, id, "")
-}
-
-// PurgeWithSync accepts the same Store override as creation. Callers must
-// repeat it when the Bed is absent locally (evicted or moved to another carrier).
-func (m *Manager) PurgeWithSync(ctx context.Context, id, requestedSync string) error {
 	if id == "" || id == m.defaultBed {
 		return ErrPurgeDefault
 	}
@@ -70,7 +66,7 @@ func (m *Manager) PurgeWithSync(ctx context.Context, id, requestedSync string) e
 		}
 	}
 
-	err := m.purgeOwned(ctx, id, requestedSync)
+	err := m.purgeOwned(ctx, id)
 	m.finishPurge(id, purge, err)
 	return err
 }
@@ -110,25 +106,32 @@ func (m *Manager) finishPurge(id string, purge *bedPurge, err error) {
 	close(purge.done)
 }
 
-func (m *Manager) purgeOwned(ctx context.Context, id, requested string) error {
+func (m *Manager) purgeOwned(ctx context.Context, id string) error {
 	ctx, cancel := m.cleanupContext(ctx, purgeStoreTimeout)
 	defer cancel()
 	m.mu.Lock()
 	local := m.localIdentityLocked(id)
 	m.mu.Unlock()
-	kind, err := m.bedSync(ctx, id, requested)
+	kind, err := m.bedSync(ctx, id, "")
+	if err == nil && kind == store.SyncNoop {
+		if _, localPresent := loadMeta(filepath.Join(m.root, id)); !localPresent {
+			durable, resolveErr := m.store.ResolveDurable(ctx)
+			if resolveErr == nil {
+				kind = durable
+			} else if !errors.Is(resolveErr, store.ErrPersistenceUnavailable) {
+				return resolveErr
+			}
+		}
+	}
 	if err != nil {
 		return err
 	}
 	m.mu.Lock()
 	if b := m.beds[id]; b != nil {
-		err = checkBedSync(requested, kind, b.Spec().Sync)
-		kind = b.Spec().Sync
+		kind = b.Spec().StoreKind
 	} else if b := m.retirements[id]; b != nil {
-		err = checkBedSync(requested, kind, b.Spec().Sync)
-		kind = b.Spec().Sync
+		kind = b.Spec().StoreKind
 	} else if initialization := m.initializations[id]; initialization != nil {
-		err = checkBedSync(requested, kind, initialization.snapshot().Sync)
 		kind = initialization.snapshot().Sync
 	}
 	m.mu.Unlock()

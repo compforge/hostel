@@ -22,7 +22,7 @@ an upstream control plane owns instance placement, cross-instance routing and AP
 - Read, write and transfer files within a bed's workspace.
 - Declare Pillow main processes with readiness checks and restart policies.
 - Share bed volumes through explicit mounts in each pillow.
-- Persist selected paths to S3-compatible storage and restore them when a bed is recreated.
+- Persist managed volumes to S3-compatible storage and restore them when a bed is recreated.
 - Share Chromium and remote MCP connections with application state scoped to beds.
 
 A bed's workspace survives replacement of its execution processes. Persistence

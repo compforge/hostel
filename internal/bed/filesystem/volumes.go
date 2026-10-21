@@ -9,6 +9,7 @@ import (
 
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 	"github.com/qiankunli/hostel/protocol"
 )
 
@@ -22,8 +23,7 @@ func (m *Manager) PillowFiles(b *bed.Bed) map[string]*bedfs.FS {
 	return out
 }
 
-// prepareVolumes resolves sources before publishing any consumer view. Only
-// EmptyDir sources live in the Bed tree and participate in its existing cleanup.
+// prepareVolumes resolves sources before publishing any consumer view. Managed sources live in the Bed tree; opening them preserves restored data.
 // +link:doc=docs/filesystem.md
 func (m *Manager) prepareVolumes(b *bed.Bed, ordinary *bedfs.FS) error {
 	spec := b.Spec()
@@ -37,11 +37,12 @@ func (m *Manager) prepareVolumes(b *bed.Bed, ordinary *bedfs.FS) error {
 	hostVolumeCount := len(sources)
 	var allocation string
 	for _, volume := range spec.Volumes {
-		if volume.EmptyDir == nil {
+		if volume.Managed == nil {
 			continue
 		}
 		if allocation == "" {
-			allocation, err = os.MkdirTemp(spec.Dir, ".volumes-")
+			allocation = filepath.Join(spec.Dir, "volumes")
+			err = os.MkdirAll(allocation, 0711)
 			if err != nil {
 				return err
 			}
@@ -53,7 +54,7 @@ func (m *Manager) prepareVolumes(b *bed.Bed, ordinary *bedfs.FS) error {
 				return err
 			}
 		}
-		if err := os.Mkdir(filepath.Join(allocation, volume.Name), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Join(allocation, volume.Name), 0700); err != nil {
 			return err
 		}
 		sources[volume.Name] = filepath.Join(allocation, volume.Name)
@@ -121,7 +122,7 @@ func resolveHostVolumes(spec bed.Spec) (map[string]string, error) {
 			return nil, fmt.Errorf("volume %s host_path must be an existing directory", volume.Name)
 		}
 		if bed.PathsOverlap(root, source) {
-			return nil, fmt.Errorf("volume %s source overlaps Hostel workspace root", volume.Name)
+			return nil, fmt.Errorf("volume %s source overlaps Hostel beds-root", volume.Name)
 		}
 		for name, prior := range sources {
 			if bed.PathsOverlap(prior, source) {
@@ -142,11 +143,11 @@ func (m *Manager) prepareVolumeOwners(b *bed.Bed) error {
 	}
 	user := b.Status().Privilege
 	for _, v := range b.Spec().Volumes {
-		if v.EmptyDir == nil {
+		if v.Managed == nil {
 			continue
 		}
 		if int(user.UID) != os.Geteuid() || int(user.GID) != os.Getegid() {
-			if err := os.Chown(filepath.Join(dir, v.Name), int(user.UID), int(user.GID)); err != nil {
+			if err := hostprivilege.ChownTree(filepath.Join(dir, v.Name), int(user.UID), int(user.GID)); err != nil {
 				return fmt.Errorf("volume %s ownership: %w", v.Name, err)
 			}
 		}

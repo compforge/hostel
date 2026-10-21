@@ -12,74 +12,80 @@ import (
 	"time"
 )
 
-// TestMixedBedStoresRoundTrip uses a real S3-compatible pillow and two daemon
-// workspace roots: a successful restore cannot accidentally reuse local luggage.
-func TestMixedBedStoresRoundTrip(t *testing.T) {
+// +case:id=managed_volume_roundtrip,desc=`Two Beds checkpoint multiple managed volumes and restore on a fresh Carrier with changed mount paths`,expect=`sync data remains isolated by Bed and volume, temporary/root data is absent, purge removes the snapshots`
+func TestManagedVolumeRoundTrip(t *testing.T) {
 	if os.Getenv("HOSTEL_E2E_REQUIRE_S3") != "1" {
 		t.Skip("set HOSTEL_E2E_REQUIRE_S3=1 with a disposable S3 endpoint")
 	}
-	if os.Getenv(binaryEnv) == "" || os.Getenv(imageEnv) != "" {
-		t.Fatal("S3 round trip requires the binary profile")
-	}
-	objects := newS3Fixture(t)
-	root := filepath.Join(t.TempDir(), "source")
-	source := startTarget(t, targetOptions{store: "noop", maxBeds: 8, bedsRoot: root}).client
-	beds := []struct{ id, store string }{
-		{"cas-a", "cas"}, {"cas-b", "cas"}, {"pack-a", "pack"}, {"tar-a", "tar"}, {"noop-a", "noop"},
-	}
-	payloads := make(map[string][]byte)
-	for _, b := range beds {
-		createStoredBed(t, source, b.id, b.store)
-		// Same paths and different binary contents reveal cross-Bed restore mixups.
-		payload := bytes.Repeat([]byte(b.id+"\x00\xff\n"), 32768)
-		payloads[b.id] = payload
-		must2xx(t, "upload "+b.id, source.upload(t, b.id, "/workspace/nested/data.bin", payload))
-		bedSyncAction(t, source, "POST", "/v1/beds/"+b.id+"/checkpoint")
-	}
-	if n := objects.count(t); n == 0 {
-		t.Fatal("checkpoint created no remote objects")
-	}
-	for _, b := range beds {
-		bedSyncAction(t, source, "DELETE", "/v1/beds/"+b.id)
-		if _, err := os.Stat(filepath.Join(root, b.id)); !os.IsNotExist(err) {
-			t.Fatalf("%s local copy survived eviction: %v", b.id, err)
-		}
-	}
-
-	// Explicit per-Bed choices must survive a different instance default as well.
-	destination := startTarget(t, targetOptions{store: "tar", maxBeds: 8}).client
-	for _, b := range beds {
-		createStoredBed(t, destination, b.id, b.store)
-		assertStoredPayload(t, destination, b.id, b.store, payloads[b.id])
-	}
-	for _, b := range beds {
-		// Re-restore siblings after earlier purges, so local files cannot hide an
-		// over-broad remote deletion (including two Beds using the same format).
-		bedSyncAction(t, destination, "DELETE", "/v1/beds/"+b.id)
-		createStoredBed(t, destination, b.id, b.store)
-		assertStoredPayload(t, destination, b.id, b.store, payloads[b.id])
-		bedSyncAction(t, destination, "DELETE", "/v1/beds/"+b.id+"?purge=true")
-		createStoredBed(t, destination, b.id, b.store)
-		if got := destination.download(t, b.id, "/workspace/nested/data.bin"); got.Status != http.StatusNotFound {
-			t.Fatalf("%s restored purged data: status=%d", b.id, got.Status)
-		}
-		bedSyncAction(t, destination, "DELETE", "/v1/beds/"+b.id+"?purge=true")
-	}
-	if n := objects.count(t); n != 0 {
-		t.Fatalf("purge left %d remote objects", n)
+	requireTestBinary(t)
+	for _, kind := range []string{"cas", "pack", "tar", "auto"} {
+		t.Run(kind, func(t *testing.T) {
+			objects := newS3Fixture(t)
+			root := filepath.Join(t.TempDir(), "source")
+			source := startTarget(t, targetOptions{store: kind, maxBeds: 8, bedsRoot: root}).client
+			payloads := map[string][]byte{}
+			for _, id := range []string{"bed1", "bed2"} {
+				createVolumeBed(t, source, id, "/workspace")
+				payloads[id] = bytes.Repeat([]byte(id+"\x00\xff\n"), 32768)
+				must2xx(t, "write workspace", source.upload(t, id, "/workspace/result.bin", payloads[id]))
+				must2xx(t, "write second volume", source.upload(t, id, "/memory/note", []byte("memory-"+id)))
+				must2xx(t, "write temporary", source.upload(t, id, "/run/shared/token", []byte("temporary")))
+				must2xx(t, "write rootfs", source.upload(t, id, "/tmp/marker", []byte("temporary")))
+				bedSyncAction(t, source, "POST", "/v1/beds/"+id+"/checkpoint")
+				bedSyncAction(t, source, "DELETE", "/v1/beds/"+id)
+				if _, err := os.Stat(filepath.Join(root, id)); !os.IsNotExist(err) {
+					t.Fatalf("local copy survived: %v", err)
+				}
+			}
+			if objects.count(t) == 0 {
+				t.Fatal("no durable objects")
+			}
+			destination := startTarget(t, targetOptions{store: "auto", maxBeds: 8}).client
+			for _, id := range []string{"bed1", "bed2"} {
+				createVolumeBed(t, destination, id, "/data")
+				got := destination.download(t, id, "/data/result.bin")
+				if got.Status != http.StatusOK || !bytes.Equal(got.Body, payloads[id]) {
+					t.Fatalf("%s workspace restore mismatch: status=%d bytes=%d", id, got.Status, len(got.Body))
+				}
+				got = destination.download(t, id, "/memory/note")
+				if got.Status != http.StatusOK || string(got.Body) != "memory-"+id {
+					t.Fatalf("second volume: %d %q", got.Status, got.Body)
+				}
+				for _, path := range []string{"/run/shared/token", "/tmp/marker", "/workspace/result.bin"} {
+					if got := destination.download(t, id, path); got.Status != http.StatusNotFound {
+						t.Fatalf("unexpected restored path %s: %d", path, got.Status)
+					}
+				}
+				bedSyncAction(t, destination, "DELETE", "/v1/beds/"+id+"?purge=true")
+			}
+			if objects.count(t) != 0 {
+				t.Fatal("purge left remote objects")
+			}
+		})
 	}
 }
 
-func createStoredBed(t *testing.T, c *apiClient, id, kind string) {
+func volumeRequest(id, policy string) map[string]any {
+	return map[string]any{"id": id, "volumes": []map[string]any{{"name": "workspace", "managed": map[string]string{"persistence": policy}}}}
+}
+
+func createVolumeBed(t *testing.T, c *apiClient, id, mount string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	request := volumeRequest(id, "sync")
+	request["volumes"] = append(request["volumes"].([]map[string]any),
+		map[string]any{"name": "memory", "managed": map[string]string{"persistence": "sync"}},
+		map[string]any{"name": "runtime", "managed": map[string]string{"persistence": "none"}})
+	request["pillows"] = []map[string]any{{"name": "agent", "workdir": mount, "mounts": []map[string]any{
+		{"volume": "workspace", "path": mount}, {"volume": "memory", "path": "/memory"}, {"volume": "runtime", "path": "/run/shared"},
+	}}}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]string{"id": id, "sync": kind}, nil)
+	response, err := c.json(ctx, "POST", "/v1/beds", "", request, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	must2xx(t, "create "+id, response)
-	c.waitBed(t, id, func(b bedView) bool { return b.Status.Readiness.Ready && b.Sync == kind }, "ready with selected Store")
+	c.waitBed(t, id, func(b bedView) bool { return b.Status.Readiness.Ready }, "managed volumes ready")
 }
 
 func bedSyncAction(t *testing.T, c *apiClient, method, path string) {
@@ -91,18 +97,4 @@ func bedSyncAction(t *testing.T, c *apiClient, method, path string) {
 		t.Fatal(err)
 	}
 	must2xx(t, path, response)
-}
-
-func assertStoredPayload(t *testing.T, c *apiClient, id, kind string, want []byte) {
-	t.Helper()
-	got := c.download(t, id, "/workspace/nested/data.bin")
-	if kind == "noop" {
-		if got.Status != http.StatusNotFound {
-			t.Fatalf("noop restored data: status=%d", got.Status)
-		}
-		return
-	}
-	if got.Status != http.StatusOK || !bytes.Equal(got.Body, want) {
-		t.Fatalf("%s restore mismatch: status=%d bytes=%d want=%d", id, got.Status, len(got.Body), len(want))
-	}
 }

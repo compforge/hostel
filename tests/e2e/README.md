@@ -25,9 +25,9 @@ file/directory mutation round trip, file/command interoperability, cross-bed
 access, active-bed eviction safety, noop eviction starting fresh, purge, and the
 dorm/room/suite isolation resolution available on the host.
 
-The binary profile also verifies per-Bed Store precedence against a runner-local
-S3 endpoint: API noop bypasses configured S3 throughout the Bed lifecycle, and
-API S3 overrides a noop instance default. The endpoint deliberately denies S3
+The binary profile also verifies per-Volume persistence policy against a runner-local
+S3 endpoint: persistence=none bypasses configured S3 throughout the Bed lifecycle, and
+explicit persistence=sync requires a durable backend even with a noop instance default. The endpoint deliberately denies S3
 requests; this case proves backend selection and error propagation, not remote
 backup integrity. The opt-in successful round trip below covers durable formats
 against a real S3-compatible service.
@@ -132,7 +132,7 @@ complete container isolation, or a business-specific service integration.
 
 ## Run successful mixed-Store persistence
 
-`TestMixedBedStoresRoundTrip` requires binary mode and a disposable S3-compatible
+`TestManagedVolumeRoundTrip` requires binary mode and a disposable S3-compatible
 endpoint (path-style addressing, `us-east-1`, static credentials). The fixture
 creates a uniquely named bucket, verifies connectivity through the S3 SDK, and
 removes that bucket and its objects during cleanup, including after a failure.
@@ -148,7 +148,7 @@ docker run -d --rm --name hostel-e2e-s3 -p 127.0.0.1:19000:9000 --tmpfs /data \
 # Wait for /minio/health/ready to return 200 before starting the suite.
 HOSTEL_E2E_REQUIRE_S3=1 HOSTEL_S3_ENDPOINT=http://127.0.0.1:19000 \
   HOSTEL_S3_ACCESS_KEY_ID=hostel-e2e HOSTEL_S3_SECRET_ACCESS_KEY=hostel-e2e-test-only \
-  GOFLAGS='-run=TestMixedBedStoresRoundTrip' make e2e
+  GOFLAGS='-run=TestManagedVolumeRoundTrip' make e2e
 docker stop hostel-e2e-s3
 ```
 
@@ -335,7 +335,7 @@ session、Pillow main process 与 file API 的一致性、跨 Bed 文件拒绝�
 
 ### Shared volumes and consumer views
 
-`TestBedVolumeConsumers` covers empty_dir/host_path × bwrap × local/supervisor with two Beds. It verifies
+`TestBedVolumeConsumers` covers managed/host_path × bwrap × local/supervisor with two Beds. It verifies
 Pillow main process writes, read-only Pillow main process/command/file API access, cross-Bed separation,
 Pillow main process restart preserving volume data, and Bed purge through the existing cleanup.
 Run on a disposable Linux runner with bwrap; unavailable prerequisites skip or fail,
@@ -344,3 +344,6 @@ never count as successful mount validation:
 ```sh
 make e2e E2E_ARGS='-run ^TestBedVolumeConsumers -timeout 3m'
 ```
+
+`TestManagedVolumeRoundTrip` covers CAS/Pack/Tar/Auto with two Beds and two persistent volumes each,
+changed mount paths on a fresh Carrier, temporary-volume and Rootfs exclusion, and purge cleanup.

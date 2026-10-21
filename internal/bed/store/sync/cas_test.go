@@ -116,19 +116,19 @@ func writeTree(t *testing.T, dir string) {
 	big := make([]byte, 3<<20) // spans several chunks at 64K/256K/1M
 	rnd.Read(big)
 	files := map[string][]byte{
-		"meta.json":                      []byte(`{"generation":1}`),
-		"skip.local":                     []byte("host private"),
-		"runtime.json":                   []byte("not portable metadata"),
-		"data/workspace/big.bin":         big,
-		"data/workspace/src/a.go":        []byte("package a\n"),
-		"data/workspace/src/b/b.go":      []byte("package b\n"),
-		"data/workspace/.hidden":         []byte("dot"),
-		"data/workspace/note.local":      []byte("workspace data, must be kept"),
-		"data/workspace/exec.sh":         []byte("#!/bin/sh\necho hi\n"),
-		"data/workspace/tmpfile":         []byte("ordinary workspace data"),
-		"data/tmp/discard.txt":           []byte("runtime-local"),
-		"data/memory/nested/discard.txt": []byte("runtime-local projection source"),
-		"data/cache/discard.txt":         []byte("another runtime-local root"),
+		"meta.json":                         []byte(`{"generation":1}`),
+		"skip.local":                        []byte("host private"),
+		"runtime.json":                      []byte("not portable metadata"),
+		"volumes/workspace/big.bin":         big,
+		"volumes/workspace/src/a.go":        []byte("package a\n"),
+		"volumes/workspace/src/b/b.go":      []byte("package b\n"),
+		"volumes/workspace/.hidden":         []byte("dot"),
+		"volumes/workspace/note.local":      []byte("workspace data, must be kept"),
+		"volumes/workspace/exec.sh":         []byte("#!/bin/sh\necho hi\n"),
+		"volumes/workspace/tmpfile":         []byte("ordinary workspace data"),
+		"data/tmp/discard.txt":              []byte("runtime-local"),
+		"volumes/memory/nested/discard.txt": []byte("runtime-local projection source"),
+		"data/cache/discard.txt":            []byte("another runtime-local root"),
 	}
 	for p, content := range files {
 		full := filepath.Join(dir, filepath.FromSlash(p))
@@ -139,13 +139,13 @@ func writeTree(t *testing.T, dir string) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Chmod(filepath.Join(dir, "data/workspace/exec.sh"), 0o755); err != nil {
+	if err := os.Chmod(filepath.Join(dir, "volumes/workspace/exec.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "data/workspace/empty"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "volumes/workspace/empty"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("src/a.go", filepath.Join(dir, "data/workspace/link")); err != nil {
+	if err := os.Symlink("src/a.go", filepath.Join(dir, "volumes/workspace/link")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -186,7 +186,7 @@ func TestCASRoundtrip(t *testing.T) {
 	if err := s.Restore(ctx, "bed1", dst); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	for _, p := range []string{"meta.json", "data/workspace/big.bin", "data/workspace/src/b/b.go", "data/workspace/.hidden", "data/workspace/note.local", "data/workspace/tmpfile"} {
+	for _, p := range []string{"meta.json", "volumes/workspace/big.bin", "volumes/workspace/src/b/b.go", "volumes/workspace/.hidden", "volumes/workspace/note.local", "volumes/workspace/tmpfile"} {
 		want, err := os.ReadFile(filepath.Join(src, filepath.FromSlash(p)))
 		if err != nil {
 			t.Fatal(err)
@@ -209,13 +209,13 @@ func TestCASRoundtrip(t *testing.T) {
 			t.Fatalf("runtime-local data/%s leaked into snapshot: err=%v", name, err)
 		}
 	}
-	if target, err := os.Readlink(filepath.Join(dst, "data/workspace/link")); err != nil || target != "src/a.go" {
+	if target, err := os.Readlink(filepath.Join(dst, "volumes/workspace/link")); err != nil || target != "src/a.go" {
 		t.Fatalf("symlink = %q, %v; want src/a.go", target, err)
 	}
-	if fi, err := os.Stat(filepath.Join(dst, "data/workspace/exec.sh")); err != nil || fi.Mode().Perm()&0o100 == 0 {
+	if fi, err := os.Stat(filepath.Join(dst, "volumes/workspace/exec.sh")); err != nil || fi.Mode().Perm()&0o100 == 0 {
 		t.Fatalf("exec bit lost: %v %v", fi.Mode(), err)
 	}
-	if fi, err := os.Stat(filepath.Join(dst, "data/workspace/empty")); err != nil || !fi.IsDir() {
+	if fi, err := os.Stat(filepath.Join(dst, "volumes/workspace/empty")); err != nil || !fi.IsDir() {
 		t.Fatalf("empty dir not restored: %v", err)
 	}
 
@@ -242,7 +242,7 @@ func TestCASIncrementalAndGC(t *testing.T) {
 
 	// Touch one small file: the next persist should move a handful of chunks
 	// (the region around the change) plus the index — nowhere near a re-upload.
-	if err := os.WriteFile(filepath.Join(src, "data/workspace/src/a.go"), []byte("package a // changed\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "volumes/workspace/src/a.go"), []byte("package a // changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Persist(ctx, "bed1", src, 2, nil); err != nil {
@@ -276,7 +276,7 @@ func TestCASIncrementalAndGC(t *testing.T) {
 	if err := s.Restore(ctx, "bed1", dst); err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(filepath.Join(dst, "data/workspace/src/a.go"))
+	got, err := os.ReadFile(filepath.Join(dst, "volumes/workspace/src/a.go"))
 	if err != nil || !strings.Contains(string(got), "changed") {
 		t.Fatalf("restored a.go = %q, %v", got, err)
 	}

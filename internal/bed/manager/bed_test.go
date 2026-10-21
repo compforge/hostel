@@ -17,6 +17,7 @@ package manager
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -1025,15 +1026,19 @@ func (f *fakeStore) Stat(_ context.Context, id string) (*store.SnapshotInfo, err
 func (f *fakeStore) Restore(_ context.Context, id, dir string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := os.MkdirAll(filepath.Join(dir, "data", "workspace"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "volumes", "workspace"), 0o755); err != nil {
 		return err
 	}
-	if meta := f.metas[id]; len(meta) > 0 {
+	meta := f.metas[id]
+	if len(meta) == 0 {
+		meta, _ = json.Marshal(bedMeta{Version: 2, BedID: id, Volumes: testWorkspaceVolume("sync")})
+	}
+	if len(meta) > 0 {
 		if err := os.WriteFile(filepath.Join(dir, "meta.json"), meta, 0o644); err != nil {
 			return err
 		}
 	}
-	return os.WriteFile(filepath.Join(dir, "data", "workspace", "restored.txt"), f.snaps[id], 0o644)
+	return os.WriteFile(filepath.Join(dir, "volumes", "workspace", "restored.txt"), f.snaps[id], 0o644)
 }
 func (f *fakeStore) Persist(_ context.Context, id, dir string, generation int64, syncPaths []string) error {
 	f.mu.Lock()
@@ -1042,7 +1047,7 @@ func (f *fakeStore) Persist(_ context.Context, id, dir string, generation int64,
 		return errors.New("fake persist failure")
 	}
 	// dir is the bed dir: meta.json + data/workspace/. Mimic that shape.
-	data, _ := os.ReadFile(filepath.Join(dir, "data", "workspace", "data.txt"))
+	data, _ := os.ReadFile(filepath.Join(dir, "volumes", "workspace", "data.txt"))
 	meta, _ := os.ReadFile(filepath.Join(dir, "meta.json"))
 	f.snaps[id] = data
 	f.metas[id] = meta
@@ -1234,7 +1239,7 @@ func TestStaleLuggageDiscardedOnResume(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(b.Spec().Dir, "data", "workspace"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveMeta(b.Spec().Dir, bedMeta{Version: 1, BedID: "conv-s", Generation: 1}); err != nil {
+	if err := saveMeta(b.Spec().Dir, bedMeta{Version: 2, BedID: "conv-s", Generation: 1, Volumes: testWorkspaceVolume("sync")}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(b.Spec().Dir, "data", "workspace", "data.txt"), []byte("old"), 0o644); err != nil {
@@ -1462,52 +1467,37 @@ func (s *slowStore) Persist(ctx context.Context, id, dir string, generation int6
 	return s.fakeStore.Persist(ctx, id, dir, generation, syncPaths)
 }
 
-// Activity during an evict's persist window must CANCEL the eviction —
-// otherwise writes landing after the snapshot are silently destroyed with the
-// workspace (docs/store.md §4).
-func TestEvictCanceledByActivity(t *testing.T) {
+// Once eviction closes admission, later writes cannot race the final snapshot.
+func TestEvictionRejectsActivityDuringFinalSnapshot(t *testing.T) {
 	root := t.TempDir()
 	ss := &slowStore{fakeStore: newFakeStore(), gate: make(chan struct{})}
 	m, _ := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, store.NewManagerWithStores(ss))
-
-	b, _ := m.Ensure(context.Background(), "conv-race")
-	res := make(chan struct {
-		ok  bool
-		err error
-	}, 1)
-	go func() {
-		ok, err := m.Evict(context.Background(), "conv-race")
-		res <- struct {
-			ok  bool
-			err error
-		}{ok, err}
-	}()
-
-	// While persist is blocked on the gate, a new operation wins admission.
-	time.Sleep(10 * time.Millisecond) // let Evict reach Persist
-	if status := b.Status(); status.Phase != PhaseEvicting || status.Activity != ActivityIdle {
-		t.Fatalf("status during persist = %+v, want evicting/idle", status.BedStatus)
-	}
-	finishOperation, err := m.BeginOperation(b, OpExec, time.Second)
+	b, err := m.Ensure(t.Context(), "conv-race")
 	if err != nil {
-		t.Fatalf("BeginOperation during eviction: %v", err)
+		t.Fatal(err)
 	}
-	if status := b.Status(); status.Phase != PhaseEvicting || status.Activity != ActivityActive {
-		t.Fatalf("status after operation admission = %+v, want evicting/active", status.BedStatus)
+	result := make(chan error, 1)
+	go func() {
+		ok, err := m.Evict(t.Context(), b.Name)
+		if err == nil && !ok {
+			err = errors.New("eviction canceled")
+		}
+		result <- err
+	}()
+	deadline := time.Now().Add(time.Second)
+	for b.Status().Phase != PhaseEvicting && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
 	}
+	_, admissionErr := m.BeginOperation(b, OpFile, time.Second)
 	close(ss.gate)
-
-	r := <-res
-	if r.err != nil || r.ok {
-		t.Fatalf("Evict = (%v, %v), want canceled (false, nil)", r.ok, r.err)
+	if err := <-result; err != nil {
+		t.Fatal(err)
 	}
-	finishOperation()
-	// Bed survived, back to idle, still resolvable.
-	if status := b.Status(); status.Phase != PhaseResident || status.Activity != ActivityIdle {
-		t.Fatalf("status after canceled evict = %+v", status.BedStatus)
+	if !errors.Is(admissionErr, ErrBedUnavailable) {
+		t.Fatalf("admitted a write during final snapshot: %v", admissionErr)
 	}
-	if _, ok := m.Get("conv-race"); !ok {
-		t.Fatal("bed should still be resident after canceled evict")
+	if _, ok := m.Get(b.Name); ok {
+		t.Fatal("evicted Bed remains resident")
 	}
 }
 
@@ -1965,10 +1955,14 @@ func TestBedDirLayoutAndMetaAcrossRestart(t *testing.T) {
 	b, _ := m.Ensure(context.Background(), "default")
 	// Layout: {root}/default/{meta.json,data/workspace}; Home is the bed_home
 	// root (data), Workspace the real subdir below it.
-	if b.Rootfs() != filepath.Join(root, "default", "data") {
+	if b.Rootfs() != filepath.Join(root, "default", "rootfs") {
 		t.Fatalf("Home = %s", b.Rootfs())
 	}
-	if b.Workdir() != filepath.Join(root, "default", "data", "workspace") {
+	expectedWorkdir, err := filepath.EvalSymlinks(filepath.Join(root, "default", "volumes", "workspace"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Workdir() != expectedWorkdir {
 		t.Fatalf("Workspace = %s", b.Workdir())
 	}
 	if _, err := os.Stat(filepath.Join(b.Spec().Dir, "meta.json")); err != nil {

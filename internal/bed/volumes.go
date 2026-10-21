@@ -12,11 +12,11 @@ import (
 )
 
 // VolumeSpec names a data source independently of any consumer's view.
-// +rule=`Exactly one source is required. EmptyDir owns temporary data; HostPath borrows an existing Carrier directory without changing its ownership or deleting it.`
-// +spec=`EmptyDir data survives Executor and Pillow replacement, is excluded from snapshots, and is removed with the resident allocation.`
+// +rule=`Exactly one source is required. Managed owns local data and its persistence policy; HostPath borrows an existing Carrier directory without changing its ownership or deleting it.`
+// +spec=`Managed data survives Executor and Pillow replacement; only persistence=sync enters snapshots.`
 // +link:doc=docs/filesystem.md
 type VolumeSpec = protocol.VolumeSpec
-type EmptyDirVolume = protocol.EmptyDirVolume
+type ManagedVolume = protocol.ManagedVolume
 type HostPathVolume = protocol.HostPathVolume
 type VolumeMount = protocol.VolumeMount
 
@@ -27,8 +27,9 @@ func CloneVolumes(in []VolumeSpec) []VolumeSpec {
 			source := *out[i].HostPath
 			out[i].HostPath = &source
 		}
-		if out[i].EmptyDir != nil {
-			out[i].EmptyDir = &EmptyDirVolume{}
+		if out[i].Managed != nil {
+			source := *out[i].Managed
+			out[i].Managed = &source
 		}
 	}
 	return out
@@ -41,7 +42,7 @@ func NormalizeVolumes(in []VolumeSpec) ([]VolumeSpec, error) {
 	seen := map[string]bool{}
 	for i := range out {
 		v := &out[i]
-		if !volumeName.MatchString(v.Name) || seen[v.Name] || (v.EmptyDir == nil) == (v.HostPath == nil) {
+		if !volumeName.MatchString(v.Name) || seen[v.Name] || (v.Managed == nil) == (v.HostPath == nil) {
 			return nil, fmt.Errorf("%w: invalid, duplicate or unsupported volume %q", ErrInvalidPaths, v.Name)
 		}
 		if v.HostPath != nil {
@@ -54,6 +55,9 @@ func NormalizeVolumes(in []VolumeSpec) ([]VolumeSpec, error) {
 					return nil, fmt.Errorf("%w: host_path volumes %s and %s overlap", ErrInvalidPaths, v.Name, other.Name)
 				}
 			}
+		}
+		if v.Managed != nil && v.Managed.Persistence != "none" && v.Managed.Persistence != "sync" {
+			return nil, fmt.Errorf("%w: volume %s persistence must be none or sync", ErrInvalidPaths, v.Name)
 		}
 		seen[v.Name] = true
 	}
@@ -97,11 +101,6 @@ func ValidateVolumeMounts(spec Spec) error {
 			if !names[m.Volume] {
 				return fmt.Errorf("%w: %s references unknown volume %q", ErrInvalidPaths, consumer, m.Volume)
 			}
-			for _, syncPath := range spec.SyncPaths {
-				if PathsOverlap(m.Path, syncPath) {
-					return fmt.Errorf("%w: %s volume mount %s overlaps sync path %s", ErrInvalidPaths, consumer, m.Path, syncPath)
-				}
-			}
 		}
 		return nil
 	}
@@ -111,4 +110,32 @@ func ValidateVolumeMounts(spec Spec) error {
 		}
 	}
 	return nil
+}
+
+// ManagedVolumes is the portable data contract. Host paths and Pillow process
+// configuration belong to the local declaration, never the snapshot.
+func ManagedVolumes(volumes []VolumeSpec) []VolumeSpec {
+	out := make([]VolumeSpec, 0, len(volumes))
+	for _, v := range CloneVolumes(volumes) {
+		if v.Managed != nil {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func HasVolume(volumes []VolumeSpec, name string) bool {
+	return slices.ContainsFunc(volumes, func(v VolumeSpec) bool { return v.Name == name })
+}
+
+// PersistentVolumeRoots selects whole volume allocations, independently of
+// Pillow mount targets. Store publishes them in one Bed checkpoint.
+func PersistentVolumeRoots(volumes []VolumeSpec) []string {
+	roots := make([]string, 0, len(volumes))
+	for _, v := range volumes {
+		if v.Managed != nil && v.Managed.Persistence == "sync" {
+			roots = append(roots, "volumes/"+v.Name)
+		}
+	}
+	return roots
 }

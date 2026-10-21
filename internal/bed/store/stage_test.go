@@ -161,3 +161,25 @@ func TestStageInBedFSPublishesCompleteSnapshot(t *testing.T) {
 		t.Fatalf("old luggage survived publish: %v", err)
 	}
 }
+
+func TestStageInRejectsInvalidVolumeContractBeforePublication(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "bed")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(dir, "local-data")
+	if err := os.WriteFile(marker, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	backend := &stageTestStore{snapshot: &SnapshotInfo{Generation: 2}}
+	_, err := StageInBedFS(t.Context(), backend, StageInRequest{
+		BedID: "bed", BedDir: dir, LocalPresent: true, LocalGeneration: 1,
+		Validate: func(staging string) error { return validateRestoredVolumes(staging, nil) },
+	})
+	if err == nil {
+		t.Fatal("snapshot without volume manifest was published")
+	}
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "keep" {
+		t.Fatalf("local data replaced: %q %v", got, err)
+	}
+}

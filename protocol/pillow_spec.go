@@ -47,10 +47,15 @@ const (
 
 type VolumeSpec struct {
 	Name     string          `json:"name"`
-	EmptyDir *EmptyDirVolume `json:"empty_dir,omitempty"`
+	Managed  *ManagedVolume  `json:"managed,omitempty"`
 	HostPath *HostPathVolume `json:"host_path,omitempty"`
 }
-type EmptyDirVolume struct{}
+
+// ManagedVolume is allocated and reclaimed by Hostel.
+// +spec=`sync requires a durable Store; none is discarded when the Bed is evicted.`
+type ManagedVolume struct {
+	Persistence string `json:"persistence"`
+}
 
 // HostPath is resolved in the daemon filesystem, including its container mounts.
 type HostPathVolume struct {

@@ -20,7 +20,8 @@ Pillow 的 workdir 默认 /workspace，统一作为进程默认 cwd 与文件 AP
 ```yaml
 volumes:
   - name: exchange
-    empty_dir: {}
+    managed:
+      persistence: none
 pillows:
   - name: workspace
     workdir: /workspace

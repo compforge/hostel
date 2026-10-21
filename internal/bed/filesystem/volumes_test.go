@@ -21,7 +21,7 @@ func (mountedFiles) View(fs *bedfs.FS) bedfs.ProcessView {
 
 func volumeBed(t *testing.T, name string) *bed.Bed {
 	t.Helper()
-	b := bed.New(name, "", bed.Spec{Dir: t.TempDir(), Volumes: []bed.VolumeSpec{{Name: "token", EmptyDir: &bed.EmptyDirVolume{}}}, Pillows: append([]bed.PillowSpec{{Name: "workspace", Mounts: []bed.VolumeMount{{Volume: "token", Path: "/run/bootstrap", ReadOnly: true}}}}, []bed.PillowSpec{{Name: "writer", Mounts: []bed.VolumeMount{{Volume: "token", Path: "/writer"}}}, {Name: "unmounted"}}...)})
+	b := bed.New(name, "", bed.Spec{Dir: t.TempDir(), Volumes: []bed.VolumeSpec{{Name: "token", Managed: &bed.ManagedVolume{Persistence: "none"}}}, Pillows: append([]bed.PillowSpec{{Name: "workspace", Mounts: []bed.VolumeMount{{Volume: "token", Path: "/run/bootstrap", ReadOnly: true}}}}, []bed.PillowSpec{{Name: "writer", Mounts: []bed.VolumeMount{{Volume: "token", Path: "/writer"}}}, {Name: "unmounted"}}...)})
 	bed.NewOwners().Privilege.Set(b, bed.PrivilegeStatus{UID: uint32(os.Geteuid()), GID: uint32(os.Getegid()), Assigned: true})
 	return b
 }
@@ -169,7 +169,7 @@ func TestHostVolumeViewsAndSourceOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	if m.volumes[b] != "" {
-		t.Fatal("borrowed data allocated an empty_dir")
+		t.Fatal("borrowed data allocated an managed")
 	}
 	if err := m.PillowFiles(b)["writer"].Write("/output/value", []byte("shared"), 0600); err != nil {
 		t.Fatal(err)
