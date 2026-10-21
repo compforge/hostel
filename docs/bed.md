@@ -101,12 +101,16 @@ Run 启动 Store 同步、Resource 采样与 Bed 回收循环，并在取消或�
 Ensure 仅等待已经声明的任务就绪；Bed 不存在时返回 404，不创建、不恢复、不重试失败任务。远端故障不能被当成空 Bed，也不能暴露半恢复目录。
 
 同 Name 初始化合并为一个任务，在任何 Store I/O 前预占容量。原生请求通过 header/query
-选择 Bed，省略时使用 default；isolated-session 映射非 default Bed，不维护平行生命周期。
-daemon 启动时通过同一创建入口声明 default Bed 的 main Pillow 与工作区挂载。
-它不计入 tenant 容量，但初始化或驻留期间仍使实例为 retained，不能把空 tenant 列表当作可释放。
+显式选择 Bed，省略返回 400；isolated-session 映射 Bed，不维护平行生命周期。
+daemon 启动时不创建任何 Bed，空实例为 releasable。所有 Bed 必须显式声明；
+`default` 是普通名称，与其他 Bed 一样参与 inventory、准入、容量计数、到期回收和 purge。
 恢复快照时，调用方仍须声明 Pillow 及 mounts；Store 只提供 Volume 契约和数据。
 卷契约解析后再验证挂载、准备执行环境并发布 Ready，恢复过程不补执行配置。
-数量上限与 carrier 资源准入见 [resource.md](resource.md)，default 不参与 tenant 容量计数。
+数量上限与 carrier 资源准入见 [resource.md](resource.md)，适用于所有 Bed。
+
+从 0.2.4 起不再提供 `--default-bed` / `HOSTEL_DEFAULT_BED`，`/healthz` 也不再返回
+`default_bed`。原先省略 Bed 标识的调用方须先声明一个 Bed，再显式传递该名称；
+CLI/SDK 可在调用端提供便捷默认值，daemon 不保留特殊生命周期。
 
 Ready 必须等到 Store Stage-in、BedFS、身份、已启用的网络及初始策略、资源记账、设施切片、Pillow 环境
 及必需主进程全部准备完成。Executor 仍可按需创建；Ready 表达本次选定能力已准备好，不表示所有维度
@@ -130,7 +134,7 @@ Bed Manager 是保活与回收决策的唯一 owner。共享 Bed 的 Lifecycle S
 - renew 指定 expiresAt：基准至少推进到 expiresAt 减 idleTTL。
 
 自动回收要求无 operation，且 `keepalive_at + idleTTL` 已到期；idleTTL 为零时禁用
-自动到期，default Bed 仍不参与自动回收。operation 的执行超时由各执行入口负责，
+自动到期；所有 Bed 使用相同规则。operation 的执行超时由各执行入口负责，
 保活承诺不取代任务取消。清理、Pillow 主进程 readiness 更新和状态发布不得覆盖保活基准。
 
 续期与开始回收在 Bed Manager 内原子互斥：续期先成功则回收必须遵守更晚期限；

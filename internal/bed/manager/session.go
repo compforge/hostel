@@ -93,7 +93,7 @@ func (m *Manager) OpenSession(b *managedBed, kind SessionKind, closeFn func()) (
 		return nil, ErrBedUnavailable
 	}
 	wasPinned := b.pinnedLocked()
-	if !wasPinned && b.Name != m.defaultBed {
+	if !wasPinned {
 		if err := m.resourceAdmissionErrorLocked(); err != nil {
 			b.mu.Unlock()
 			m.mu.Unlock()

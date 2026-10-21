@@ -124,5 +124,5 @@
 
   <rect x="60" y="660" width="1320" height="62" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
   <text x="82" y="687" class="note">occupied 包含 preparing / resident / 待清理 Bed；清理失败仅保留 occupied，成功后释放身份。图中箭头表示成功路径。</text>
-  <text x="82" y="709" class="note">default Bed 不参与三项计数。occupied/max_beds 或 pinned/max_pinned_beds 达配置水位（默认 80%）即 bed_pressure。</text>
+  <text x="82" y="709" class="note">所有 Bed 参与三项计数。occupied/max_beds 或 pinned/max_pinned_beds 达配置水位（默认 80%）即 bed_pressure。</text>
 </svg>

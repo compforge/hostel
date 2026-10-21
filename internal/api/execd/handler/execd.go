@@ -48,7 +48,9 @@ func (s *Handler) bindExecdBed(c *gin.Context) {
 		name = c.GetHeader(BedHeader)
 	}
 	if name == "" {
-		name = s.mgr.DefaultBedID()
+		badRequest(c, "Bed is required: use a Bed-scoped path or X-Hostel-Bed")
+		c.Abort()
+		return
 	}
 	b, ok := s.mgr.Get(name)
 	if !ok {

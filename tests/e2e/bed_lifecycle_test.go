@@ -7,21 +7,17 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/config"
 )
 
 func TestBedEvictStartsFreshWithNoopStoreAndPurge(t *testing.T) {
 	target := startTarget(t, targetOptions{isolation: "dorm", maxBeds: 1})
 	c := target.client
 
-	defaultRun, response := c.command(t, "", map[string]any{"command": "printf default-ready", "timeout": 30_000})
-	must2xx(t, "run default bed", response)
-	assertCommandExit(t, defaultRun, 0)
 	inventory := c.inventory(t)
-	if hasBed(inventory, "default") {
-		t.Fatal("default bed leaked into scheduler inventory")
-	}
-	if inventory.Instance.Status != "retained" {
-		t.Fatalf("instance status = %s, want retained while default bed is resident", inventory.Instance.Status)
+	if len(inventory.Beds) != 0 || inventory.Instance.Status != "releasable" {
+		t.Fatalf("new daemon must be empty and releasable: %+v", inventory)
 	}
 
 	created := c.createBed(t, "lifecycle-bed")
@@ -96,4 +92,49 @@ func TestExplicitBedPillowDeclaration(t *testing.T) {
 	if result.Stdout != "ready" {
 		t.Fatalf("unexpected output: %q", result.Stdout)
 	}
+}
+
+// +case:id=explicit_bed_idle_release,desc=`Start empty, reject implicit requests, then expire and purge an explicitly declared default Bed`,expect=`All Beds consume capacity and the daemon returns to releasable without a hidden resident`
+func TestExplicitBedIdleRelease(t *testing.T) {
+	requireTestBinary(t)
+	c := startTarget(t, targetOptions{isolation: "dorm", maxBeds: 1, config: &config.Options{BedIdleTTL: value(2 * time.Second)}}).client
+	assertEmpty := func(got inventoryView) bool {
+		return len(got.Beds) == 0 && got.Instance.Status == "releasable"
+	}
+	if got := c.inventory(t); !assertEmpty(got) {
+		t.Fatalf("new daemon is not empty and releasable: %+v", got)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	for _, path := range []string{"/command", "/execd/command"} {
+		response, err := c.json(ctx, http.MethodPost, path, "", map[string]any{"command": "true"}, nil)
+		if err != nil || response.Status != http.StatusBadRequest {
+			t.Fatalf("implicit Bed request %s: status=%d err=%v body=%s", path, response.Status, err, response.Body)
+		}
+	}
+	if got := c.inventory(t); !assertEmpty(got) {
+		t.Fatalf("implicit request created a Bed: %+v", got)
+	}
+	must2xx(t, "declare default", c.createBed(t, "default"))
+	c.waitBed(t, "default", func(b bedView) bool { return b.Status.Phase == "resident" && b.Status.Readiness.Ready }, "resident")
+	if got := c.inventory(t); len(got.Beds) != 1 || !hasBed(got, "default") || got.Instance.Status != "retained" {
+		t.Fatalf("default Bed not visible and retained: %+v", got)
+	}
+	if response := c.createBed(t, "overflow"); response.Status != http.StatusTooManyRequests {
+		t.Fatalf("default Bed bypassed capacity: %d %s", response.Status, response.Body)
+	}
+	c.waitInventory(t, "idle default Bed reclaimed and instance releasable", assertEmpty)
+	must2xx(t, "recreate default", c.createBed(t, "default"))
+	result, response := c.command(t, "default", map[string]any{"command": "printf explicit-ready", "timeout": 1000})
+	must2xx(t, "explicit command", response)
+	assertCommandExit(t, result, 0)
+	if result.Stdout != "explicit-ready" {
+		t.Fatalf("explicit command output: %q", result.Stdout)
+	}
+	response, err := c.json(ctx, http.MethodDelete, "/v1/beds/default?purge=true", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must2xx(t, "purge default", response)
+	c.waitInventory(t, "purged default Bed removed and instance releasable", assertEmpty)
 }

@@ -14,16 +14,10 @@ const (
 	InstanceReleasable InstanceState = "releasable" // nothing resident; snapshots (if any) are remote
 )
 
-// statusOfInstance folds the scheduler-visible inventory, the compatibility
-// default bed into the hostel-layer status. A zero
+// statusOfInstance folds the inventory into the hostel-layer status. A zero
 // RetainUntil (no idle TTL configured) counts as retained — releasable must
 // never be concluded from unknown retention.
-func statusOfInstance(beds []InventoryBed, defaultBedOccupied bool, now time.Time) InstanceState {
-	// The default bed never participates in scheduler inventory or idle GC, so
-	// its residency is a separate, unconditional reason to retain this instance.
-	if defaultBedOccupied {
-		return InstanceRetained
-	}
+func statusOfInstance(beds []InventoryBed, now time.Time) InstanceState {
 	hasResident, allExpired := false, true
 	for _, b := range beds {
 		switch b.Status.Phase {
@@ -84,9 +78,9 @@ type InstanceStatus struct {
 }
 
 func (m *Manager) InventoryStatus() InventoryStatus {
-	beds, defaultOccupied := m.captureInventory()
+	beds := m.captureInventory()
 	instance := InstanceStatus{
-		Status: statusOfInstance(beds, defaultOccupied, time.Now()),
+		Status: statusOfInstance(beds, time.Now()),
 		Sync:   m.SyncName(), VolumePersistence: true, TransferSyncs: []string{"copy", "restic"},
 		FileTransfers: m.TransfersConfigured(), TransferInstanceID: m.TransferInstanceID(),
 		Network: m.NetworkReport(), NetworkPolicy: true, Isolation: string(m.RoomStatus().Effective),

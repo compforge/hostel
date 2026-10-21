@@ -85,9 +85,7 @@ func (m *Manager) evictResidentBed(ctx context.Context, b *Resident, cutoff *tim
 	}
 	m.retirements[b.Name] = b
 	delete(m.beds, b.Name)
-	if b.Name != m.defaultBed {
-		m.residentBeds.Add(-1)
-	}
+	m.residentBeds.Add(-1)
 	b.mu.Unlock()
 	m.mu.Unlock()
 	// Retirement owns the same semaphore and exact Bed allocation from here.

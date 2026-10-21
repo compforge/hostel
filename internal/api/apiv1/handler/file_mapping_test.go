@@ -23,7 +23,7 @@ func TestCarrierMappingAPIAndCommandPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr, err := bed.NewManager(facts, root, "default", "/bin/bash", iso, nil, 0, nil)
+	mgr, err := bed.NewManager(facts, root, "/bin/bash", iso, nil, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

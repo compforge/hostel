@@ -18,7 +18,7 @@ import (
 func TestPillowManagementRoutesAndDeclarationConflict(t *testing.T) {
 	root := t.TempDir()
 	host := hostfacts.Collect()
-	m, err := bed.NewManager(host, root, "default", "/bin/sh", isolation.New(host, "shared", root), nil, 0, nil, bed.WithPillows(nil))
+	m, err := bed.NewManager(host, root, "/bin/sh", isolation.New(host, "shared", root), nil, 0, nil, bed.WithPillows(nil))
 	if err != nil {
 		t.Fatal(err)
 	}

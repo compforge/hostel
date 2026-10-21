@@ -190,7 +190,7 @@ func TestRestartCleansUnrecoverableExecutionLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := hostfacts.Collect()
-	m2, err := NewManager(host, root, "default", "/bin/bash", isolation.New(host, "shared", root), nil, 0, nil)
+	m2, err := NewManager(host, root, "/bin/bash", isolation.New(host, "shared", root), nil, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

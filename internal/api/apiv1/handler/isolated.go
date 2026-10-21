@@ -64,15 +64,10 @@ type isolatedRunRequest struct {
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
 }
 
-// withIsolatedBed resolves only an already-resident, non-default bed. The
-// default bed is the native API fallback, not an isolated session.
+// withIsolatedBed resolves an already-resident Bed by its explicit session identity.
 func (s *Handler) withIsolatedBed(next gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("sessionId")
-		if id == s.mgr.DefaultBedID() {
-			respondError(c, http.StatusNotFound, apiview.ErrSessionNotFound, "session not found")
-			return
-		}
 		b, ok := s.mgr.Get(id)
 		if !ok {
 			respondError(c, http.StatusNotFound, apiview.ErrSessionNotFound, "session not found")
@@ -84,10 +79,10 @@ func (s *Handler) withIsolatedBed(next gin.HandlerFunc) gin.HandlerFunc {
 }
 
 // POST /v1/isolated/session. The compatibility identity is deliberately
-// one-to-one: an isolated session is a non-default bed, not a second lifecycle
+// one-to-one: an isolated session is a Bed, not a second lifecycle
 // object.
 //
-// +spec=`The isolated-session compatibility resource is one non-default Bed identity with a persistent shell and BedFS-backed /workspace.`
+// +spec=`The isolated-session compatibility resource is one Bed identity with a persistent shell and BedFS-backed /workspace.`
 // +case:id=isolated_session_compatibility,desc=`Create, inspect, run, exchange a file with, list, and delete an isolated session`,expect=`all compatibility endpoints address the same Bed and deletion ends that identity`
 func (s *Handler) isolatedCreate(c *gin.Context) {
 	if !s.mgr.Isolator().Available() {
@@ -196,9 +191,6 @@ func (s *Handler) isolatedList(c *gin.Context) {
 	sort.Slice(beds, func(i, j int) bool { return beds[i].Name < beds[j].Name })
 	items := make([]apiview.IsolatedSessionSummary, 0, len(beds))
 	for _, b := range beds {
-		if b.Name == s.mgr.DefaultBedID() {
-			continue
-		}
 		state := isolatedState(b, !s.mgr.NetworkReport().Enabled)
 		items = append(items, apiview.IsolatedSessionSummary{
 			SessionID:            b.Name,

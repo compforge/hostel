@@ -24,7 +24,7 @@ func TestConfigurationLifecycleAndProcessConsumers(t *testing.T) {
 		}
 	}
 	host := hostfacts.Collect()
-	m, err := NewManager(host, root, "default", "/bin/bash", isolation.New(host, "shared", root), nil, 0, nil,
+	m, err := NewManager(host, root, "/bin/bash", isolation.New(host, "shared", root), nil, 0, nil,
 		WithConfiguration(configuration.Config{Sources: map[string]string{"runtime": source, "unused": filepath.Join(source, "missing")}}))
 	if err != nil {
 		t.Fatal(err)

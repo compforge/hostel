@@ -133,7 +133,7 @@ func (w executionLogWriter) Write(p []byte) (int, error) {
 }
 
 // Execution history is daemon-local. Clean the previous daemon's output before
-// admission, including default and cold Beds which may never be evicted. Do not
+// admission, including cold Beds which may never be evicted. Do not
 // follow symlinks or traverse BedFS; only remove our private execution directory.
 func (m *Manager) cleanupPreviousExecutionLogs(ctx context.Context) error {
 	for _, local := range m.localIdentities {

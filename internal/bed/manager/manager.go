@@ -67,7 +67,6 @@ type Manager struct {
 	executorManager     *executor.Manager
 	resourceManager     *resource.Manager
 	root                string
-	defaultBed          string
 	iso                 isolation.Isolator
 	bedUser             privilege.BedUser
 	roomType            model.RoomType
@@ -114,8 +113,8 @@ type Manager struct {
 	localIdentities map[string]*localIdentity
 	// Single filesystem deletion boundary, replaceable by fault-injection tests.
 	removeLocalTree func(string) error
-	// residentBeds tracks resident/evicting tenant beds for lock-free instance
-	// health reads. The compatibility default bed is deliberately excluded.
+	// residentBeds tracks all resident/evicting Beds for lock-free instance
+	// health reads.
 	residentBeds atomic.Int64
 }
 
@@ -147,7 +146,7 @@ func WithBedUser(user privilege.BedUser) ManagerOption {
 // NewManager assembles domain managers from the daemon host snapshot.
 // Start prepares the workspace root and recovers local identities.
 // amenities and st may be nil; maxBeds 0 = unlimited.
-func NewManager(host hostfacts.Snapshot, root, defaultBed, shellPath string, iso isolation.Isolator, amenities *amenity.Manager, maxBeds int, st *store.Manager, opts ...ManagerOption) (*Manager, error) {
+func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.Isolator, amenities *amenity.Manager, maxBeds int, st *store.Manager, opts ...ManagerOption) (*Manager, error) {
 	processEnv, _ := newProcessEnv(os.Environ())
 	shellPath = resolveShellPath(shellPath)
 	if st == nil {
@@ -161,7 +160,6 @@ func NewManager(host hostfacts.Snapshot, root, defaultBed, shellPath string, iso
 		hostFacts:       host,
 		root:            root,
 		owners:          model.NewOwners(),
-		defaultBed:      defaultBed,
 		iso:             iso,
 		bedUser:         privilege.CurrentBedUser(),
 		shellPath:       shellPath,
@@ -324,8 +322,8 @@ func (m *Manager) SetBedPressureThresholdPercent(percent int) error {
 // BedPressureThresholdPercent reports the configured high-watermark percent.
 func (m *Manager) BedPressureThresholdPercent() int { return m.pressurePercent }
 
-// PinnedBedCount reports tenant beds that are running an operation or whose
-// latest data has not reached the durable store. The default bed is exempt.
+// PinnedBedCount reports Beds that are running an operation or whose
+// latest data has not reached the durable store.
 func (m *Manager) PinnedBedCount() int64 { return m.pinnedBeds.Load() }
 
 // BedPressure is a scheduling signal. It becomes true when either occupied
@@ -371,9 +369,6 @@ func (m *Manager) resourceAdmissionErrorLocked() error {
 // adjustPinnedLocked updates the tenant capacity counter after a bed mutation.
 // Callers hold m.mu and b.mu and pass the pre-mutation compound value.
 func (m *Manager) adjustPinnedLocked(b *managedBed, wasPinned bool) {
-	if b.Name == m.defaultBed {
-		return
-	}
 	isPinned := b.pinnedLocked()
 	switch {
 	case !wasPinned && isPinned:
@@ -384,7 +379,7 @@ func (m *Manager) adjustPinnedLocked(b *managedBed, wasPinned bool) {
 }
 
 // ResidentBedCount reports current resident/evicting tenant beds without
-// taking the manager lock. The default bed and initializing beds are excluded.
+// taking the manager lock. Initializing Beds are counted by OccupiedBedCount.
 func (m *Manager) ResidentBedCount() int64 { return m.residentBeds.Load() }
 
 // OccupiedBedCount reports tenant beds that currently consume maxBeds
@@ -395,29 +390,13 @@ func (m *Manager) OccupiedBedCount() int {
 	return m.tenantOccupiedBedsLocked()
 }
 
-// tenantResidentBedsLocked returns the count governed by maxBeds. The default
-// compatibility bed is resident but deliberately exempt from tenant capacity.
-// Callers must hold m.mu.
-func (m *Manager) tenantResidentBedsLocked() int {
-	n := len(m.beds)
-	if _, ok := m.beds[m.defaultBed]; ok {
-		n--
-	}
-	return n
-}
-
 // tenantOccupiedBedsLocked includes initializing beds because admission must
 // reserve their eventual resident slot before any slow Store I/O starts.
 // Callers must hold m.mu.
 func (m *Manager) tenantOccupiedBedsLocked() int {
-	n := m.tenantResidentBedsLocked()
+	n := len(m.beds) + len(m.retirements)
 	for id, initialization := range m.initializations {
-		if id != m.defaultBed && m.retirements[id] == nil && initialization.snapshot().Phase == PhaseInitializing {
-			n++
-		}
-	}
-	for id := range m.retirements {
-		if id != m.defaultBed {
+		if m.retirements[id] == nil && initialization.snapshot().Phase == PhaseInitializing {
 			n++
 		}
 	}
@@ -427,32 +406,12 @@ func (m *Manager) tenantOccupiedBedsLocked() int {
 // SyncName reports the default synchronization policy for capabilities reporting.
 func (m *Manager) SyncName() string { return string(m.store.DefaultSync()) }
 
-// DefaultBedID reports the id used when a request omits a bed.
-func (m *Manager) DefaultBedID() string { return m.defaultBed }
-
-// DefaultBedOccupied reports whether the compatibility bed is resident or
-// initializing. It is intentionally separate from Inventory: the default bed
-// does not participate in scheduler placement or capacity, but its presence
-// still prevents the instance from being safely released.
-func (m *Manager) DefaultBedOccupied() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.beds[m.defaultBed]; ok {
-		return true
-	}
-	initialization, ok := m.initializations[m.defaultBed]
-	return ok && initialization.snapshot().Phase == PhaseInitializing
-}
-
 // SetBedIdleTTL configures the idle retention used for new beds and operation
 // deadlines. It is startup configuration and must be called before serving.
 func (m *Manager) SetBedIdleTTL(ttl time.Duration) { m.bedIdleTTL = ttl }
 
 // Get returns an existing bed without creating it.
 func (m *Manager) Get(id string) (*managedBed, bool) {
-	if id == "" {
-		id = m.defaultBed
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.beds[id]
@@ -484,8 +443,8 @@ func (m *Manager) evictExpired(ctx context.Context, id string, now time.Time) (b
 }
 
 func (m *Manager) evict(ctx context.Context, id string, expiryCutoff *time.Time) (evicted bool, retErr error) {
-	if id == "" {
-		id = m.defaultBed
+	if err := validBedID(id); err != nil {
+		return false, err
 	}
 	m.mu.Lock()
 	b, ok := m.beds[id]
@@ -538,14 +497,12 @@ func (m *Manager) finishRetirement(ctx context.Context, b *managedBed) (bool, er
 // CollectExpired reaps beds whose promised expiry has elapsed. The final
 // expiry/running-exec check happens again under the bed lock in evictExpired,
 // closing the scan→evict race with a concurrent command.
-// The default bed is never reaped.
+// +spec=`Every Bed name follows the same retention and reclamation rules.`
+// +link:doc=docs/bed.md
 func (m *Manager) CollectExpired(ctx context.Context, now time.Time) []string {
 	var stale []string
 	m.mu.Lock()
 	for id, b := range m.beds {
-		if id == m.defaultBed {
-			continue
-		}
 		retainUntil := b.RetainUntil()
 		if !retainUntil.IsZero() && !retainUntil.After(now) {
 			stale = append(stale, id)
@@ -681,7 +638,6 @@ func (m *Manager) Checkpoint(ctx context.Context, id string) error {
 // PersistDirty asks the persistence subsystem to snapshot every idle bed
 // touched since its last snapshot. The store loop normally owns invocation;
 // this synchronous entry point is retained for tests and explicit callers.
-// The default bed is included because its data matters most.
 func (m *Manager) PersistDirty(ctx context.Context) []string {
 	done, _ := m.persistDirty(ctx, "manual")
 	return done

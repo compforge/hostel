@@ -38,7 +38,7 @@ func TestResourceAdmissionChecksSyncedIdleAndNewBeds(t *testing.T) {
 	m := newTestManager(t)
 	a, _ := declareTestBed(m, context.Background(), "a")
 	b, _ := declareTestBed(m, context.Background(), "b")
-	defaultBed, _ := declareTestBed(m, context.Background(), "")
+	defaultBed, _ := declareTestBed(m, context.Background(), "default")
 	admission := &mutableAdmission{decision: resource.AdmissionDecision{Allowed: true}}
 	m.SetResourceAdmission(admission)
 
@@ -57,19 +57,16 @@ func TestResourceAdmissionChecksSyncedIdleAndNewBeds(t *testing.T) {
 	if _, err := declareTestBed(m, context.Background(), "new"); !errors.Is(err, ErrResourcePressure) {
 		t.Fatalf("admit new resident: want ErrResourcePressure, got %v", err)
 	}
-	finishDefault, err := m.BeginOperation(defaultBed, OpExec, 0)
-	if err != nil {
-		t.Fatalf("default bed should bypass resource admission: %v", err)
+	if _, err := m.BeginOperation(defaultBed, OpExec, 0); !errors.Is(err, ErrResourcePressure) {
+		t.Fatalf("default named Bed bypassed resource admission: %v", err)
 	}
-
-	finishDefault()
 	finishA2()
 	finishA()
 }
 
 func TestResourceAdmissionAllowsUnsyncedIdleBed(t *testing.T) {
 	root := t.TempDir()
-	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
+	m, err := NewManager(hostfacts.Collect(), root, "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
@@ -92,7 +89,7 @@ func TestResourceAdmissionAllowsUnsyncedIdleBed(t *testing.T) {
 
 func TestEnsureKeepsSyncedIdleBedEligibleForAdmission(t *testing.T) {
 	root := t.TempDir()
-	m, err := NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
+	m, err := NewManager(hostfacts.Collect(), root, "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 3, store.NewManagerWithStores(newFakeStore()))
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}

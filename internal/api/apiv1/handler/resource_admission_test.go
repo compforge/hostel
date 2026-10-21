@@ -48,8 +48,8 @@ func TestResourcePressureBackpressureAndReporting(t *testing.T) {
 	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "RESOURCE_PRESSURE") {
 		t.Fatalf("resource pressure = %d %s", rec.Code, rec.Body.String())
 	}
-	// The compatibility default bed remains available even under pressure.
-	if rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, nil); rec.Code != http.StatusOK {
+	// An idle Bed named default follows the same resource admission policy.
+	if rec = do(t, s, http.MethodGet, "/files/info?path=/workspace", nil, nil); rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("default bed under pressure = %d %s", rec.Code, rec.Body.String())
 	}
 

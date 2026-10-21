@@ -328,7 +328,7 @@ func TestBedPillowLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
 	// The complete desired state lives with the local Bed identity. Recovery no
 	// longer depends on a deployment-owned template catalog.
 	host := hostfacts.Collect()
-	next, err := NewManager(host, m.root, "default", "/bin/sh", isolation.New(host, "shared", m.root), nil, 0, nil, WithPillows(ports))
+	next, err := NewManager(host, m.root, "/bin/sh", isolation.New(host, "shared", m.root), nil, 0, nil, WithPillows(ports))
 	if err != nil {
 		t.Fatal(err)
 	}

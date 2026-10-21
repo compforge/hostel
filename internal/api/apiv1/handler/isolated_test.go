@@ -81,6 +81,9 @@ func runIsolated(t *testing.T, s *testServer, sessionID, body string) []apiview.
 
 func TestIsolatedSessionLifecycleAndStatefulRun(t *testing.T) {
 	s := newTestServer(t)
+	if err := s.mgr.Purge(t.Context(), "default"); err != nil {
+		t.Fatal(err)
+	}
 	id := createIsolatedSession(t, s)
 
 	rec := do(t, s, http.MethodGet, "/v1/isolated/session/"+id, nil, nil)
@@ -141,7 +144,7 @@ func TestIsolatedSessionRemainsActiveWhileEvicting(t *testing.T) {
 		started: make(chan struct{}, 1),
 		release: make(chan struct{}),
 	}
-	mgr, err := bed.NewManager(hostfacts.Collect(), root, "default", "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, store.NewManagerWithStores(backend))
+	mgr, err := bed.NewManager(hostfacts.Collect(), root, "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, store.NewManagerWithStores(backend))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,39 +263,26 @@ func TestIsolatedUnsupportedOptionsAndCapabilities(t *testing.T) {
 	}
 }
 
-func TestDefaultBedIsNotAnIsolatedSession(t *testing.T) {
+func TestDefaultNamedBedUsesIsolatedSessionLifecycle(t *testing.T) {
 	s := newTestServer(t)
-	if _, err := declareTestBed(s.mgr, context.Background(), ""); err != nil {
-		t.Fatalf("resolve default bed: %v", err)
+	if _, err := declareTestBed(s.mgr, t.Context(), "native-bed"); err != nil {
+		t.Fatal(err)
 	}
-	visible, err := declareTestBed(s.mgr, context.Background(), "native-bed")
-	if err != nil {
-		t.Fatalf("resolve non-default bed: %v", err)
-	}
-
 	rec := do(t, s, http.MethodGet, "/v1/isolated/sessions", nil, nil)
 	var list apiview.IsolatedList
-	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil ||
-		len(list.Sessions) != 1 || list.Sessions[0].SessionID != visible.Name {
-		t.Fatalf("list isolated sessions with default bed = %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil || len(list.Sessions) != 2 || list.Sessions[0].SessionID != "default" {
+		t.Fatalf("list = %d %s", rec.Code, rec.Body.String())
 	}
-
-	for _, request := range []struct {
-		method string
-		path   string
-	}{
-		{http.MethodGet, "/v1/isolated/session/default"},
-		{http.MethodDelete, "/v1/isolated/session/default"},
-		{http.MethodGet, "/v1/isolated/session/default/diff"},
-		{http.MethodPost, "/v1/isolated/session/default/commit"},
-	} {
-		rec = do(t, s, request.method, request.path, nil, nil)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("%s %s = %d %s", request.method, request.path, rec.Code, rec.Body.String())
-		}
+	rec = do(t, s, http.MethodGet, "/v1/isolated/session/default", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get = %d %s", rec.Code, rec.Body.String())
 	}
-	if _, ok := s.mgr.Get(""); !ok {
-		t.Fatal("isolated delete removed the default bed")
+	rec = do(t, s, http.MethodDelete, "/v1/isolated/session/default", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := s.mgr.Get("default"); ok {
+		t.Fatal("isolated delete retained Bed")
 	}
 }
 

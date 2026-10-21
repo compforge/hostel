@@ -132,9 +132,6 @@ func (m *Manager) finishEnvironmentProbe(started time.Time, err error) {
 // BedModel returns an observation handle, never an admitted operation. It also
 // covers initializing and retiring identities so detail queries keep one shape.
 func (m *Manager) BedModel(name string) *model.Bed {
-	if name == "" {
-		name = m.defaultBed
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if b := m.beds[name]; b != nil {

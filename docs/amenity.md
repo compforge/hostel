@@ -130,7 +130,7 @@ MCP server 可以位于外部；设施支持 SSE 和 Streamable HTTP 的工具�
 
 ### 调用与隔离
 
-HTTP 请求沿用 `X-Hostel-Bed`（或 `?bed=`）选择 bed，省略时使用 default。
+HTTP 请求沿用 `X-Hostel-Bed`（或 `?bed=`）选择 bed，缺失返回 400；包括名为 `default` 的 Bed 在内，都须先显式声明。
 这些接口与 `/command` 一样属于可信控制面：bed 标识仅负责路由，不是认证凭据，
 接入方负责入口认证和 bed 访问授权。设施使用 carrier 网络和 HTTP 客户端的出网策略，
 不声称继承某个 bed executor 的网络隔离。
