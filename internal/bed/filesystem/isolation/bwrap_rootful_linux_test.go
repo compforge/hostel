@@ -15,12 +15,17 @@ func TestRootfulRequiresActualHostCapabilities(t *testing.T) {
 	if canPrepareRootful(facts) {
 		t.Fatal("UID zero alone granted rootful preparation")
 	}
-	for _, cap := range []uint{unix.CAP_SYS_ADMIN, unix.CAP_SYS_CHROOT, unix.CAP_SETUID, unix.CAP_SETGID, unix.CAP_SETPCAP} {
+	for _, cap := range []uint{unix.CAP_SYS_ADMIN, unix.CAP_SYS_CHROOT, unix.CAP_SETUID, unix.CAP_SETGID, unix.CAP_SETPCAP, unix.CAP_DAC_OVERRIDE} {
 		facts.EffectiveCaps |= 1 << cap
 	}
 	if !canPrepareRootful(facts) {
 		t.Fatal("complete rootful preparation prerequisites rejected")
 	}
+	facts.EffectiveCaps &^= 1 << unix.CAP_DAC_OVERRIDE
+	if canPrepareRootful(facts) {
+		t.Fatal("rootful preparation must traverse private Bed directories")
+	}
+	facts.EffectiveCaps |= 1 << unix.CAP_DAC_OVERRIDE
 	facts.EUID = 1000
 	if canPrepareRootful(facts) {
 		t.Fatal("non-root helper cannot use bwrap's rootful mode")

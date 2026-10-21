@@ -183,7 +183,7 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 		return err
 	}
 	executable := rootExecutable(fs, cmd.Path, b.View(fs).MappingSupport())
-	argv := b.args(fs.Rootfs(), fs.Workdir(), processCwd, fs.Mounts())
+	argv := buildBwrapArgs(b.root, fs.Rootfs(), fs.Workdir(), processCwd, b.maskPaths, fs.Mounts(), existingRuntimePaths()...)
 	argv = append(argv[:len(argv)-1], systemFileArgs(fs)...)
 	argv = append(argv, "--")
 	userArgs := append([]string{executable}, cmd.Args[1:]...)
@@ -199,19 +199,3 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 }
 
 func (b *bwrap) AllowsMappings() bool { return true }
-
-func (b *bwrap) args(home, workspace, cwd string, mappings []bedfs.Mount) []string {
-	args := buildBwrapArgs(b.root, home, workspace, cwd, b.maskPaths, mappings, existingRuntimePaths()...)
-	if b.rootful != nil {
-		// Rootful preparation creates a mount namespace using existing host
-		// authority. No user namespace or UID remapping is needed.
-		filtered := args[:0]
-		for _, arg := range args {
-			if arg != "--unshare-user" {
-				filtered = append(filtered, arg)
-			}
-		}
-		args = filtered
-	}
-	return args
-}
