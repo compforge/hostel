@@ -20,7 +20,7 @@ func (s *Handler) filesDelete(c *gin.Context) {
 		return
 	}
 	if err := ops.Remove(paths); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.Status(http.StatusOK)
@@ -39,7 +39,7 @@ func (s *Handler) filesRename(c *gin.Context) {
 	}
 	for _, it := range items {
 		if err := ops.Rename(it.Src, it.Dest); err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 	}
@@ -61,7 +61,7 @@ func (s *Handler) filesReplace(c *gin.Context) {
 	for p, item := range m {
 		res, err := ops.Replace(p, bedfs.ReplaceItem{Old: item.Old, New: item.New})
 		if err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 		out[p] = apiview.ReplaceResult{ReplacedCount: res.ReplacedCount}

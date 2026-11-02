@@ -68,12 +68,12 @@ func respondBedError(c *gin.Context, err error) {
 			return
 		}
 	}
-	respondError(c, 409, apiview.ErrServiceUnavailable, err.Error())
+	respondFailure(c, 409, apiview.ErrServiceUnavailable, err.Error(), err)
 }
 func downloadErr(c *gin.Context, err error) {
 	if os.IsNotExist(err) {
-		respondError(c, http.StatusNotFound, apiview.ErrFileNotFound, err.Error())
+		respondFailure(c, http.StatusNotFound, apiview.ErrFileNotFound, err.Error(), err)
 		return
 	}
-	runtimeError(c, err.Error())
+	runtimeFailure(c, err)
 }

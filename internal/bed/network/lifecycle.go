@@ -107,14 +107,14 @@ func FromModel(p bed.NetworkPolicy) Policy {
 func (m *Manager) UpdatePolicy(ctx context.Context, b *bed.Bed, mutation PolicyMutation) (PolicyStatus, error) {
 	a := m.allocation(b)
 	if a == nil {
-		return PolicyStatus{}, ErrUnavailable
+		return PolicyStatus{}, m.UnavailableError()
 	}
 	if err := a.mu.Acquire(ctx, 1); err != nil {
 		return PolicyStatus{}, err
 	}
 	defer a.mu.Release(1)
 	if a.released || a.attachment == nil {
-		return PolicyStatus{}, ErrUnavailable
+		return PolicyStatus{}, m.UnavailableError()
 	}
 	result, err := m.NetworkPolicy(ctx, b.ID.String(), mutation)
 	if err == nil {

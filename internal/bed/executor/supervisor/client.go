@@ -114,7 +114,7 @@ func (c *Client) start(processID string, argv []string, dir string, env []string
 			return 0, &RequestError{Operation: string(opStart), Err: err}
 		}
 		if len(payload) > maxStartSpecSize {
-			return 0, &RequestError{Operation: string(opStart), Err: hostel.WrapError(hostel.ErrLimitExceeded, "process specification", &MessageTooLargeError{Size: len(payload), Limit: maxStartSpecSize})}
+			return 0, &RequestError{Operation: string(opStart), Err: hostel.WrapError(hostel.ErrLimitExceeded, "process specification", hostel.CauseRequest, &MessageTooLargeError{Size: len(payload), Limit: maxStartSpecSize})}
 		}
 		file, err := newStartSpecFile(payload)
 		if err != nil {
@@ -186,7 +186,7 @@ func (c *Client) call(req request, fds []int) (reply, error) {
 	if err := writeMsg(conn, req, fds); err != nil {
 		var tooLarge *MessageTooLargeError
 		if errors.As(err, &tooLarge) || errors.Is(err, syscall.EMSGSIZE) {
-			return reply{}, &RequestError{Operation: string(req.Operation), Err: hostel.WrapError(hostel.ErrLimitExceeded, "supervisor request", err)}
+			return reply{}, &RequestError{Operation: string(req.Operation), Err: hostel.WrapError(hostel.ErrLimitExceeded, "supervisor request", hostel.CauseRequest, err)}
 		}
 		return reply{}, fmt.Errorf("supervisor: send %s: %w", req.Operation, err)
 	}
@@ -200,7 +200,7 @@ func (c *Client) call(req request, fds []int) (reply, error) {
 	if rep.Error != "" {
 		remoteErr := &RemoteError{Operation: string(req.Operation), Message: rep.Error}
 		if rep.ErrorKind == hostel.ErrLimitExceeded {
-			return reply{}, hostel.WrapError(hostel.ErrLimitExceeded, "process specification", remoteErr)
+			return reply{}, hostel.WrapError(hostel.ErrLimitExceeded, "process specification", hostel.CauseRequest, remoteErr)
 		}
 		return reply{}, remoteErr
 	}

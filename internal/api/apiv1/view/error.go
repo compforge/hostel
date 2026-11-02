@@ -1,5 +1,7 @@
 package view
 
+import hostel "github.com/qiankunli/hostel/internal"
+
 // ErrorCode mirrors the OpenSandbox execd error vocabulary so SDK error
 // handling works against hostel unchanged.
 type ErrorCode string
@@ -27,7 +29,8 @@ const (
 // ErrorResponse keeps execd's required code/message envelope and adds optional
 // hostel scheduler hints that existing OpenSandbox SDKs can ignore.
 type ErrorResponse struct {
-	Code      ErrorCode `json:"code,omitempty"`
-	Message   string    `json:"message,omitempty"`
-	Retryable bool      `json:"retryable,omitempty"`
+	Cause     hostel.ErrorCause `json:"cause"`
+	Code      ErrorCode         `json:"code,omitempty"`
+	Message   string            `json:"message,omitempty"`
+	Retryable bool              `json:"retryable,omitempty"`
 }

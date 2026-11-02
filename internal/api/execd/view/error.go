@@ -1,5 +1,7 @@
 package view
 
+import hostel "github.com/qiankunli/hostel/internal"
+
 type ErrorCode string
 
 const (
@@ -15,6 +17,7 @@ const (
 )
 
 type ErrorResponse struct {
-	Code    ErrorCode `json:"code"`
-	Message string    `json:"message"`
+	Cause   hostel.ErrorCause `json:"cause"`
+	Code    ErrorCode         `json:"code"`
+	Message string            `json:"message"`
 }

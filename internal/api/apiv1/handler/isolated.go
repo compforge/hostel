@@ -23,12 +23,10 @@ import (
 	"strings"
 	"time"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
-
 	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/go-stdx/shellx"
 	"github.com/qiankunli/go-stdx/uuid"
-
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
@@ -126,7 +124,7 @@ func (s *Handler) isolatedCreate(c *gin.Context) {
 	// that its workspace directory exists.
 	if _, err := s.mgr.ForegroundShell(b); err != nil {
 		_ = s.mgr.Purge(c.Request.Context(), b.Name)
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, apiview.IsolatedCreate{
@@ -250,7 +248,7 @@ func (s *Handler) isolatedRun(c *gin.Context) {
 	timeout := time.Duration(req.TimeoutSeconds) * time.Second
 	sh, err := s.mgr.ForegroundShell(b)
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 
@@ -311,7 +309,7 @@ func isolatedRunScript(code string, envs map[string]string) string {
 // DELETE /v1/isolated/session/:sessionId
 func (s *Handler) isolatedDelete(c *gin.Context) {
 	if err := s.mgr.Purge(c.Request.Context(), c.Param("sessionId")); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, nil)

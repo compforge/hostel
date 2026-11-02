@@ -20,10 +20,8 @@ import (
 	"os"
 	"strconv"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
-
 	"github.com/gin-gonic/gin"
-
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 )
@@ -54,10 +52,10 @@ func (s *Handler) filesInfo(c *gin.Context) {
 		fi, err := reader.Stat(p)
 		if err != nil {
 			if os.IsNotExist(err) {
-				respondError(c, http.StatusNotFound, apiview.ErrFileNotFound, err.Error())
+				respondFailure(c, http.StatusNotFound, apiview.ErrFileNotFound, err.Error(), err)
 				return
 			}
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 		out[p] = fi
@@ -78,7 +76,7 @@ func (s *Handler) filesDelete(c *gin.Context) {
 		return
 	}
 	if err := ops.Remove(paths); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.Status(http.StatusOK)
@@ -98,7 +96,7 @@ func (s *Handler) filesRename(c *gin.Context) {
 	}
 	for _, it := range items {
 		if err := ops.Rename(it.Src, it.Dest); err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 	}
@@ -119,7 +117,7 @@ func (s *Handler) filesChmod(c *gin.Context) {
 	}
 	for p, perm := range m {
 		if err := ops.Chmod(p, perm); err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 	}
@@ -141,7 +139,7 @@ func (s *Handler) filesSearch(c *gin.Context) {
 	}
 	res, err := reader.Search(p, c.Query("pattern"))
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -163,7 +161,7 @@ func (s *Handler) filesReplace(c *gin.Context) {
 	for p, item := range m {
 		res, err := ops.Replace(p, item)
 		if err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 		out[p] = res
@@ -201,17 +199,17 @@ func (s *Handler) filesUpload(c *gin.Context) {
 	}
 	f, err := fh.Open()
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	defer f.Close()
 	data, err := io.ReadAll(f)
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	if err := ops.Write(path, data, 0); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.Status(http.StatusOK)
@@ -257,10 +255,10 @@ func (s *Handler) filesDownload(c *gin.Context) {
 
 func downloadErr(c *gin.Context, err error) {
 	if os.IsNotExist(err) {
-		respondError(c, http.StatusNotFound, apiview.ErrFileNotFound, err.Error())
+		respondFailure(c, http.StatusNotFound, apiview.ErrFileNotFound, err.Error(), err)
 		return
 	}
-	runtimeError(c, err.Error())
+	runtimeFailure(c, err)
 }
 
 // --- directories ---
@@ -287,10 +285,10 @@ func (s *Handler) dirList(c *gin.Context) {
 	res, err := reader.List(p, depth)
 	if err != nil {
 		if os.IsNotExist(err) {
-			respondError(c, http.StatusNotFound, apiview.ErrFileNotFound, err.Error())
+			respondFailure(c, http.StatusNotFound, apiview.ErrFileNotFound, err.Error(), err)
 			return
 		}
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, res)
@@ -309,7 +307,7 @@ func (s *Handler) dirCreate(c *gin.Context) {
 		return
 	}
 	if err := ops.MakeDir(p); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.Status(http.StatusOK)
@@ -328,7 +326,7 @@ func (s *Handler) dirDelete(c *gin.Context) {
 		return
 	}
 	if err := ops.RemoveDir(p); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.Status(http.StatusOK)

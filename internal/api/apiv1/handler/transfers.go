@@ -19,9 +19,8 @@ import (
 	"net/http"
 	"time"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
-
 	"github.com/gin-gonic/gin"
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
@@ -102,11 +101,11 @@ func transferError(c *gin.Context, err error) {
 	case errors.Is(err, store.ErrTransferInvalid):
 		badRequest(c, err.Error())
 	case errors.Is(err, store.ErrTransferConflict):
-		respondError(c, http.StatusConflict, "TRANSFER_CONFLICT", err.Error())
+		respondFailure(c, http.StatusConflict, "TRANSFER_CONFLICT", err.Error(), err)
 	case errors.Is(err, store.ErrTransferNotFound):
-		respondError(c, http.StatusNotFound, "TRANSFER_UNKNOWN", err.Error())
+		respondFailure(c, http.StatusNotFound, "TRANSFER_UNKNOWN", err.Error(), err)
 	case errors.Is(err, store.ErrTransferCapacity):
-		respondError(c, http.StatusTooManyRequests, "TRANSFER_CAPACITY", err.Error())
+		respondFailure(c, http.StatusTooManyRequests, "TRANSFER_CAPACITY", err.Error(), err)
 	case errors.Is(err, store.ErrTransferUnavailable):
 		respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, "S3 transfer unavailable")
 	default:

@@ -9,21 +9,25 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	hostel "github.com/qiankunli/hostel/internal"
 )
 
 // Status is a cached startup verdict. Reading it never modifies networking.
 type Status struct {
-	Available bool   `json:"available"`
-	Backend   string `json:"backend"`
-	Reason    string `json:"reason,omitempty"`
-	Probe     Probe  `json:"probe"`
+	Available bool              `json:"available"`
+	Cause     hostel.ErrorCause `json:"cause,omitempty"`
+	Backend   string            `json:"backend"`
+	Reason    string            `json:"reason,omitempty"`
+	Probe     Probe             `json:"probe"`
 }
 
 type Probe struct {
-	Attempted  bool   `json:"attempted"`
-	Stage      string `json:"stage"`
-	DurationMS int64  `json:"duration_ms"`
-	Error      string `json:"error,omitempty"`
+	Attempted  bool              `json:"attempted"`
+	Stage      string            `json:"stage"`
+	DurationMS int64             `json:"duration_ms"`
+	Error      string            `json:"error,omitempty"`
+	Cause      hostel.ErrorCause `json:"cause,omitempty"`
 }
 
 type endpoint interface {
@@ -80,8 +84,9 @@ func probePool(ctx context.Context, ports ...*PortManager) *Pool {
 		report.Backend = "netns"
 	} else {
 		report.Reason = probe.Error
+		report.Cause = probe.Cause
 	}
-	log.Printf("network: enabled=%t backend=%s stage=%s reason=%q", report.Available, report.Backend, probe.Stage, report.Reason)
+	log.Printf("network: enabled=%t backend=%s stage=%s cause=%s reason=%q", report.Available, report.Backend, probe.Stage, report.Cause, report.Reason)
 	return &Pool{report: report, backend: b, allocations: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 

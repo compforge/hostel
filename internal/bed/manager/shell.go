@@ -220,14 +220,14 @@ func (s *Shell) runAt(ctx context.Context, cwdInBed, command string, settings *S
 	if cwdInBed != "" {
 		processCwd, err := s.view.Path(cwdInBed)
 		if err != nil {
-			return nil, hostel.WrapError(hostel.ErrPreparationFailed, "session directory", err)
+			return nil, hostel.WrapError(hostel.ErrPreparationFailed, "session directory", hostel.CauseUnknown, err)
 		}
 		result, err := s.runLocked(ctx, "command cd -- "+shellx.Quote(processCwd), onLine)
 		if err != nil {
 			return nil, err
 		}
 		if result.ExitCode != 0 {
-			return nil, hostel.WrapError(hostel.ErrPreparationFailed, "session directory", fmt.Errorf("cd exited %d", result.ExitCode))
+			return nil, hostel.WrapError(hostel.ErrPreparationFailed, "session directory", hostel.CauseUnknown, fmt.Errorf("cd exited %d", result.ExitCode))
 		}
 	}
 	return s.runLocked(ctx, command, onLine)
@@ -315,7 +315,7 @@ func (m *Manager) StartSessionExecution(
 }
 func (m *Manager) StartConfiguredSessionExecution(ctx context.Context, b *Resident, shell *Shell, command string, settings SessionSettings, timeout time.Duration, onStart func(ExecutionStatus), onOutput func(ExecutionOutput)) (*Execution, error) {
 	if err := ValidateRequestEnv(settings.Environment); err != nil {
-		return nil, hostel.WrapError(hostel.ErrInvalidArgument, "session environment", err)
+		return nil, hostel.WrapError(hostel.ErrInvalidArgument, "session environment", hostel.CauseRequest, err)
 	}
 	return m.startSessionExecution(ctx, b, shell, command, "", &settings, timeout, onStart, onOutput)
 }

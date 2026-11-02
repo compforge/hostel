@@ -21,7 +21,7 @@ type SessionSettings struct {
 
 func (s *Shell) prepareSessionLocked(ctx context.Context, settings *SessionSettings) (string, error) {
 	if err := ValidateRequestEnv(settings.Environment); err != nil {
-		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session environment", err)
+		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session environment", hostel.CauseUnknown, err)
 	}
 	if len(settings.Environment) > 0 {
 		var control strings.Builder
@@ -33,7 +33,7 @@ func (s *Shell) prepareSessionLocked(ctx context.Context, settings *SessionSetti
 			return "", err
 		}
 		if result.ExitCode != 0 {
-			return "", hostel.WrapError(hostel.ErrPreparationFailed, "session environment", fmt.Errorf("environment update rejected"))
+			return "", hostel.WrapError(hostel.ErrPreparationFailed, "session environment", hostel.CauseUnknown, fmt.Errorf("environment update rejected"))
 		}
 	}
 	if settings.Directory == "" {
@@ -41,7 +41,7 @@ func (s *Shell) prepareSessionLocked(ctx context.Context, settings *SessionSetti
 	}
 	expression, err := directoryExpression(settings.Directory)
 	if err != nil {
-		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", err)
+		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", hostel.CauseUnknown, err)
 	}
 	var output strings.Builder
 	result, err := s.runLocked(ctx, `(printf '%s\n' "$PWD"; printf '%s\n' `+expression+`)`, func(line string) { output.WriteString(line) })
@@ -49,11 +49,11 @@ func (s *Shell) prepareSessionLocked(ctx context.Context, settings *SessionSetti
 		return "", err
 	}
 	if result.ExitCode != 0 {
-		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", fmt.Errorf("cannot expand directory"))
+		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", hostel.CauseUnknown, fmt.Errorf("cannot expand directory"))
 	}
 	lines := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
 	if len(lines) != 2 || lines[1] == "" {
-		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", fmt.Errorf("invalid expanded directory"))
+		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", hostel.CauseUnknown, fmt.Errorf("invalid expanded directory"))
 	}
 	directory := lines[1]
 	if !path.IsAbs(directory) {
@@ -61,7 +61,7 @@ func (s *Shell) prepareSessionLocked(ctx context.Context, settings *SessionSetti
 	}
 	resolved, err := s.view.ResolveDirectory(directory)
 	if err != nil {
-		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", err)
+		return "", hostel.WrapError(hostel.ErrPreparationFailed, "session directory", hostel.CauseUnknown, err)
 	}
 	return resolved, nil
 }

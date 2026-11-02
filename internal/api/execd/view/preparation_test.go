@@ -11,7 +11,7 @@ import (
 )
 
 func TestPreparationFailureProjection(t *testing.T) {
-	result := bed.ExecutionResult{Cause: bed.CausePreparationFailed, Err: hostel.WrapError(hostel.ErrPreparationFailed, "session directory", errors.New("secret carrier path"))}
+	result := bed.ExecutionResult{Cause: bed.CausePreparationFailed, Err: hostel.WrapError(hostel.ErrPreparationFailed, "session directory", hostel.CauseUnknown, errors.New("secret carrier path"))}
 	view := Terminal(result)
 	encoded, err := json.Marshal(view)
 	if view.Type != "error" || view.Error == nil || view.Error.Value != "125" {

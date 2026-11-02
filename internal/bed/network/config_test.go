@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestOffNetworkDoesNotConstructHostPool(t *testing.T) {
 	if a, err := m.Acquire(t.Context(), "bed"); err != nil || a != nil {
 		t.Fatalf("%v %v", a, err)
 	}
-	if _, err := m.NetworkPolicy(t.Context(), "bed", PolicyMutation{}); err != ErrUnavailable {
+	if _, err := m.NetworkPolicy(t.Context(), "bed", PolicyMutation{}); !errors.Is(err, ErrUnavailable) {
 		t.Fatal(err)
 	}
 	if err := m.Close(t.Context()); err != nil {

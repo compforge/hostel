@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/filepathx"
+	hostel "github.com/qiankunli/hostel/internal"
 	"github.com/qiankunli/hostel/internal/amenity"
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/configuration"
@@ -123,11 +124,11 @@ const defaultBedPressureThresholdPercent = 80
 // ErrBedLimit is returned when creating a new bed would exceed the configured
 // cap. Callers should surface it as backpressure (HTTP 429): the upstream
 // scheduler is expected to place the sandbox on another instance.
-var ErrBedLimit = errors.New("bed: max bed count reached")
+var ErrBedLimit = hostel.WrapError(hostel.ErrLimitExceeded, "bed capacity", hostel.CauseResource, errors.New("bed: max bed count reached"))
 
 // ErrResourcePressure is returned when aggregate carrier CPU or memory usage
 // is already too high to initialize another Bed.
-var ErrResourcePressure = errors.New("bed: carrier resource admission threshold reached")
+var ErrResourcePressure = hostel.WrapError(hostel.ErrLimitExceeded, "carrier resource admission", hostel.CauseResource, errors.New("bed: carrier resource admission threshold reached"))
 
 // ErrBedUnavailable means the caller holds a stale Bed pointer whose resident
 // entry has already been removed.

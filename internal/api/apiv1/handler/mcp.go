@@ -20,9 +20,8 @@ import (
 	"net/http"
 	"time"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
-
 	"github.com/gin-gonic/gin"
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/tracing"
 	"github.com/qiankunli/hostel/pkg/mcpproxy"
@@ -49,7 +48,7 @@ func (s *Handler) mcpRequest(next func(*gin.Context, *mcpproxy.Proxy) error) gin
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
 		t, err := s.mgr.Amenities().MCP(ctx, b.ID)
 		if err != nil {
-			respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, err.Error())
+			respondFailure(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, err.Error(), err)
 			return
 		}
 		start := time.Now()
@@ -97,13 +96,13 @@ func (s *Handler) mcpCallTool(c *gin.Context, p *mcpproxy.Proxy) error {
 func respondMCPError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, mcpproxy.ErrInvalid):
-		respondError(c, http.StatusBadRequest, apiview.ErrInvalidRequest, err.Error())
+		respondFailure(c, http.StatusBadRequest, apiview.ErrInvalidRequest, err.Error(), err)
 	case errors.Is(err, mcpproxy.ErrNotFound):
-		respondError(c, http.StatusNotFound, apiview.ErrMCPServerNotFound, err.Error())
+		respondFailure(c, http.StatusNotFound, apiview.ErrMCPServerNotFound, err.Error(), err)
 	case errors.Is(err, mcpproxy.ErrCapacity):
-		respondError(c, http.StatusTooManyRequests, apiview.ErrMCPCapacity, err.Error())
+		respondFailure(c, http.StatusTooManyRequests, apiview.ErrMCPCapacity, err.Error(), err)
 	case errors.Is(err, mcpproxy.ErrClosed):
-		respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, err.Error())
+		respondFailure(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, err.Error(), err)
 	case errors.Is(err, context.DeadlineExceeded):
 		respondError(c, http.StatusGatewayTimeout, apiview.ErrMCPTimeout, "MCP request timed out")
 	case errors.Is(err, context.Canceled):

@@ -165,27 +165,27 @@ func respondBedError(c *gin.Context, err error) {
 		}
 	}
 	if errors.Is(err, bed.ErrPortsConflict) || errors.Is(err, bed.ErrPathsConflict) || errors.Is(err, bed.ErrPillowsConflict) {
-		respondError(c, http.StatusConflict, apiview.ErrBedInvalid, err.Error())
+		respondFailure(c, http.StatusConflict, apiview.ErrBedInvalid, err.Error(), err)
 		return
 	}
 
 	if errors.Is(err, bed.ErrResourcePressure) {
-		respondError(c, http.StatusTooManyRequests, apiview.ErrResourcePressure, err.Error())
+		respondFailure(c, http.StatusTooManyRequests, apiview.ErrResourcePressure, err.Error(), err)
 		return
 	}
 	if errors.Is(err, bed.ErrBedLimit) {
-		respondError(c, http.StatusTooManyRequests, apiview.ErrBedLimitExceeded, err.Error())
+		respondFailure(c, http.StatusTooManyRequests, apiview.ErrBedLimitExceeded, err.Error(), err)
 		return
 	}
 	if errors.Is(err, bed.ErrBedUnavailable) {
-		respondError(c, http.StatusConflict, apiview.ErrBedBusy, err.Error())
+		respondFailure(c, http.StatusConflict, apiview.ErrBedBusy, err.Error(), err)
 		return
 	}
 	if errors.Is(err, bed.ErrBedPurging) {
-		respondError(c, http.StatusConflict, apiview.ErrBedBusy, err.Error())
+		respondFailure(c, http.StatusConflict, apiview.ErrBedBusy, err.Error(), err)
 		return
 	}
-	respondError(c, http.StatusBadRequest, apiview.ErrBedInvalid, err.Error())
+	respondFailure(c, http.StatusBadRequest, apiview.ErrBedInvalid, err.Error(), err)
 }
 
 const resolvedBedContextKey = "hostel.resolved-bed"

@@ -23,13 +23,19 @@ func (k ErrorKind) Error() string { return string(k) }
 // Op describes an operation, e.g. "session directory"; it must not contain
 // commands, credentials, user values or carrier paths.
 type Error struct {
-	Kind ErrorKind
-	Op   string
-	Err  error
+	Kind  ErrorKind
+	Op    string
+	Cause ErrorCause
+	Err   error
 }
 
-func WrapError(kind ErrorKind, op string, cause error) *Error {
-	return &Error{Kind: kind, Op: op, Err: cause}
+// WrapError attaches attribution at the boundary with evidence. Context-only
+// wrappers pass CauseUnknown to preserve attribution from the underlying error.
+func WrapError(kind ErrorKind, op string, cause ErrorCause, err error) *Error {
+	if cause == "" || cause == CauseUnknown {
+		cause = CauseOf(err)
+	}
+	return &Error{Kind: kind, Op: op, Cause: cause, Err: err}
 }
 func (e *Error) Error() string {
 	if e.Err == nil {

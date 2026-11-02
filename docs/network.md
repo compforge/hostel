@@ -16,6 +16,19 @@ Network 定义 shared/private 两级：dorm/room 预期 shared，suite/auto 预�
 继续共享 carrier 网络。探测成功后，单个 Bed 创建网络失败会使该次初始化失败，不能在
 同一实例中静默改成共享网络。运行中权限撤销也不会自动放开已隔离 Bed。
 
+## 能力失败归因
+
+`/v1/status` 的 `components.network` 与 `/v1/beds/capabilities` 的 `network` 报告实例能力。
+失败时的 `cause` 表示归因，`probe.stage` 表示检测阶段，`reason`/`probe.error` 保存运维详情；
+`scope` 仍表示网络执行范围，不是错误归因。
+
+例如 carrier netns 的 `ip_forward=0` 得到 `cause=carrier, probe.stage=forwarding`。
+这会令独立网络不可用；携带 networkPolicy 的 `POST /v1/beds` 仍返回 503，响应增加
+`cause=carrier`，不会因加诊断字段而忽略策略或修改 carrier sysctl。
+配置显式禁用独立网络却请求其策略时归 request；地址耗尽归 resource；机制验证未兑现归 bed。
+namespace 命令或连通性失败本身不能证明是 carrier 还是 Bed 实现的问题，证据不足则为 unknown。
+原始 probe 错误留在全局状态/日志，创建 API 保留固定安全消息。
+
 ## Bed PortMapping
 
 `Bed.Spec.PortMappings` 是命名的 TCP 端口需求；与 Volume/Mount 声明一样，调用方声明逻辑关系，

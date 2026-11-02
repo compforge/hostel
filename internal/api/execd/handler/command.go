@@ -45,7 +45,7 @@ func (s *Handler) execdLogs(c *gin.Context) {
 	}
 	f, next, err := e.OpenBackgroundLog(cursor)
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	defer f.Close()
