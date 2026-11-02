@@ -53,7 +53,7 @@ func (s *Handler) runCommand(c *gin.Context) {
 	if req.Background {
 		e, err := s.mgr.StartExecution(context.WithoutCancel(ctx), b, bed.ExecutionBackground, req.Command, cwd, req.Stdin, req.Envs, timeout, nil, nil)
 		if err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 		stream.send(view.StreamEvent{Type: "init", Text: e.ID})
@@ -65,7 +65,7 @@ func (s *Handler) runCommand(c *gin.Context) {
 	defer func() { stop() }()
 	e, err := s.mgr.StartExecution(ctx, b, bed.ExecutionForeground, req.Command, cwd, req.Stdin, req.Envs, timeout, func(status bed.ExecutionStatus) { stop = stream.start(ctx, status.ID) }, func(out bed.ExecutionOutput) { stream.send(view.StreamEvent{Type: string(out.Stream), Text: out.Text}) })
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	result := e.Wait()
@@ -95,7 +95,7 @@ func (s *Handler) sessionCreate(c *gin.Context) {
 	}
 	id, err := s.mgr.CreateShell(b, cwd)
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.JSON(200, view.SessionCreated{ID: id})

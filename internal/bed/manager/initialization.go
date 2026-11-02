@@ -18,9 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/qiankunli/hostel/protocol"
-
 	"log"
 	"path/filepath"
 	"reflect"
@@ -30,6 +27,7 @@ import (
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/store"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 // Phase is the coarse local lifecycle of a Bed identity. Activity
@@ -120,7 +118,7 @@ func (m *Manager) Ensure(ctx context.Context, id string) (*managedBed, error) {
 	initialization := m.initializations[id]
 	m.mu.Unlock()
 	if initialization == nil {
-		return nil, hostel.WrapError(hostel.ErrNotFound, "bed", nil)
+		return nil, hostel.WrapError(hostel.ErrNotFound, "bed", hostel.CauseRequest, nil)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -217,7 +215,7 @@ func (m *Manager) beginInitialization(
 			return nil, nil, err
 		}
 		if !m.network.Status().Enabled {
-			return nil, nil, network.ErrUnavailable
+			return nil, nil, m.network.UnavailableError()
 		}
 		options.NetworkPolicy = &normalized
 	}

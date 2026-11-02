@@ -8,10 +8,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	hostel "github.com/qiankunli/hostel/internal"
 )
 
 var ErrUnavailable = errors.New("network policy is unavailable")
-var ErrInvalidPolicy = errors.New("invalid network policy")
+var ErrInvalidPolicy = hostel.WrapError(hostel.ErrInvalidArgument, "network policy", hostel.CauseRequest, nil)
 
 type Rule struct {
 	Action string `json:"action"`

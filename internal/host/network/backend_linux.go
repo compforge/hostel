@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
+	hostel "github.com/qiankunli/hostel/internal"
 	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 )
 
@@ -55,7 +56,7 @@ func run(ctx context.Context, input, command string, args ...string) ([]byte, er
 }
 
 func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
-	probe := Probe{Stage: "tools"}
+	probe := Probe{Stage: "tools", Cause: hostel.CauseCarrier}
 	b := &linuxBackend{prefix: "hn" + randx.Hex(4), endpoints: make(map[string]*linuxEndpoint)}
 	if len(ports) > 0 {
 		b.ports = ports[0]
@@ -72,9 +73,9 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 		}
 	}
 	probe.Stage = "forwarding"
-	forwarding, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
-	if err != nil || strings.TrimSpace(string(forwarding)) != "1" {
-		probe.Error = "IPv4 forwarding is unavailable; Hostel does not change carrier-wide sysctls"
+	if err := checkForwarding("/proc/sys/net/ipv4/ip_forward"); err != nil {
+		probe.Error = err.Error()
+		probe.Cause = hostel.CauseOf(err)
 		return nil, probe
 	}
 	probe.Stage = "dns"
@@ -83,6 +84,7 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 		probe.Error = err.Error()
 		return nil, probe
 	}
+	probe.Cause = hostel.CauseUnknown
 	probe.Attempted = true
 	probe.Stage = "namespace_network"
 	ep, err := b.Create(ctx)
@@ -99,7 +101,7 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 		if err == nil {
 			own, _ := os.Readlink("/proc/self/ns/net")
 			if strings.HasPrefix(string(out), own+"\n") || !strings.Contains(string(out), "CapEff:\t0000000000000000") {
-				err = errors.New("namespace entry or capability drop was not effective")
+				err = hostel.WrapError(hostel.ErrPreparationFailed, "network namespace execution", hostel.CauseBed, errors.New("namespace entry or capability drop was not effective"))
 			}
 		}
 	}
@@ -112,6 +114,7 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 	cleanupErr := b.Close(cleanupCtx)
 	cancel()
 	err = errors.Join(err, cleanupErr)
+	probe.Cause = hostel.CauseOf(err)
 	if err != nil {
 		probe.Error = err.Error()
 		if cleanupErr != nil {
@@ -120,6 +123,7 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 		return nil, probe
 	}
 	probe.Stage = "ready"
+	probe.Cause = ""
 	return b, probe
 }
 
@@ -179,7 +183,7 @@ func (b *linuxBackend) allocate(ctx context.Context) (netip.Addr, netip.Addr, er
 			return subnet.Addr().Next(), subnet.Addr().Next().Next(), nil
 		}
 	}
-	return netip.Addr{}, netip.Addr{}, errors.New("no unused /30 network in 198.18.0.0/15")
+	return netip.Addr{}, netip.Addr{}, hostel.WrapError(hostel.ErrLimitExceeded, "network address allocation", hostel.CauseResource, errors.New("no unused /30 network in 198.18.0.0/15"))
 }
 
 func (e *linuxEndpoint) create(ctx context.Context) error {

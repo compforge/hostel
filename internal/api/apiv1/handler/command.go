@@ -21,9 +21,8 @@ import (
 	"strconv"
 	"time"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
-
 	"github.com/gin-gonic/gin"
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
@@ -98,7 +97,7 @@ func (s *Handler) runCommand(c *gin.Context) {
 		executionCtx := context.WithoutCancel(c.Request.Context())
 		execution, err := s.mgr.StartExecution(executionCtx, b, bed.ExecutionBackground, req.Command, cwdInBed, req.Stdin, req.Envs, timeout, nil, nil)
 		if err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 		sse := newSSE(c)
@@ -126,7 +125,7 @@ func (s *Handler) runCommand(c *gin.Context) {
 		sse.send(apiview.StreamEvent{Type: eventType, ExecutionID: startedExecutionID, Sequence: &sequence, Text: output.Text})
 	})
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	result := execution.Wait()
@@ -243,7 +242,7 @@ func (s *Handler) sessionCreate(c *gin.Context) {
 	}
 	id, err := s.mgr.CreateShell(b, cwdInBed)
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"session_id": id})

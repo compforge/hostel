@@ -22,16 +22,13 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/qiankunli/hostel/protocol"
-
 	"github.com/gin-gonic/gin"
 	"github.com/qiankunli/go-stdx/randx"
 	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
-
 	model "github.com/qiankunli/hostel/internal/bed"
-
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/bed/network"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 func (s *Handler) viewOf(b *bed.Resident) protocol.Bed {
@@ -98,7 +95,7 @@ func (s *Handler) bedCreate(c *gin.Context) {
 	status, err := s.mgr.InitializeBed(c.Request.Context(), id, bed.CreateOptions{Volumes: req.Volumes, PortMappings: req.PortMappings, NetworkPolicy: req.NetworkPolicy, Pillows: req.Pillows})
 	if err != nil {
 		if errors.Is(err, network.ErrUnavailable) {
-			respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, "bed network policy is unavailable")
+			respondFailure(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, "bed network policy is unavailable", err)
 		} else if errors.Is(err, network.ErrInvalidPolicy) {
 			badRequest(c, err.Error())
 		} else {
@@ -172,7 +169,7 @@ func (s *Handler) bedDelete(c *gin.Context) {
 				respondBedError(c, err)
 				return
 			}
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 		c.Status(http.StatusOK)
@@ -180,7 +177,7 @@ func (s *Handler) bedDelete(c *gin.Context) {
 	}
 	evicted, err := s.mgr.Evict(c.Request.Context(), id)
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	if !evicted {
@@ -245,7 +242,7 @@ func (s *Handler) bedCheckpoint(c *gin.Context) {
 			respondBedError(c, err)
 			return
 		}
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	b, ok := s.mgr.Get(id)

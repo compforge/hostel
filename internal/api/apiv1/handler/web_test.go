@@ -31,16 +31,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/hostel/protocol"
-
 	"github.com/gin-gonic/gin"
 	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
-
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
-
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 func newTestServer(t *testing.T) *testServer {
@@ -814,7 +811,7 @@ func TestMaxBedsBackpressure(t *testing.T) {
 	}
 	// Second bed → 429 BED_LIMIT_EXCEEDED, whether via management API...
 	rec = do(t, s, "POST", "/v1/beds", strings.NewReader(`{"id":"two","pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`), map[string]string{"Content-Type": "application/json"})
-	if rec.Code != 429 || !strings.Contains(rec.Body.String(), "BED_LIMIT_EXCEEDED") {
+	if rec.Code != 429 || !strings.Contains(rec.Body.String(), "BED_LIMIT_EXCEEDED") || !strings.Contains(rec.Body.String(), `"cause":"resource"`) {
 		t.Fatalf("create two = %d %s (want 429 BED_LIMIT_EXCEEDED)", rec.Code, rec.Body.String())
 	}
 	// Data access never attempts admission or creates a Bed.

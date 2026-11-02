@@ -20,12 +20,10 @@ import (
 	"net/http"
 	"net/url"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
-
 	"github.com/gin-gonic/gin"
 	"github.com/gobwas/ws"
-
 	"github.com/qiankunli/hostel/internal/amenity"
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 )
 
@@ -46,7 +44,7 @@ func (s *Handler) browserOf(c *gin.Context) (*bed.Resident, amenity.Browser, fun
 	br, err := s.mgr.Amenities().Browser(c.Request.Context(), b.ID)
 	if err != nil {
 		finish()
-		respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, err.Error())
+		respondFailure(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, err.Error(), err)
 		return nil, nil, nil
 	}
 	return b, br, finish
@@ -65,7 +63,7 @@ func (s *Handler) browserInfo(c *gin.Context) {
 	defer finishOperation()
 	token, err := br.CDPToken()
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	// Reuse the port the request came in on; host is always loopback for the bed.
@@ -145,7 +143,7 @@ func (s *Handler) browserGoto(c *gin.Context) {
 	}
 	title, loc, err := br.Goto(c.Request.Context(), b.Workdir(), req.URL)
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"title": title, "url": loc})
@@ -167,7 +165,7 @@ func (s *Handler) browserScreenshot(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	saved, err := br.Screenshot(c.Request.Context(), b.Workdir(), req.Path)
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"path": saved})
@@ -182,7 +180,7 @@ func (s *Handler) browserText(c *gin.Context) {
 	defer finishOperation()
 	text, err := br.Text(c.Request.Context(), b.Workdir())
 	if err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"text": text})
@@ -196,7 +194,7 @@ func (s *Handler) browserClose(c *gin.Context) {
 	}
 	defer finishOperation()
 	if err := br.CloseContext(c.Request.Context()); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.Status(http.StatusOK)
@@ -217,7 +215,7 @@ func (s *Handler) browserClick(c *gin.Context) {
 		return
 	}
 	if err := br.Click(c.Request.Context(), b.Workdir(), req.Selector); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.Status(http.StatusOK)
@@ -240,7 +238,7 @@ func (s *Handler) browserType(c *gin.Context) {
 		return
 	}
 	if err := br.Type(c.Request.Context(), b.Workdir(), req.Selector, req.Text, req.Clear); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.Status(http.StatusOK)
@@ -261,7 +259,7 @@ func (s *Handler) browserPress(c *gin.Context) {
 		return
 	}
 	if err := br.Press(c.Request.Context(), b.Workdir(), req.Key); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.Status(http.StatusOK)
@@ -280,7 +278,7 @@ func (s *Handler) browserScroll(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req)
 	if err := br.Scroll(c.Request.Context(), b.Workdir(), req.DX, req.DY); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.Status(http.StatusOK)
@@ -301,7 +299,7 @@ func (s *Handler) browserWait(c *gin.Context) {
 		return
 	}
 	if err := br.Wait(c.Request.Context(), b.Workdir(), req.Selector); err != nil {
-		runtimeError(c, err.Error())
+		runtimeFailure(c, err)
 		return
 	}
 	c.Status(http.StatusOK)

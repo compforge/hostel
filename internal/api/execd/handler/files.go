@@ -36,7 +36,7 @@ func (s *Handler) execdRemoveDirectories(c *gin.Context) {
 	}
 	for _, p := range paths {
 		if err := ops.RemoveDir(p); err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 	}
@@ -118,7 +118,7 @@ func (s *Handler) execdUpload(c *gin.Context) {
 	for _, part := range form.File["metadata"] {
 		f, err := part.Open()
 		if err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 		raw, err := io.ReadAll(io.LimitReader(f, 1<<20))
@@ -144,13 +144,13 @@ func (s *Handler) execdUpload(c *gin.Context) {
 		}
 		f, err := part.Open()
 		if err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 		data, err := io.ReadAll(f)
 		f.Close()
 		if err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 		perm, err := meta.Permission.Native()
@@ -163,7 +163,7 @@ func (s *Handler) execdUpload(c *gin.Context) {
 			return
 		}
 		if err := ops.Write(meta.Path, data, 0); err != nil {
-			runtimeError(c, err.Error())
+			runtimeFailure(c, err)
 			return
 		}
 		if meta.Permission.Mode != 0 || meta.Permission.Owner != "" || meta.Permission.Group != "" {
@@ -179,7 +179,7 @@ func (s *Handler) execdUpload(c *gin.Context) {
 				if os.IsNotExist(err) {
 					downloadErr(c, err)
 				} else {
-					runtimeError(c, err.Error())
+					runtimeFailure(c, err)
 				}
 				return
 			}

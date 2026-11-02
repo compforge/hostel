@@ -7,6 +7,7 @@ import (
 	"log"
 	"sync"
 
+	hostel "github.com/qiankunli/hostel/internal"
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
@@ -22,6 +23,7 @@ type Status struct {
 	Backend   string                 `json:"backend"`
 	Scope     string                 `json:"scope"`
 	Reason    string                 `json:"reason,omitempty"`
+	Cause     hostel.ErrorCause      `json:"cause,omitempty"`
 	Probe     hostnetwork.Probe      `json:"probe"`
 }
 
@@ -107,7 +109,7 @@ func (m *Manager) Status() Status {
 	if report.Available {
 		scope = "bed_processes"
 	}
-	return m.describe(Status{Enabled: report.Available, Backend: report.Backend, Scope: scope, Reason: report.Reason, Probe: report.Probe})
+	return m.describe(Status{Enabled: report.Available, Backend: report.Backend, Scope: scope, Reason: report.Reason, Cause: report.Cause, Probe: report.Probe})
 }
 
 func (m *Manager) describe(s Status) Status {
@@ -121,6 +123,7 @@ func (m *Manager) describe(s Status) Status {
 		s.Backend = "shared"
 		s.Scope = "carrier"
 		s.Reason = "disabled_by_config"
+		s.Cause = hostel.CauseRequest
 	}
 	s.Expected = Private
 	if m != nil && m.config.Level == Shared {
@@ -128,11 +131,13 @@ func (m *Manager) describe(s Status) Status {
 		s.Enabled, s.Backend, s.Scope = false, "shared", "carrier"
 		if policy != tool.Off {
 			s.Reason = "shared network selected by profile"
+			s.Cause = hostel.CauseRequest
 		}
 	}
 	if m != nil && m.config.FallbackReason != "" {
 		s.Expected = Private
 		s.Reason = m.config.FallbackReason
+		s.Cause = hostel.CauseUnknown
 	}
 	s.Effective, s.Supported = Shared, []Level{Shared}
 	if available && policy != tool.Off {
@@ -140,6 +145,10 @@ func (m *Manager) describe(s Status) Status {
 	}
 	if s.Enabled {
 		s.Effective = Private
+		s.Cause = ""
+	}
+	if !s.Enabled && s.Cause == "" {
+		s.Cause = hostel.CauseUnknown
 	}
 	requirements := tool.Requirements{Capabilities: []string{"CAP_NET_ADMIN", "CAP_SYS_ADMIN"}, Tools: []string{"ip", "nft"}, Conditions: []string{"Linux", "IPv4 forwarding", "DNS resolvers", "namespace entry and connectivity probe"}}
 	s.Tools = map[string]tool.Status{"netns": tool.Describe(policy, requirements, s.Probe.Stage != "", available, s.Enabled, s.Reason)}
@@ -158,13 +167,13 @@ func (m *Manager) Acquire(ctx context.Context, id string) (Attachment, error) {
 }
 func (m *Manager) NetworkPolicy(ctx context.Context, id string, change PolicyMutation) (PolicyStatus, error) {
 	if !m.Status().Enabled {
-		return PolicyStatus{}, ErrUnavailable
+		return PolicyStatus{}, m.UnavailableError()
 	}
 	if m != nil && m.provider != nil {
 		return m.provider.NetworkPolicy(ctx, id, change)
 	}
 	if m == nil || m.pool == nil {
-		return PolicyStatus{}, ErrUnavailable
+		return PolicyStatus{}, m.UnavailableError()
 	}
 	s, err := m.pool.NetworkPolicy(ctx, id, change)
 	if err == nil {
@@ -172,6 +181,13 @@ func (m *Manager) NetworkPolicy(ctx context.Context, id string, change PolicyMut
 	}
 	return s, err
 }
+
+// UnavailableError carries the same attribution exposed in the capability report.
+// Raw probe errors stay in operator status/logs, not client-facing messages.
+func (m *Manager) UnavailableError() error {
+	return hostel.WrapError(hostel.ErrUnavailable, "bed network policy", m.Status().Cause, ErrUnavailable)
+}
+
 func (m *Manager) Close(ctx context.Context) error {
 	if m == nil {
 		return nil

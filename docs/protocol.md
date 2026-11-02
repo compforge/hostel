@@ -121,7 +121,30 @@ Hostel 的通用错误契约位于 `internal/error.go`。领域层决定失败�
 
 ### 分类与原因
 
-`hostel.ErrorKind` 表达稳定类别：ErrInvalidArgument、ErrNotFound、ErrConflict、ErrUnavailable、ErrPreparationFailed。使用 `hostel.WrapError(kind, op, cause)` 添加操作上下文，通过 `errors.Is` 判断类别、通过 `errors.As` 读取结构。底层 cause 保留，文件不存在等已有标准库错误仍能通过 `errors.Is` 识别；取消和截止时间复用 `context.Canceled` / `context.DeadlineExceeded`。
+`hostel.Error` 的四个维度各有唯一语义：
+
+| 字段 | 含义 |
+|---|---|
+| `Kind` | 失败类型：ErrInvalidArgument、ErrNotFound、ErrConflict、ErrUnavailable、ErrPreparationFailed、ErrLimitExceeded |
+| `Op` | 正在执行的固定操作名 |
+| `Cause` | 有证据支持的归因分类，类型为 `ErrorCause` |
+| `Err` | 底层 error，保留 Go 错误链 |
+
+`Cause` 的分类如下；它不是发生位置、责任判决或自动重试策略：
+
+| 值 | 归因依据 |
+|---|---|
+| `carrier` | 宿主/Pod 未提供前提，如 forwarding、工具或权限缺失 |
+| `bed` | Bed 机制保证未兑现，如实际 namespace 进入或降权验证不符合预期；不等同于确认代码 bug |
+| `request` | 请求无效、声明冲突或与选择的能力配置不兼容 |
+| `resource` | 有效请求遇到容量、资源或地址耗尽 |
+| `unknown` | 原因尚未确认，或组合失败没有单一归因 |
+
+使用 `hostel.WrapError(kind, op, cause, err)` 在有证据的领域边界附加归因。仅添加上下文时传 `CauseUnknown`，继承底层归因；通过 `CauseOf(err)` 穿过 `%w` 包装读取。组合错误只有归因一致才返回该分类，否则返回 unknown。不得按操作名、所在 package、HTTP 状态或错误文本猜归因；例如 Bed 创建期间发现 Pod 缺权限仍属于 carrier。请求 payload 超过协议大小限制属于 request，不能与运行容量不足混为 resource。
+
+通过 `errors.Is` 判断类别及 sentinel、通过 `errors.As` 读取结构；底层标准库错误仍可识别。取消和截止时间复用 `context.Canceled` / `context.DeadlineExceeded`。
+
+原生与 Execd 同步 HTTP 错误响应在既有 code/message 上增加 `cause`；未归因时明确为 unknown。状态码和既有重试语义不因 Cause 改变。网络全局能力报告的 `cause` 与拒绝执行该能力的 API 错误共用同一归因。成功能力状态不带 cause；现有执行终态 `cause`（timeout/cancel 等）语义保持不变，不与错误归因混用。其他未迁移领域保留 unknown，不承诺完整归因覆盖。
 
 Op 使用固定操作名，例如 `session directory`，不拼入 command、env、凭据、调用方内容或宿主路径。`Error()` 保留内部错误链；API 使用 `Message()` 或自身的固定消息，不将底层 OS/IPC 错误直接暴露。错误分类禁止依赖字符串比较。
 

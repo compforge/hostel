@@ -10,7 +10,7 @@ import (
 
 func TestCategoryAndCauseSurviveWrapping(t *testing.T) {
 	cause := &os.PathError{Op: "open", Path: "/private/carrier/path", Err: os.ErrNotExist}
-	wrapped := fmt.Errorf("execute: %w", WrapError(ErrPreparationFailed, "session directory", cause))
+	wrapped := fmt.Errorf("execute: %w", WrapError(ErrPreparationFailed, "session directory", CauseUnknown, cause))
 	if !errors.Is(wrapped, ErrPreparationFailed) || !errors.Is(wrapped, os.ErrNotExist) || errors.Is(wrapped, ErrConflict) {
 		t.Fatal(wrapped)
 	}

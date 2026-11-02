@@ -8,9 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
-
 	"github.com/gin-gonic/gin"
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/tracing"
@@ -68,12 +67,12 @@ func (s *Handler) networkPolicy(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, network.ErrUnavailable):
-			respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, "bed network policy is unavailable")
+			respondFailure(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, "bed network policy is unavailable", err)
 		case errors.Is(err, network.ErrInvalidPolicy):
-			respondError(c, http.StatusBadRequest, apiview.ErrInvalidRequest, err.Error())
+			respondFailure(c, http.StatusBadRequest, apiview.ErrInvalidRequest, err.Error(), err)
 		default:
 			tracing.InfoContext(ctx, "network policy update failed", "bed", b.Name, "error", err)
-			respondError(c, http.StatusInternalServerError, apiview.ErrRuntimeError, "network policy update failed")
+			respondFailure(c, http.StatusInternalServerError, apiview.ErrRuntimeError, "network policy update failed", err)
 		}
 		return
 	}

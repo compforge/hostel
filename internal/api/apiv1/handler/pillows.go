@@ -5,9 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
-
 	"github.com/gin-gonic/gin"
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/bed/pillow"
 )
@@ -60,7 +59,7 @@ func (s *Handler) pillowRestart(c *gin.Context) {
 	}
 	defer finish()
 	if err := s.mgr.Pillows().Restart(b.Bed, c.Param("pillow")); err != nil {
-		respondError(c, http.StatusConflict, apiview.ErrServiceUnavailable, err.Error())
+		respondFailure(c, http.StatusConflict, apiview.ErrServiceUnavailable, err.Error(), err)
 		return
 	}
 	c.Status(http.StatusAccepted)
@@ -79,7 +78,7 @@ func (s *Handler) pillowAccess(c *gin.Context) {
 	}
 	access, err := s.mgr.Pillows().Access(b.Bed, c.Param("pillow"))
 	if err != nil {
-		respondError(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, err.Error())
+		respondFailure(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, err.Error(), err)
 		return
 	}
 	hold, err := s.mgr.HoldPillow(b, time.Duration(req.HoldSeconds)*time.Second)
@@ -111,7 +110,7 @@ func (s *Handler) pillowLogs(c *gin.Context) {
 	}
 	output, next, running, truncated, err := s.mgr.PillowLogs(b, status.ExecutionID, cursor)
 	if err != nil {
-		respondError(c, http.StatusNotFound, apiview.ErrCommandNotFound, err.Error())
+		respondFailure(c, http.StatusNotFound, apiview.ErrCommandNotFound, err.Error(), err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"output": output, "next_cursor": next, "running": running, "truncated": truncated})

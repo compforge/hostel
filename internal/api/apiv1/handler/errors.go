@@ -17,19 +17,27 @@ package handler
 import (
 	"net/http"
 
-	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
-
 	"github.com/gin-gonic/gin"
+	hostel "github.com/qiankunli/hostel/internal"
+	apiview "github.com/qiankunli/hostel/internal/api/apiv1/view"
 )
 
 func respondError(c *gin.Context, status int, code apiview.ErrorCode, msg string) {
-	c.JSON(status, apiview.ErrorResponse{Code: code, Message: msg})
+	respondFailure(c, status, code, msg, nil)
+}
+
+func respondFailure(c *gin.Context, status int, code apiview.ErrorCode, msg string, err error) {
+	c.JSON(status, apiview.ErrorResponse{Code: code, Message: msg, Cause: hostel.CauseOf(err)})
 }
 
 func badRequest(c *gin.Context, msg string) {
-	respondError(c, http.StatusBadRequest, apiview.ErrInvalidRequest, msg)
+	respondFailure(c, http.StatusBadRequest, apiview.ErrInvalidRequest, msg, hostel.WrapError(hostel.ErrInvalidArgument, "request", hostel.CauseRequest, nil))
 }
 
 func runtimeError(c *gin.Context, msg string) {
 	respondError(c, http.StatusInternalServerError, apiview.ErrRuntimeError, msg)
+}
+
+func runtimeFailure(c *gin.Context, err error) {
+	respondFailure(c, http.StatusInternalServerError, apiview.ErrRuntimeError, err.Error(), err)
 }
