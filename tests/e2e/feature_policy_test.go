@@ -38,7 +38,7 @@ func requireTestBinary(t *testing.T) string {
 func TestFeaturePoliciesOff(t *testing.T) {
 	requireTestBinary(t)
 	options := restrictedOptions()
-	c := startTarget(t, targetOptions{isolation: "suite", config: &options}).client
+	c := startTarget(t, targetOptions{isolation: "dorm", config: &options}).client
 	var status struct {
 		Components struct {
 			Filesystem struct {
@@ -46,8 +46,8 @@ func TestFeaturePoliciesOff(t *testing.T) {
 				Tools     map[string]tool.Status
 			}
 			Network struct {
-				Enabled bool
-				Tools   map[string]tool.Status
+				Effective string
+				Tools     map[string]tool.Status
 			}
 			Resource struct {
 				Accounting struct {
@@ -64,7 +64,7 @@ func TestFeaturePoliciesOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	must2xx(t, "tool status", response)
-	if status.Components.Filesystem.Effective != "shared" || status.Components.Network.Enabled || status.Components.Resource.Accounting.Available {
+	if status.Components.Filesystem.Effective != "shared" || status.Components.Network.Effective == "private" || status.Components.Resource.Accounting.Available {
 		t.Fatalf("disabled tools active: %+v", status)
 	}
 	for _, tools := range []map[string]tool.Status{status.Components.Filesystem.Tools, status.Components.Network.Tools, status.Components.Resource.Accounting.Tools} {
@@ -88,8 +88,8 @@ func TestFeaturePoliciesOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Status != http.StatusServiceUnavailable {
-		t.Fatalf("disabled network status=%d body=%s; want 503", response.Status, response.Body)
+	if response.Status != http.StatusOK || !strings.Contains(string(response.Body), `"mode":"unenforced"`) {
+		t.Fatalf("shared network must report unenforced policy: status=%d body=%s", response.Status, response.Body)
 	}
 }
 func TestFeatureRequiredStartupFailure(t *testing.T) {
@@ -104,9 +104,9 @@ func TestFeatureRequiredStartupFailure(t *testing.T) {
 				options.Bed.Network.NetNS = value(tool.Required)
 				expected = "network.netns required"
 			} else {
-				options.Bed.RoomType = value("room")
 				options.Bed.Filesystem.Bwrap = value(tool.Required)
-				expected = "bwrap requires private files"
+				options.Bed.Filesystem.UID = value(tool.Required)
+				expected = "mutually exclusive"
 			}
 			raw, err := json.Marshal(options)
 			if err != nil {

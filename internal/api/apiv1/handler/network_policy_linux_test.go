@@ -30,7 +30,7 @@ func TestLinuxNetworkPolicyAPI(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if !manager.Status().Enabled {
+	if manager.Status().Effective != network.Private {
 		t.Fatalf("network unavailable: %+v", manager.Status())
 	}
 	s.mgr.SetNetworkManager(manager)

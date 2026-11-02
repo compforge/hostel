@@ -6,8 +6,7 @@ import (
 	"github.com/qiankunli/hostel/protocol"
 )
 
-// RoomType is the user-facing file isolation guarantee. Profiles may prefer
-// additional capabilities, whose availability does not change this guarantee.
+// RoomType is a minimum isolation contract shared by filesystem and network.
 type RoomType = protocol.RoomType
 
 const (
@@ -16,38 +15,52 @@ const (
 	Suite = protocol.Suite
 )
 
+// The legacy auto spelling retains best-effort admission; selection always
+// attempts the strongest allowed combination, independently of this floor.
 func ParseRoomType(value string) (RoomType, error) {
 	switch value {
-	case "", "auto", "suite":
-		return Suite, nil
-	case "dorm":
+	case "", "auto", "dorm":
 		return Dorm, nil
 	case "room":
 		return Room, nil
+	case "suite":
+		return Suite, nil
 	default:
-		return "", fmt.Errorf("invalid Bed room type %q: expected dorm, room, suite or auto", value)
+		return "", fmt.Errorf("invalid Bed room type %q: expected dorm, room or suite", value)
 	}
 }
 
-// RoomStatus summarizes guarantees without removing stronger domain features.
 type RoomStatus = protocol.RoomStatus
 
-// SummarizeRoom reports the attained file guarantee within the requested profile.
-// +spec=`Room requires confined files; suite requires a private file view. Additional network, identity and process capabilities are reported by their owners.`
-func SummarizeRoom(requested, files RoomType) RoomStatus {
-	r := RoomStatus{Requested: requested, Effective: requested}
-	if roomRank(files) < roomRank(requested) {
-		r.Effective = files
-		r.Reasons = []string{"filesystem below requested profile"}
+// SummarizeRoom reports actual guarantees without capping them at the floor.
+// +spec=`Bed isolation is the minimum of prepared filesystem and network rooms; the requested room is an admission floor, never a selection ceiling.`
+// +link=component://docs/isolation.md
+func SummarizeRoom(required, files, network RoomType) RoomStatus {
+	if required == "" {
+		required = Dorm
 	}
+	r := RoomStatus{Requested: required, Effective: files}
+	if Rank(network) < Rank(files) {
+		r.Effective = network
+	}
+	if Rank(files) < Rank(required) {
+		r.Reasons = append(r.Reasons, "filesystem below required isolation")
+	}
+	if Rank(network) < Rank(required) {
+		r.Reasons = append(r.Reasons, "network below required isolation")
+	}
+	r.Satisfied = Rank(r.Effective) >= Rank(required)
 	return r
 }
 
-func roomRank(r RoomType) int {
+// Rank orders guarantees; an unprepared component has no attained room.
+func Rank(r RoomType) int {
 	switch r {
 	case Suite:
-		return 2
+		return 3
 	case Room:
+		return 2
+	case Dorm:
 		return 1
 	default:
 		return 0

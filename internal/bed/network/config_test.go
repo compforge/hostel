@@ -19,7 +19,7 @@ func TestOffNetworkDoesNotConstructHostPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := m.Status()
-	if s.Enabled || s.Tools["netns"].Probe != "not_probed" || s.Reason != "disabled_by_config" {
+	if s.Effective == Private || s.Tools["netns"].Probe != "not_probed" || s.Reason != "disabled_by_config" {
 		t.Fatalf("%+v", s)
 	}
 	if a, err := m.Acquire(t.Context(), "bed"); err != nil || a != nil {
@@ -35,13 +35,13 @@ func TestOffNetworkDoesNotConstructHostPool(t *testing.T) {
 
 func TestNetworkCapabilityFactsDoNotFollowSelection(t *testing.T) {
 	m := &Manager{config: Config{Level: Shared}}
-	s := m.describe(Status{Enabled: true, Backend: "netns", Scope: "bed_processes"})
-	if s.Enabled || s.Effective != Shared || !reflect.DeepEqual(s.Supported, []Level{Shared, Private}) {
+	s := m.describe(Status{Effective: Private, Backend: "netns", Scope: "bed_processes"})
+	if s.Effective == Private || s.Effective != Shared || !reflect.DeepEqual(s.Supported, []Level{Shared, Private}) {
 		t.Fatalf("profile hid host support or enabled unrequested isolation: %+v", s)
 	}
 	m.config = Config{Level: Private}
-	strong := m.describe(Status{Enabled: true, Backend: "netns", Scope: "bed_processes"})
-	if !strong.Enabled || !reflect.DeepEqual(strong.Supported, s.Supported) {
+	strong := m.describe(Status{Effective: Private, Backend: "netns", Scope: "bed_processes"})
+	if strong.Effective != Private || !reflect.DeepEqual(strong.Supported, s.Supported) {
 		t.Fatalf("selection changed capability list: %+v", strong)
 	}
 	next, ok := m.config.WithoutOptionalNamespace("combination failed")

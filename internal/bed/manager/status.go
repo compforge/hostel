@@ -15,8 +15,12 @@
 package manager
 
 import (
+	"errors"
+	"fmt"
+	"log"
 	"time"
 
+	hostel "github.com/qiankunli/hostel/internal"
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/configuration"
 
@@ -99,11 +103,35 @@ func (m *Manager) Status() Status {
 }
 
 func (m *Manager) RoomStatus() model.RoomStatus {
-	requested := m.roomType
-	if requested == "" {
-		requested = m.iso.Level().Room()
+	return model.SummarizeRoom(m.roomType, m.iso.Level().Room(), m.network.Status().Room)
+}
+
+func (m *Manager) BedRoomStatus(b *model.Bed) model.RoomStatus {
+	s := b.Status()
+	return model.SummarizeRoom(m.roomType, s.Filesystem.Room, s.Network.Room)
+}
+
+// checkIsolation is the only tenant admission comparison. Component guarantees
+// are evaluated independently; diagnostic text never determines attribution.
+func (m *Manager) checkIsolation(name string, files, net model.RoomType) error {
+	s := model.SummarizeRoom(m.roomType, files, net)
+	if s.Satisfied {
+		return nil
 	}
-	return model.SummarizeRoom(requested, m.iso.Level().Room())
+	var failures []error
+	for _, domain := range []struct {
+		name   string
+		actual model.RoomType
+		cause  hostel.ErrorCause
+	}{{"filesystem", files, hostel.CauseUnknown}, {"network", net, m.network.Status().Cause}} {
+		if model.Rank(domain.actual) < model.Rank(s.Requested) {
+			failures = append(failures, hostel.WrapError(hostel.ErrUnavailable, "bed isolation", domain.cause,
+				fmt.Errorf("%s below required isolation: required=%s actual=%s", domain.name, s.Requested, domain.actual)))
+		}
+	}
+	err := errors.Join(failures...)
+	log.Printf("bed isolation admission rejected bed=%s required=%s actual=%s cause=%s reasons=%v", name, s.Requested, s.Effective, hostel.CauseOf(err), s.Reasons)
+	return err
 }
 
 func (m *Manager) startEnvironmentProbe(started time.Time) {

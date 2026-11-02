@@ -99,7 +99,7 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 			return fmt.Errorf("prepare file view consumer=%q: %w", consumer, err)
 		}
 	}
-	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Prepared = true })
+	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Prepared = true; s.Room = m.isolator.Level().Room() })
 	return nil
 }
 func (m *Manager) Files(b *bed.Bed) *bedfs.FS { m.mu.Lock(); defer m.mu.Unlock(); return m.files[b] }
@@ -133,11 +133,12 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 	delete(m.pillows, b)
 	delete(m.volumes, b)
 	m.mu.Unlock()
-	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Prepared = false })
+	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Prepared = false; s.Room = "" })
 	return nil
 }
 
 type Status struct {
+	Room        bed.RoomType                     `json:"room"`
 	Tools       map[string]tool.Status           `json:"tools"`
 	Requested   string                           `json:"requested"`
 	Effective   string                           `json:"effective"`
@@ -150,6 +151,7 @@ type Status struct {
 
 func (m *Manager) Status() Status {
 	view := Status{
+		Room:        m.isolator.Level().Room(),
 		Effective:   m.isolator.Level().String(),
 		Mechanism:   m.isolator.Name(),
 		ProcessView: isolation.ProcessViewReport{Mode: "carrier", Available: true},

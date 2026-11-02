@@ -30,9 +30,9 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 	var diagnostics struct {
 		Components struct {
 			Network struct {
-				Enabled bool   `json:"enabled"`
-				Scope   string `json:"scope"`
-				Reason  string `json:"reason"`
+				Effective string `json:"effective"`
+				Scope     string `json:"scope"`
+				Reason    string `json:"reason"`
 			} `json:"network"`
 		} `json:"components"`
 	}
@@ -41,12 +41,12 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 		t.Fatal(err)
 	}
 	must2xx(t, "diagnostics", response)
-	private := level == "suite"
+	private := true // Every floor seeks the strongest network on this required-network runner.
 	wantScope := "carrier"
 	if private {
 		wantScope = "bed_processes"
 	}
-	if diagnostics.Components.Network.Enabled != private || diagnostics.Components.Network.Scope != wantScope {
+	if (diagnostics.Components.Network.Effective == "private") != private || diagnostics.Components.Network.Scope != wantScope {
 		t.Fatalf("network: %+v", diagnostics.Components.Network)
 	}
 	var health healthView
@@ -55,8 +55,15 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 		t.Fatal(err)
 	}
 	must2xx(t, "health", response)
-	if requiredIsolationLevels()[level] && health.Isolation.Effective != level {
+	if requiredIsolationLevels()[level] && isolationRank(health.Isolation.Effective) < isolationRank(level) {
 		t.Fatalf("required %s degraded: %+v", level, health.Isolation)
+	}
+	if isolationRank(health.Isolation.Effective) < isolationRank(level) {
+		response := c.createBed(t, "below-floor")
+		if response.Status != 503 {
+			t.Fatalf("below-floor create: %+v", response)
+		}
+		return
 	}
 	t.Logf("executor=%s room=%s files=%+v", backend, health.Isolation.Effective, c.filesystemStatus(t))
 	must2xx(t, "declare Bed", c.createBed(t, "network-a"))

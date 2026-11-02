@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/bed"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
 
@@ -23,13 +22,6 @@ const (
 	UIDMin          = 200000
 	UIDMax          = 299999
 )
-
-func ExpectedLevel(room bed.RoomType) Level {
-	if room == bed.Dorm {
-		return Shared
-	}
-	return Dedicated
-}
 
 type Selection struct {
 	Expected  Level                 `json:"expected"`
@@ -44,8 +36,8 @@ type Selection struct {
 // Resolve owns identity selection independently of the filesystem mechanism.
 // Configured users are preferences. An unavailable identity can fall back to
 // the daemon identity only after verifying actual child credentials and file access.
-func Resolve(ctx context.Context, facts hostfacts.Snapshot, cfg Config, room bed.RoomType, root string) (Selection, error) {
-	s := Selection{Expected: ExpectedLevel(room), Effective: Shared}
+func Resolve(ctx context.Context, facts hostfacts.Snapshot, cfg Config, root string) (Selection, error) {
+	s := Selection{Expected: Dedicated, Effective: Shared}
 	user := CurrentBedUser()
 	if cfg.Configured {
 		var err error

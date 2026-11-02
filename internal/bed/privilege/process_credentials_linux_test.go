@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 )
@@ -18,7 +17,7 @@ import (
 func TestPreferredIdentityRejectsUnsafeInheritedCredentials(t *testing.T) {
 	const child = "HOSTEL_TEST_UNSAFE_IDENTITY"
 	if os.Getenv(child) == "1" {
-		_, err := Resolve(t.Context(), hostfacts.Collect(), Config{UID: 1000, GID: 1000, Configured: true}, bed.Dorm, t.TempDir())
+		_, err := Resolve(t.Context(), hostfacts.Collect(), Config{UID: 1000, GID: 1000, Configured: true}, t.TempDir())
 		if err == nil || !strings.Contains(err.Error(), "shared identity probe") {
 			t.Fatalf("inherited root identity retained capabilities without rejection: %v", err)
 		}

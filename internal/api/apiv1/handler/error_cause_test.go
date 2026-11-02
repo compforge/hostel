@@ -26,7 +26,7 @@ func (failedNetworkProbe) NetworkPolicy(context.Context, string, network.PolicyM
 }
 func (failedNetworkProbe) Close(context.Context) error { return nil }
 
-// +case:id=network_cause_http,desc=`Create Bed with policy against unavailable carrier or Bed mechanism`,expect=`Global capabilities and 503 carry the same cause; invalid policy remains request`
+// +case:id=network_cause_http,desc=`Create Bed with policy against unavailable carrier or Bed mechanism`,expect=`Dorm admits with an unenforced policy carrying the same cause; invalid policy remains request`
 func TestNetworkCauseAcrossStatusAndCreate(t *testing.T) {
 	for _, cause := range []hostel.ErrorCause{hostel.CauseCarrier, hostel.CauseBed, hostel.CauseUnknown} {
 		t.Run(string(cause), func(t *testing.T) {
@@ -46,15 +46,22 @@ func TestNetworkCauseAcrossStatusAndCreate(t *testing.T) {
 			}
 			body := `{"id":"policy-probe","networkPolicy":{"defaultAction":"deny"},"pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`
 			rec = do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(body), nil)
-			var response struct {
-				Cause hostel.ErrorCause `json:"cause"`
-				Code  string            `json:"code"`
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusOK {
+				t.Fatalf("%d %s", rec.Code, rec.Body)
 			}
-			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			if _, err := s.mgr.Ensure(t.Context(), "policy-probe"); err != nil {
 				t.Fatal(err)
 			}
-			if rec.Code != 503 || response.Cause != cause || response.Code != "SERVICE_UNAVAILABLE" {
+			rec = do(t, s, http.MethodGet, "/v1/beds/policy-probe/network/policy", nil, nil)
+			var policy network.PolicyStatus
+			if err := json.Unmarshal(rec.Body.Bytes(), &policy); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Code != 200 || policy.Cause != cause || policy.Mode != "unenforced" || policy.RequestedPolicy == nil || policy.RequestedPolicy.DefaultAction != "deny" {
 				t.Fatalf("%d %s", rec.Code, rec.Body)
+			}
+			var response struct {
+				Cause hostel.ErrorCause `json:"cause"`
 			}
 			rec = do(t, s, http.MethodPost, "/v1/beds", strings.NewReader(strings.Replace(body, `"deny"`, `"invalid"`, 1)), nil)
 			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {

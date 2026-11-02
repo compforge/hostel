@@ -30,11 +30,12 @@ type RuntimeConfig struct {
 }
 
 type RuntimeSelection struct {
-	Room     bed.RoomType
-	Files    isolation.Isolator
-	Identity privilege.Selection
-	Network  network.Config
-	Executor executor.Config
+	Room         bed.RoomType
+	Files        isolation.Isolator
+	Identity     privilege.Selection
+	Network      network.Config
+	Executor     executor.Config
+	NetworkLevel network.Level
 }
 type runtimeProbeResult struct {
 	ExecutorTools map[string]tool.Status
@@ -77,20 +78,23 @@ func selectRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell str
 		return RuntimeSelection{}, err
 	}
 	cfg.Room = room
-	files := cfg.Filesystem.ForRoom(room)
-	netConfig := cfg.Network.ForRoom(room)
+	files := cfg.Filesystem
+	files.Level = isolation.Private.String()
+	netConfig := cfg.Network
+	netConfig.Level = network.Private
 	if err := errors.Join(files.Validate(), netConfig.Validate(), cfg.Resource.Validate()); err != nil {
 		return RuntimeSelection{}, err
 	}
 	if err := os.MkdirAll(root, 0755); err != nil {
 		return RuntimeSelection{}, err
 	}
-	identity, err := privilege.Resolve(ctx, host, cfg.Privilege, cfg.Room, root)
+	identity, err := privilege.Resolve(ctx, host, cfg.Privilege, root)
 	if err != nil {
 		return RuntimeSelection{}, err
 	}
 	files.DedicatedIdentity = identity.Effective == privilege.Dedicated
 	selection := RuntimeSelection{Room: cfg.Room, Identity: identity, Network: netConfig}
+	var best *RuntimeSelection
 	for {
 		if err := ctx.Err(); err != nil {
 			return selection, err
@@ -100,19 +104,48 @@ func selectRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell str
 			return selection, err
 		}
 		selection.Files, selection.Identity = iso, identity
-		// Exhaust optional enhancements for this file boundary before excluding
-		// it. Each new file candidate gets the original enhancement preferences.
+		// Compare complete, verified combinations. Each file candidate gets
+		// the original enhancement preferences, independently of the admission floor.
 		selected, reason, err := tryFileCombination(ctx, host, root, shell, cfg, files, selection, ports, resolveFiles, probe)
 		selection = selected
-		if err != nil || reason == "" {
+		if err != nil {
 			return selection, err
+		}
+		if reason == "" {
+			if best == nil || betterRuntime(selection, *best) {
+				copy := selection
+				best = &copy
+			}
+			// Lower file candidates cannot improve this combined room once
+			// the strongest network has been realized for the current file level.
+			if selection.NetworkLevel == network.Private {
+				return selection, nil
+			}
+			reason = "seeking stronger combined isolation"
 		}
 		if next, ok := isolation.NextCombination(files, iso, reason); ok {
 			files = next
 			continue
 		}
+		if best != nil {
+			return *best, nil
+		}
 		return selection, fmt.Errorf("no executable Bed combination: %s", reason)
 	}
+}
+
+// Compare the weakest domain first. At the same overall room retain stronger
+// file guarantees, then stronger network guarantees; never strip acquired features.
+func betterRuntime(a, b RuntimeSelection) bool {
+	ar := bed.SummarizeRoom(bed.Dorm, a.Files.Level().Room(), a.NetworkLevel.Room())
+	br := bed.SummarizeRoom(bed.Dorm, b.Files.Level().Room(), b.NetworkLevel.Room())
+	if ar.Effective != br.Effective {
+		return bed.Rank(ar.Effective) > bed.Rank(br.Effective)
+	}
+	if a.Files.Level() != b.Files.Level() {
+		return a.Files.Level() > b.Files.Level()
+	}
+	return bed.Rank(a.NetworkLevel.Room()) > bed.Rank(b.NetworkLevel.Room())
 }
 
 // tryFileCombination orders process, network and identity alternatives inside
@@ -122,8 +155,10 @@ func selectRuntime(ctx context.Context, host hostfacts.Snapshot, root, shell str
 // Attempt details are logged, while only the final component selection is retained.
 func tryFileCombination(ctx context.Context, host hostfacts.Snapshot, root, shell string, cfg RuntimeConfig, files isolation.Config, selection RuntimeSelection, ports *hostnetwork.PortManager, resolveFiles fileResolver, probe runtimeProbe) (RuntimeSelection, string, error) {
 	fileLevel := selection.Files.Level()
+	var best *RuntimeSelection
 	for {
-		netConfig := cfg.Network.ForRoom(cfg.Room)
+		netConfig := cfg.Network
+		netConfig.Level = network.Private
 		executorConfig := cfg.Executor
 		var reason string
 		for {
@@ -138,6 +173,7 @@ func tryFileCombination(ctx context.Context, host hostfacts.Snapshot, root, shel
 				return selection, "", fmt.Errorf("runtime probe: %w", fatalErr)
 			}
 			if attempt.Error == "" {
+				selection.NetworkLevel = network.Level(attempt.Network)
 				selection.Executor = executorConfig.WithSelection(attempt.ExecutorTools)
 				selection.Executor.Backend = attempt.Executor
 				if attempt.Network == string(network.Shared) && netConfig.Level == network.Private {
@@ -145,7 +181,15 @@ func tryFileCombination(ctx context.Context, host hostfacts.Snapshot, root, shel
 						selection.Network = next
 					}
 				}
-				return selection, "", nil
+				if best == nil || betterRuntime(selection, *best) {
+					copy := selection
+					best = &copy
+				}
+				if selection.NetworkLevel == network.Private {
+					return selection, "", nil
+				}
+				reason = "seeking stronger network combination"
+				break
 			}
 			reason = attempt.Error
 			selectedTools := []string{}
@@ -168,6 +212,9 @@ func tryFileCombination(ctx context.Context, host hostfacts.Snapshot, root, shel
 		}
 		identity, ok := selection.Identity.WithoutDedicatedIdentity(reason)
 		if !ok {
+			if best != nil {
+				return *best, "", nil
+			}
 			return selection, reason, nil
 		}
 		// Identity can be a prerequisite of the file boundary (UID/DAC). Re-resolve
@@ -175,6 +222,9 @@ func tryFileCombination(ctx context.Context, host hostfacts.Snapshot, root, shel
 		files.DedicatedIdentity = false
 		iso, err := resolveFiles(host, files, root)
 		if err != nil || iso.Level() < fileLevel {
+			if best != nil {
+				return *best, "", nil
+			}
 			return selection, reason, nil
 		}
 		selection.Identity, selection.Files = identity, iso

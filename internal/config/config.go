@@ -24,6 +24,7 @@ import (
 
 	"github.com/qiankunli/go-stdx/osx"
 	"github.com/qiankunli/hostel/internal/bed"
+	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
@@ -113,7 +114,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs.StringVar(&c.OTLPTracesGRPCEndpoint, "otel-traces-grpc-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_GRPC_ENDPOINT", ""), "OTLP gRPC traces endpoint")
 	fs.StringVar(&c.OTLPTracesHTTPEndpoint, "otel-traces-http-endpoint", osx.EnvStr("HOSTEL_OTEL_TRACES_HTTP_ENDPOINT", ""), "OTLP HTTP traces endpoint")
 	fs.StringVar(&c.BedsRoot, "beds-root", osx.EnvStr("HOSTEL_BEDS_ROOT", "/workspace"), "carrier parent dir for per-bed data")
-	fs.StringVar(&c.Bed.RoomType, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "auto"), "Bed room type: dorm | room | suite | auto (auto=highest available profile)")
+	fs.StringVar(&c.Bed.RoomType, "isolation", osx.EnvStr("HOSTEL_ISOLATION", "dorm"), "Minimum Bed isolation: dorm | room | suite (always seek strongest available combination)")
 	fs.StringVar(&c.Bed.Filesystem.DormReadFallbackRoot, "dorm-read-fallback-root", osx.EnvStr("HOSTEL_DORM_READ_FALLBACK_ROOT", ""), "exclusive dorm process root used only for read fallback (empty=disabled)")
 	fs.StringVar(&c.ShellPath, "shell", osx.EnvStr("HOSTEL_SHELL", "/bin/bash"), "shell for bed sessions")
 	idle := fs.Duration("bed-idle-timeout", osx.EnvDuration("HOSTEL_BED_IDLE_TIMEOUT", 30*time.Minute), "reap a bed after this idle duration (0=never)")
@@ -173,12 +174,12 @@ func Load(args []string, explicit Options) (*Config, error) {
 			c.Bed.Privilege.Configured = true
 		}
 	})
-	room, roomErr := bed.ParseRoomType(c.Bed.RoomType)
+	_, roomErr := bed.ParseRoomType(c.Bed.RoomType)
 	if roomErr != nil {
 		return nil, roomErr
 	}
-	c.Bed.Filesystem = c.Bed.Filesystem.ForRoom(room)
-	c.Bed.Network = c.Bed.Network.ForRoom(room)
+	c.Bed.Filesystem.Level = "private"
+	c.Bed.Network.Level = network.Private
 	for _, p := range []*tool.Policy{&c.Bed.Filesystem.Bwrap, &c.Bed.Filesystem.Landlock, &c.Bed.Filesystem.UID, &c.Bed.Filesystem.PRoot, &c.Bed.Filesystem.Pathshim, &c.Bed.Network.NetNS, &c.Bed.Resource.Cgroup, &c.Bed.Executor.PIDNS} {
 		*p = p.Effective()
 	}

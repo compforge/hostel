@@ -180,7 +180,7 @@ Bed 详情的 `status.lifecycle` 由 Bed Manager 提供；Tenant 状态由设施
 不复制进 Bed。Tenant Status 的字段跟随设施领域：浏览器就绪和 MCP 连接池不是同一种状态。
 接口不根据 Status 推导更强的隔离保证，也不执行生命周期 hook、探测或远端 I/O。状态读取只读取已发布的内存状态，不持有慢操作的协调锁；Tenant 存在不代表设施提供强制隔离。
 
-`GET /v1/status` 的 `schema_version` 为 `11`。该接口只组合 Hostel/Carrier 粒度状态，不携带 `beds` 列表；Bed inventory 由 `GET /v1/beds` 独立提供。工具选择报告位于 `components.filesystem.tools`、`components.network.tools` 和 `components.resource.accounting.tools`；每项包含 Policy、Requirements、探测结果、是否选中及原因。`requirements.tools` 是该工具依赖的外部程序列表，与组件的工具状态映射分别解释。
+`GET /v1/status` 的 `schema_version` 为 `12`。该接口只组合 Hostel/Carrier 粒度状态，不携带 `beds` 列表；Bed inventory 由 `GET /v1/beds` 独立提供。工具选择报告位于 `components.filesystem.tools`、`components.network.tools` 和 `components.resource.accounting.tools`；每项包含 Policy、Requirements、探测结果、是否选中及原因。`requirements.tools` 是该工具依赖的外部程序列表，与组件的工具状态映射分别解释。
 
 Privilege 的 credential helper 诊断字段为 `helper`。Pillow 主进程的 `phase` 表达运行阶段，独立的 `ready` 表达当前可用性；readiness 变化不终止运行实例。`host.fact` 报告 runtime、process、security_modules、
 namespace_limits、kernel_features 与 ptrace 等启动事实；`host.status` 组合动态资源状态，
@@ -188,9 +188,10 @@ namespace_limits、kernel_features 与 ptrace 等启动事实；`host.status` �
 `components.filesystem` 报告文件隔离和
 启动探测，`components.privilege` 报告 daemon/Bed 用户前置条件；Network、Executor、Store、
 Resource 分别拥有网络、执行、同步和资源报告。`environment` 保留实例组合探测结果，
-状态接口只报告各组件最终采用的能力、探测结果与原因，`isolation` 汇总文件房型。
+状态接口只报告各组件最终采用的能力、探测结果与原因，`isolation` 报告 requested 最低要求、fs/net 较低值 effective、satisfied 和不足原因。
 启动组合尝试及失败原因写入日志，不在实例内保存历史数组，也不进入 `/v1/status`。
-文件等级使用 shared/confined/private，与 dorm/room/suite 房型分别报告。
+文件等级使用 shared/confined/private，网络使用 shared/private；各自通过 room 映射到统一房型。Bed detail 使用准备后的领域事实，不能复用实例支持上限。
+网络 enabled 已移除；原调用方需改读 effective/level、room 和 policy_status，requested_policy 与已执行 policy 分开。
 与各组件独立前置条件区分。Bed inventory 与容量是摘要，不展开 Bed 或 Tenant 详情。
 状态报告不披露凭据、远端存储地址或可操作其他 Tenant 的资源句柄。
 

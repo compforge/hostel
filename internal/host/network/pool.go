@@ -86,7 +86,7 @@ func probePool(ctx context.Context, ports ...*PortManager) *Pool {
 		report.Reason = probe.Error
 		report.Cause = probe.Cause
 	}
-	log.Printf("network: enabled=%t backend=%s stage=%s cause=%s reason=%q", report.Available, report.Backend, probe.Stage, report.Cause, report.Reason)
+	log.Printf("network: private_available=%t backend=%s stage=%s cause=%s reason=%q", report.Available, report.Backend, probe.Stage, report.Cause, report.Reason)
 	return &Pool{report: report, backend: b, allocations: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 

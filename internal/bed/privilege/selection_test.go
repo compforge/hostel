@@ -16,7 +16,7 @@ import (
 func TestSharedIdentityBaselineNeedsNoSwitchingCapabilities(t *testing.T) {
 	facts := hostfacts.Collect()
 	facts.EffectiveCaps = 0 // Selection must not require caps for inherited identity.
-	s, err := Resolve(t.Context(), facts, Config{}, bed.Suite, t.TempDir())
+	s, err := Resolve(t.Context(), facts, Config{}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestIdentityFallbackRetainsCapabilityFacts(t *testing.T) {
 func TestPreferredIdentityFallsBackWithoutSwitchingCapabilities(t *testing.T) {
 	facts := hostfacts.Collect()
 	facts.EffectiveCaps = 0
-	s, err := Resolve(t.Context(), facts, Config{UID: os.Geteuid() + 10000, GID: os.Getegid() + 10000, Configured: true}, bed.Dorm, t.TempDir())
+	s, err := Resolve(t.Context(), facts, Config{UID: os.Geteuid() + 10000, GID: os.Getegid() + 10000, Configured: true}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestPreferredIdentityProbeFailureFallsBack(t *testing.T) {
 		facts.EffectiveCaps |= 1 << capability.Bit
 	}
 	root := t.TempDir()
-	s, err := Resolve(t.Context(), facts, Config{UID: os.Geteuid() + 10000, GID: os.Getegid() + 10000, Configured: true}, bed.Dorm, root)
+	s, err := Resolve(t.Context(), facts, Config{UID: os.Geteuid() + 10000, GID: os.Getegid() + 10000, Configured: true}, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestPreferredIdentityKeepsUsableUser(t *testing.T) {
 		t.Skip("this case uses an existing non-root identity")
 	}
 	facts := hostfacts.Collect()
-	s, err := Resolve(t.Context(), facts, Config{UID: os.Geteuid(), GID: os.Getegid(), Configured: true}, bed.Dorm, t.TempDir())
+	s, err := Resolve(t.Context(), facts, Config{UID: os.Geteuid(), GID: os.Getegid(), Configured: true}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestPreferredIdentityKeepsUsableUser(t *testing.T) {
 
 func TestPreferredIdentityRejectsInvalidUser(t *testing.T) {
 	for _, uid := range []int{0, -1} {
-		_, err := Resolve(t.Context(), hostfacts.Collect(), Config{UID: uid, GID: 1000, Configured: true}, bed.Dorm, t.TempDir())
+		_, err := Resolve(t.Context(), hostfacts.Collect(), Config{UID: uid, GID: 1000, Configured: true}, t.TempDir())
 		if err == nil {
 			t.Fatalf("accepted invalid preferred uid %d", uid)
 		}
@@ -111,7 +111,7 @@ func TestPreferredIdentityRejectsInvalidUser(t *testing.T) {
 func TestPreferredIdentityDoesNotBypassInheritedProbe(t *testing.T) {
 	facts := hostfacts.Collect()
 	facts.EffectiveCaps = 0
-	_, err := Resolve(t.Context(), facts, Config{UID: 10000, GID: 10000, Configured: true}, bed.Dorm, filepath.Join(t.TempDir(), "missing"))
+	_, err := Resolve(t.Context(), facts, Config{UID: 10000, GID: 10000, Configured: true}, filepath.Join(t.TempDir(), "missing"))
 	if err == nil {
 		t.Fatal("accepted an inherited identity without successful file access")
 	}

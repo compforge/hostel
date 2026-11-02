@@ -30,7 +30,7 @@ type initializationNetwork struct {
 }
 
 func (n *initializationNetwork) Status() network.Status {
-	return network.Status{Enabled: true}
+	return network.Status{Effective: network.Private}
 }
 
 func (n *initializationNetwork) Acquire(ctx context.Context, _ string) (network.Attachment, error) {
@@ -201,7 +201,7 @@ type policyInitializationNetwork struct {
 }
 
 func (n *policyInitializationNetwork) Status() network.Status {
-	return network.Status{Enabled: true}
+	return network.Status{Effective: network.Private}
 }
 func (n *policyInitializationNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	return n, nil

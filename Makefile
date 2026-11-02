@@ -16,7 +16,7 @@ TEST_PACKAGES ?= ./...
 # Go compiles tests at package granularity. TEST_FILES is a devloop adapter:
 # turn changed _test.go paths into unique package targets instead of passing files.
 ifneq ($(strip $(TEST_FILES)),)
-TEST_PACKAGES := $(sort $(foreach file,$(TEST_FILES),./$(patsubst %/,%,$(dir $(file)))))
+TEST_PACKAGES := $(sort $(foreach test_file,$(TEST_FILES),./$(patsubst %/,%,$(dir $(test_file)))))
 endif
 
 TEST_TAGS :=
@@ -64,10 +64,10 @@ tidy: ## Sync go.mod/go.sum
 check: tidy lint build test ## Pre-commit gate: tidy + lint + build + race tests
 	@echo "check passed"
 
-run: build ## Run locally with no isolation (dev, any platform)
+run: build ## Run locally with a best-effort dorm isolation floor
 	$(BIN) --isolation dorm --beds-root $(BEDS_ROOT) --addr $(ADDR)
 
-run-bwrap: build ## Run at suite level = bwrap (Linux with bubblewrap installed)
+run-bwrap: build ## Run with suite minimum (private filesystem and network required)
 	$(BIN) --isolation suite --beds-root $(BEDS_ROOT) --addr $(ADDR)
 
 linux: ## Cross-compile static Linux binaries (amd64 + arm64) into bin/

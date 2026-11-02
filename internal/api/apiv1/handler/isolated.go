@@ -30,6 +30,7 @@ import (
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
+	"github.com/qiankunli/hostel/internal/bed/network"
 )
 
 type isolatedEnvPassthroughSpec struct {
@@ -96,7 +97,7 @@ func (s *Handler) isolatedCreate(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	if !validateIsolatedCreate(c, req, !s.mgr.NetworkReport().Enabled) {
+	if !validateIsolatedCreate(c, req, s.mgr.NetworkReport().Effective != network.Private) {
 		return
 	}
 
@@ -180,7 +181,7 @@ func (s *Handler) isolatedGet(c *gin.Context) {
 	if b == nil {
 		return
 	}
-	c.JSON(http.StatusOK, isolatedState(b, !s.mgr.NetworkReport().Enabled))
+	c.JSON(http.StatusOK, isolatedState(b, s.mgr.NetworkReport().Effective != network.Private))
 }
 
 // GET /v1/isolated/sessions
@@ -189,7 +190,7 @@ func (s *Handler) isolatedList(c *gin.Context) {
 	sort.Slice(beds, func(i, j int) bool { return beds[i].Name < beds[j].Name })
 	items := make([]apiview.IsolatedSessionSummary, 0, len(beds))
 	for _, b := range beds {
-		state := isolatedState(b, !s.mgr.NetworkReport().Enabled)
+		state := isolatedState(b, s.mgr.NetworkReport().Effective != network.Private)
 		items = append(items, apiview.IsolatedSessionSummary{
 			SessionID:            b.Name,
 			Status:               state.Status,

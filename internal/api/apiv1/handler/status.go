@@ -42,6 +42,7 @@ func (o statusObserver) BedStatus(b *bed.Bed, lifecycle manager.BedStatus) proto
 		report.Amenities[name] = protocol.AmenityBinding{TenantID: string(binding.TenantID), Status: binding.Status}
 	}
 	state := b.Status()
+	report.Isolation = o.beds.BedRoomStatus(b)
 	report.Components.Filesystem = state.Filesystem.FilesystemStatus
 	report.Components.Privilege = state.Privilege
 	report.Components.Network = state.Network

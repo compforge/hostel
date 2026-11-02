@@ -15,7 +15,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
-func TestSuiteWithSharedCapabilities(t *testing.T) {
+func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 	if os.Getenv("HOSTEL_E2E_REQUIRE_ROOTFUL") != "1" {
 		t.Skip("requires rootful Linux file isolation")
 	}
@@ -26,7 +26,7 @@ func TestSuiteWithSharedCapabilities(t *testing.T) {
 			options.Bed.Filesystem.Bwrap = value(tool.Required)
 			options.Bed.Privilege.UID, options.Bed.Privilege.GID = value(1000), value(1000)
 			options.Bed.Executor.PIDNS = value(tool.Off)
-			targetConfig := targetOptions{isolation: "suite", executor: "supervisor", config: &options}
+			targetConfig := targetOptions{isolation: "dorm", executor: "supervisor", config: &options}
 			if scenario == "network-probe-failure" {
 				options.Bed.Network.NetNS = value(tool.Auto)
 				helpers := t.TempDir()
@@ -85,7 +85,7 @@ func TestSuiteWithSharedCapabilities(t *testing.T) {
 			if result.Result == nil || result.Result.Process.ExitCode == nil || *result.Result.Process.ExitCode == 0 {
 				t.Fatalf("suite exposed sibling file: %+v", result)
 			}
-			assertSuiteStatus(t, c, bed)
+			assertMixedIsolationStatus(t, c, bed)
 			var status struct {
 				Components struct {
 					Filesystem struct{ Effective string }
@@ -108,21 +108,23 @@ func TestSuiteWithSharedCapabilities(t *testing.T) {
 			if scenario == "network-probe-failure" && (status.Components.Network.Tools["netns"].Probe != "unavailable" || status.Components.Network.Reason == "") {
 				t.Fatalf("missing failed probe evidence: %+v", status)
 			}
-			// File-suite does not satisfy an explicit network-policy requirement.
+			// Dorm preserves a desired policy without pretending the shared network enforces it.
 			response, err = c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "needs-policy", "networkPolicy": map[string]any{"defaultAction": "deny"}, "pillows": workspacePillows()}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if response.Status == http.StatusAccepted {
-				c.waitBed(t, "needs-policy", func(b bedView) bool { return b.Status.Phase == "failed" && !b.Status.Readiness.Ready }, "unavailable required network policy fails")
-			} else if response.Status < 400 {
-				t.Fatalf("network policy silently accepted: %+v", response)
+			must2xx(t, "best effort policy", response)
+			c.waitBed(t, "needs-policy", func(b bedView) bool { return b.Status.Readiness.Ready }, "dorm policy Bed ready")
+			response, err = c.json(ctx, "GET", "/v1/beds/needs-policy/network/policy", "", nil, nil)
+			if err != nil || response.Status != http.StatusOK || !strings.Contains(string(response.Body), `"mode":"unenforced"`) {
+				t.Fatalf("missing policy gap: %v %+v", err, response)
 			}
+
 		})
 	}
 }
 
-func assertSuiteStatus(t *testing.T, c *apiClient, bed string) {
+func assertMixedIsolationStatus(t *testing.T, c *apiClient, bed string) {
 	t.Helper()
 	type room struct {
 		Requested, Effective string
@@ -142,7 +144,7 @@ func assertSuiteStatus(t *testing.T, c *apiClient, bed string) {
 		}
 		must2xx(t, "suite status", response)
 		if endpoint == "/v1/beds" {
-			if body.Instance.Isolation != "suite" {
+			if body.Instance.Isolation != "dorm" {
 				t.Fatalf("inventory: %+v", body)
 			}
 			continue
@@ -151,7 +153,7 @@ func assertSuiteStatus(t *testing.T, c *apiClient, bed string) {
 		if strings.HasPrefix(endpoint, "/v1/beds/") {
 			got = body.Status.Isolation
 		}
-		if got.Requested != "suite" || got.Effective != "suite" || len(got.Reasons) != 0 {
+		if got.Requested != "dorm" || got.Effective != "dorm" || len(got.Reasons) != 0 {
 			t.Fatalf("%s: %+v", endpoint, got)
 		}
 	}

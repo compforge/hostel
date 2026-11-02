@@ -19,7 +19,7 @@ type Status struct {
 	Effective Level                  `json:"effective"`
 	Supported []Level                `json:"supported"`
 	Tools     map[string]tool.Status `json:"tools"`
-	Enabled   bool                   `json:"enabled"`
+	Room      bed.RoomType           `json:"room"`
 	Backend   string                 `json:"backend"`
 	Scope     string                 `json:"scope"`
 	Reason    string                 `json:"reason,omitempty"`
@@ -109,17 +109,21 @@ func (m *Manager) Status() Status {
 	if report.Available {
 		scope = "bed_processes"
 	}
-	return m.describe(Status{Enabled: report.Available, Backend: report.Backend, Scope: scope, Reason: report.Reason, Cause: report.Cause, Probe: report.Probe})
+	level := Shared
+	if report.Available {
+		level = Private
+	}
+	return m.describe(Status{Effective: level, Backend: report.Backend, Scope: scope, Reason: report.Reason, Cause: report.Cause, Probe: report.Probe})
 }
 
 func (m *Manager) describe(s Status) Status {
-	available := s.Enabled
+	available := s.Effective == Private
 	policy := tool.Auto
 	if m != nil {
 		policy = m.config.NetNS.Effective()
 	}
 	if policy == tool.Off {
-		s.Enabled = false
+		s.Effective = Shared
 		s.Backend = "shared"
 		s.Scope = "carrier"
 		s.Reason = "disabled_by_config"
@@ -127,35 +131,36 @@ func (m *Manager) describe(s Status) Status {
 	}
 	s.Expected = Private
 	if m != nil && m.config.Level == Shared {
-		s.Expected = Shared
-		s.Enabled, s.Backend, s.Scope = false, "shared", "carrier"
-		if policy != tool.Off {
-			s.Reason = "shared network selected by profile"
-			s.Cause = hostel.CauseRequest
+		s.Effective, s.Backend, s.Scope = Shared, "shared", "carrier"
+		if policy != tool.Off && available {
+			s.Reason = "shared network selected after combination probe"
+			s.Cause = hostel.CauseUnknown
 		}
 	}
-	if m != nil && m.config.FallbackReason != "" {
+	if m != nil && m.config.FallbackReason != "" && available {
 		s.Expected = Private
 		s.Reason = m.config.FallbackReason
 		s.Cause = hostel.CauseUnknown
 	}
+	selected := s.Effective == Private
 	s.Effective, s.Supported = Shared, []Level{Shared}
 	if available && policy != tool.Off {
 		s.Supported = append(s.Supported, Private)
 	}
-	if s.Enabled {
+	if selected {
 		s.Effective = Private
 		s.Cause = ""
 	}
-	if !s.Enabled && s.Cause == "" {
+	if !selected && s.Cause == "" {
 		s.Cause = hostel.CauseUnknown
 	}
 	requirements := tool.Requirements{Capabilities: []string{"CAP_NET_ADMIN", "CAP_SYS_ADMIN"}, Tools: []string{"ip", "nft"}, Conditions: []string{"Linux", "IPv4 forwarding", "DNS resolvers", "namespace entry and connectivity probe"}}
-	s.Tools = map[string]tool.Status{"netns": tool.Describe(policy, requirements, s.Probe.Stage != "", available, s.Enabled, s.Reason)}
+	s.Tools = map[string]tool.Status{"netns": tool.Describe(policy, requirements, s.Probe.Stage != "", available, selected, s.Reason)}
+	s.Room = s.Effective.Room()
 	return s
 }
 func (m *Manager) Acquire(ctx context.Context, id string) (Attachment, error) {
-	if !m.Status().Enabled {
+	if m.Status().Effective != Private {
 		return nil, nil
 	}
 	if m != nil && m.provider != nil {
@@ -166,7 +171,7 @@ func (m *Manager) Acquire(ctx context.Context, id string) (Attachment, error) {
 	return m.pool.Acquire(ctx, id)
 }
 func (m *Manager) NetworkPolicy(ctx context.Context, id string, change PolicyMutation) (PolicyStatus, error) {
-	if !m.Status().Enabled {
+	if m.Status().Effective != Private {
 		return PolicyStatus{}, m.UnavailableError()
 	}
 	if m != nil && m.provider != nil {

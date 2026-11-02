@@ -30,7 +30,7 @@ func TestBedVolumeConsumers(t *testing.T) {
 		t.Run(backend+"/"+variant.source, func(t *testing.T) {
 			options := restrictedOptions()
 			options.Bed.Filesystem.Bwrap = value(tool.Required)
-			c := startTarget(t, targetOptions{isolation: "suite", executor: backend, config: &options}).client
+			c := startTarget(t, targetOptions{isolation: "dorm", executor: backend, config: &options}).client
 			for _, id := range []string{"volume-a", "volume-b"} {
 				id := id
 				volume := map[string]any{"name": "shared", "managed": map[string]any{"persistence": "none"}}

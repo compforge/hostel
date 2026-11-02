@@ -11,10 +11,9 @@
 Bed 的每次命令和常驻 shell 使用相同 netns，Executor 替换不改变该网络身份。
 当前覆盖 `bed_processes`：共享 Chromium/MCP 等 amenity 的出站仍走 carrier 网络。
 
-Network 定义 shared/private 两级：dorm/room 预期 shared，suite/auto 预期 private。它按实际探测与配置选择，
-不从文件 backend 推导，也不参与房型评级。没有默认要求部署提权的开关。auto 网络候选探测失败不影响服务启动；普通 Bed
-继续共享 carrier 网络。探测成功后，单个 Bed 创建网络失败会使该次初始化失败，不能在
-同一实例中静默改成共享网络。运行中权限撤销也不会自动放开已隔离 Bed。
+Network 保留 shared/private 两级原生能力，分别映射 dorm/suite；不为了对应三种房型增加虚构的中间 backend。
+所有 isolation 配置均尽力选择 private。实例探测失败可选择 shared；最终是否接纳 Bed，由 fs/net 较低房型
+是否满足 isolation 门槛决定。探测成功后单个 Bed 的分配、策略安装失败仍使初始化失败，不静默撤销已选边界。
 
 ## 能力失败归因
 
@@ -23,8 +22,8 @@ Network 定义 shared/private 两级：dorm/room 预期 shared，suite/auto 预�
 `scope` 仍表示网络执行范围，不是错误归因。
 
 例如 carrier netns 的 `ip_forward=0` 得到 `cause=carrier, probe.stage=forwarding`。
-这会令独立网络不可用；携带 networkPolicy 的 `POST /v1/beds` 仍返回 503，响应增加
-`cause=carrier`，不会因加诊断字段而忽略策略或修改 carrier sysctl。
+这会令当前独立网络路径不可用。dorm 门槛可以接纳 shared Bed，策略标为 unenforced，保留所请求的规则和 cause；
+room/suite 门槛返回 503。Hostel 不修改 carrier sysctl。
 配置显式禁用独立网络却请求其策略时归 request；地址耗尽归 resource；机制验证未兑现归 bed。
 namespace 命令或连通性失败本身不能证明是 carrier 还是 Bed 实现的问题，证据不足则为 unknown。
 原始 probe 错误留在全局状态/日志，创建 API 保留固定安全消息。
@@ -151,10 +150,10 @@ Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspac
   veth 访问的地址（默认 `:8872`），不是仅监听 carrier loopback。
 - 这些边界不等于安全容器：Hostel 的可信/半可信代码模型不变。透明 MITM 和 Credential Vault 不在当前能力范围。
 
-`GET /v1/status.components.network` 和 `/healthz.network` 返回支持等级、预期/生效等级、启用状态、backend、作用域、失败
-原因和启动 probe（attempted、stage、duration_ms、error）。`enabled=false` 表示未采用 private 网络，可能是预期 shared、
-策略关闭或能力缺席，不是 Hostel 健康检查失败。探测成功但未选用时仍保留 Supported 的 private。`/v1/isolated` 的 share_net 如实反映该状态，显式请求
-与实例能力冲突会报不支持。
+`GET /v1/status.components.network` 和 `/healthz.network` 返回 expected/effective/supported 原生等级、room、backend、scope、reason/cause 和启动 probe。
+没有网络 enabled 开关。netns 是否采用从 effective=private 或工具 selected 判断；读取状态不触发探测。
+Bed 的 `status.components.network` 报告准备后实际 room/level、gateway、requested_policy、已执行 policy、policy_status 与缺口。
+`/v1/isolated` 的 share_net 依据实际网络等级；显式参数与实际能力冲突仍报错。
 
 共享 Chromium 的 BrowserContext 不是 OS 网络边界。待办是在创建 Context 时设置各 Bed
 的 `proxyServer`，代理按 Bed 的网络策略拨号，并覆盖 bypass、QUIC/WebRTC 等路径。
@@ -166,15 +165,16 @@ Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspac
 
 NetworkManager 同时拥有 Bed netns 和有效策略。控制面可以在 `POST /v1/beds` 的
 `networkPolicy` 字段指定初始策略，规则安装成功后才发布 Bed 就绪；重复创建相同 Bed
-不会重置运行期策略，初始参数冲突则拒绝。未启用网络能力时，带策略的创建请求返回 503，
-不带策略的创建继续使用原有降级行为。`/v1/beds/capabilities` 的 `network_policy` 表示
-API 是否支持，实际可用性仍看 `network.enabled`。
+不会重置运行期策略，初始参数冲突则拒绝。shared 网络下 dorm 可以接纳声明，明确报告请求规则未执行；room/suite 无法达到门槛则在分配前拒绝。
+`/v1/beds/capabilities` 的 `network_policy` 表示 API 支持，不代表当前环境可执行全部规则。
 
 每个现存 Bed 提供 `/v1/beds/{id}/network/policy`：GET 查询、POST/PUT 替换、PATCH 合并
 规则数组、DELETE 删除 target 字符串数组。`/network/healthz` 查询同一 Bed 的有效状态。
 这些控制面接口按路径中的 Bed 定位，不接受 header 覆盖；操作引用防止执行期间被回收。
-缺少 Bed 返回 404，网络管理未启用返回 503，非法规则返回 400，nft 提交失败返回 500。
-查询不会创建 Bed，也不会把共享网络报成 enforcing。
+缺少 Bed 返回 404，非法规则返回 400，nft 提交失败返回 500。查询不会创建 Bed。
+shared Bed 的策略 API 保存和更新 desired policy，返回 status=degraded、mode=unenforced、enforcementMode=none；
+requested_policy 是请求，policy=allow 仅表示 Hostel 没有安装限制，不保证外部 CNI/防火墙放行。Bed status 的已执行 policy 保持 null。
+非法更新保留之前声明；运行中已经采用的执行机制失败不能转为这个降级路径。
 
 策略包含 `defaultAction: allow|deny` 和 `egress: [{action,target}]`；target 接受 IP、CIDR、
 域名和 `*.example.com` 通配域名。省略 defaultAction 时，空规则允许全部，有规则则默认拒绝。

@@ -33,7 +33,7 @@ func TestIsolationAndManagedPillowConfigContract(t *testing.T) {
 		if c.Bed.RoomType != mode || c.BedsRoot != "/var/lib/hostel" {
 			t.Fatalf("mode %q: isolation=%q root=%q", mode, c.Bed.RoomType, c.BedsRoot)
 		}
-		wantFiles := map[string]string{"dorm": "shared", "room": "confined", "suite": "private", "auto": "private"}[mode]
+		wantFiles := "private"
 		if c.Bed.Filesystem.Level != wantFiles {
 			t.Fatalf("profile %s maps to files %s, want %s", mode, c.Bed.Filesystem.Level, wantFiles)
 		}

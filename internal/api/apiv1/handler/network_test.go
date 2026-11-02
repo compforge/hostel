@@ -16,9 +16,9 @@ func TestNetworkDiagnosticsWithoutManager(t *testing.T) {
 		}
 		var body struct {
 			Network struct {
-				Enabled bool   `json:"enabled"`
-				Backend string `json:"backend"`
-				Reason  string `json:"reason"`
+				Effective string `json:"effective"`
+				Backend   string `json:"backend"`
+				Reason    string `json:"reason"`
 			} `json:"network"`
 		}
 		payload := rec.Body.Bytes()
@@ -34,7 +34,7 @@ func TestNetworkDiagnosticsWithoutManager(t *testing.T) {
 		if err := json.Unmarshal(payload, &body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Network.Enabled || body.Network.Backend != "shared" || body.Network.Reason == "" {
+		if body.Network.Effective != "shared" || body.Network.Backend != "shared" || body.Network.Reason == "" {
 			t.Fatalf("unavailable network not explained: %s", rec.Body.String())
 		}
 	}
@@ -53,7 +53,7 @@ func TestNetworkPolicyUnavailableDoesNotPretendSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := do(t, s, http.MethodPut, "/v1/beds/test-bed/network/policy", strings.NewReader(`{"defaultAction":"deny"}`), nil)
-	if rec.Code != http.StatusServiceUnavailable {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"mode":"unenforced"`) || !strings.Contains(rec.Body.String(), `"requested_policy":{"defaultAction":"deny"`) {
 		t.Fatalf("disabled policy: %d %s", rec.Code, rec.Body)
 	}
 }
