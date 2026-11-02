@@ -2,6 +2,7 @@ package bed_test
 
 import (
 	"github.com/qiankunli/hostel/internal/bed"
+	"slices"
 	"testing"
 )
 
@@ -11,6 +12,16 @@ func TestRoomMinimumAcrossDomains(t *testing.T) {
 		for fsIndex, files := range levels {
 			for netIndex, network := range levels {
 				status := bed.SummarizeRoom(floor, files, network)
+				var reasons []string
+				if fsIndex < floorIndex {
+					reasons = append(reasons, "filesystem below required isolation")
+				}
+				if netIndex < floorIndex {
+					reasons = append(reasons, "network below required isolation")
+				}
+				if !slices.Equal(status.Reasons, reasons) {
+					t.Fatalf("floor=%s files=%s network=%s reasons=%v want=%v", floor, files, network, status.Reasons, reasons)
+				}
 				expected := levels[min(fsIndex, netIndex)]
 				if status.Requested != floor || status.Effective != expected || status.Satisfied != (min(fsIndex, netIndex) >= floorIndex) {
 					t.Fatalf("floor=%s files=%s network=%s status=%+v", floor, files, network, status)

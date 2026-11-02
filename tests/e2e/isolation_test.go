@@ -68,7 +68,9 @@ func TestIsolationLevels(t *testing.T) {
 			}, "ready with Bed workdir")
 
 			var detail protocol.BedDetail
-			response, err = c.json(ctx, "GET", "/v1/beds/isolation-a", "", nil, &detail)
+			detailCtx, detailCancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer detailCancel()
+			response, err = c.json(detailCtx, "GET", "/v1/beds/isolation-a", "", nil, &detail)
 			if err != nil {
 				t.Fatal(err)
 			}
