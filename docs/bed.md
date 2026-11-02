@@ -100,6 +100,8 @@ Run 启动 Store 同步、Resource 采样与 Bed 回收循环，并在取消或�
 已 Ready 返回 200。Store Stat/Restore 延迟属于数据准备，不占住创建连接。原生数据面通过
 Ensure 仅等待已经声明的任务就绪；Bed 不存在时返回 404，不创建、不恢复、不重试失败任务。远端故障不能被当成空 Bed，也不能暴露半恢复目录。
 
+单 Bed 状态查询在 Manager 的同一次加锁中选择 resident 或过渡态及其身份，避免初始化发布时两次查询分别读到“不存在”。这保证生命周期集合之间的可见性，不承诺各 Component 的状态是跨领域原子快照。
+
 同 Name 初始化合并为一个任务，在任何 Store I/O 前预占容量。原生请求通过 header/query
 显式选择 Bed，省略返回 400；isolated-session 映射 Bed，不维护平行生命周期。
 daemon 空载启动，由调用方声明 Bed；空实例为 releasable。

@@ -17,6 +17,12 @@ Network 保留 shared/private 两级原生能力，分别映射 dorm/suite；不
 
 ## 能力失败归因
 
+`cause` 归属于失败本身。探针和组合验证保留类型化错误，Component 按从强到弱的顺序提供允许的候选实现；
+选择结果携带相关失败，Config 不保存诊断字符串。满足 isolation 门槛时成功降级，
+不向调用方返回错误；需要拒绝创建或执行能力时，以原始错误链保留归因。
+状态中的 cause 是失败证据的展示，不参与重新分类；未知错误不会因为发生在 Bed 内就归为 bed。
+
+
 `/v1/status` 的 `components.network` 与 `/v1/beds/capabilities` 的 `network` 报告实例能力。
 失败时的 `cause` 表示归因，`probe.stage` 表示检测阶段，`reason`/`probe.error` 保存运维详情；
 `scope` 仍表示网络执行范围，不是错误归因。

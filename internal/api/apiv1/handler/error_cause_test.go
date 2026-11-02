@@ -16,7 +16,7 @@ import (
 type failedNetworkProbe struct{ cause hostel.ErrorCause }
 
 func (p failedNetworkProbe) Status() network.Status {
-	return network.Status{Cause: p.cause, Backend: "shared", Reason: "carrier prerequisite unavailable", Probe: hostnetwork.Probe{Stage: "forwarding", Cause: p.cause}}
+	return network.Status{Err: hostel.WrapError(hostel.ErrUnavailable, "carrier prerequisite", p.cause, nil), Cause: p.cause, Backend: "shared", Reason: "carrier prerequisite unavailable", Probe: hostnetwork.Probe{Stage: "forwarding", Cause: p.cause}}
 }
 func (failedNetworkProbe) Acquire(context.Context, string) (network.Attachment, error) {
 	panic("unavailable backend must not allocate")

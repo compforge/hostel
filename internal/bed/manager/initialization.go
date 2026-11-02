@@ -137,6 +137,10 @@ func (m *Manager) Ensure(ctx context.Context, id string) (*managedBed, error) {
 func (m *Manager) Initialization(id string) (InitializationStatus, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.initializationLocked(id)
+}
+
+func (m *Manager) initializationLocked(id string) (InitializationStatus, bool) {
 	m.pruneFailedInitializationsLocked(time.Now())
 	if purge, ok := m.purges[id]; ok {
 		return purge.status, true

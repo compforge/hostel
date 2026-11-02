@@ -114,19 +114,33 @@ func TestProbeDoesNotRequireTenantIsolationFloor(t *testing.T) {
 	}
 }
 
-type unavailableFloorNetwork struct{ *network.Manager }
+type unavailableFloorNetwork struct {
+	*network.Manager
+	err error
+}
 
-func (unavailableFloorNetwork) Status() network.Status {
-	return network.Status{Effective: network.Shared, Cause: hostel.CauseCarrier, Reason: "IPv4 forwarding unavailable"}
+func (p unavailableFloorNetwork) Status() network.Status {
+	return network.Status{Err: p.err, Effective: network.Shared, Cause: hostel.CauseCarrier, Reason: "IPv4 forwarding unavailable"}
 }
 func (unavailableFloorNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	panic("failed floor must not allocate a network")
 }
 func TestIsolationAdmissionPreservesNetworkCause(t *testing.T) {
-	m, _ := floorManager(t, bed.Room, isolation.Private, false)
-	m.SetNetworkManager(network.WithProvider(unavailableFloorNetwork{}, m.owners.Network))
-	_, err := declareTestBed(m, t.Context(), "tenant")
-	if !errors.Is(err, hostel.ErrUnavailable) || hostel.CauseOf(err) != hostel.CauseCarrier {
-		t.Fatalf("lost carrier prerequisite cause: %v", err)
+	for _, floor := range []bed.RoomType{bed.Dorm, bed.Room, bed.Suite} {
+		t.Run(string(floor), func(t *testing.T) {
+			m, _ := floorManager(t, floor, isolation.Private, false)
+			original := hostel.WrapError(hostel.ErrUnavailable, "IPv4 forwarding", hostel.CauseCarrier, errors.New("forwarding disabled"))
+			m.SetNetworkManager(network.WithProvider(unavailableFloorNetwork{err: original}, m.owners.Network))
+			_, err := declareTestBed(m, t.Context(), "tenant")
+			if floor == bed.Dorm {
+				if err != nil {
+					t.Fatalf("acceptable isolation returned capability error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, original) || !errors.Is(err, hostel.ErrUnavailable) || hostel.CauseOf(err) != hostel.CauseCarrier {
+				t.Fatalf("lost carrier prerequisite error: %v", err)
+			}
+		})
 	}
 }

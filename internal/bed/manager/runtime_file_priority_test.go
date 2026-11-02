@@ -66,7 +66,7 @@ func TestRuntimePreservesFilesBeforeOptionalNetwork(t *testing.T) {
 				}{s.Files.Level(), s.Network.Level})
 				a := runtimeProbeResult{Filesystem: s.Files.Name(), Network: string(s.Network.Level), Executor: "local"}
 				if s.Files.Level() == isolation.Private && (tc.failPrivate || s.Network.Level == network.Private) {
-					a.Error = "incompatible environment"
+					a.Err = errors.New("incompatible environment")
 				}
 				return a, nil
 			}
@@ -105,12 +105,12 @@ func TestRuntimeIdentityFallbackMustPreserveFileGuarantee(t *testing.T) {
 			calls++
 			a := runtimeProbeResult{Executor: "local", Network: "shared"}
 			if s.Identity.Effective == privilege.Dedicated {
-				a.Error = "dedicated identity rejected"
+				a.Err = errors.New("dedicated identity rejected")
 			}
 			return a, nil
 		}
 		got, reason, err := tryFileCombination(t.Context(), facts, t.TempDir(), "/bin/bash", cfg, cfg.Filesystem, selection, nil, resolver, probe)
-		ok := reason == ""
+		ok := reason == nil
 		if err != nil || ok == identityRequiredByFiles {
 			t.Fatalf("required=%t ok=%t error=%v", identityRequiredByFiles, ok, err)
 		}
@@ -143,7 +143,7 @@ func TestRuntimeRestoresPIDCandidateForSharedNetwork(t *testing.T) {
 		selected := status.Probe != "available"
 		a := runtimeProbeResult{Executor: "local", Network: string(s.Network.Level), ExecutorTools: map[string]tool.Status{"pidns": tool.Describe(tool.Auto, tool.Requirements{}, true, true, selected, "")}}
 		if s.Network.Level == network.Private {
-			a.Error = "private network combination failed"
+			a.Err = errors.New("private network combination failed")
 		}
 		if s.Network.Level == network.Shared && !selected {
 			return a, errors.New("lost original PID candidate")
@@ -182,7 +182,7 @@ func TestRuntimeSelectsHigherCombinedRoomRegardlessOfFloor(t *testing.T) {
 	probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, _ RuntimeConfig, s RuntimeSelection, _ *hostnetwork.PortManager) (runtimeProbeResult, error) {
 		a := runtimeProbeResult{Network: string(s.Network.Level), Executor: "local"}
 		if s.Files.Level() == isolation.Private && s.Network.Level == network.Private {
-			a.Error = "private file view cannot compose with network"
+			a.Err = errors.New("private file view cannot compose with network")
 		}
 		return a, nil
 	}

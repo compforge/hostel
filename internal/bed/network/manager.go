@@ -3,6 +3,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -24,6 +25,7 @@ type Status struct {
 	Scope     string                 `json:"scope"`
 	Reason    string                 `json:"reason,omitempty"`
 	Cause     hostel.ErrorCause      `json:"cause,omitempty"`
+	Err       error                  `json:"-"`
 	Probe     hostnetwork.Probe      `json:"probe"`
 }
 
@@ -41,6 +43,7 @@ var ErrInvalidPolicy = hostnetwork.ErrInvalidPolicy
 func NormalizePolicy(p Policy) (Policy, error) { return hostnetwork.NormalizePolicy(p) }
 
 type Manager struct {
+	selectionErr error
 	portMappings *PortMappings
 	config       Config
 	bed.Noop
@@ -61,6 +64,12 @@ func (m *Manager) SetPortManager(ports *hostnetwork.PortManager) {
 		m.pool.SetPortManager(ports)
 	}
 }
+func NewSelected(ctx context.Context, selected Selection) *Manager {
+	m := NewConfigured(ctx, selected.Config)
+	m.selectionErr = selected.Err
+	return m
+}
+
 func NewConfigured(ctx context.Context, cfg Config) *Manager {
 	m := &Manager{config: cfg}
 	if cfg.NetNS.Effective() != tool.Off {
@@ -94,7 +103,10 @@ func (m *Manager) Start(ctx context.Context) error {
 	return m.checkRequired()
 }
 func (m *Manager) checkRequired() error {
-	return m.Status().Tools["netns"].CheckRequired("network.netns")
+	if err := m.Status().Tools["netns"].CheckRequired("network.netns"); err != nil {
+		return fmt.Errorf("%s: %w", err, m.UnavailableError())
+	}
+	return nil
 }
 func (m *Manager) Status() Status {
 	if m != nil && m.provider != nil {
@@ -113,7 +125,7 @@ func (m *Manager) Status() Status {
 	if report.Available {
 		level = Private
 	}
-	return m.describe(Status{Effective: level, Backend: report.Backend, Scope: scope, Reason: report.Reason, Cause: report.Cause, Probe: report.Probe})
+	return m.describe(Status{Effective: level, Backend: report.Backend, Scope: scope, Reason: report.Reason, Cause: report.Cause, Err: report.Probe.Err, Probe: report.Probe})
 }
 
 func (m *Manager) describe(s Status) Status {
@@ -127,20 +139,18 @@ func (m *Manager) describe(s Status) Status {
 		s.Backend = "shared"
 		s.Scope = "carrier"
 		s.Reason = "disabled_by_config"
-		s.Cause = hostel.CauseRequest
+		s.Err = hostel.WrapError(hostel.ErrUnavailable, "network namespace disabled", hostel.CauseRequest, ErrUnavailable)
 	}
 	s.Expected = Private
 	if m != nil && m.config.Level == Shared {
 		s.Effective, s.Backend, s.Scope = Shared, "shared", "carrier"
 		if policy != tool.Off && available {
 			s.Reason = "shared network selected after combination probe"
-			s.Cause = hostel.CauseUnknown
+			s.Err = m.selectionErr
+			if s.Err != nil {
+				s.Reason = s.Err.Error()
+			}
 		}
-	}
-	if m != nil && m.config.FallbackReason != "" && available {
-		s.Expected = Private
-		s.Reason = m.config.FallbackReason
-		s.Cause = hostel.CauseUnknown
 	}
 	selected := s.Effective == Private
 	s.Effective, s.Supported = Shared, []Level{Shared}
@@ -149,10 +159,14 @@ func (m *Manager) describe(s Status) Status {
 	}
 	if selected {
 		s.Effective = Private
-		s.Cause = ""
+		s.Err, s.Cause = nil, ""
 	}
-	if !selected && s.Cause == "" {
-		s.Cause = hostel.CauseUnknown
+	if !selected {
+		if s.Err == nil {
+			// No failure evidence was supplied; do not infer attribution from a status label.
+			s.Err = hostel.WrapError(hostel.ErrUnavailable, "network namespace", hostel.CauseUnknown, ErrUnavailable)
+		}
+		s.Cause = hostel.CauseOf(s.Err)
 	}
 	requirements := tool.Requirements{Capabilities: []string{"CAP_NET_ADMIN", "CAP_SYS_ADMIN"}, Tools: []string{"ip", "nft"}, Conditions: []string{"Linux", "IPv4 forwarding", "DNS resolvers", "namespace entry and connectivity probe"}}
 	s.Tools = map[string]tool.Status{"netns": tool.Describe(policy, requirements, s.Probe.Stage != "", available, selected, s.Reason)}
@@ -190,7 +204,8 @@ func (m *Manager) NetworkPolicy(ctx context.Context, id string, change PolicyMut
 // UnavailableError carries the same attribution exposed in the capability report.
 // Raw probe errors stay in operator status/logs, not client-facing messages.
 func (m *Manager) UnavailableError() error {
-	return hostel.WrapError(hostel.ErrUnavailable, "bed network policy", m.Status().Cause, ErrUnavailable)
+	err := m.Status().Err
+	return hostel.WrapError(hostel.ErrUnavailable, "bed network policy", hostel.CauseOf(err), errors.Join(ErrUnavailable, err))
 }
 
 func (m *Manager) Close(ctx context.Context) error {

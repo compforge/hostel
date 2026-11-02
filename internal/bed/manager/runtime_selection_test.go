@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	hostel "github.com/qiankunli/hostel/internal"
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
@@ -66,6 +67,7 @@ func TestRuntimeFallbackOnlyAfterCleanOptionalFailure(t *testing.T) {
 			facts.EffectiveCaps = 0
 			calls := 0
 			cleanupErr := errors.New("namespace cleanup failed")
+			original := hostel.WrapError(hostel.ErrPreparationFailed, "network combination", hostel.CauseBed, errors.New("namespace and environment did not compose"))
 			probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, _ RuntimeConfig, s RuntimeSelection, _ *hostnetwork.PortManager) (runtimeProbeResult, error) {
 				calls++
 				a := runtimeProbeResult{Filesystem: s.Files.Name(), Network: string(s.Network.Level), Executor: "local", Identity: s.Identity.Effective}
@@ -73,7 +75,7 @@ func TestRuntimeFallbackOnlyAfterCleanOptionalFailure(t *testing.T) {
 					return a, &ProbeCleanupError{Err: cleanupErr}
 				}
 				if s.Network.Level == network.Private {
-					a.Error = "namespace and environment did not compose"
+					a.Err = original
 				}
 				return a, nil
 			}
@@ -84,7 +86,16 @@ func TestRuntimeFallbackOnlyAfterCleanOptionalFailure(t *testing.T) {
 			if tc.fatal && !errors.Is(err, cleanupErr) {
 				t.Fatalf("lost cleanup error: %v", err)
 			}
-			if err == nil && (result.Network.Level != network.Shared || result.Network.NetNS != tool.Auto || result.Network.FallbackReason == "") {
+			if !tc.fatal {
+				failure := err
+				if failure == nil {
+					failure = result.Network.Err
+				}
+				if !errors.Is(failure, original) || hostel.CauseOf(failure) != hostel.CauseBed {
+					t.Fatalf("candidate selection lost original failure: %v", failure)
+				}
+			}
+			if err == nil && (result.Network.Level != network.Shared || result.Network.NetNS != tool.Auto || result.Network.Err == nil) {
 				t.Fatalf("fallback hid policy or attempt: %+v", result)
 			}
 		})
@@ -97,7 +108,7 @@ func TestRuntimeFailureDoesNotLoopOnBaseline(t *testing.T) {
 	calls := 0
 	probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, _ RuntimeConfig, _ RuntimeSelection, _ *hostnetwork.PortManager) (runtimeProbeResult, error) {
 		calls++
-		return runtimeProbeResult{Filesystem: "direct", Network: "shared", Error: "combined command failed"}, nil
+		return runtimeProbeResult{Filesystem: "direct", Network: "shared", Err: errors.New("combined command failed")}, nil
 	}
 	_, err := resolveRuntime(t.Context(), facts, t.TempDir(), "/bin/bash", baselineRuntimeConfig(), nil, probe)
 	if err == nil || !strings.Contains(err.Error(), "no executable Bed combination") {
@@ -133,7 +144,7 @@ func TestRuntimePIDNSFallbackPreservesPolicyAndRequiresCleanup(t *testing.T) {
 			probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, c RuntimeConfig, _ RuntimeSelection, _ *hostnetwork.PortManager) (runtimeProbeResult, error) {
 				calls++
 				if calls == 1 {
-					a := runtimeProbeResult{Executor: "supervisor", Network: "shared", ExecutorTools: map[string]tool.Status{"pidns": tool.Describe(policy, tool.Requirements{}, true, true, true, "")}, Error: "view composition failed"}
+					a := runtimeProbeResult{Executor: "supervisor", Network: "shared", ExecutorTools: map[string]tool.Status{"pidns": tool.Describe(policy, tool.Requirements{}, true, true, true, "")}, Err: errors.New("view composition failed")}
 					if cleanupFailed {
 						return a, &ProbeCleanupError{Err: errors.New("cleanup pending")}
 					}

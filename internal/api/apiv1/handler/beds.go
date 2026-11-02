@@ -117,13 +117,15 @@ func (s *Handler) bedCreate(c *gin.Context) {
 
 // GET /v1/beds/:bedId
 func (s *Handler) bedGet(c *gin.Context) {
-	b, ok := s.mgr.Get(c.Param("bedId"))
+	observation, ok := s.mgr.ObserveBed(c.Param("bedId"))
 	if !ok {
-		if initialization, initializing := s.mgr.Initialization(c.Param("bedId")); initializing {
-			c.JSON(http.StatusOK, protocol.BedDetail{Bed: apiview.BedInitialization(initialization), Status: s.observer.BedStatus(s.mgr.BedModel(initialization.Name), initialization.BedStatus)})
-			return
-		}
 		respondError(c, http.StatusNotFound, apiview.ErrBedInvalid, "bed not found")
+		return
+	}
+	b := observation.Resident
+	if b == nil {
+		initialization := observation.Initialization
+		c.JSON(http.StatusOK, protocol.BedDetail{Bed: apiview.BedInitialization(initialization), Status: s.observer.BedStatus(observation.Model, initialization.BedStatus)})
 		return
 	}
 	status := b.Status()

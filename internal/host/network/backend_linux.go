@@ -68,20 +68,23 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 	}{{"ip", &b.ip}, {"nft", &b.nft}} {
 		*tool.path, err = exec.LookPath(tool.name)
 		if err != nil {
-			probe.Error = err.Error()
+			probe.Err = hostel.WrapError(hostel.ErrUnavailable, "network probe "+probe.Stage, probe.Cause, err)
+			probe.Error = probe.Err.Error()
 			return nil, probe
 		}
 	}
 	probe.Stage = "forwarding"
 	if err := checkForwarding("/proc/sys/net/ipv4/ip_forward"); err != nil {
-		probe.Error = err.Error()
+		probe.Err = hostel.WrapError(hostel.ErrUnavailable, "network probe "+probe.Stage, probe.Cause, err)
+		probe.Error = probe.Err.Error()
 		probe.Cause = hostel.CauseOf(err)
 		return nil, probe
 	}
 	probe.Stage = "dns"
 	b.resolvers, b.resolverOptions, err = readResolvers()
 	if err != nil {
-		probe.Error = err.Error()
+		probe.Err = hostel.WrapError(hostel.ErrUnavailable, "network probe "+probe.Stage, probe.Cause, err)
+		probe.Error = probe.Err.Error()
 		return nil, probe
 	}
 	probe.Cause = hostel.CauseUnknown
@@ -116,7 +119,8 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 	err = errors.Join(err, cleanupErr)
 	probe.Cause = hostel.CauseOf(err)
 	if err != nil {
-		probe.Error = err.Error()
+		probe.Err = hostel.WrapError(hostel.ErrUnavailable, "network probe "+probe.Stage, probe.Cause, err)
+		probe.Error = probe.Err.Error()
 		if cleanupErr != nil {
 			return b, probe
 		}

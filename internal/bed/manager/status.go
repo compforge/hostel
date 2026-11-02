@@ -122,11 +122,17 @@ func (m *Manager) checkIsolation(name string, files, net model.RoomType) error {
 	for _, domain := range []struct {
 		name   string
 		actual model.RoomType
-		cause  hostel.ErrorCause
-	}{{"filesystem", files, hostel.CauseUnknown}, {"network", net, m.network.Status().Cause}} {
+		err    error
+	}{{"filesystem", files, nil}, {"network", net, m.network.UnavailableError()}} {
 		if model.Rank(domain.actual) < model.Rank(s.Requested) {
-			failures = append(failures, hostel.WrapError(hostel.ErrUnavailable, "bed isolation", domain.cause,
-				fmt.Errorf("%s below required isolation: required=%s actual=%s", domain.name, s.Requested, domain.actual)))
+			message := fmt.Sprintf("%s below required isolation: required=%s actual=%s", domain.name, s.Requested, domain.actual)
+			failure := domain.err
+			if failure == nil {
+				failure = errors.New(message)
+			} else {
+				failure = fmt.Errorf("%s: %w", message, failure)
+			}
+			failures = append(failures, hostel.WrapError(hostel.ErrUnavailable, "bed isolation", hostel.CauseUnknown, failure))
 		}
 	}
 	err := errors.Join(failures...)
@@ -162,6 +168,10 @@ func (m *Manager) finishEnvironmentProbe(started time.Time, err error) {
 func (m *Manager) BedModel(name string) *model.Bed {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.bedModelLocked(name)
+}
+
+func (m *Manager) bedModelLocked(name string) *model.Bed {
 	if b := m.beds[name]; b != nil {
 		return b.Bed
 	}
@@ -172,4 +182,30 @@ func (m *Manager) BedModel(name string) *model.Bed {
 		return init.model
 	}
 	return nil
+}
+
+// BedObservation selects one lifecycle representation and its identity. Resident
+// is set for a resident Bed; otherwise Initialization describes its transition.
+// The handles are observations, not admitted operations or frozen component state.
+type BedObservation struct {
+	Resident       *managedBed
+	Model          *model.Bed
+	Initialization InitializationStatus
+}
+
+// ObserveBed resolves existence across lifecycle collections in one critical
+// section. A concurrent publication cannot fall between two absence checks.
+// +rule=`A declared Bed must remain observable while it moves from initializing to resident.`
+// +link:doc=docs/bed.md
+func (m *Manager) ObserveBed(name string) (BedObservation, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if b := m.beds[name]; b != nil {
+		return BedObservation{Resident: b, Model: b.Bed}, true
+	}
+	initialization, ok := m.initializationLocked(name)
+	if !ok {
+		return BedObservation{}, false
+	}
+	return BedObservation{Model: m.bedModelLocked(name), Initialization: initialization}, true
 }
