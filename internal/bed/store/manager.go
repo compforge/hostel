@@ -13,8 +13,8 @@ import (
 	storesync "github.com/qiankunli/hostel/internal/bed/store/sync"
 )
 
-// Manager is the daemon-wide persistence component. Beds carry only a SyncKind;
-// this component owns shared stores, their clients, and the sync controller.
+// Manager is the daemon-wide persistence subsystem. Beds carry only a SyncKind;
+// this subsystem owns shared stores, their clients, and the sync controller.
 type Manager struct {
 	interval time.Duration
 	syncBeds func(context.Context, string) ([]string, bool)

@@ -11,7 +11,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
-func TestComponentToolStatusJSON(t *testing.T) {
+func TestSubsystemToolStatusJSON(t *testing.T) {
 	selected := map[string]tool.Status{
 		"example": tool.Describe(tool.Required, tool.Requirements{Tools: []string{"helper"}}, true, true, true, ""),
 	}

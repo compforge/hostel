@@ -63,8 +63,8 @@ daemon 通过 `--configuration-sources` 或 `HOSTEL_CONFIGURATION_SOURCES` 接�
 
 ### 解析时机与宿主观测
 
-Configuration Manager 是 Bed 组件，不只是声明转换器：启动时以 daemon 的实际身份检查
-来源目录是否可读，并在后续解析时更新观测。`components.configuration` 报告来源名、
+Configuration Manager 是 Bed 子系统，不只是声明转换器：启动时以 daemon 的实际身份检查
+来源目录是否可读，并在后续解析时更新观测。`subsystems.configuration` 报告来源名、
 最近观测时间、目录可读性及已准备的 Bed 配置数量，不报告宿主路径或配置值。
 观测可读不保证所有键均存在、值均合法，也不代表 Bed 进程可以直接访问来源目录。
 
@@ -83,7 +83,7 @@ Bed 初始化检查所有 Pillow 引用的配置能否解析；启动每个消�
 
 控制面决定哪些 Bed 可以声明哪些来源；来源注册不是租户授权机制。尤其是 `env_files`
 能够读取 daemon 可访问的宿主文件，不能向不可信调用方直接开放。进程环境独立注入也不等于
-进程或文件隔离；共享身份、共享宿主视图的实际限制仍由对应组件报告。
+进程或文件隔离；共享身份、共享宿主视图的实际限制仍由对应子系统报告。
 
 这里落实的是文件来源到进程环境变量的消费，不提供按 Bed 挂载配置文件的能力。
 文件视图、只读挂载和访问边界属于 Filesystem 的职责，不能用环境变量注入代替这些保证。
@@ -220,7 +220,7 @@ Executor 丢失终结其所属 Execution，不能把传输 EOF 当成正常退�
 按 Bed Manager 绑定的执行方案进入环境、切换身份及权限、应用 env/cwd，最后 `exec`
 用户程序。它使用 Hostel 自身二进制的内部入口，不是用户镜像的 ENTRYPOINT，
 也不是 Bed 生命周期的 Prepare hook、常驻服务或 PID 1。Executor 只负责启动和监督；
-资源分配、机制选择与降级仍由 Bed Manager 及领域组件完成。
+资源分配、机制选择与降级仍由 Bed Manager 及领域子系统完成。
 Bed Manager 为新 Executor 绑定执行环境后才发布它：Filesystem 可从 Bed 模板派生
 与该进程域匹配的各 Pillow 最终视图；command、Session 和主进程使用所属 Pillow 的视图，
 Executor 退出后释放。卷数据与模板归 Bed，Executor 替换不改变它们。
@@ -241,7 +241,7 @@ Bed 身份终结时清理，daemon 重启不恢复执行历史。运行中日志
 
 `--executor-pid-namespace=off|auto|required` / `HOSTEL_EXECUTOR_PID_NAMESPACE`
 控制 Executor 的 PID namespace Tool，默认 `off`。`auto` 在启动时尝试独立进程域，
-不支持或无法与文件视图组合时允许回退；`required` 必须实际采用，否则启动失败。
+Executor 自身探测不支持时允许回退；`required` 必须实际采用，否则启动失败。
 前提包括 Linux supervisor、PID/mount namespace 创建权限和 procfs 挂载权限。
 这一策略与文件、网络隔离分别配置；选定后，live Bed 和替换 Executor 不重新降级。
 
@@ -250,8 +250,8 @@ Supervisor 是域内 PID 1，负责收尸与终止；Executor 丢失会结束该
 重新创建进程域和对应文件视图，旧资源清理成功前不发布新 Executor。
 对 daemon 返回的 PID 仍属于 daemon 可见的命名空间，供 Pillow 主进程监听端口归属检查使用。
 
-Component 的 `tools.pidns` 报告 policy、requirements、probe、selected 和 reason；
-Bed 的 `executor.private_pid_namespace` 报告所属进程域是否实际隔离。启动组合回退
+Subsystem 的 `tools.pidns` 报告 policy、requirements、probe、selected 和 reason；
+Bed 的 `executor.private_pid_namespace` 报告所属进程域是否实际隔离。Executor 内部回退
 保留原始 Policy 和探测证据，不通过改写 Policy 来伪装成调用方关闭了隔离。
 
 共享控制目录通过 Bed `volumes` 和各 Pillow 的 `mounts` 声明。需要真实挂载点的调用方必须选择已兑现 mount

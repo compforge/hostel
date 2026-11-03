@@ -14,7 +14,7 @@ import (
 )
 
 func TestExecutionLifecycle(t *testing.T) {
-	target := startTarget(t, targetOptions{isolation: "dorm"})
+	target := startTarget(t, targetOptions{})
 	c := target.client
 
 	must2xx(t, "declare Bed", c.createBed(t, "execution-bed"))
@@ -86,7 +86,7 @@ func TestExecutionLifecycle(t *testing.T) {
 }
 
 func TestStatefulSessionLifecycle(t *testing.T) {
-	target := startTarget(t, targetOptions{isolation: "dorm"})
+	target := startTarget(t, targetOptions{})
 	c := target.client
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

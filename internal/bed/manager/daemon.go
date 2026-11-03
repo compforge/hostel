@@ -12,12 +12,12 @@ import (
 	model "github.com/qiankunli/hostel/internal/bed"
 )
 
-type daemonComponent struct {
+type daemonSubsystem struct {
 	name      string
 	lifecycle model.DaemonLifecycle
 }
 
-// Start initializes domain components and reserves retained identities before
+// Start initializes domain subsystems and reserves retained identities before
 // admission. Constructors and configuration never launch background loops.
 func (m *Manager) Start(ctx context.Context) error {
 	m.startMu.Lock()
@@ -31,16 +31,16 @@ func (m *Manager) Start(ctx context.Context) error {
 	if m.started || m.startErr != nil {
 		return m.startErr
 	}
-	components := []daemonComponent{
+	subsystems := []daemonSubsystem{
 		{"filesystem", m.files}, {"privilege", m.privileges}, {"resource", m.resourceManager},
 		{"store", m.store}, {"network", m.network}, {"executor", m.executorManager},
 		{"configuration", m.configurations}, {"pillow", m.pillows},
 	}
-	for _, component := range components {
+	for _, subsystem := range subsystems {
 		// Start may allocate before failing; register cleanup ownership first.
-		m.components = append(m.components, component)
-		if err := component.lifecycle.Start(ctx); err != nil {
-			m.startErr = fmt.Errorf("start %s: %w", component.name, err)
+		m.subsystems = append(m.subsystems, subsystem)
+		if err := subsystem.lifecycle.Start(ctx); err != nil {
+			m.startErr = fmt.Errorf("start %s: %w", subsystem.name, err)
 			break
 		}
 	}
@@ -56,21 +56,21 @@ func (m *Manager) Start(ctx context.Context) error {
 	if m.startErr != nil {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		m.startErr = errors.Join(m.startErr, m.closeComponents(cleanup))
+		m.startErr = errors.Join(m.startErr, m.closeSubsystems(cleanup))
 		return m.startErr
 	}
 	m.started = true
 	return nil
 }
-func (m *Manager) closeComponents(ctx context.Context) error {
+func (m *Manager) closeSubsystems(ctx context.Context) error {
 	var result error
-	// Keep components until Close succeeds so a failed shutdown can be retried.
-	for len(m.components) > 0 {
-		last := m.components[len(m.components)-1]
+	// Keep subsystems until Close succeeds so a failed shutdown can be retried.
+	for len(m.subsystems) > 0 {
+		last := m.subsystems[len(m.subsystems)-1]
 		if err := last.lifecycle.Close(ctx); err != nil {
 			return errors.Join(result, fmt.Errorf("close %s: %w", last.name, err))
 		}
-		m.components = m.components[:len(m.components)-1]
+		m.subsystems = m.subsystems[:len(m.subsystems)-1]
 	}
 	return result
 }
@@ -233,6 +233,6 @@ func (m *Manager) Close(ctx context.Context) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	closeErr = errors.Join(m.RetryLocalCleanups(ctx), m.closeComponents(ctx))
+	closeErr = errors.Join(m.RetryLocalCleanups(ctx), m.closeSubsystems(ctx))
 	return closeErr
 }

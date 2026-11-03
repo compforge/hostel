@@ -1,23 +1,8 @@
 package network
 
-import (
-	"fmt"
+import "github.com/qiankunli/hostel/internal/bed/tool"
 
-	"github.com/qiankunli/hostel/internal/bed/tool"
-)
-
-type Config struct {
-	NetNS tool.Policy
-	Level Level
-}
+type Config struct{ NetNS tool.Policy }
 type Options struct{ NetNS *tool.Policy }
 
-func (c Config) Validate() error {
-	if c.Level != "" && c.Level != Shared && c.Level != Private {
-		return fmt.Errorf("invalid network level %q", c.Level)
-	}
-	if c.Level == Shared && c.NetNS == tool.Required {
-		return fmt.Errorf("network.netns required conflicts with shared network expectation")
-	}
-	return c.NetNS.Validate()
-}
+func (c Config) Validate() error { return c.NetNS.Validate() }

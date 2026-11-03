@@ -9,8 +9,7 @@ import (
 )
 
 func ptr[T any](v T) *T { return &v }
-func TestExplicitComponentConfigOverridesEnvironment(t *testing.T) {
-	t.Setenv("HOSTEL_ISOLATION", "suite")
+func TestExplicitSubsystemConfigOverridesEnvironment(t *testing.T) {
 	t.Setenv("HOSTEL_SYNC", "cas")
 	t.Setenv("HOSTEL_S3_BUCKET", "env-bucket")
 	t.Setenv("HOSTEL_S3_ENDPOINT", "https://env.invalid")
@@ -19,7 +18,6 @@ func TestExplicitComponentConfigOverridesEnvironment(t *testing.T) {
 	t.Setenv("HOSTEL_SYNC_AUTO_PACK_FILE_THRESHOLD", "300")
 	t.Setenv("HOSTEL_MAX_BEDS", "15")
 	options := Options{MaxBeds: ptr(0), Bed: BedOptions{
-		RoomType:   ptr("room"),
 		Filesystem: filesystem.Options{Bwrap: ptr(tool.Off), PRoot: ptr(tool.Auto)},
 		Store:      store.Options{Sync: ptr("auto"), Bucket: ptr("explicit-bucket"), Endpoint: ptr(""), PathStyle: ptr(false), AutoPackFileThreshold: ptr(0)},
 	}}
@@ -27,8 +25,8 @@ func TestExplicitComponentConfigOverridesEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.MaxBeds != 0 || c.Bed.RoomType != "room" || c.Bed.Filesystem.Level != "private" || c.Bed.Filesystem.Bwrap != tool.Off || c.Bed.Filesystem.PRoot != tool.Auto {
-		t.Fatal("explicit component options lost")
+	if c.MaxBeds != 0 || c.Bed.Filesystem.Level != "private" || c.Bed.Filesystem.Bwrap != tool.Off || c.Bed.Filesystem.PRoot != tool.Auto {
+		t.Fatal("explicit subsystem options lost")
 	}
 	s := c.Bed.Store
 	if s.Sync != "auto" || s.Bucket != "explicit-bucket" || s.Endpoint != "" || s.PathStyle || s.AutoPackFileThreshold != 0 {
@@ -43,13 +41,13 @@ func TestExplicitComponentConfigOverridesEnvironment(t *testing.T) {
 	}
 }
 func TestStartupRejectsFeatureConflictsAndUnknownFlags(t *testing.T) {
-	for _, args := range [][]string{{"--not-a-hostel-flag"}, {"unexpected"}, {"--isolation", "typo"}} {
+	for _, args := range [][]string{{"--not-a-hostel-flag"}, {"unexpected"}, {"--isolation", "suite"}} {
 		if _, err := Load(args, Options{}); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}
-	_, err := Load(nil, Options{Bed: BedOptions{RoomType: ptr("room"), Filesystem: filesystem.Options{Bwrap: ptr(tool.Required)}}})
+	_, err := Load(nil, Options{Bed: BedOptions{Filesystem: filesystem.Options{Bwrap: ptr(tool.Required)}}})
 	if err != nil {
-		t.Fatalf("minimum room must allow required bwrap: %v", err)
+		t.Fatalf("required bwrap must remain configurable: %v", err)
 	}
 }

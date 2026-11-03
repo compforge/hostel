@@ -38,9 +38,9 @@ func requireTestBinary(t *testing.T) string {
 func TestFeaturePoliciesOff(t *testing.T) {
 	requireTestBinary(t)
 	options := restrictedOptions()
-	c := startTarget(t, targetOptions{isolation: "dorm", config: &options}).client
+	c := startTarget(t, targetOptions{config: &options}).client
 	var status struct {
-		Components struct {
+		Subsystems struct {
 			Filesystem struct {
 				Effective string
 				Tools     map[string]tool.Status
@@ -64,10 +64,10 @@ func TestFeaturePoliciesOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	must2xx(t, "tool status", response)
-	if status.Components.Filesystem.Effective != "shared" || status.Components.Network.Effective == "private" || status.Components.Resource.Accounting.Available {
+	if status.Subsystems.Filesystem.Effective != "shared" || status.Subsystems.Network.Effective == "private" || status.Subsystems.Resource.Accounting.Available {
 		t.Fatalf("disabled tools active: %+v", status)
 	}
-	for _, tools := range []map[string]tool.Status{status.Components.Filesystem.Tools, status.Components.Network.Tools, status.Components.Resource.Accounting.Tools} {
+	for _, tools := range []map[string]tool.Status{status.Subsystems.Filesystem.Tools, status.Subsystems.Network.Tools, status.Subsystems.Resource.Accounting.Tools} {
 		if len(tools) == 0 {
 			t.Fatal("missing tool diagnostics")
 		}

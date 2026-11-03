@@ -105,4 +105,4 @@ func (m *Manager) Forget(_ context.Context, b *bed.Bed) error {
 	return nil
 }
 
-var _ bed.Component[Status] = (*Manager)(nil)
+var _ bed.Subsystem[Status] = (*Manager)(nil)

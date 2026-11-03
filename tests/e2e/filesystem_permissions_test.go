@@ -25,14 +25,11 @@ func TestFilesystemPermissions(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		backends = append(backends, "supervisor")
 	}
-	for _, scenario := range []string{"dorm", "room", "suite", "carrier"} {
+	for _, scenario := range []string{"auto", "carrier"} {
 		for _, backend := range backends {
 			t.Run(scenario+"/"+backend, func(t *testing.T) {
 				options := restrictedOptions()
-				room := scenario
-				if scenario == "carrier" {
-					room = "dorm"
-				} else {
+				if scenario != "carrier" {
 					// Leave every filesystem mechanism on Auto. Only unrelated
 					// network/cgroup probes are disabled to isolate this contract.
 					options.Bed.Filesystem = filesystem.Options{}
@@ -63,10 +60,10 @@ func TestFilesystemPermissions(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				target := startTarget(t, targetOptions{isolation: room, executor: backend, config: &options})
+				target := startTarget(t, targetOptions{executor: backend, config: &options})
 				c := target.client
 				var status struct {
-					Components struct {
+					Subsystems struct {
 						Filesystem struct {
 							Effective   string
 							Mechanism   string
@@ -81,7 +78,7 @@ func TestFilesystemPermissions(t *testing.T) {
 					t.Fatal(err)
 				}
 				must2xx(t, "filesystem diagnostics", response)
-				fs := status.Components.Filesystem
+				fs := status.Subsystems.Filesystem
 				view := fs.ProcessView
 				if view.Rootfs != (view.Mode == "mount" || view.Mode == "proot") ||
 					(view.Mode == "mount") != (fs.Effective == "private") {

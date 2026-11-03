@@ -10,8 +10,8 @@
       "outcome": {"Kind": "exited", "ExitCode": 0, "Signal": 0, "CoreDumped": false, "Error": "", "Detail": ""},
       "listener": {"state": "owned", "method": "proc"}}],
     "port_mappings": [{"name": "web", "protocol": "tcp", "pillow": "http", "execution_id": "exec-1", "network": "private", "state": "listening", "bed_port": 8080, "host_port": 24000}],
-    "isolation": {"requested": "dorm", "effective": "dorm", "satisfied": true},
-    "components": {
+    "isolation": {"effective": "dorm"},
+    "subsystems": {
       "filesystem": {"prepared": true, "room": "suite"},
       "privilege": {"uid": 1000, "gid": 1000, "assigned": true},
       "network": {"room": "dorm", "level": "shared", "policy_status": "none", "gateway": "", "policy": null},

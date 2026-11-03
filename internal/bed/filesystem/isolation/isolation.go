@@ -104,7 +104,7 @@ type Boundary interface {
 	Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error
 }
 
-// Isolator is the resolved file/isolation component used to build a Bed's
+// Isolator is the resolved file/isolation subsystem used to build a Bed's
 // Environment: one security Boundary plus one process-visible BedFS view.
 type Isolator interface {
 	Boundary
@@ -348,10 +348,6 @@ func selectBoundary(config Config, candidates []Boundary) (Boundary, Level) {
 		}
 		if m.Level() > ceiling {
 			ceiling = m.Level()
-		}
-		// A failed composition changes eligibility, not the standalone host fact.
-		if config.Excluded[m.Name()] != "" && policies[m.Name()] != tool.Required {
-			continue
 		}
 		if policies[m.Name()] == tool.Required {
 			forced = m

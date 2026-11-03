@@ -7,29 +7,28 @@
 网络隔离沿 Bed 的独立执行空间目标按环境能力尽量兑现，统一模型与组合约束见
 [isolation.md](isolation.md)。
 
-`network.Manager` 是实例级组件，管理 resident Bed 的网络资源。网络与文件隔离档正交；
+`network.Manager` 是实例级子系统，管理 resident Bed 的网络资源。网络与文件隔离档正交；
 Bed 的每次命令和常驻 shell 使用相同 netns，Executor 替换不改变该网络身份。
 当前覆盖 `bed_processes`：共享 Chromium/MCP 等 amenity 的出站仍走 carrier 网络。
 
 Network 保留 shared/private 两级原生能力，分别映射 dorm/suite；不为了对应三种房型增加虚构的中间 backend。
-所有 isolation 配置均尽力选择 private。实例探测失败可选择 shared；最终是否接纳 Bed，由 fs/net 较低房型
-是否满足 isolation 门槛决定。探测成功后单个 Bed 的分配、策略安装失败仍使初始化失败，不静默撤销已选边界。
+Network 尽力选择 private，实例探测失败可选择 shared，并报告缺口；Hostel 不按房型拦截 Bed。探测成功后单个 Bed 的分配、策略安装失败仍使初始化失败，不静默撤销已选边界。
 
 ## 能力失败归因
 
-`cause` 归属于失败本身。探针和组合验证保留类型化错误，Component 按从强到弱的顺序提供允许的候选实现；
-选择结果携带相关失败，Config 不保存诊断字符串。满足 isolation 门槛时成功降级，
-不向调用方返回错误；需要拒绝创建或执行能力时，以原始错误链保留归因。
+`cause` 归属于失败本身。探针和组合验证保留类型化错误，Subsystem 按从强到弱的顺序提供允许的候选实现；
+选择结果携带相关失败，Config 不保存诊断字符串。成功回退为可执行的 shared 网络时，
+通过状态报告缺口；需要拒绝创建或执行能力时，以原始错误链保留归因。
 状态中的 cause 是失败证据的展示，不参与重新分类；未知错误不会因为发生在 Bed 内就归为 bed。
 
 
-`/v1/status` 的 `components.network` 与 `/v1/beds/capabilities` 的 `network` 报告实例能力。
+`/v1/status` 的 `subsystems.network` 与 `/v1/beds/capabilities` 的 `network` 报告实例能力。
 失败时的 `cause` 表示归因，`probe.stage` 表示检测阶段，`reason`/`probe.error` 保存运维详情；
 `scope` 仍表示网络执行范围，不是错误归因。
 
 例如 carrier netns 的 `ip_forward=0` 得到 `cause=carrier, probe.stage=forwarding`。
-这会令当前独立网络路径不可用。dorm 门槛可以接纳 shared Bed，策略标为 unenforced，保留所请求的规则和 cause；
-room/suite 门槛返回 503。Hostel 不修改 carrier sysctl。
+这会令当前独立网络路径不可用。Hostel 可继续准备 shared Bed，策略标为 unenforced，保留所请求的规则和 cause；
+caller 决定是否使用该 Bed。Hostel 不修改 carrier sysctl。
 配置显式禁用独立网络却请求其策略时归 request；地址耗尽归 resource；机制验证未兑现归 bed。
 namespace 命令或连通性失败本身不能证明是 carrier 还是 Bed 实现的问题，证据不足则为 unknown。
 原始 probe 错误留在全局状态/日志，创建 API 保留固定安全消息。
@@ -73,7 +72,7 @@ pillows:
 
 ### 发现、归属与回收
 
-Bed 详情直接返回 `status.pillows` 和 `status.port_mappings`；`status.components.network`
+Bed 详情直接返回 `status.pillows` 和 `status.port_mappings`；`status.subsystems.network`
 继续描述隔离能力与网络状态。每项映射报告 `name`、`protocol`、`pillow`、`execution_id`、
 `network`、`state`、`bed_port`、`host_port` 和降级 `reason`。`host_port` 仅在发布时存在。
 端口事实只由 PortMapping 持有；Pillow 主进程状态通过 `port_mapping` 名称引用它。
@@ -124,7 +123,8 @@ Bed 初始化完成数据准备后获取具体 `Attachment`，保存到 resident
 `manager.Environment`，准备完成后才发布 Ready。命令和 shell 共用这个组合入口：
 网络进入发生在最终降权之前；Network Manager 只负责进入所分配的 netns，完整的身份切换、
 文件视图与用户程序启动顺序由 [权限模型](isolation.md#特权操作顺序) 统一定义。
-实例在 HTTP 启动前还会实测选中的完整 command/session/Pillow 主进程组合；自动候选可在完整清理后有限回退，required 或清理失败则阻止启动。
+Network 自行根据真实探测决定 private 或 shared；required 和清理失败会阻止启动。
+实例在 HTTP 启动前还会实测准备后的 command/session/Pillow 主进程；失败只报告并清理，不触发跨子系统重选。
 
 网络分配提供 Bed resolver 文件，Bed Manager 在组装 mount 视图前交给 Filesystem，
 只读挂到 `/etc/resolv.conf`。这样进入已准备的 mount namespace 不会丢失 `ip netns exec`
@@ -156,9 +156,9 @@ Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspac
   veth 访问的地址（默认 `:8872`），不是仅监听 carrier loopback。
 - 这些边界不等于安全容器：Hostel 的可信/半可信代码模型不变。透明 MITM 和 Credential Vault 不在当前能力范围。
 
-`GET /v1/status.components.network` 和 `/healthz.network` 返回 expected/effective/supported 原生等级、room、backend、scope、reason/cause 和启动 probe。
+`GET /v1/status.subsystems.network` 和 `/healthz.network` 返回 expected/effective/supported 原生等级、room、backend、scope、reason/cause 和启动 probe。
 没有网络 enabled 开关。netns 是否采用从 effective=private 或工具 selected 判断；读取状态不触发探测。
-Bed 的 `status.components.network` 报告准备后实际 room/level、gateway、requested_policy、已执行 policy、policy_status 与缺口。
+Bed 的 `status.subsystems.network` 报告准备后实际 room/level、gateway、requested_policy、已执行 policy、policy_status 与缺口。
 `/v1/isolated` 的 share_net 依据实际网络等级；显式参数与实际能力冲突仍报错。
 
 共享 Chromium 的 BrowserContext 不是 OS 网络边界。待办是在创建 Context 时设置各 Bed
@@ -171,7 +171,7 @@ Bed 的 `status.components.network` 报告准备后实际 room/level、gateway�
 
 NetworkManager 同时拥有 Bed netns 和有效策略。控制面可以在 `POST /v1/beds` 的
 `networkPolicy` 字段指定初始策略，规则安装成功后才发布 Bed 就绪；重复创建相同 Bed
-不会重置运行期策略，初始参数冲突则拒绝。shared 网络下 dorm 可以接纳声明，明确报告请求规则未执行；room/suite 无法达到门槛则在分配前拒绝。
+不会重置运行期策略，初始参数冲突则拒绝。shared 网络下可以接纳声明，并明确报告请求规则未执行；caller 根据实际状态决定是否使用。
 `/v1/beds/capabilities` 的 `network_policy` 表示 API 支持，不代表当前环境可执行全部规则。
 
 每个现存 Bed 提供 `/v1/beds/{id}/network/policy`：GET 查询、POST/PUT 替换、PATCH 合并

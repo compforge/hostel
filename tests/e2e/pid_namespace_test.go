@@ -36,7 +36,7 @@ func TestPrivatePIDNamespace(t *testing.T) {
 	options := restrictedOptions()
 	options.Bed.Executor.PIDNS = value(tool.Required)
 	options.Bed.Filesystem.Bwrap = value(tool.Required)
-	c := startTarget(t, targetOptions{isolation: "dorm", executor: "supervisor", config: &options}).client
+	c := startTarget(t, targetOptions{executor: "supervisor", config: &options}).client
 	for _, id := range []string{"process-a", "process-b"} {
 		source := t.TempDir()
 		if err := os.Chmod(source, 0777); err != nil {

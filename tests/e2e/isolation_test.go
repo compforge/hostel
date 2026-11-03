@@ -4,7 +4,6 @@ package e2e_test
 
 import (
 	"context"
-	"github.com/qiankunli/hostel/protocol"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,113 +12,104 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qiankunli/hostel/protocol"
 )
 
 func TestIsolationLevels(t *testing.T) {
 	required := requiredIsolationLevels()
-	for _, requested := range []string{"dorm", "room", "suite"} {
-		t.Run(requested, func(t *testing.T) {
-			target := startTarget(t, targetOptions{isolation: requested, maxBeds: 3})
-			c := target.client
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			var health healthView
-			result, err := c.json(ctx, "GET", "/healthz", "", nil, &health)
-			if err != nil || result.Status != http.StatusOK {
-				t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
-			}
-			files := c.filesystemStatus(t)
-			if health.Isolation.Requested != requested {
-				t.Fatalf("isolation resolution: %+v", health.Isolation)
-			}
-			if required[requested] && isolationRank(health.Isolation.Effective) < isolationRank(requested) {
-				t.Fatalf("required isolation %s degraded to %s (files=%+v)", requested, health.Isolation.Effective, files)
-			}
-			if isolationRank(health.Isolation.Effective) < isolationRank(requested) {
-				response := c.createBed(t, "below-floor")
-				if response.Status != http.StatusServiceUnavailable {
-					t.Fatalf("below-floor create: %d %s", response.Status, response.Body)
-				}
-				return
-			}
-			if (health.ProcessView.Mode == "mount") != (files.Effective == "private") {
-				t.Fatalf("process_view=%s for effective isolation %s", health.ProcessView.Mode, health.Isolation.Effective)
-			}
-			t.Logf("requested=%s effective=%s files=%+v", requested, health.Isolation.Effective, files)
-			helperRequired := strings.TrimSpace(os.Getenv(pathshimEnv)) != "" || strings.TrimSpace(os.Getenv(prootEnv)) != ""
-			if helperRequired && files.Effective != "private" &&
-				((health.ProcessView.Mode != "pathshim" && health.ProcessView.Mode != "proot") || !health.ProcessView.Available) {
-				t.Fatalf("required workspace view unavailable: %+v", health.ProcessView)
-			}
-			if (health.ProcessView.Mode == "pathshim" || health.ProcessView.Mode == "proot") && !health.ProcessView.Available {
-				t.Fatalf("selected workspace view reported unavailable: %+v", health.ProcessView)
-			}
 
-			must2xx(t, "declare Bed", c.createBed(t, "isolation-a"))
-			must2xx(t, "declare Bed", c.createBed(t, "isolation-b"))
-			write, response := c.command(t, "isolation-a", map[string]any{
-				"command": "printf secret-a > secret.txt; pwd",
-				"timeout": 30_000,
-			})
-			must2xx(t, "write isolation probe", response)
-			assertCommandExit(t, write, 0)
-			c.waitBed(t, "isolation-a", func(b bedView) bool {
-				return b.Status.Phase == "resident" && b.Status.Readiness.Ready && b.Workdir == "/workspace"
-			}, "ready with Bed workdir")
+	target := startTarget(t, targetOptions{maxBeds: 3})
+	c := target.client
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var health healthView
+	result, err := c.json(ctx, "GET", "/healthz", "", nil, &health)
+	if err != nil || result.Status != http.StatusOK {
+		t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
+	}
+	files := c.filesystemStatus(t)
+	for expected := range required {
+		if isolationRank(health.Isolation.Effective) < isolationRank(expected) {
+			t.Fatalf("runner requires %s but Hostel reports %+v", expected, health.Isolation)
+		}
+	}
+	if (health.ProcessView.Mode == "mount") != (files.Effective == "private") {
+		t.Fatalf("process_view=%s for effective isolation %s", health.ProcessView.Mode, health.Isolation.Effective)
+	}
+	t.Logf("effective=%s files=%+v", health.Isolation.Effective, files)
+	helperRequired := strings.TrimSpace(os.Getenv(pathshimEnv)) != "" || strings.TrimSpace(os.Getenv(prootEnv)) != ""
+	if helperRequired && files.Effective != "private" &&
+		((health.ProcessView.Mode != "pathshim" && health.ProcessView.Mode != "proot") || !health.ProcessView.Available) {
+		t.Fatalf("required workspace view unavailable: %+v", health.ProcessView)
+	}
+	if (health.ProcessView.Mode == "pathshim" || health.ProcessView.Mode == "proot") && !health.ProcessView.Available {
+		t.Fatalf("selected workspace view reported unavailable: %+v", health.ProcessView)
+	}
 
-			var detail protocol.BedDetail
-			detailCtx, detailCancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer detailCancel()
-			response, err = c.json(detailCtx, "GET", "/v1/beds/isolation-a", "", nil, &detail)
-			if err != nil {
-				t.Fatal(err)
-			}
-			must2xx(t, "Bed domain isolation", response)
-			state := detail.Status
-			actual := min(isolationRank(string(state.Components.Filesystem.Room)), isolationRank(string(state.Components.Network.Room)))
-			if actual == 0 || isolationRank(string(state.Isolation.Effective)) != actual || !state.Isolation.Satisfied || state.Isolation.Requested != protocol.RoomType(requested) {
-				t.Fatalf("Bed status does not reflect prepared domains: %+v", state)
-			}
+	must2xx(t, "declare Bed", c.createBed(t, "isolation-a"))
+	must2xx(t, "declare Bed", c.createBed(t, "isolation-b"))
+	write, response := c.command(t, "isolation-a", map[string]any{
+		"command": "printf secret-a > secret.txt; pwd",
+		"timeout": 30_000,
+	})
+	must2xx(t, "write isolation probe", response)
+	assertCommandExit(t, write, 0)
+	c.waitBed(t, "isolation-a", func(b bedView) bool {
+		return b.Status.Phase == "resident" && b.Status.Readiness.Ready && b.Workdir == "/workspace"
+	}, "ready with Bed workdir")
 
-			read, response := c.command(t, "isolation-b", map[string]any{
-				"command": "cat \"$TARGET\"",
-				"envs":    map[string]string{"TARGET": filepath.Join(target.bedsRoot, "isolation-a", "volumes", "workspace", "secret.txt")},
-				"timeout": 30_000,
-			})
-			must2xx(t, "cross-bed isolation probe", response)
-			switch files.Effective {
-			case "shared":
-				if health.ProcessView.Rootfs {
-					// PRoot changes ordinary path lookup, but is not a security
-					// boundary against intentional bypass of the helper.
-					if read.Result == nil || read.Result.Process.ExitCode == nil || *read.Result.Process.ExitCode == 0 {
-						t.Fatalf("Bed root exposed a sibling through its carrier spelling: %+v", read)
-					}
-				} else {
-					assertCommandExit(t, read, 0)
-					if read.Stdout != "secret-a" {
-						t.Fatalf("dorm did not expose shared carrier path: stdout=%q stderr=%q", read.Stdout, read.Stderr)
-					}
-				}
-			case "confined", "private":
-				if read.Result == nil || read.Result.Process.ExitCode == nil || *read.Result.Process.ExitCode == 0 {
-					t.Fatalf("%s allowed sibling workspace read: %+v stdout=%q stderr=%q", health.Isolation.Effective, read.Result, read.Stdout, read.Stderr)
-				}
-			default:
-				t.Fatalf("unknown effective isolation %q", health.Isolation.Effective)
-			}
-			assertBedUserPolicy(t, c, health)
+	var detail protocol.BedDetail
+	detailCtx, detailCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer detailCancel()
+	response, err = c.json(detailCtx, "GET", "/v1/beds/isolation-a", "", nil, &detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must2xx(t, "Bed domain isolation", response)
+	state := detail.Status
+	actual := min(isolationRank(string(state.Subsystems.Filesystem.Room)), isolationRank(string(state.Subsystems.Network.Room)))
+	if actual == 0 || isolationRank(string(state.Isolation.Effective)) != actual {
+		t.Fatalf("Bed status does not reflect prepared domains: %+v", state)
+	}
 
-			pwd, response := c.command(t, "isolation-a", map[string]any{"command": "pwd", "timeout": 30_000})
-			must2xx(t, "workspace path probe", response)
-			assertCommandExit(t, pwd, 0)
-			if health.ProcessView.Mode == "mount" || health.ProcessView.Mode == "pathshim" || health.ProcessView.Mode == "proot" {
-				if strings.TrimSpace(pwd.Stdout) != "/workspace" {
-					t.Fatalf("%s workspace cwd=%q, want /workspace", health.ProcessView.Mode, strings.TrimSpace(pwd.Stdout))
-				}
-				assertCanonicalWorkspaceView(t, c, health.ProcessView.Mode)
+	read, response := c.command(t, "isolation-b", map[string]any{
+		"command": "cat \"$TARGET\"",
+		"envs":    map[string]string{"TARGET": filepath.Join(target.bedsRoot, "isolation-a", "volumes", "workspace", "secret.txt")},
+		"timeout": 30_000,
+	})
+	must2xx(t, "cross-bed isolation probe", response)
+	switch files.Effective {
+	case "shared":
+		if health.ProcessView.Rootfs {
+			// PRoot changes ordinary path lookup, but is not a security
+			// boundary against intentional bypass of the helper.
+			if read.Result == nil || read.Result.Process.ExitCode == nil || *read.Result.Process.ExitCode == 0 {
+				t.Fatalf("Bed root exposed a sibling through its carrier spelling: %+v", read)
 			}
-		})
+		} else {
+			assertCommandExit(t, read, 0)
+			if read.Stdout != "secret-a" {
+				t.Fatalf("dorm did not expose shared carrier path: stdout=%q stderr=%q", read.Stdout, read.Stderr)
+			}
+		}
+	case "confined", "private":
+		if read.Result == nil || read.Result.Process.ExitCode == nil || *read.Result.Process.ExitCode == 0 {
+			t.Fatalf("%s allowed sibling workspace read: %+v stdout=%q stderr=%q", health.Isolation.Effective, read.Result, read.Stdout, read.Stderr)
+		}
+	default:
+		t.Fatalf("unknown effective isolation %q", health.Isolation.Effective)
+	}
+	assertBedUserPolicy(t, c, health)
+
+	pwd, response := c.command(t, "isolation-a", map[string]any{"command": "pwd", "timeout": 30_000})
+	must2xx(t, "workspace path probe", response)
+	assertCommandExit(t, pwd, 0)
+	if health.ProcessView.Mode == "mount" || health.ProcessView.Mode == "pathshim" || health.ProcessView.Mode == "proot" {
+		if strings.TrimSpace(pwd.Stdout) != "/workspace" {
+			t.Fatalf("%s workspace cwd=%q, want /workspace", health.ProcessView.Mode, strings.TrimSpace(pwd.Stdout))
+		}
+		assertCanonicalWorkspaceView(t, c, health.ProcessView.Mode)
 	}
 }
 
@@ -164,7 +154,6 @@ func assertBedUserPolicy(t *testing.T, c *apiClient, health healthView) {
 
 func TestHelperProbeFailureKeepsCommandAPIAvailable(t *testing.T) {
 	target := startTarget(t, targetOptions{
-		isolation:  "dorm",
 		helperPath: t.TempDir(),
 	})
 	c := target.client
@@ -193,7 +182,6 @@ func TestPathshimProbeFailureFallsBackToProot(t *testing.T) {
 		t.Skipf("set %s or run image E2E with bundled PRoot", prootEnv)
 	}
 	target := startTarget(t, targetOptions{
-		isolation:        "dorm",
 		allowPtrace:      true,
 		pathshimHostPath: unavailablePathshim(t),
 		proot:            proot,
@@ -210,7 +198,7 @@ func TestPathshimProbeFailureFallsBackToProot(t *testing.T) {
 		t.Fatalf("proot fallback workspace view = %+v", health.ProcessView)
 	}
 	var diagnostics struct {
-		Components struct {
+		Subsystems struct {
 			Filesystem struct {
 				Probes map[string]struct {
 					Exists     bool   `json:"exists"`
@@ -220,19 +208,19 @@ func TestPathshimProbeFailureFallsBackToProot(t *testing.T) {
 					Error      string `json:"error"`
 				} `json:"probes"`
 			} `json:"filesystem"`
-		} `json:"components"`
+		} `json:"subsystems"`
 	}
 	result, err = c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
 	if err != nil || result.Status != http.StatusOK {
 		t.Fatalf("diagnostics: status=%d err=%v body=%s", result.Status, err, result.Body)
 	}
 	for _, name := range []string{"ptrace", "proot"} {
-		probe := diagnostics.Components.Filesystem.Probes[name]
+		probe := diagnostics.Subsystems.Filesystem.Probes[name]
 		if !probe.Exists || !probe.Executable || !probe.Attempted || probe.ExitCode == nil || *probe.ExitCode != 0 || probe.Error != "" {
 			t.Fatalf("%s probe = %+v", name, probe)
 		}
 	}
-	pathshimProbe := diagnostics.Components.Filesystem.Probes["pathshim"]
+	pathshimProbe := diagnostics.Subsystems.Filesystem.Probes["pathshim"]
 	if !pathshimProbe.Exists || !pathshimProbe.Executable || !pathshimProbe.Attempted || pathshimProbe.Error == "" {
 		t.Fatalf("pathshim failure probe = %+v", pathshimProbe)
 	}

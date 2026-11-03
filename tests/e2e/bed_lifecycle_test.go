@@ -12,7 +12,7 @@ import (
 )
 
 func TestBedEvictStartsFreshWithNoopStoreAndPurge(t *testing.T) {
-	target := startTarget(t, targetOptions{isolation: "dorm", maxBeds: 1})
+	target := startTarget(t, targetOptions{maxBeds: 1})
 	c := target.client
 
 	inventory := c.inventory(t)
@@ -65,7 +65,7 @@ func TestBedEvictStartsFreshWithNoopStoreAndPurge(t *testing.T) {
 
 // +case:id=bed_explicit_pillows,desc=`Reject empty declarations and data access before declaration`,expect=`400/404 without creating a Bed; an explicit Pillow enables command execution`
 func TestExplicitBedPillowDeclaration(t *testing.T) {
-	c := startTarget(t, targetOptions{isolation: "dorm"}).client
+	c := startTarget(t, targetOptions{}).client
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	for _, request := range []map[string]any{{"id": "undeclared"}, {"id": "undeclared", "pillows": nil}, {"id": "undeclared", "pillows": []any{}}} {
@@ -97,7 +97,7 @@ func TestExplicitBedPillowDeclaration(t *testing.T) {
 // +case:id=explicit_bed_idle_release,desc=`Start empty, reject implicit requests, then expire and purge an explicitly declared Bed`,expect=`All Beds consume capacity and the daemon returns to releasable after the last Bed is reclaimed`
 func TestExplicitBedIdleRelease(t *testing.T) {
 	requireTestBinary(t)
-	c := startTarget(t, targetOptions{isolation: "dorm", maxBeds: 1, config: &config.Options{BedIdleTTL: value(2 * time.Second)}}).client
+	c := startTarget(t, targetOptions{maxBeds: 1, config: &config.Options{BedIdleTTL: value(2 * time.Second)}}).client
 	assertEmpty := func(got inventoryView) bool {
 		return len(got.Beds) == 0 && got.Instance.Status == "releasable"
 	}

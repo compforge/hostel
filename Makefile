@@ -64,11 +64,8 @@ tidy: ## Sync go.mod/go.sum
 check: tidy lint build test ## Pre-commit gate: tidy + lint + build + race tests
 	@echo "check passed"
 
-run: build ## Run locally with a best-effort dorm isolation floor
-	$(BIN) --isolation dorm --beds-root $(BEDS_ROOT) --addr $(ADDR)
-
-run-bwrap: build ## Run with suite minimum (private filesystem and network required)
-	$(BIN) --isolation suite --beds-root $(BEDS_ROOT) --addr $(ADDR)
+run: build ## Run locally with best-effort subsystem realization
+	$(BIN) --beds-root $(BEDS_ROOT) --addr $(ADDR)
 
 linux: ## Cross-compile static Linux binaries (amd64 + arm64) into bin/
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/hostel-linux-amd64 ./cmd/hostel
@@ -77,7 +74,7 @@ linux: ## Cross-compile static Linux binaries (amd64 + arm64) into bin/
 smoke: build ## Boot on a scratch port and curl the core endpoints end to end
 	@set -e; \
 	tmp=$$(mktemp -d); \
-	$(BIN) --isolation dorm --beds-root $$tmp/ws --addr :44799 & pid=$$!; \
+	$(BIN) --beds-root $$tmp/ws --addr :44799 & pid=$$!; \
 	trap "kill $$pid 2>/dev/null; rm -rf $$tmp" EXIT; \
 	sleep 1; \
 	curl -sf localhost:44799/ping >/dev/null; \

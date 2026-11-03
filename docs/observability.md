@@ -57,9 +57,9 @@ evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史�
 | 接口 | 回答的问题 |
 |------|-----------|
 | `POST /v1/beds` | 接受 Bed 初始化；新任务返回 `202` 与 initializing readiness，已 Ready 返回 `200` |
-| `GET /v1/status` | Hostel/Carrier 粒度的实例、组件、设施、容量 pressure 与资源状态，不返回 Bed 列表 |
+| `GET /v1/status` | Hostel/Carrier 粒度的实例、子系统、设施、容量 pressure 与资源状态，不返回 Bed 列表 |
 | `GET /v1/beds` | 全部 Bed 概要（含 initializing / failed / dormant）+ 与列表同快照的原始容量计数，不返回 pressure verdict |
-| `GET /v1/beds/:id` | `status.lifecycle` 表达 Bed 生命周期，`status.components` 与 `status.amenities` 分别表达 Bed 分域和关联 Tenant 状态 |
+| `GET /v1/beds/:id` | `status.lifecycle` 表达 Bed 生命周期，`status.subsystems` 与 `status.amenities` 分别表达 Bed 分域和关联 Tenant 状态 |
 | `GET /healthz` | 实例可服务性（探活/调度用） |
 
 bed 明细只进 `/v1/beds/:id`；`/v1/beds` 的 bed 条目保持概要。上游读到的任何字段都是 stale-tolerant hint——正确性由准入/回收点的原子复核兜底，不靠上报实时性。
@@ -154,7 +154,7 @@ running 都不能推导出完整隔离，语义由 [isolation.md](isolation.md) 
 状态沿领域所有者汇总，API handler 查询和组合，view 定义响应结构与纯转换：
 
 ```text
-Component → 全局 Status → Bed Manager ─────┐
+Subsystem → 全局 Status → Bed Manager ─────┐
 Amenity   → 全局 Status → Amenity Manager ─┤
 Host      → daemon 采集并注入的系统事实快照 ──────────┴→ Hostel 实例聚合 → /v1/status
 
@@ -162,16 +162,19 @@ Bed 分域 Status ────────────────────�
 Tenant 领域 Status → Bed/Tenant 绑定查询 ───┴→ Bed 详情组合 → /v1/beds/:id
 ```
 
-**Component Status** 表示领域的实例级报告，是粒度约定，不另抽跨领域公共类型。
-各领域定义自己的具体 Status，通过组件的 `Status()` 提供，Bed Manager 聚合所属组件。
+Subsystem 状态分别表达期望配置、实际采用的机制与落实结果；具体结构由领域拥有。房型和 Ready 不替代这些事实，
+例如 shared Network 可以保留 requested_policy 而 policy=null、policy_status=unenforced；共享 Chromium/MCP 出站不继承 Bed 进程网络保证。
+
+**Subsystem Status** 表示领域的实例级报告，是粒度约定，不另抽跨领域公共类型。
+各领域定义自己的具体 Status，通过子系统的 `Status()` 提供，Bed Manager 聚合所属子系统。
 Amenity Manager 聚合独立设施的状态；API handler 组合两个 Manager 与 Host 快照，API view 拥有对外 schema。
-`Component[S]` 将读取契约与 daemon、Bed 两层 Lifecycle 放在同一个组件协议下；
+`Subsystem[S]` 将读取契约与 daemon、Bed 两层 Lifecycle 放在同一个子系统协议下；
 Amenity Manager 只通过适配器参与 Bed 回收，其设施全局生命周期仍直属 daemon。
 
 | 分区 | `/v1/status` | `/v1/beds/:id` 的 `status` |
 |---|---|---|
 | `host` | 宿主系统事实，不代表领域已启用某项能力 | 不重复返回 |
-| `components` | 各领域 Component Status | 各领域在此 Bed 上的实际状态 |
+| `subsystems` | 各领域 Subsystem Status | 各领域在此 Bed 上的实际状态 |
 | `pillows` | 不展开 | 环境准备、主进程运行、就绪及 execution 事实 |
 | `port_mappings` | 不展开 | Bed 内监听与 Carrier 发布映射 |
 | `amenities` | 各设施全局状态 | 已绑定 Tenant 的 ID 和设施自定义状态 |
@@ -180,25 +183,25 @@ Bed 详情的 `status.lifecycle` 由 Bed Manager 提供；Tenant 状态由设施
 不复制进 Bed。Tenant Status 的字段跟随设施领域：浏览器就绪和 MCP 连接池不是同一种状态。
 接口不根据 Status 推导更强的隔离保证，也不执行生命周期 hook、探测或远端 I/O。状态读取只读取已发布的内存状态，不持有慢操作的协调锁；Tenant 存在不代表设施提供强制隔离。
 
-`GET /v1/status` 的 `schema_version` 为 `12`。该接口只组合 Hostel/Carrier 粒度状态，不携带 `beds` 列表；Bed inventory 由 `GET /v1/beds` 独立提供。工具选择报告位于 `components.filesystem.tools`、`components.network.tools` 和 `components.resource.accounting.tools`；每项包含 Policy、Requirements、探测结果、是否选中及原因。`requirements.tools` 是该工具依赖的外部程序列表，与组件的工具状态映射分别解释。
+`GET /v1/status` 的 `schema_version` 为 `13`。该接口只组合 Hostel/Carrier 粒度状态，不携带 `beds` 列表；Bed inventory 由 `GET /v1/beds` 独立提供。工具选择报告位于 `subsystems.filesystem.tools`、`subsystems.network.tools` 和 `subsystems.resource.accounting.tools`；每项包含 Policy、Requirements、探测结果、是否选中及原因。`requirements.tools` 是该工具依赖的外部程序列表，与子系统的工具状态映射分别解释。
 
 Privilege 的 credential helper 诊断字段为 `helper`。Pillow 主进程的 `phase` 表达运行阶段，独立的 `ready` 表达当前可用性；readiness 变化不终止运行实例。`host.fact` 报告 runtime、process、security_modules、
 namespace_limits、kernel_features 与 ptrace 等启动事实；`host.status` 组合动态资源状态，
 其中 `ports` 是 Hostel 管理的端口分配，不是系统全部监听端口。状态读取复用已有事实与资源状态，不重新探测。
-`components.filesystem` 报告文件隔离和
-启动探测，`components.privilege` 报告 daemon/Bed 用户前置条件；Network、Executor、Store、
+`subsystems.filesystem` 报告文件隔离和
+启动探测，`subsystems.privilege` 报告 daemon/Bed 用户前置条件；Network、Executor、Store、
 Resource 分别拥有网络、执行、同步和资源报告。`environment` 保留实例组合探测结果，
-状态接口只报告各组件最终采用的能力、探测结果与原因，`isolation` 报告 requested 最低要求、fs/net 较低值 effective、satisfied 和不足原因。
-启动组合尝试及失败原因写入日志，不在实例内保存历史数组，也不进入 `/v1/status`。
+状态接口只报告各子系统最终采用的能力、探测结果与原因，`isolation.effective` 只报告 fs/net 实际房型的较低值，使用方自行判断是否满足要求。
+各子系统选择与执行环境验证的失败原因写入日志，不在实例内保存历史数组，也不进入 `/v1/status`。
 文件等级使用 shared/confined/private，网络使用 shared/private；各自通过 room 映射到统一房型。Bed detail 使用准备后的领域事实，不能复用实例支持上限。
-网络 enabled 已移除；原调用方需改读 effective/level、room 和 policy_status，requested_policy 与已执行 policy 分开。
-与各组件独立前置条件区分。Bed inventory 与容量是摘要，不展开 Bed 或 Tenant 详情。
+网络通过 effective/level、room 和 policy_status 报告实际能力，requested_policy 与已执行 policy 分开。
+实例组合探测与各子系统独立前置条件区分。Bed inventory 与容量是摘要，不展开 Bed 或 Tenant 详情。
 状态报告不披露凭据、远端存储地址或可操作其他 Tenant 的资源句柄。
 
 `instance` 与 `beds` 由 Bed Manager 的 `InventoryStatus()` 一次聚合，`/v1/beds` 使用同一入口。
 phase/activity、occupied/resident/pinned 计数与本次返回的行一致，不再分别读取原子计数器。
 `retained/draining/releasable` 由 Bed Manager 推导；HTTP 只序列化。冷目录大小在锁外采样，
-再按锁内的准入与清理身份过滤，属于可滞后的调度提示；活跃操作及组件状态不构成全局事务快照。
+再按锁内的准入与清理身份过滤，属于可滞后的调度提示；活跃操作及子系统状态不构成全局事务快照。
 `/healthz` 保留轻量健康与能力视图，不增加目录扫描。
 
 Bed Manager 的 `local_cleanups` 报告已认领本地目录的清理状态和最近失败，供区分运行中、等待重试与完成。

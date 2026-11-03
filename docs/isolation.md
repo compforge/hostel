@@ -34,9 +34,8 @@ Hostel 通过共享 Carrier 提高 workload 密度，优先把 BedSpec 的使用
 路径投影和文件 API 补偿仍可提供独立工作空间的使用体验；这不等于进程侧已经具备同样强的访问屏障。
 房型评价隔离保证，不评价功能多少。dorm 也应尽力提供完整的文件、执行与网络体验。
 
-`--isolation` / `HOSTEL_ISOLATION` 是实例接纳 Bed 的最低房型，默认 dorm。所有房型均尝试环境和工具策略
-允许的最强组合；dorm 不关闭可用增强，suite 不允许自动降到 room。旧的 auto 拼写兼容为 dorm 门槛，
-仍尽力选择最高能力。房型不进入 BedSpec。
+Hostel 根据 BedSpec 和宿主条件协调各 Subsystem 尽力兑现能力。房型只描述实际保证，
+不作为配置或准入门槛，也不参与候选机制排序。caller 可以根据整体房型或各 Subsystem 的具体状态决定是否使用。
 
 领域保留自己的能力模型，只在汇总边界映射到房型，不要求每个领域都有三个实现档位：
 
@@ -48,17 +47,16 @@ Hostel 通过共享 Carrier 提高 workload 密度，优先把 BedSpec 的使用
 | network shared | dorm | 共享 Carrier 网络，网络策略尽力兑现，未执行的规则明确披露 |
 | network private | suite | Bed 进程独立 netns，现有 DNS/nft 策略与跨 Bed 转发规则；具体限制见 network.md |
 
-当前网络没有独立的 room backend，suite 能力满足 room 门槛。进程、身份和资源组件暂不参与房型汇总。
+当前网络没有独立的 room backend，不为凑齐三级而增加实现。进程、身份和资源子系统暂不参与房型汇总。
 网络房型不扩大策略语义：域名规则控制 DNS，不等于 HTTP Host/SNI 或任意应用流量识别；共享设施出站不在
 Bed 进程作用域内，也不承诺 Carrier 管理服务已全部隔离。
 
-`Bed.actual = min(filesystem.room, network.room)`；只有 actual >= isolation 才能发布 Ready。
-实例能力已确定不足时，在 Bed 分配及 Store stage-in 前拒绝；具体 Bed 准备后再次检查实际保证。
-未准备的领域不报告已达到的房型，释放后清除。能力不足不关闭诊断服务，创建 API 返回 503 和 cause。
-实例探测用临时 Bed 验证能力，不受客户最低门槛限制；这个豁免不进入公开创建参数。
+`Bed.actual = min(filesystem.room, network.room)`，只是已经落实的能力摘要，不影响 Ready。
+未准备的领域不报告已达到的房型，释放后清除。实例报告已探测并选定的能力，Bed 报告准备后的实际结果。
+能力较弱不触发房型拒绝；必要执行、准备或清理失败仍使初始化失败。临时探测 Bed 与用户 Bed 走同一准备契约。
 
 各领域继续披露原生等级、选用机制和缺口。例如 fs=suite、net=dorm 时整体为 dorm，文件能力保留。
-机制组合存在冲突时优先选择整体房型较高的可执行组合；整体相同时优先保留较强文件保证，再比较网络保证。
+机制选择与回退由所属 Subsystem 负责；Hostel 不枚举跨领域组合，也不根据某领域失败削弱其他领域。
 PRoot/pathshim 只改善路径体验，不提高文件隔离评级。显式只读 mount 仍必须兑现，不能降成可写。
 
 ### 各维度的目标与当前兑现程度
@@ -77,10 +75,10 @@ Store 管持久化与恢复，和这些能力协作，但不提供隔离屏障�
 
 ## 能力选择与工具策略
 
-- Component 拥有领域行为、生命周期、配置和状态。
-- 组件拥有自己的能力类型与支持集合，结合 Config 选择机制，并在类型化 Status 中报告实际结果。
-- 文件和网络各自映射房型，Bed 取两者较低值，与实例最低要求比较。
-- Tool 是组件为兑现 Bed 能力而选择、组合的工具，既包括外部程序，也包括内核机制和身份技术，例如 Filesystem 的 Bwrap、Landlock、UID、PRoot、Pathshim，
+- Subsystem 拥有领域行为、生命周期、配置和状态；BedSpec 的一项需求可以跨子系统协作。
+- 子系统拥有自己的能力类型与支持集合，结合 Config 选择机制，并在类型化 Status 中报告实际结果。
+- 文件和网络各自映射房型，Bed 取两者较低值；caller 判断实际保证是否满足要求。
+- Tool 是子系统为兑现 Bed 能力而选择、组合的工具，既包括外部程序，也包括内核机制和身份技术，例如 Filesystem 的 Bwrap、Landlock、UID、PRoot、Pathshim，
   Network 的 NetNS，以及 Resource 的 cgroup accounting。
 - Requirements 是使用该 Tool 的环境前提，包含 Linux Capabilities、外部程序和系统条件。
   CAP_NET_ADMIN、CAP_SYS_ADMIN 保留 Linux Capability 的含义。
@@ -89,30 +87,29 @@ Tool 使用统一的 Policy：
 
 | Policy | 语义 |
 |---|---|
-| auto | 允许探测和选择；可用不代表一定被选择，不可用按组件原有契约降级 |
+| auto | 允许探测和选择；可用不代表一定被选择，不可用按子系统原有契约降级 |
 | off | 排除该工具，不执行其运行探测，不创建其运行资源 |
 | required | 必须可用且实际采用，不允许其他工具替代 |
 
-`--isolation` / `HOSTEL_ISOLATION` 和内部 `BedOptions.RoomType` 设置最低隔离要求。
 Filesystem 和 Network 始终以最高原生等级为选择目标，独立身份也在允许范围内尽力采用。
-Tool Policy 控制采用哪个实现。例如 room、UID=required 要求使用 UID/DAC 文件机制。互斥功能同时 required，
+Tool Policy 控制采用哪个实现。例如 UID=required 要求使用 UID/DAC 文件机制。互斥功能同时 required，
 或 required 实现互相冲突，在探测前拒绝配置。Required process path helper 会排除互斥的 Bwrap 挂载视图。
 
 基础 BedFS 路径归属和必要的执行降权没有通用关闭开关。关闭可选隔离不绕过这些契约。
-Requirements 由实现声明，caller 不给环境前提设置 Policy；实际准备顺序和依赖校验由所属组件负责。
+Requirements 由实现声明，caller 不给环境前提设置 Policy；实际准备顺序和依赖校验由所属子系统负责。
 共享 `internal/bed/tool` 包只提供策略和观测类型，不执行通用依赖调度，也不新增工具箱 Manager。
 各领域 Manager 根据 Bed 的需求和宿主条件，从工具箱中选择并组合工具；工具更多不代表每次全部启用，也不自动提供更高的隔离保证。
 
 ### 启动、失败与观测
 
-启动入口合并配置并校验冲突，各组件按策略探测、选择和准备，再以临时 Bed 验证 command/session/Pillow 主进程的组合。
-每个文件候选尝试可选进程、网络和身份组合，恢复原始增强偏好探测下一个候选；比较验证成功的组合，优先最大化 fs/net 的最低房型。
-整体选择、单次组合执行与清理都有独立的有界预算；候选耗尽或选择预算耗尽则失败。
-Required 功能启动时无法满足就启动失败；清理失败也终止回退，保留资源 owner 和错误，不继续尝试下一组。
+启动入口合并配置并校验冲突，各子系统按策略探测、选择和准备，再以临时 Bed 验证 command/session/Pillow 主进程的组合。
+Privilege 自行选择身份；Filesystem 消费身份结果并自行选择文件机制与进程视图；Network 和 Executor 各自探测并选择本领域机制。
+Hostel 显式协调准备顺序，不维护候选组合、不改变子系统选择。一次临时 Bed 探测验证准备结果可以完成真实执行；失败即报告启动错误并清理，不触发跨领域重选。
+领域探测、真实执行探测与清理使用有界预算。Required 功能无法满足就启动失败；领域内部回退也必须先完成清理，清理失败保留 owner 和错误。
 启动后具体 Bed 准备失败则该 Bed 不进入 Ready。已经采用的隔离实现执行失败，不能静默降级或放开边界。
-组件准备与失败清理继续走同一生命周期。
+子系统准备与失败清理继续走同一生命周期。
 
-实例状态按组件报告 Tool 的最终 Policy、Requirements、探测状态、是否选中及原因，原有执行探测
+实例状态按子系统报告 Tool 的最终 Policy、Requirements、探测状态、是否选中及原因，原有执行探测
 证据继续保留，JSON 字段为 `tools`。off 报告 disabled_by_config 和 not_probed；auto 工具可以探测成功却因优先级未被选中。
 Requirements 是声明，不能仅凭权限位或工具存在就声称可用，执行探测仍是最终证据。
 Filesystem 的 ceiling 表达已探测候选的最高可用档位；禁用候选后不能用它推断未探测的物理环境上限。
@@ -139,9 +136,9 @@ Hostel 不尝试获取缺失权限，也不把 UID 0 等同于具备某个 capab
   在预留范围内寻找空闲值，不能因散列碰撞让两个 Bed 共享身份。
 
 per-Bed UID 是本地数据身份的一部分。Bed Manager 识别本地目录及 `.gc-*` 清理占位，
-通过绑定到本地身份的 Recover / Prepare / Forget 驱动 Privilege Manager；权限组件不推测磁盘目录布局。
+通过绑定到本地身份的 Recover / Prepare / Forget 驱动 Privilege Manager；权限子系统不推测磁盘目录布局。
 启动先根据目录 owner 恢复租约，资源与本地目录全部清理后才调用 Forget。luggage 和失败清理继续
-保留 UID，具体重试与准入契约见 [Bed 生命周期](bed.md#组件参与生命周期)。
+保留 UID，具体重试与准入契约见 [Bed 生命周期](bed.md#子系统参与生命周期)。
 UID 范围须由部署侧预留，避免与宿主账号或 user namespace 映射重叠。
 
 Bed 数据交接给新属主时跳过多硬链接的普通文件，防止改变 Bed 外共享 inode 的 owner；Linux 部署应
@@ -155,14 +152,14 @@ Bed 初始化先恢复或创建 BedFS，再解析并准备 `BedUser`，随后获
 统一通过 `manager.Environment` 组装执行环境：
 
 ```text
-Bed Manager 协调各组件准备 BedFS、身份、namespace 与资源
+Bed Manager 协调各子系统准备 BedFS、身份、namespace 与资源
   → 可信启动器进入所属 Pillow 的已准备视图
   → 切换到 BedUser，清空 capability 集合、设置 no_new_privs
   → 应用用户环境与 cwd，启动所需进程
   → 必需 Pillow 主进程就绪后开放数据面，持续监督、同步与观测
 ```
 
-资源准备和降级决策属于 Bed Manager 及其协调的组件，不属于 Executor。Hostel 优先使用实际拥有的
+资源准备和降级决策属于 Bed Manager 及其协调的子系统，不属于 Executor。Hostel 优先使用实际拥有的
 权限完成准备，权限不足才尝试无特权机制。最终 BedUser 的低权限不应反过来限制 daemon 的准备能力。
 
 rootful bwrap 的准备接口只接收挂载描述，不接收 Pillow 的 workdir、命令或环境。准备进程
@@ -215,7 +212,7 @@ CAP_SETPCAP 时清空 bounding set，没有时仅允许非 root 身份保留 cei
 | `CAP_SETPCAP` | 管理最终进程的 capability 集合 |
 
 `drop: ["ALL"]` 会移除包括 `CAP_KILL`、`CAP_SETPCAP` 在内的默认 capability。只有希望使用跨 UID 管理时，
-才需按 `/v1/status.components.privilege.requirements.capabilities` 的实际结果配置；不是 Hostel 启动的统一前提。
+才需按 `/v1/status.subsystems.privilege.requirements.capabilities` 的实际结果配置；不是 Hostel 启动的统一前提。
 daemon 与 BedUser 相同时，这组身份切换要求为空，子进程凭据验证仍不可省略。
 
 隔离和进程视图在 Bed identity 基础上还有各自的运行条件。下表区分实际操作要求与容器中常见的
@@ -252,7 +249,7 @@ Bed 初始化、回收与失败重试见 [bed.md](bed.md)，Executor 替换见 [
 
 - **准备完成才可服务**：不能把半恢复目录或尚未分配的必需网络当成 Ready。
 - **特权步骤先于最终降权**：网络进入、文件视图准备和用户身份切换须按依赖顺序完成，
-  再把控制权交给用户命令。任何单一组件都不能提前丢掉后续准备仍需要的能力。
+  再把控制权交给用户命令。任何单一子系统都不能提前丢掉后续准备仍需要的能力。
 - **同一 Bed 的执行入口一致**：一次性命令、常驻 shell 和 Pillow 主进程应使用同一套能力组合；共享设施
   没有进入该进程树时，必须单独说明其边界，不能自动继承 Bed 命令的隔离声明。
 - **释放中的资源不再服务新执行**：失败清理仍需有人负责，但不能因此继续被视为可用。
@@ -293,10 +290,10 @@ Executor 替换不改变该 resident Bed 的网络身份；能力不可用时共
 
 ## 能力披露与验证
 
-`/healthz.isolation` 和 `/v1/status.isolation` 报告最低要求与实际综合房型的 requested/effective/satisfied/reasons；
-`/v1/status.components.filesystem` 报告 shared/confined/private 文件等级、上限、机制及视图；
+`/healthz.isolation` 和 `/v1/status.isolation` 仅通过 effective 报告实际综合房型；
+`/v1/status.subsystems.filesystem` 报告 shared/confined/private 文件等级、上限、机制及视图；
 Privilege 与 Network 分别报告自己的 supported 和最终选择结果；启动组合失败原因通过日志排查。
-状态 schema 见 [observability.md](observability.md)；文件机制从 `components.filesystem` 查询。
+状态 schema 见 [observability.md](observability.md)；文件机制从 `subsystems.filesystem` 查询。
 诊断接口还报告 workspace 进程视图和网络作用域；
 health / capabilities 还报告资源记账、准入与设施可用性。各投影的边界见
 [observability.md](observability.md)，具体字段由 API 和配置代码维护。当前没有一个

@@ -14,7 +14,6 @@ import (
 
 type BedConfig struct {
 	Configuration configuration.Config
-	RoomType      string
 	Filesystem    filesystem.Config
 	Network       network.Config
 	Resource      resource.Config
@@ -24,7 +23,6 @@ type BedConfig struct {
 }
 type BedOptions struct {
 	ConfigurationSources *map[string]string
-	RoomType             *string
 	Filesystem           filesystem.Options
 	Network              network.Options
 	Resource             resource.Options
@@ -35,7 +33,7 @@ type BedOptions struct {
 
 // Options contains only explicitly supplied values. Pointer presence, not the
 // value's zero-ness, wins over flags/environment/defaults. Runtime Config is concrete.
-// +spec=`Explicit options override CLI/env/defaults, including Auto, false and zero; components never read startup environment.`
+// +spec=`Explicit options override CLI/env/defaults, including Auto, false and zero; subsystems never read startup environment.`
 type Options struct {
 	PortRangeStart              *int
 	PortRangeEnd                *int
@@ -63,7 +61,6 @@ type Options struct {
 
 func (o Options) apply(c *Config) {
 	apply(&c.Bed.Configuration.Sources, o.Bed.ConfigurationSources)
-	apply(&c.Bed.RoomType, o.Bed.RoomType)
 	apply(&c.PortRangeStart, o.PortRangeStart)
 	apply(&c.PortRangeEnd, o.PortRangeEnd)
 	apply(&c.ShowVersion, o.ShowVersion)

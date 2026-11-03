@@ -16,38 +16,36 @@ func TestNetworkNamespaces(t *testing.T) {
 		t.Skip("set HOSTEL_E2E_REQUIRE_NETWORK=1 in a disposable capable Linux container")
 	}
 	for _, backend := range []string{"local", "supervisor"} {
-		for _, level := range []string{"dorm", "room", "suite"} {
-			t.Run(backend+"/"+level, func(t *testing.T) { testNetworkEnvironment(t, backend, level) })
-		}
+		t.Run(backend, func(t *testing.T) { testNetworkEnvironment(t, backend) })
 	}
 }
 
-func testNetworkEnvironment(t *testing.T, backend, level string) {
-	target := startTarget(t, targetOptions{isolation: level, executor: backend})
+func testNetworkEnvironment(t *testing.T, backend string) {
+	target := startTarget(t, targetOptions{executor: backend})
 	c := target.client
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var diagnostics struct {
-		Components struct {
+		Subsystems struct {
 			Network struct {
 				Effective string `json:"effective"`
 				Scope     string `json:"scope"`
 				Reason    string `json:"reason"`
 			} `json:"network"`
-		} `json:"components"`
+		} `json:"subsystems"`
 	}
 	response, err := c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
 	if err != nil {
 		t.Fatal(err)
 	}
 	must2xx(t, "diagnostics", response)
-	private := true // Every floor seeks the strongest network on this required-network runner.
+	private := true // This runner requires private networking.
 	wantScope := "carrier"
 	if private {
 		wantScope = "bed_processes"
 	}
-	if (diagnostics.Components.Network.Effective == "private") != private || diagnostics.Components.Network.Scope != wantScope {
-		t.Fatalf("network: %+v", diagnostics.Components.Network)
+	if (diagnostics.Subsystems.Network.Effective == "private") != private || diagnostics.Subsystems.Network.Scope != wantScope {
+		t.Fatalf("network: %+v", diagnostics.Subsystems.Network)
 	}
 	var health healthView
 	response, err = c.json(ctx, "GET", "/healthz", "", nil, &health)
@@ -55,16 +53,6 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 		t.Fatal(err)
 	}
 	must2xx(t, "health", response)
-	if requiredIsolationLevels()[level] && isolationRank(health.Isolation.Effective) < isolationRank(level) {
-		t.Fatalf("required %s degraded: %+v", level, health.Isolation)
-	}
-	if isolationRank(health.Isolation.Effective) < isolationRank(level) {
-		response := c.createBed(t, "below-floor")
-		if response.Status != 503 {
-			t.Fatalf("below-floor create: %+v", response)
-		}
-		return
-	}
 	t.Logf("executor=%s room=%s files=%+v", backend, health.Isolation.Effective, c.filesystemStatus(t))
 	must2xx(t, "declare Bed", c.createBed(t, "network-a"))
 	must2xx(t, "declare Bed", c.createBed(t, "network-b"))
@@ -96,7 +84,7 @@ func testNetworkEnvironment(t *testing.T, backend, level string) {
 		ids[bed] = strings.TrimSpace(result.Stdout)
 	}
 	if (ids["network-a"] != ids["network-b"]) != private {
-		t.Fatalf("network namespace sharing disagrees with profile %s: %v", level, ids)
+		t.Fatalf("network namespace sharing disagrees with backend %s: %v", backend, ids)
 	}
 	var session struct {
 		ID string `json:"session_id"`

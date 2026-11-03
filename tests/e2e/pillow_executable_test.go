@@ -39,19 +39,18 @@ func TestPillowExecutableUsesBedView(t *testing.T) {
 		for _, backend := range []string{"local", "supervisor"} {
 			t.Run(mode+"/"+backend, func(t *testing.T) {
 				options := restrictedOptions()
-				room := "dorm"
 				if mode == "mount" {
 					if _, err := exec.LookPath("bwrap"); err != nil {
 						t.Skip("bwrap unavailable")
 					}
-					options.Bed.Filesystem.Bwrap, room = value(tool.Required), "suite"
+					options.Bed.Filesystem.Bwrap = value(tool.Required)
 				} else {
 					if _, err := exec.LookPath("proot"); err != nil && os.Getenv(prootEnv) == "" {
 						t.Skip("PRoot unavailable")
 					}
 					options.Bed.Filesystem.PRoot = value(tool.Required)
 				}
-				c := startTarget(t, targetOptions{isolation: room, executor: backend, config: &options}).client
+				c := startTarget(t, targetOptions{executor: backend, config: &options}).client
 				var pillows []map[string]any
 				for name, command := range map[string]string{"absolute": "/tools/worker", "relative": "./worker", "path": "worker"} {
 					pillows = append(pillows, map[string]any{"name": name, "command": []string{command}, "workdir": "/tools", "required": true,

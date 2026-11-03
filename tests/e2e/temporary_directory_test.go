@@ -26,7 +26,6 @@ func TestBedTemporaryDirectory(t *testing.T) {
 		for _, backend := range backends {
 			t.Run(mode+"/"+backend, func(t *testing.T) {
 				options := restrictedOptions()
-				room := "dorm"
 				if mode != "carrier" {
 					if runtime.GOOS != "linux" {
 						t.Skip("process path helpers require Linux")
@@ -41,14 +40,13 @@ func TestBedTemporaryDirectory(t *testing.T) {
 						options.Bed.Filesystem.PRoot = value(tool.Required)
 					case "mount":
 						helper = "bwrap"
-						room = "suite"
 						options.Bed.Filesystem.Bwrap = value(tool.Required)
 					}
 					if _, err := exec.LookPath(helper); err != nil && os.Getenv(variable) == "" {
 						t.Skip(helper + " unavailable")
 					}
 				}
-				c := startTarget(t, targetOptions{isolation: room, executor: backend, config: &options}).client
+				c := startTarget(t, targetOptions{executor: backend, config: &options}).client
 				checkBedTemporaryDirectory(t, c, mode)
 			})
 		}

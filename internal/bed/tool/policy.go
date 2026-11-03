@@ -1,6 +1,6 @@
-// Package tool describes the tools a Bed component can select and combine.
+// Package tool describes the tools a Bed subsystem can select and combine.
 // A tool may be an external program, a kernel mechanism, or an identity-based
-// technique; the component owns its selection and lifecycle.
+// technique; the subsystem owns its selection and lifecycle.
 package tool
 
 import "fmt"
@@ -60,12 +60,12 @@ func Describe(p Policy, requirements Requirements, probed, available, selected b
 	return s
 }
 
-// CheckRequired is called after component-owned selection, before publishing readiness.
+// CheckRequired is called after subsystem-owned selection, before publishing readiness.
 func (s Status) CheckRequired(name string) error {
 	if s.Policy == Required && !s.Selected {
 		reason := s.Reason
 		if reason == "" {
-			reason = "tool unavailable or excluded by component selection"
+			reason = "tool unavailable or excluded by subsystem selection"
 		}
 		return fmt.Errorf("%s required but not selected: %s", name, reason)
 	}

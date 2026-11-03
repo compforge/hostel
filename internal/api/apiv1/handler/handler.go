@@ -291,10 +291,10 @@ func (s *Handler) healthz(c *gin.Context) {
 	})
 }
 
-// GET /v1/status serializes the instance-level Component and Amenity view.
+// GET /v1/status serializes the instance-level Subsystem and Amenity view.
 // The status observer composes the Bed and Amenity Managers. Reading it does not rerun startup probes or perform remote I/O.
 //
-// +spec=`Instance diagnostics expose cached facts and component reports; reading the endpoint never reruns probes.`
+// +spec=`Instance diagnostics expose cached facts and subsystem reports; reading the endpoint never reruns probes.`
 func (s *Handler) status(c *gin.Context) {
 	c.JSON(http.StatusOK, s.observer.Status())
 }

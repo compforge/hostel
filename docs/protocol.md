@@ -4,7 +4,7 @@ Hostel 的原生 API 与 OpenSandbox Execd adapter 共享 Bed、Pillow 和 Volum
 协议负责寻址、校验以及结果与错误的表达；资源状态和生命周期由领域拥有。
 
 `github.com/qiankunli/hostel/protocol` 为服务端和 Go 调用方提供 Bed 管理数据定义，覆盖
-身份、生命周期、Pillow 声明与状态、端口及组件状态。它只依赖标准库，不包含 client 或运行时资源。
+身份、生命周期、Pillow 声明与状态、端口及子系统状态。它只依赖标准库，不包含 client 或运行时资源。
 
 ## 模块与工具链边界
 
@@ -28,7 +28,7 @@ Hostel 自行生成 ID 唯一标识本地生命周期，避免调用方标识与
 同一个 Name 在销毁后重建时会对应不同 ID；保留本地数据的 daemon 重启恢复沿用 ID。
 上游自行维护业务标识与 Name/ID 的映射，Hostel 不解释上游业务身份。
 
-内部 `bed` 组合 `protocol.Bed`，保留锁、Spec 和分域状态；`Bed` alias 仅供仓内组件共享。
+内部 `bed` 组合 `protocol.Bed`，保留锁、Spec 和分域状态；`Bed` alias 仅供仓内子系统共享。
 组合的公开部分保存身份，API 快照从各 owner 读取其它字段，不增加第二套可变状态写权。
 
 ## 寻址与身份

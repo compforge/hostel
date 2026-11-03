@@ -23,7 +23,7 @@ func TestBedDetailWireContract(t *testing.T) {
 	if bed.ID != "bed-00000000000000000000000000000001" || bed.Name != "caller-bed" || bed.Status.Lifecycle.Phase != protocol.PhaseResident || !bed.Status.Lifecycle.Readiness.Ready {
 		t.Fatalf("Bed identity/readiness: %+v", bed)
 	}
-	if bed.Generation != 9007199254740993 || bed.Status.Components.Store.SnapshotGeneration != 9007199254740992 {
+	if bed.Generation != 9007199254740993 || bed.Status.Subsystems.Store.SnapshotGeneration != 9007199254740992 {
 		t.Fatal("data generation lost integer precision")
 	}
 	if len(bed.Status.Pillows) != 1 || len(bed.Status.PortMappings) != 1 {

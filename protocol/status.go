@@ -6,14 +6,14 @@ type BedStatus struct {
 	PortMappings []PortMappingStatus `json:"port_mappings"`
 	Isolation    RoomStatus          `json:"isolation"`
 	Lifecycle    BedLifecycle        `json:"lifecycle"`
-	Components   struct {
+	Subsystems   struct {
 		Filesystem FilesystemStatus `json:"filesystem"`
 		Privilege  PrivilegeStatus  `json:"privilege"`
 		Network    NetworkStatus    `json:"network"`
 		Store      StoreStatus      `json:"store"`
 		Executor   ExecutorStatus   `json:"executor"`
 		Resource   ResourceStatus   `json:"resource"`
-	} `json:"components"`
+	} `json:"subsystems"`
 	Amenities map[string]AmenityBinding `json:"amenities"`
 }
 

@@ -112,17 +112,6 @@ func Resolve(ctx context.Context, facts hostfacts.Snapshot, cfg Config, root str
 	return s, nil
 }
 
-// WithoutDedicatedIdentity preserves capability facts while choosing the
-// already-probed shared identity after all stronger combinations failed.
-func (s Selection) WithoutDedicatedIdentity(reason string) (Selection, bool) {
-	if s.Effective != Dedicated {
-		return s, false
-	}
-	s.Effective, s.Reason = Shared, "dedicated identity combination unavailable: "+reason
-	s.Policy = BedUserReport{Strategy: "fixed", UID: s.User.UID(), GID: s.User.GID()}
-	return s, true
-}
-
 func probeIdentity(ctx context.Context, root string, user BedUser) (report hostfacts.ProbeReport, cleanupErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

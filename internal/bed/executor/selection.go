@@ -17,8 +17,8 @@ func pidnsStatus(policy tool.Policy, probed, selected bool, reason string) tool.
 		Conditions: []string{"Linux supervisor", "PID and mount namespace creation", "procfs mount permitted"}}, probed, selected, selected, reason)
 }
 
-// ResolveFactory only falls back during startup selection. A frozen combination
-// must be recreated exactly, even when its original policy was auto.
+// ResolveFactory owns startup selection and fallback for the Executor subsystem.
+// The returned factory retains its choice throughout Bed execution and recovery.
 func ResolveFactory(ctx context.Context, cfg Config, resources resource.Tracker) (Factory, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -31,15 +31,11 @@ func ResolveFactory(ctx context.Context, cfg Config, resources resource.Tracker)
 	policy := cfg.PIDNS.Effective()
 	status := pidnsStatus(policy, false, false, "")
 	private := policy != tool.Off
-	if cfg.selection != nil {
-		status = cfg.selection["pidns"]
-		private = status.Selected
-	}
 	if cfg.Backend == "local" {
-		if policy == tool.Required || private && cfg.selection != nil {
+		if policy == tool.Required {
 			return nil, fmt.Errorf("PID namespace requires the supervisor executor")
 		}
-		if cfg.selection == nil && policy != tool.Off {
+		if policy != tool.Off {
 			status = pidnsStatus(policy, false, false, "local executor does not support PID namespaces")
 		}
 		f := NewLocalFactory(resources)
@@ -56,7 +52,7 @@ func ResolveFactory(ctx context.Context, cfg Config, resources resource.Tracker)
 	}
 	factory.privatePIDNamespace = private
 	err = factory.Probe(ctx)
-	if private && cfg.selection == nil {
+	if private {
 		reason := ""
 		if err != nil {
 			reason = err.Error()
@@ -67,7 +63,7 @@ func ResolveFactory(ctx context.Context, cfg Config, resources resource.Tracker)
 	if errors.As(err, &cleanupErr) {
 		return nil, err
 	}
-	if err != nil && private && policy == tool.Auto && cfg.selection == nil {
+	if err != nil && private && policy == tool.Auto {
 		// Probe fully shuts its candidate down before a weaker candidate starts.
 		factory.privatePIDNamespace = false
 		err = factory.Probe(ctx)
@@ -82,7 +78,7 @@ func ResolveFactory(ctx context.Context, cfg Config, resources resource.Tracker)
 	if cleanupErr := factory.Close(); cleanupErr != nil {
 		return nil, fmt.Errorf("supervisor probe cleanup after %v: %w", err, cleanupErr)
 	}
-	if cfg.Backend == "supervisor" || policy == tool.Required || cfg.selection != nil {
+	if cfg.Backend == "supervisor" || policy == tool.Required {
 		return nil, fmt.Errorf("required supervisor executor: %w", err)
 	}
 	log.Printf("hostel: executor backend=local reason=%q", err)

@@ -14,7 +14,7 @@ import (
 )
 
 func TestOpenSandboxExecd(t *testing.T) {
-	target := startTarget(t, targetOptions{isolation: "dorm"})
+	target := startTarget(t, targetOptions{})
 	c := target.client
 	must2xx(t, "create Execd bed", c.createBed(t, "execd-a"))
 	must2xx(t, "create other bed", c.createBed(t, "execd-b"))
@@ -92,7 +92,7 @@ func TestOpenSandboxExecd(t *testing.T) {
 }
 
 func TestOpenSandboxAdapterLifecycle(t *testing.T) {
-	target := startTarget(t, targetOptions{isolation: "dorm"})
+	target := startTarget(t, targetOptions{})
 	c := target.client
 	for _, id := range []string{"adapter-a", "adapter-b"} {
 		must2xx(t, "create adapter Bed", c.createBed(t, id))

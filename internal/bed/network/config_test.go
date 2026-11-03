@@ -3,7 +3,6 @@ package network
 import (
 	"context"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -33,20 +32,6 @@ func TestOffNetworkDoesNotConstructHostPool(t *testing.T) {
 	}
 }
 
-func TestNetworkCapabilityFactsDoNotFollowSelection(t *testing.T) {
-	m := &Manager{config: Config{Level: Shared}}
-	s := m.describe(Status{Effective: Private, Backend: "netns", Scope: "bed_processes"})
-	if s.Effective == Private || s.Effective != Shared || !reflect.DeepEqual(s.Supported, []Level{Shared, Private}) {
-		t.Fatalf("profile hid host support or enabled unrequested isolation: %+v", s)
-	}
-	m.config = Config{Level: Private}
-	strong := m.describe(Status{Effective: Private, Backend: "netns", Scope: "bed_processes"})
-	if strong.Effective != Private || !reflect.DeepEqual(strong.Supported, s.Supported) {
-		t.Fatalf("selection changed capability list: %+v", strong)
-	}
-
-}
-
 type unavailableProvider struct{}
 
 func (unavailableProvider) Acquire(context.Context, string) (Attachment, error) { return nil, nil }
@@ -61,28 +46,5 @@ func TestRequiredNetworkFailsStartup(t *testing.T) {
 	m := &Manager{config: Config{NetNS: tool.Required}, provider: unavailableProvider{}}
 	if err := m.Start(t.Context()); err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("%v", err)
-	}
-}
-
-func TestNetworkCandidatesRespectToolRequirements(t *testing.T) {
-	for _, tc := range []struct {
-		policy tool.Policy
-		want   []Level
-	}{
-		{tool.Auto, []Level{Private, Shared}},
-		{tool.Required, []Level{Private}},
-		{tool.Off, []Level{Shared}},
-	} {
-		candidates := (Config{NetNS: tc.policy}).Candidates()
-		var got []Level
-		for _, candidate := range candidates {
-			if candidate.NetNS != tc.policy {
-				t.Fatal("candidate changed the tool requirement")
-			}
-			got = append(got, candidate.Level)
-		}
-		if !reflect.DeepEqual(got, tc.want) {
-			t.Fatalf("policy=%s levels=%v want=%v", tc.policy, got, tc.want)
-		}
 	}
 }

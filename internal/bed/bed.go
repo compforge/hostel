@@ -1,4 +1,4 @@
-// Package bed defines Hostel's shared Bed model and component contracts.
+// Package bed defines Hostel's shared Bed model and subsystem contracts.
 // It has no dependency on HTTP or domain implementations.
 package bed
 

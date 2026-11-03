@@ -18,8 +18,6 @@ type Config struct {
 	Pathshim             tool.Policy
 	// DedicatedIdentity is resolved by Privilege before filesystem selection.
 	DedicatedIdentity bool
-	// Excluded records failed startup combinations without rewriting user policy.
-	Excluded map[string]string
 }
 
 // Options preserves explicit Auto independently of omitted configuration.

@@ -19,8 +19,8 @@ const (
 )
 
 // Status contains observations for one Bed, never live resources, clients or
-// goroutines. Each domain owns its section; instance-wide Component Status is
-// reported separately through Component.Status().
+// goroutines. Each domain owns its section; instance-wide Subsystem Status is
+// reported separately through Subsystem.Status().
 type Status struct {
 	Lifecycle  LifecycleStatus
 	Filesystem FilesystemStatus

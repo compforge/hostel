@@ -29,7 +29,6 @@ const (
 type targetOptions struct {
 	config           *config.Options
 	store            string
-	isolation        string
 	executor         string
 	maxBeds          int
 	allowPtrace      bool
@@ -55,9 +54,6 @@ func startTarget(t *testing.T, options targetOptions) *target {
 	}
 	if options.store == "" {
 		options.store = "noop"
-	}
-	if options.isolation == "" {
-		options.isolation = "dorm"
 	}
 	if options.maxBeds == 0 {
 		options.maxBeds = 4
@@ -161,7 +157,6 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 		"--chromium-debug-port", fmt.Sprint(reservePort(t)),
 		"--chromium-cdp-url", "",
 		"--beds-root", bedsRoot,
-		"--isolation", options.isolation,
 		"--executor", options.executor,
 		"--sync", options.store,
 		"--max-beds", fmt.Sprint(options.maxBeds),
@@ -236,7 +231,6 @@ func startImageTarget(t *testing.T, image, addr string, options targetOptions) s
 		// Most isolation E2E keeps carrier paths outside the guest /workspace
 		// bind. A test may override this to reproduce a real carrier-root layout.
 		"-e", "HOSTEL_BEDS_ROOT=" + bedsRoot,
-		"-e", "HOSTEL_ISOLATION=" + options.isolation,
 		"-e", "HOSTEL_EXECUTOR=auto",
 		"-e", "HOSTEL_SYNC=noop",
 		"-e", fmt.Sprintf("HOSTEL_MAX_BEDS=%d", options.maxBeds),

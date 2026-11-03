@@ -147,14 +147,6 @@ func resolveProcessViewWithConfig(base Boundary, bedsRoot string, ptraceProbe ho
 		}
 	}
 
-	if reason := config.Excluded["proot"]; reason != "" && config.PRoot != tool.Required {
-		prootCandidate = nil
-		reasons = append(reasons, "proot combination: "+reason)
-	}
-	if reason := config.Excluded["pathshim"]; reason != "" && config.Pathshim != tool.Required {
-		pathshimCandidate = nil
-		reasons = append(reasons, "pathshim combination: "+reason)
-	}
 	if prootCandidate != nil && config.Pathshim != tool.Required {
 		log.Printf("isolation: process view selected mode=proot")
 		return prootCandidate, prootReport

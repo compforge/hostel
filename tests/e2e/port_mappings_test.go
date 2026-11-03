@@ -19,11 +19,13 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/shellx"
+	"github.com/qiankunli/hostel/internal/bed/tool"
+	"github.com/qiankunli/hostel/internal/config"
 )
 
 type pillowPortsView struct {
 	Status struct {
-		Components map[string]json.RawMessage `json:"components"`
+		Subsystems map[string]json.RawMessage `json:"subsystems"`
 		Pillows    []struct {
 			Name        string `json:"name"`
 			Ready       bool   `json:"ready"`
@@ -79,11 +81,13 @@ func TestBedPortMappings(t *testing.T) {
 	}
 }
 func testBedPortMappings(t *testing.T, mode, executor, python string) {
-	isolation := "dorm"
-	if mode == "private" {
-		isolation = "suite"
+	options := config.Options{}
+	if mode == "shared" {
+		options.Bed.Network.NetNS = value(tool.Off)
+	} else {
+		options.Bed.Network.NetNS = value(tool.Required)
 	}
-	c := startTarget(t, targetOptions{isolation: isolation, executor: executor}).client
+	c := startTarget(t, targetOptions{executor: executor, config: &options}).client
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	request := func(method, path string, body, out any) httpResult {
@@ -104,7 +108,7 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 	check := func(name string) pillowPortsView {
 		t.Helper()
 		d := read(name)
-		if d.Status.Components["pillows"] != nil || d.Status.Components["network"] == nil || len(d.Status.Pillows) != 1 || len(d.Status.PortMappings) != 1 {
+		if d.Status.Subsystems["pillows"] != nil || d.Status.Subsystems["network"] == nil || len(d.Status.Pillows) != 1 || len(d.Status.PortMappings) != 1 {
 			t.Fatalf("status layout: %+v", d)
 		}
 		s, p := d.Status.Pillows[0], d.Status.PortMappings[0]

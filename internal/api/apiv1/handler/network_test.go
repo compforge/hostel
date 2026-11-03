@@ -24,12 +24,12 @@ func TestNetworkDiagnosticsWithoutManager(t *testing.T) {
 		payload := rec.Body.Bytes()
 		if path == "/v1/status" {
 			var envelope struct {
-				Components json.RawMessage `json:"components"`
+				Subsystems json.RawMessage `json:"subsystems"`
 			}
 			if err := json.Unmarshal(payload, &envelope); err != nil {
 				t.Fatal(err)
 			}
-			payload = envelope.Components
+			payload = envelope.Subsystems
 		}
 		if err := json.Unmarshal(payload, &body); err != nil {
 			t.Fatal(err)

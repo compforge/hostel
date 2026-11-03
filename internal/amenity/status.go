@@ -4,7 +4,7 @@ import "github.com/qiankunli/hostel/internal/bed"
 
 // Status is an Amenity-owned global report. Concrete facilities define their
 // own fields; the manager only uses lifecycleState for capability projection.
-// Component Status remains a scope convention, not a cross-domain base type.
+// Subsystem Status remains a scope convention, not a cross-domain base type.
 type Status interface{ lifecycleState() string }
 
 // TenantStatus is an Amenity-owned immutable observation. The sealed interface
@@ -17,7 +17,7 @@ type BindingStatus struct {
 }
 
 // Status aggregates facility-wide Amenity Status for the Hostel instance,
-// alongside the Bed Manager's domain Component Status.
+// alongside the Bed Manager's domain Subsystem Status.
 func (m *Manager) Status() map[string]Status {
 	out := make(map[string]Status)
 	for _, a := range m.List() {

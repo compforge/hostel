@@ -12,7 +12,7 @@ import (
 )
 
 func TestIsolatedSessionCompatibility(t *testing.T) {
-	target := startTarget(t, targetOptions{isolation: "dorm"})
+	target := startTarget(t, targetOptions{})
 	c := target.client
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -46,16 +46,16 @@ func TestIsolatedSessionCompatibility(t *testing.T) {
 
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	var diagnostics struct {
-		Components struct {
+		Subsystems struct {
 			Network struct {
 				Effective string `json:"effective"`
 			} `json:"network"`
-		} `json:"components"`
+		} `json:"subsystems"`
 	}
 	verdict, err := c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
 	cancel()
-	if err != nil || verdict.Status != http.StatusOK || state.ShareNet == (diagnostics.Components.Network.Effective == "private") {
-		t.Fatalf("isolated share_net=%t disagrees with network=%+v: %v", state.ShareNet, diagnostics.Components.Network, err)
+	if err != nil || verdict.Status != http.StatusOK || state.ShareNet == (diagnostics.Subsystems.Network.Effective == "private") {
+		t.Fatalf("isolated share_net=%t disagrees with network=%+v: %v", state.ShareNet, diagnostics.Subsystems.Network, err)
 	}
 
 	primed, response := c.stream(t, base+"/run", "", map[string]any{

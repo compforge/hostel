@@ -14,7 +14,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/pillow"
 )
 
-// ProbeCleanupError prevents startup fallback from abandoning an allocation.
+// ProbeCleanupError preserves cleanup failure separately from execution failure.
 type ProbeCleanupError struct{ Err error }
 
 func (e *ProbeCleanupError) Error() string { return "environment probe cleanup: " + e.Err.Error() }
@@ -22,13 +22,14 @@ func (e *ProbeCleanupError) Unwrap() error { return e.Err }
 
 // ProbeEnvironment exercises the selected composition through the same Bed,
 // command and session entry points used by clients. Run before HTTP admission.
-// A failed combination is a startup error, not permission to run unconfined.
+// +spec=`Hostel validates the prepared environment once; failure never triggers cross-subsystem reselection or weaker mechanisms.`
+// +link=component://docs/isolation.md
 func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	started := time.Now()
 	m.startEnvironmentProbe(started)
 	defer func() { m.finishEnvironmentProbe(started, retErr) }()
 	id := "environment-probe-" + randx.Hex(6)
-	initialization, _, err := m.beginInitialization(ctx, id, CreateOptions{probe: true, Pillows: []model.PillowSpec{{Name: "probe", Mounts: []model.VolumeMount{{Volume: "workspace", Path: "/workspace"}}}}, Volumes: []model.VolumeSpec{{Name: "workspace", Managed: &model.ManagedVolume{Persistence: "none"}}}})
+	initialization, _, err := m.beginInitialization(ctx, id, CreateOptions{Pillows: []model.PillowSpec{{Name: "probe", Mounts: []model.VolumeMount{{Volume: "workspace", Path: "/workspace"}}}}, Volumes: []model.VolumeSpec{{Name: "workspace", Managed: &model.ManagedVolume{Persistence: "none"}}}})
 	if err != nil {
 		return err
 	}

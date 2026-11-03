@@ -30,7 +30,7 @@ func TestPrivatePIDNamespaceRecovery(t *testing.T) {
 	options := restrictedOptions()
 	options.Bed.Executor.PIDNS = value(tool.Required)
 	options.Bed.Filesystem.Bwrap = value(tool.Required)
-	c := startTarget(t, targetOptions{isolation: "dorm", executor: "supervisor", config: &options}).client
+	c := startTarget(t, targetOptions{executor: "supervisor", config: &options}).client
 	const bed = "process-recovery"
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": bed, "pillows": workspacePillows()}, nil)

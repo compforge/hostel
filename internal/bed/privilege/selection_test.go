@@ -25,17 +25,6 @@ func TestSharedIdentityBaselineNeedsNoSwitchingCapabilities(t *testing.T) {
 	}
 }
 
-func TestIdentityFallbackRetainsCapabilityFacts(t *testing.T) {
-	s := Selection{Expected: Dedicated, Effective: Dedicated, User: CurrentBedUser(), Supported: []Level{Shared, Dedicated}, Policy: BedUserReport{Strategy: "per_bed", UIDMin: UIDMin, UIDMax: UIDMax}}
-	next, ok := s.WithoutDedicatedIdentity("composition rejected")
-	if !ok || next.Effective != Shared || next.Expected != Dedicated || next.Policy.Strategy != "fixed" || next.Policy.UID != os.Geteuid() || !reflect.DeepEqual(next.Supported, s.Supported) {
-		t.Fatalf("fallback: %+v", next)
-	}
-	if _, ok := next.WithoutDedicatedIdentity("again"); ok {
-		t.Fatal("repeated fallback")
-	}
-}
-
 func TestPreferredIdentityFallsBackWithoutSwitchingCapabilities(t *testing.T) {
 	facts := hostfacts.Collect()
 	facts.EffectiveCaps = 0

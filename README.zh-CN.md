@@ -4,7 +4,7 @@
 
 **Hostel 是面向 AI Agent 的 sandbox runtime。** Hostel / Bed 可以看作「猴版」的 kubelet / Pod：
 一个 daemon 在笔记本、VM、CI runner 或容器内管理多个 sandbox，每个称为一张 **bed**。
-Hostel 以 BedSpec 声明运行与管理模型，在宿主能力范围内尽力兑现。
+Hostel 协调各 **Subsystem（子系统）**，在宿主能力范围内尽力满足 BedSpec，并按子系统如实报告落实状态；调用方决定是否使用。
 Bed 声明共享资源；其下的 **pillow** 是命名执行环境，持有环境变量、工作目录和卷挂载，
 可运行临时命令、shell 会话及可选的托管主进程。首个 pillow 为默认环境。
 详见[核心架构](docs/kernel.md)与 [Pillow](docs/pillow.md)。
@@ -30,7 +30,7 @@ Bed 声明共享资源；其下的 **pillow** 是命名执行环境，持有环�
 
 ```bash
 make build
-./bin/hostel --isolation dorm --beds-root ./.workspace --addr 127.0.0.1:8872
+./bin/hostel --beds-root ./.workspace --addr 127.0.0.1:8872
 ```
 
 在另一个终端运行命令，并下载生成的文件：
@@ -67,17 +67,10 @@ docker run --rm -p 127.0.0.1:8872:8872 hostel:dev
 
 ## 隔离与访问边界
 
-`--isolation` 设置实例级房型预期：
-
-| 房型 | 期望的边界 |
-|---|---|
-| `dorm` | 文件按 bed 组织，进程侧共享访问边界 |
-| `room` | 限制跨 bed 文件访问 |
-| `suite` | 私有文件视图，并限制跨 bed 文件访问 |
-| `auto` | 期望 suite，允许降级到环境支持的机制 |
-
-房型表达文件隔离的最低保证。网络、身份、PID namespace 和资源控制作为增强能力独立报告；
-共享网络不降低 suite 房型，显式声明的硬要求仍必须兑现。
+各 Subsystem 尽力选择允许且可共同执行的机制。Filesystem 的 shared/confined/private
+映射为 dorm/room/suite，Network 的 shared/private 映射为 dorm/suite，整体房型取二者较低值。
+房型只是观测结果，不是启动参数或准入门槛；调用方根据子系统报告决定是否使用 Bed。
+共享网络可以保留未执行的请求规则，并明确报告缺口。显式 required 工具与只读挂载等功能契约仍须兑现。
 
 通过 `/healthz` 和 `/v1/status` 查看实际能力。房型受环境能力约束；共享 Chromium/MCP
 的出站仍使用 carrier 网络，按 bed 统计资源用量也不代表施加了 CPU 或内存硬限额。

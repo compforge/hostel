@@ -6,7 +6,7 @@
 
 **产品背景**：Hostel / Bed 可类比轻量、尽力实现的 kubelet / Pod：在受限的 Host/Pod 上，从 API 视角提供尽可能接近 Container 的使用体验。文件与执行等 API 优先完成用户任务，底层缺少某项机制（如 cgroup）不应自动使整个 Bed 不可用；领域可通过路径解析、候选读取等方式补齐体验，并分别报告功能可用性与实际隔离保证。产品取舍见 [核心架构](docs/kernel.md#定位与目标)，文件路径的具体语义见 [Volume 与文件视图](docs/volumes.md)。
 
-**尽力启动的边界**：Bed Spec 表达需求，Hostel 根据宿主能力落实；未要求的可选能力缺失不应阻止启动，低于 isolation 门槛必须拒绝；dorm 的网络规则允许尽力兑现并明确报告未执行，不能伪装成 enforcing；只读挂载等功能契约仍须兑现。未声明部分的机制选择与尽力程度随实现演进，不构成固定隔离承诺；状态披露实际能力与缺口。按需启用与失败语义见 [核心架构](docs/kernel.md#定位与目标)。
+**尽力启动的边界**：Bed Spec 表达需求，Hostel 根据宿主能力落实；未要求的可选能力缺失不应阻止启动，房型只报告事实，由 caller 决定是否使用；共享网络规则允许尽力兑现并明确报告未执行，不能伪装成 enforcing；只读挂载等功能契约仍须兑现。未声明部分的机制选择与尽力程度随实现演进，不构成固定隔离承诺；状态披露实际能力与缺口。按需启用与失败语义见 [核心架构](docs/kernel.md#定位与目标)。
 
 - **做**：bed 生命周期、exec / file、共享多租服务（Chromium/Jupyter/MCP…）管理。
 - **不做**（留给上层调度系统）：实例调度、跨实例路由、计费配额。
@@ -14,8 +14,11 @@
 
 ## 概念与命名约定
 
+**主线：Hostel 协调各 Subsystem，尽力满足 BedSpec，并按 Subsystem 如实报告落实状态；caller 决定是否使用。**
+
 以下名词全仓（代码 / 注释 / 文档）统一使用，避免同物多名、一名多物：
 
+- **Subsystem（子系统）**：领域实现、资源生命周期与状态的 owner；一项 BedSpec 需求可跨子系统协作，Bed Manager 负责组合、顺序及 Ready。共享接口与契约见 `internal/bed/subsystem.go` 和 `docs/kernel.md`。
 - **bed**：隔离执行单元，对外即一个 sandbox（独立文件空间 + 执行环境，状态跨命令保持）。
 - **bed name**：调用方给定的不透明路由标识，支持中文；HTTP 请求的 bed/id 参数及 `BED_ID` 都表达 Name；管理响应同时返回 `name` 与本地生命周期 `id`，必须显式选择 Bed。Hostel 不解释其上层业务语义。
 - **bed id**：Hostel 生成的本地身份；本地数据保留期间跨重启恢复，Forget 后同名创建换 ID。领域资源以 ID 归属，远端快照以 Name/快照引用定位。
@@ -25,7 +28,7 @@
 - **bed_home（rootfs 目录）**：BedFS 的宿主根 `{bed 目录}/rootfs`——**Bed 自身数据根**；未命中外部映射的客户端路径解析到它下面，回显保持 Bed 路径。它不参与自动持久化，也不表示进程已有独立的 `/`。
 - **Workdir**：Pillow 默认工作目录，当前为 `/workspace`（`bedfs.DefaultWorkdir`），也是 API 相对路径的解析基准；具体进程的 cwd 可以覆盖。Rootfs、Workdir 与 Volumes/Mounts 的关系见 `docs/volumes.md`。
 - **Volume / Mount**：Bed 声明命名数据来源（managed / host_path）；每个 Pillow 声明自己的 mounts，所属 command、session、主进程和文件 API 共用该视图。共享数据与执行视图分别管理，见 [Volume 与文件视图](docs/volumes.md#来源与挂载)。
-- **房型（dorm / room / suite）**：fs/net 各自将实际能力映射为房型，Bed 取较低值；isolation 是最低准入要求，能力选择始终尽力向上（见 `docs/isolation.md`）。
+- **房型（dorm / room / suite）**：fs/net 各自将实际能力映射为房型，Bed 取较低值；房型不参与准入或机制选择，能力选择始终尽力向上（见 `docs/isolation.md`）。
 - **luggage**：非正常生命周期状态，只表达异常退出遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
 - **amenity**：bed 外由 hostel 统一管理、按 bed 分配状态的共享设施（Chromium / Jupyter / MCP 连接池）。
 - **pillow**：Bed 内的命名执行环境，拥有 env、workdir、mounts 与可选主进程，与用户命令共用 Bed Environment/Executor；创建者提交通用完整 `PillowSpec`，Carrier 镜像提供程序与依赖，Hostel 不依赖具体业务服务。端口通过 daemon 级 Port Manager 统一申请，见 `docs/pillow.md`。
@@ -78,13 +81,13 @@ deploy/
 ├── docker/Dockerfile  多阶段多架构镜像(amd64/arm64,builder 原生交叉编译免 QEMU)：静态 hostel + debian-slim（内置 bwrap/PRoot/pathshim + 可选 chromium）；tini PID1；hostel --health 做 HEALTHCHECK
 └── k8s/              Kubernetes 部署示例；AppArmor 的 PSA 豁免申请见 pod-security-admission-exemption.yaml
 protocol/             独立 Go module（最低 Go 1.25）；server 与 caller 共用的 Bed 数据契约，仅依赖标准库
-cmd/hostel/main.go     daemon 入口：配置、组件组装、启动探测、Web 与信号；驱动 Manager 启停
+cmd/hostel/main.go     daemon 入口：配置、子系统组装、启动探测、Web 与信号；驱动 Manager 启停
 tests/e2e/             真实进程/镜像 E2E：同一 suite 可在 Host 或 K8s Pod 内运行；环境配置与事实入口，见 tests/e2e/e2e-environments.md
 internal/
 ├── bed/               唯一 Bed 模型（Spec / 分域 Status）及生命周期契约；不导入领域实现
 │   ├── manager/       Composite：准入、初始化/回收顺序、operation/session、执行环境组装与诊断聚合
 │   │   ├── bed.go     managedBed / Resident：请求操作句柄与并发协调，引用共享 Bed
-│   │   ├── daemon.go  Start / Run / Close：组件启动回滚、后台循环取消与 join
+│   │   ├── daemon.go  Start / Run / Close：子系统启动回滚、后台循环取消与 join
 │   │   ├── resident.go 初始化各领域资源，全部完成后由初始化入口发布 Ready
 │   │   └── local_identity.go 本地身份与清理占位；目录删除完成后才 Forget
 │   ├── filesystem/    BedFS 与文件隔离的 owner，提供文件领域诊断
@@ -121,7 +124,7 @@ internal/
         └── view/      OpenSandbox 响应、权限与 SSE 编码
 ```
 
-**数据流**：请求 →`api/apiv1/handler` 或 `api/execd/handler` 按 显式 Bed 标识（`X-Hostel-Bed` 等） 解析 bed → 调 `bed`/`bedfs` 核心 → 组装响应（命令走 SSE）。核心模型与领域组件**不含任何 HTTP 类型或协议族编码**；两套 adapter 不互相依赖，复用能力进入 `internal/bed` 等 owner。换框架只动 `api/`。
+**数据流**：请求 →`api/apiv1/handler` 或 `api/execd/handler` 按 显式 Bed 标识（`X-Hostel-Bed` 等） 解析 bed → 调 `bed`/`bedfs` 核心 → 组装响应（命令走 SSE）。核心模型与领域子系统**不含任何 HTTP 类型或协议族编码**；两套 adapter 不互相依赖，复用能力进入 `internal/bed` 等 owner。换框架只动 `api/`。
 
 ## 关键约定
 
@@ -144,13 +147,13 @@ internal/
     - Hostel 只上报事实，不自行选择 carrier；同步 trigger 的节奏、合并与重试由 Store 同步循环统一负责，详见 `docs/resource.md` / `docs/volumes.md`。
 - **执行层次是 `Bed → Executor → Execution`**：Bed 是 sandbox 的持久身份；Executor 是当前可替换的进程域；Execution 是一次运行。Executor 丢失只终结归属它的进程，不丢 Bed 数据，下一次请求在旧 Executor 清理成功后创建新 Executor。每次前台、后台或 session run 都生成 `Execution`；`execution_start` 先于输出，之后恰有一个 `execution_end`。命令准备失败时无 `ProcessOutcome`，以领域错误和 `preparation_failed` 表达；实际运行的 `ProcessOutcome` 表达 exited / signaled / lost，termination cause 独立表达 timeout / cancel / interrupt / teardown / executor_lost，禁止再用裸 EOF、`-1` 或错误字符串承载多种语义。
 - **Trace 是生命周期事实的投影**：HTTP 使用路由模板 span，bed initialize/persist/evict 与 execution 使用稳定领域 span，stage 只记 event；不得把 command、env、stdout/stderr 写入 span。后台 initialization / execution 继承 trace identity 但不继承 HTTP cancel。详见 `docs/observability.md`。
-- **隔离按 Bed 的统一目标尽量兑现**：各 domain 拥有 facts、能力状态、配置选择与有限回退；房型由 fs/net 的实际等级较低值决定，其他能力独立增强。Component 组合生命周期和类型化 Status。启动组合验证允许有限回退，required 不丢弃，清理失败终止；live Bed 不重选。当前缺口见 `docs/isolation.md` 与 `docs/backlog.md`。
+- **隔离按 Bed 的统一目标尽量兑现**：各 domain 拥有 facts、能力状态、配置选择与有限回退；房型由 fs/net 的实际等级较低值决定，其他能力独立增强。Subsystem 组合生命周期和类型化 Status。各子系统自行选择和回退，Hostel 只协调依赖及验证实际执行，不枚举跨领域组合；required 不丢弃，清理失败终止；live Bed 不重选。当前缺口见 `docs/isolation.md` 与 `docs/backlog.md`。
   - daemon 身份与 BedUser 正交：command/session/Pillow 主进程使用 resident Bed 的同一身份；Privilege 独立决定 shared/dedicated，Filesystem 不分配 UID。配置的 UID/GID 是建议值，不可用时可经验证继承 daemon 身份，并披露实际结果；Linux 子进程仍须通过 capability 清理与 no_new_privs 验证。见 `docs/isolation.md`。
   - BedFS 路径映射在所有档位一致；PRoot/pathshim 改善进程路径体验，不提供安全边界，也不提高文件隔离档位。
   - Volume.managed.persistence 声明完整卷的持久化策略；Store 按卷名发布 Bed 级快照，详见 `docs/volumes.md`。
 - **amenity 通则**：共享设施按 Bed 分配应用状态，产物落对应 Bed 的默认 Pillow Workdir；设施状态、Bed 级凭据与 Bed 生命周期分别管理。北向使用 Bed 级动作或受限代理，不裸透传共享设施的管理协议。应用切分不等于文件、网络或资源完整隔离，当前机制与缺口见 `docs/amenity.md`。
 - **常驻 shell 的坑**：一个 Shell 只能有**一个** stdout reader（否则 run 间串输出——v1 踩过）；Run 之间串行；Shell 持有启动时的 Executor View，session run 的 cwd 必须经 `RunAt` 投影并作为独立控制步骤执行，禁止 Web 拼接 `cd` 或 Executor path；`exit` 会杀死 session，非零退出码用子 shell（`sh -c "exit N"`）。**锁纪律**：`runMu` 串行化 Run 且只有 Run 碰；`mu` 只护 `dead` 标志、纳秒级持有——曾因单锁设计让「shell 死亡+未断开客户端」死锁整个 daemon（含 healthz），别往 `mu` 里加阻塞代码（见 shell.go LOCKING 注释）。
-- **配置在启动入口收敛**：显式 Options > CLI > env > 默认值，组件只读确定的 Config；指针区分未指定与显式零值。按 Component → Tool → Requirements 组织选择与诊断，Tool 使用 auto/off/required，Linux Capabilities 属于实现前提。内部配置不自动扩展成公开参数，见 `docs/isolation.md`。
+- **配置在启动入口收敛**：显式 Options > CLI > env > 默认值，子系统只读确定的 Config；指针区分未指定与显式零值。按 Subsystem → Tool → Requirements 组织选择与诊断，Tool 使用 auto/off/required，Linux Capabilities 属于实现前提。内部配置不自动扩展成公开参数，见 `docs/isolation.md`。
 - **E2E owner 边界**：Hostel 的单机 suite 直接验证真实 daemon/image 的 bed runtime、隔离与 carrier userland；上层控制面只保留 placement、跨 carrier 持久化和 lifecycle 编排，不在 K8s E2E 重复证明 Hostel 内部契约。运行说明见 `tests/e2e/README.md`。
 - Go 项目常规：改完 `go build ./...` + `go test ./...` + `go vet ./...` 三件套过再提交（见 `Makefile`）。仓库在 `github.com/qiankunli/hostel`，保护分支 main 走 PR。
 - 根目录 `VERSION` 是二进制和镜像的唯一版本源；改变运行时行为时递增版本号，默认递增 patch。仅修改测试用例、测试 fixture、测试报告或文档时不递增。

@@ -13,7 +13,7 @@ sandctl placement and cross-carrier orchestration remain outside this boundary.
 make e2e
 ```
 
-The core profile verifies global Component/Amenity reports, per-Bed component
+The core profile verifies global Subsystem/Amenity reports, per-Bed subsystem
 and bound Tenant reports, read-only status polling, and new Tenant identity
 after recreating a same-name Bed. It also covers remote MCP configuration, list/call, metadata,
 call-scoped overrides and cross-bed isolation over SSE and Streamable HTTP.
@@ -34,8 +34,8 @@ requests; this case proves backend selection and error propagation, not remote
 backup integrity. The opt-in successful round trip below covers durable formats
 against a real S3-compatible service.
 
-By default, a host may honestly degrade an unavailable isolation request. A
-release runner can require complete room profiles to be realized instead (the floor must be met by both filesystem and network):
+Hostel reports the isolation guarantees actually available on the host. A
+release runner can assert the attained room as a caller-side expectation (both filesystem and network must reach the expected grade):
 
 ```sh
 HOSTEL_E2E_REQUIRE_ISOLATION=dorm,room,suite make e2e
@@ -214,7 +214,7 @@ to reach the test-owned browser fixture.
 In a disposable Linux container with the required namespace, routing and nft
 permissions, set `HOSTEL_E2E_REQUIRE_NETWORK=1` and run `make e2e` in binary
 mode. `TestNetworkNamespaces` requires a private network diagnostic verdict and checks
-the `local` / `supervisor` × `dorm` / `room` / `suite` matrix: separate Bed namespaces at every minimum isolation setting,
+the `local` / `supervisor` matrix: separate Bed namespaces with best-effort capability selection,
 command/session namespace consistency, zero capability sets, `no_new_privs`, and
 purge/recreate. Set `HOSTEL_E2E_REQUIRE_ISOLATION=dorm,room,suite` to reject profile
 degradation as well. Binary fixtures use a traversable workspace root so a selected
@@ -241,7 +241,7 @@ workspaces are run-owned and cleaned up by the fixture.
 
 These traffic assertions cover new IPv4 TCP connections. DNS/domain rules,
 TTL expiry, existing established flows and injected nft transaction failures are
-not covered by this E2E case; component tests cover parts of those behaviors.
+not covered by this E2E case; subsystem tests cover parts of those behaviors.
 
 `TestNetworkNAT` uses the same disposable Linux binary profile. It creates an
 external fixture namespace on `192.0.2.0/30` after rejecting overlapping carrier
@@ -262,7 +262,7 @@ that command and Pillow main process see the same Bed gateway resolver and can r
 upstream DNS and `getent` in the runner. Missing prerequisites fail the requested
 profile; the test never installs tools or changes host forwarding settings.
 
-## Internal component configuration
+## Internal subsystem configuration
 
 `make e2e` builds `bin/hostel-e2e` with the `e2e` build tag. The fixture can pass
 `config.Options` through `targetOptions.config`; pointer presence distinguishes
@@ -286,9 +286,9 @@ Configuration restrictions exercise selection; they do not prove kernel permissi
 rejection or failure halfway through allocation. Keep real restricted-container
 cases alongside these deterministic tests. See [configuration design](../../docs/isolation.md).
 
-Status schema 8 reports component tool selection under `tools`, groups boot-time host facts under `host.fact` and managed port
-allocations under `host.status.ports`. It separates `healthz.isolation` (requested/effective room profile) from
-`/v1/status.components.filesystem` (shared/confined/private). Filesystem assertions
+Status schema 13 reports subsystem tool selection under `tools`, groups boot-time host facts under `host.fact` and managed port
+allocations under `host.status.ports`. It separates `healthz.isolation` (effective room summary) from
+`/v1/status.subsystems.filesystem` (shared/confined/private). Filesystem assertions
 must use the latter: a degraded room profile may retain a private file view.
 These cases require an explicit E2E run; compile-only validation is not execution evidence.
 
@@ -337,7 +337,7 @@ path is built into Hostel.
 网络和 PID namespace 仍为 suite；通过 run-owned nft 失败验证真实网络探测降级，检查命令、
 session、Pillow main process 与 file API 的一致性、跨 Bed 文件拒绝访问，以及显式 NetworkPolicy 不被忽略。
 该用例与 `TestPrivatePIDNamespaceRecovery` 共同覆盖静态组合和 Executor 替换后的房型保证。
-`TestFeatureRequiredStartupFailure/missing-network` 验证缺少网络组件时 required 拒绝启动。
+`TestFeatureRequiredStartupFailure/missing-network` 验证缺少网络子系统时 required 拒绝启动。
 
 ### Shared volumes and consumer views
 
@@ -354,12 +354,11 @@ make e2e E2E_ARGS='-run ^TestBedVolumeConsumers -timeout 3m'
 `TestManagedVolumeRoundTrip` covers CAS/Pack/Tar/Auto with two Beds and two persistent volumes each,
 changed mount paths on a fresh Carrier, temporary-volume and Rootfs exclusion, and purge cleanup.
 
-## Minimum isolation admission
+## Subsystem realization reports
 
-`TestIsolationLevels` verifies that a floor below the attained room still uses stronger capabilities,
-while an unattainable floor returns 503 on Bed creation without hiding diagnostics. On macOS the
-room/suite cases verify rejection, not Linux isolation. `TestFeaturePoliciesOff` verifies that dorm
-retains file/command usability with mechanisms disabled and reports policy enforcement gaps.
-Mechanism-specific mount/PID tests use a dorm floor plus required tools so they do not accidentally
-require a separate network backend. `TestPrivateFilesWithSharedNetwork` preserves private file
-checks while expecting an overall dorm room and explicitly unenforced network rules.
+`TestIsolationLevels` checks actual subsystem grades and their aggregate room after Bed preparation.
+Caller-side runner expectations may assert a room, but Hostel itself has no room admission gate.
+`TestFeaturePoliciesOff` verifies file/command usability with mechanisms disabled and reports policy enforcement gaps.
+Mechanism-specific mount/PID tests require their own tools without requiring a separate network backend.
+`TestPrivateFilesWithSharedNetwork` verifies private file boundaries while reporting an overall dorm room
+and explicitly unenforced network rules.

@@ -32,12 +32,12 @@ import (
 
 	"github.com/qiankunli/hostel/internal/amenity"
 	"github.com/qiankunli/hostel/internal/api"
-	bedmodel "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
 	"github.com/qiankunli/hostel/internal/bed/executor/supervisor"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	bed "github.com/qiankunli/hostel/internal/bed/manager"
 	"github.com/qiankunli/hostel/internal/bed/network"
+	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/resource"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	"github.com/qiankunli/hostel/internal/config"
@@ -117,17 +117,22 @@ func main() {
 		log.Fatalf("hostel: HTTP listener: %v", err)
 	}
 	host := hostfacts.Collect()
-	room, _ := bedmodel.ParseRoomType(cfg.Bed.RoomType) // Config.Load validates the public profile.
-	selectionCtx, cancelSelection := context.WithTimeout(context.Background(), 60*time.Second)
-	selection, err := bed.ResolveRuntime(selectionCtx, host, cfg.BedsRoot, cfg.ShellPath, bed.RuntimeConfig{
-		Room: room, Filesystem: cfg.Bed.Filesystem, Privilege: cfg.Bed.Privilege,
-		Network: cfg.Bed.Network, Resource: cfg.Bed.Resource, Executor: cfg.Bed.Executor,
-	}, ports)
-	cancelSelection()
-	if err != nil {
-		log.Fatalf("hostel: select Bed environment: %v", err)
+	if err := os.MkdirAll(cfg.BedsRoot, 0755); err != nil {
+		log.Fatalf("hostel: prepare beds root: %v", err)
 	}
-	iso := selection.Files
+	identityCtx, cancelIdentity := context.WithTimeout(context.Background(), 15*time.Second)
+	identity, err := privilege.Resolve(identityCtx, host, cfg.Bed.Privilege, cfg.BedsRoot)
+	cancelIdentity()
+	if err != nil {
+		log.Fatalf("hostel: select privilege: %v", err)
+	}
+	// Filesystem consumes Privilege's result; it never changes the identity choice.
+	filesConfig := cfg.Bed.Filesystem
+	filesConfig.DedicatedIdentity = identity.Effective == privilege.Dedicated
+	iso, err := isolation.Resolve(host, filesConfig, cfg.BedsRoot)
+	if err != nil {
+		log.Fatalf("hostel: select filesystem: %v", err)
+	}
 
 	// Facilities remain registered when unavailable; Start reports the reason.
 	amenities := amenity.NewManager(host)
@@ -150,7 +155,7 @@ func main() {
 	}
 
 	mgr, err := bed.NewManager(host, cfg.BedsRoot, cfg.ShellPath, iso, amenities, cfg.MaxBeds, st,
-		bed.WithRuntimeSelection(selection),
+		bed.WithIdentitySelection(identity),
 		bed.WithPillows(ports),
 		bed.WithConfiguration(cfg.Bed.Configuration),
 	)
@@ -167,7 +172,7 @@ func main() {
 		log.Printf("hostel: filtered reserved carrier environment from bed processes: keys=%v", filtered)
 	}
 
-	networks := network.NewSelected(context.Background(), selection.Network)
+	networks := network.NewConfigured(context.Background(), cfg.Bed.Network)
 	networks.SetPortManager(ports)
 	mgr.SetNetworkManager(networks)
 	resources := resource.NewConfigured(cfg.Bed.Resource)
@@ -197,7 +202,7 @@ func main() {
 	}
 
 	executorCtx, cancelExecutor := context.WithTimeout(context.Background(), 5*time.Second)
-	factory, err := executor.ResolveFactory(executorCtx, selection.Executor, resources)
+	factory, err := executor.ResolveFactory(executorCtx, cfg.Bed.Executor, resources)
 	cancelExecutor()
 	if err != nil {
 		log.Fatalf("hostel: executor: %v", err)

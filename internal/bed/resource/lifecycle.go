@@ -23,7 +23,7 @@ func NewManager(tracker Tracker, status bed.StatusWriter[bed.ResourceStatus]) *M
 }
 
 // Start owns host accounting initialization, including partial allocations.
-// Bed Manager registers this component for cleanup before calling Start.
+// Bed Manager registers this subsystem for cleanup before calling Start.
 func (m *Manager) Start(ctx context.Context) error {
 	if starter, ok := m.tracker.(interface{ Start(context.Context) error }); ok {
 		return starter.Start(ctx)
@@ -74,7 +74,7 @@ func (m *Manager) Status() Status {
 
 // Accounting and carrier admission do not enforce per-Bed resource limits.
 
-var _ bed.Component[Status] = (*Manager)(nil)
+var _ bed.Subsystem[Status] = (*Manager)(nil)
 
 func (m *Manager) SetAdmission(a Admitter) { m.admission = a }
 func (m *Manager) Run(ctx context.Context) error {
