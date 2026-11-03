@@ -126,7 +126,7 @@ func TestPingAndHealthz(t *testing.T) {
 	iso, _ := h["isolation"].(map[string]any)
 	bedUser, _ := h["bed_user"].(map[string]any)
 	accounting, _ := h["resource_accounting"].(map[string]any)
-	if h["ok"] != true || iso == nil || iso["requested"] != "dorm" || iso["effective"] != "dorm" || h["isolator"] != "direct" {
+	if h["ok"] != true || iso == nil || len(iso) != 1 || iso["effective"] != "dorm" || h["isolator"] != "direct" {
 		t.Fatalf("/healthz body = %v", h)
 	}
 	if accounting == nil || accounting["backend"] != "noop" || accounting["available"] != false {
@@ -156,14 +156,21 @@ func TestStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode diagnostics: %v", err)
 	}
-	if body["schema_version"] != float64(12) {
+	if body["schema_version"] != float64(13) {
 		t.Fatalf("diagnostics schema_version = %v", body["schema_version"])
 	}
 	if _, exists := body["beds"]; exists {
 		t.Fatal("/v1/status must not include the Bed inventory")
 	}
-	components, _ := body["components"].(map[string]any)
-	isolationFacts, _ := components["filesystem"].(map[string]any)
+	if _, ok := body["components"]; ok {
+		t.Fatal("unexpected legacy components field")
+	}
+	room, ok := body["isolation"].(map[string]any)
+	if !ok || len(room) != 1 || room["effective"] == "" {
+		t.Fatalf("isolation must report only attained room: %v", room)
+	}
+	subsystems, _ := body["subsystems"].(map[string]any)
+	isolationFacts, _ := subsystems["filesystem"].(map[string]any)
 	if view, ok := isolationFacts["process_view"].(map[string]any); !ok || view["mode"] == "" {
 		t.Fatalf("filesystem process_view = %v", isolationFacts)
 	}
@@ -180,7 +187,7 @@ func TestStatus(t *testing.T) {
 		t.Fatalf("host must contain only fact and status: %v", host)
 	}
 	if _, exists := isolationFacts["system"]; exists {
-		t.Fatal("host facts duplicated under filesystem component")
+		t.Fatal("host facts duplicated under filesystem subsystem")
 	}
 	runtimeFacts, _ := system["runtime"].(map[string]any)
 	process, _ := system["process"].(map[string]any)
@@ -189,7 +196,7 @@ func TestStatus(t *testing.T) {
 	kernelFeatures, _ := system["kernel_features"].(map[string]any)
 	ptraceFacts, _ := system["ptrace"].(map[string]any)
 	probes, _ := isolationFacts["probes"].(map[string]any)
-	privilegeFacts, _ := components["privilege"].(map[string]any)
+	privilegeFacts, _ := subsystems["privilege"].(map[string]any)
 	environmentFacts, _ := body["environment"].(map[string]any)
 	bedUser, _ := privilegeFacts["bed_user"].(map[string]any)
 	if runtimeFacts["os"] == "" || runtimeFacts["arch"] == "" || process == nil ||
@@ -250,15 +257,15 @@ func TestStatus(t *testing.T) {
 		t.Fatalf("diagnostics environment = %v", environmentFacts)
 	}
 	for _, field := range []string{"network", "executor", "store", "resource"} {
-		if components[field] == nil {
-			t.Fatalf("diagnostics missing component %q: %v", field, body)
+		if subsystems[field] == nil {
+			t.Fatalf("diagnostics missing subsystem %q: %v", field, body)
 		}
 	}
-	storeFacts, _ := components["store"].(map[string]any)
-	resourceFacts, _ := components["resource"].(map[string]any)
+	storeFacts, _ := subsystems["store"].(map[string]any)
+	resourceFacts, _ := subsystems["resource"].(map[string]any)
 	accounting, _ := resourceFacts["accounting"].(map[string]any)
 	if storeFacts["backend"] != "none" || storeFacts["default_sync"] != "noop" || accounting["backend"] != "noop" {
-		t.Fatalf("diagnostics component reports: store=%v resource=%v", storeFacts, resourceFacts)
+		t.Fatalf("diagnostics subsystem reports: store=%v resource=%v", storeFacts, resourceFacts)
 	}
 	if storeFacts["transfers_configured"] != false || storeFacts["transfers_available"] != nil {
 		t.Fatalf("diagnostics store configuration = %v", storeFacts)

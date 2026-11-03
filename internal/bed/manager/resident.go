@@ -110,12 +110,6 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 	if err := trace.stage("prepare_process_view", func() error { return m.files.PrepareView(ctx, b.Bed, systemFiles) }); err != nil {
 		return nil, fmt.Errorf("bed: prepare process view: %w", err)
 	}
-	if !init.probe {
-		state := b.Bed.Status()
-		if err := m.checkIsolation(b.Name, state.Filesystem.Room, state.Network.Room); err != nil {
-			return nil, err
-		}
-	}
 	m.updateInitialization(init, "PreparingResources", "preparing Bed accounting group")
 	if err := m.resourceManager.Prepare(ctx, b.Bed); err != nil {
 		return nil, fmt.Errorf("bed: prepare resources: %w", err)

@@ -15,12 +15,8 @@
 package manager
 
 import (
-	"errors"
-	"fmt"
-	"log"
 	"time"
 
-	hostel "github.com/qiankunli/hostel/internal"
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/configuration"
 
@@ -32,14 +28,14 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
-// Status aggregates Bed inventory and domain-owned Component Status. Amenity
+// Status aggregates Bed inventory and domain-owned Subsystem Status. Amenity
 // facilities are peers and are composed separately by the Hostel instance.
 type Status struct {
 	Isolation     model.RoomStatus     `json:"isolation"`
 	Instance      StatusInstance       `json:"instance"`
 	LocalCleanups []LocalCleanupReport `json:"local_cleanups"`
 	Environment   EnvironmentReport    `json:"environment"`
-	Components    struct {
+	Subsystems    struct {
 		Configuration configuration.Report `json:"configuration"`
 		Filesystem    filesystem.Status    `json:"filesystem"`
 		Privilege     privilege.Status     `json:"privilege"`
@@ -47,7 +43,7 @@ type Status struct {
 		Executor      executor.Status      `json:"executor"`
 		Store         store.Status         `json:"store"`
 		Resource      resource.Status      `json:"resource"`
-	} `json:"components"`
+	} `json:"subsystems"`
 }
 
 // StatusInstance adds Hostel/Carrier signals to the Bed-derived instance
@@ -69,7 +65,7 @@ const (
 
 // EnvironmentReport records the real composition probe that exercises BedFS,
 // networking, credentials and the Executor through normal Bed entry points.
-// It is distinct from each component's startup prerequisites.
+// It is distinct from each subsystem's startup prerequisites.
 type EnvironmentReport struct {
 	ProbeStatus string    `json:"probe_status"`
 	StartedAt   time.Time `json:"started_at,omitzero"`
@@ -78,7 +74,7 @@ type EnvironmentReport struct {
 	Error       string    `json:"error,omitempty"`
 }
 
-// Status returns component snapshots only. Isolation and privilege facts
+// Status returns subsystem snapshots only. Isolation and privilege facts
 // were captured at startup; this method performs no host probes or remote I/O.
 func (m *Manager) Status() Status {
 	m.diagnosticsMu.RLock()
@@ -92,52 +88,23 @@ func (m *Manager) Status() Status {
 		CPUPressure:                 resourceStatus.Admission.CPUPressure, MemoryPressure: resourceStatus.Admission.MemoryPressure},
 		LocalCleanups: m.localCleanupReports(), Environment: environment,
 		Isolation: m.RoomStatus()}
-	report.Components.Filesystem = m.files.Status()
-	report.Components.Configuration = m.configurations.Status()
-	report.Components.Privilege = m.privileges.Status()
-	report.Components.Network = m.network.Status()
-	report.Components.Executor = m.executorManager.Status()
-	report.Components.Store = m.store.Status()
-	report.Components.Resource = resourceStatus
+	report.Subsystems.Filesystem = m.files.Status()
+	report.Subsystems.Configuration = m.configurations.Status()
+	report.Subsystems.Privilege = m.privileges.Status()
+	report.Subsystems.Network = m.network.Status()
+	report.Subsystems.Executor = m.executorManager.Status()
+	report.Subsystems.Store = m.store.Status()
+	report.Subsystems.Resource = resourceStatus
 	return report
 }
 
 func (m *Manager) RoomStatus() model.RoomStatus {
-	return model.SummarizeRoom(m.roomType, m.iso.Level().Room(), m.network.Status().Room)
+	return model.SummarizeRoom(m.iso.Level().Room(), m.network.Status().Room)
 }
 
 func (m *Manager) BedRoomStatus(b *model.Bed) model.RoomStatus {
 	s := b.Status()
-	return model.SummarizeRoom(m.roomType, s.Filesystem.Room, s.Network.Room)
-}
-
-// checkIsolation is the only tenant admission comparison. Component guarantees
-// are evaluated independently; diagnostic text never determines attribution.
-func (m *Manager) checkIsolation(name string, files, net model.RoomType) error {
-	s := model.SummarizeRoom(m.roomType, files, net)
-	if s.Satisfied {
-		return nil
-	}
-	var failures []error
-	for _, domain := range []struct {
-		name   string
-		actual model.RoomType
-		err    error
-	}{{"filesystem", files, nil}, {"network", net, m.network.UnavailableError()}} {
-		if model.Rank(domain.actual) < model.Rank(s.Requested) {
-			message := fmt.Sprintf("%s below required isolation: required=%s actual=%s", domain.name, s.Requested, domain.actual)
-			failure := domain.err
-			if failure == nil {
-				failure = errors.New(message)
-			} else {
-				failure = fmt.Errorf("%s: %w", message, failure)
-			}
-			failures = append(failures, hostel.WrapError(hostel.ErrUnavailable, "bed isolation", hostel.CauseUnknown, failure))
-		}
-	}
-	err := errors.Join(failures...)
-	log.Printf("bed isolation admission rejected bed=%s required=%s actual=%s cause=%s reasons=%v", name, s.Requested, s.Effective, hostel.CauseOf(err), s.Reasons)
-	return err
+	return model.SummarizeRoom(s.Filesystem.Room, s.Network.Room)
 }
 
 func (m *Manager) startEnvironmentProbe(started time.Time) {
@@ -186,7 +153,7 @@ func (m *Manager) bedModelLocked(name string) *model.Bed {
 
 // BedObservation selects one lifecycle representation and its identity. Resident
 // is set for a resident Bed; otherwise Initialization describes its transition.
-// The handles are observations, not admitted operations or frozen component state.
+// The handles are observations, not admitted operations or frozen subsystem state.
 type BedObservation struct {
 	Resident       *managedBed
 	Model          *model.Bed

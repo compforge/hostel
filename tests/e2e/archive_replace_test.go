@@ -16,29 +16,32 @@ import (
 )
 
 func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
-	for _, requested := range []string{"dorm", "room", "suite"} {
-		requested := requested
-		t.Run(requested, func(t *testing.T) {
-			options := targetOptions{isolation: requested, maxBeds: 8}
-			forcePathshim := os.Getenv(pathshimEnv) != "" && os.Getenv(imageEnv) == "" && requested == "dorm"
+	for _, scenario := range []string{"auto", "pathshim"} {
+		scenario := scenario
+		t.Run(scenario, func(t *testing.T) {
+			options := targetOptions{maxBeds: 8}
+			forcePathshim := os.Getenv(pathshimEnv) != "" && os.Getenv(imageEnv) == "" && scenario == "pathshim"
+			if scenario == "pathshim" && !forcePathshim {
+				t.Skip("set HOSTEL_E2E_PATHSHIM for explicit helper coverage")
+			}
 			if forcePathshim {
 				options.helperPath = pathshimOnlySearchPath(t)
 			}
 			target := startTarget(t, options)
 			c := target.client
-			health := requireSupportedArchiveReplaceView(t, c, requested)
+			health := requireSupportedArchiveReplaceView(t, c)
 			if forcePathshim && health.ProcessView.Mode != "pathshim" {
 				t.Fatalf("requested real pathshim coverage but selected %+v", health.ProcessView)
 			}
 
-			t.Logf("requested=%s effective=%s process_view=%s", requested, health.Isolation.Effective, health.ProcessView.Mode)
+			t.Logf("scenario=%s effective=%s process_view=%s", scenario, health.Isolation.Effective, health.ProcessView.Mode)
 			type bedCase struct {
 				id       string
 				expected string
 			}
 			beds := make([]bedCase, 0, 8)
 			for i := 0; i < 8; i++ {
-				bedID := fmt.Sprintf("unzip-%s-%d", requested, i)
+				bedID := fmt.Sprintf("unzip-%s-%d", scenario, i)
 				expected := fmt.Sprintf("content-from-%s", bedID)
 				created := c.createBed(t, bedID)
 				if created.Status != http.StatusAccepted && created.Status != http.StatusOK {
@@ -54,7 +57,7 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 					})
 					must2xx(t, "probe unzip", response)
 					if probe.Result == nil || probe.Result.Process.ExitCode == nil || *probe.Result.Process.ExitCode != 0 {
-						t.Skipf("target for %s does not provide unzip", requested)
+						t.Skipf("target for %s does not provide unzip", scenario)
 					}
 				}
 				archive := concurrentReplaceArchive(t, expected)
@@ -110,7 +113,6 @@ func TestDormPathshimFailureUsesProotWithoutEscapingBedFS(t *testing.T) {
 	}
 
 	target := startTarget(t, targetOptions{
-		isolation:        "dorm",
 		maxBeds:          4,
 		allowPtrace:      true,
 		pathshimHostPath: unavailablePathshim(t),
@@ -204,7 +206,7 @@ exit 99
 	return path
 }
 
-func requireSupportedArchiveReplaceView(t *testing.T, c *apiClient, requested string) healthView {
+func requireSupportedArchiveReplaceView(t *testing.T, c *apiClient) healthView {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -213,24 +215,8 @@ func requireSupportedArchiveReplaceView(t *testing.T, c *apiClient, requested st
 	if err != nil || result.Status != http.StatusOK {
 		t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
 	}
-	files := c.filesystemStatus(t)
-	wantFiles := map[string]string{"dorm": "shared", "room": "confined", "suite": "private"}[requested]
-	if requiredIsolationLevels()[requested] && health.Isolation.Effective != requested {
-		t.Fatalf("required profile %s degraded: %+v", requested, health.Isolation)
-	}
-	if files.Effective != wantFiles {
-		if requiredIsolationLevels()[requested] {
-			t.Fatalf("test environment promised files %s but got %+v", wantFiles, files)
-		}
-		t.Skipf("host capability unavailable: requested files %s, got %+v", wantFiles, files)
-	}
-
-	if requested == "suite" {
-		if health.ProcessView.Mode != "mount" || !health.ProcessView.Available {
-			t.Fatalf("%s isolation is effective, but workspace implementation = %+v, want available mount", requested, health.ProcessView)
-		}
-	} else if (health.ProcessView.Mode != "pathshim" && health.ProcessView.Mode != "proot") || !health.ProcessView.Available {
-		t.Fatalf("%s isolation is effective, but workspace implementation = %+v, want an available user-space view", requested, health.ProcessView)
+	if !health.ProcessView.Available || (health.ProcessView.Mode != "mount" && health.ProcessView.Mode != "pathshim" && health.ProcessView.Mode != "proot") {
+		t.Skipf("archive replacement requires a process view: %+v", health.ProcessView)
 	}
 	return health
 }

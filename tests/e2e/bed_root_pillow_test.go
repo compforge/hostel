@@ -28,20 +28,18 @@ func TestBedRootPillowCommandFiles(t *testing.T) {
 		for _, backend := range []string{"local", "supervisor"} {
 			t.Run(mode+"/"+backend, func(t *testing.T) {
 				options := restrictedOptions()
-				room := "dorm"
 				if mode == "mount" {
 					if _, err := exec.LookPath("bwrap"); err != nil {
 						t.Skip("bwrap not installed")
 					}
 					options.Bed.Filesystem.Bwrap = value(tool.Required)
-					room = "suite"
 				} else {
 					if _, err := exec.LookPath("proot"); err != nil && os.Getenv(prootEnv) == "" {
 						t.Skip("PRoot not installed; set HOSTEL_E2E_PROOT to require it")
 					}
 					options.Bed.Filesystem.PRoot = value(tool.Required)
 				}
-				c := startTarget(t, targetOptions{isolation: room, executor: backend, config: &options}).client
+				c := startTarget(t, targetOptions{executor: backend, config: &options}).client
 				var health struct {
 					ProcessView struct {
 						Mode   string `json:"mode"`

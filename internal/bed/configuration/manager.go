@@ -143,7 +143,7 @@ func (m *Manager) Status() Report {
 	return Report{Sources: sources, PreparedBeds: len(m.prepared)}
 }
 
-var _ bed.Component[Report] = (*Manager)(nil)
+var _ bed.Subsystem[Report] = (*Manager)(nil)
 
 // Resolve imports directories in declaration order, then explicit variables.
 // Only source references are retained; contents are never copied into BedFS.

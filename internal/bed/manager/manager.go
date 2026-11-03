@@ -56,7 +56,7 @@ type Manager struct {
 	closeMu             *semaphore.Weighted
 	started             bool
 	startErr            error
-	components          []daemonComponent
+	subsystems          []daemonSubsystem
 	runMu               sync.Mutex
 	runCancel           context.CancelFunc
 	runDone             chan struct{}
@@ -70,7 +70,6 @@ type Manager struct {
 	root                string
 	iso                 isolation.Isolator
 	bedUser             privilege.BedUser
-	roomType            model.RoomType
 	identitySelection   *privilege.Selection
 	privileges          *privilege.Manager
 	diagnosticsMu       sync.RWMutex
@@ -86,7 +85,7 @@ type Manager struct {
 	pressurePercent     int                // shared occupied/pinned high-watermark percentage
 	pinnedBeds          atomic.Int64       // Beds running work or holding data not yet durable
 	network             *network.Manager
-	store               *store.Manager // daemon-wide persistence component
+	store               *store.Manager // daemon-wide persistence subsystem
 	processEnv          processEnv     // explicit carrier software env; never daemon-wide inheritance
 	// bedIdleTTL is set once at startup. Accepted operations extend their bed
 	// through timeout+idleTTL so the idle reaper cannot kill in-flight work.
@@ -142,6 +141,14 @@ type ManagerOption func(*Manager)
 // uid isolation resolves a dedicated user from the same policy per Bed.
 func WithBedUser(user privilege.BedUser) ManagerOption {
 	return func(m *Manager) { m.bedUser = user }
+}
+
+// WithIdentitySelection installs the Privilege subsystem's resolved identity policy.
+func WithIdentitySelection(identity privilege.Selection) ManagerOption {
+	return func(m *Manager) {
+		m.identitySelection = &identity
+		m.bedUser = identity.User
+	}
 }
 
 // NewManager assembles domain managers from the daemon host snapshot.

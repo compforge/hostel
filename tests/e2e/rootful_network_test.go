@@ -29,7 +29,7 @@ func TestRootfulNetworkResolver(t *testing.T) {
 			options := restrictedOptions()
 			options.Bed.Filesystem.Bwrap = value(tool.Required)
 			options.Bed.Network.NetNS = value(tool.Required)
-			c := startTarget(t, targetOptions{isolation: "suite", executor: backend, config: &options}).client
+			c := startTarget(t, targetOptions{executor: backend, config: &options}).client
 			const bed = "resolver"
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": bed,
@@ -42,11 +42,11 @@ func TestRootfulNetworkResolver(t *testing.T) {
 			c.waitBed(t, bed, func(b bedView) bool { return b.Status.Readiness.Ready }, "network Pillow ready")
 			var detail struct {
 				Status struct {
-					Components struct {
+					Subsystems struct {
 						Network struct {
 							Gateway string `json:"gateway"`
 						} `json:"network"`
-					} `json:"components"`
+					} `json:"subsystems"`
 				} `json:"status"`
 			}
 			ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
@@ -56,13 +56,13 @@ func TestRootfulNetworkResolver(t *testing.T) {
 				t.Fatal(err)
 			}
 			must2xx(t, "Bed network status", response)
-			if net.ParseIP(detail.Status.Components.Network.Gateway) == nil {
+			if net.ParseIP(detail.Status.Subsystems.Network.Gateway) == nil {
 				t.Fatal("missing Bed gateway")
 			}
 			result, response := c.command(t, bed, map[string]any{"command": "set -eu; for i in 1 2 3 4 5; do test -s /workspace/pillow-dns && break; sleep 1; done; cmp /etc/resolv.conf /workspace/pillow-resolver; test -s /workspace/pillow-dns; getent ahostsv4 example.com >/dev/null; cat /etc/resolv.conf", "timeout": 15000})
 			must2xx(t, "Bed DNS query", response)
 			assertCommandExit(t, result, 0)
-			if !strings.Contains(result.Stdout, "nameserver "+detail.Status.Components.Network.Gateway+"\n") {
+			if !strings.Contains(result.Stdout, "nameserver "+detail.Status.Subsystems.Network.Gateway+"\n") {
 				t.Fatalf("wrong resolver: %q", result.Stdout)
 			}
 		})

@@ -22,6 +22,6 @@ func TestPrivilegeSupportedLevelsDoNotExposeSelection(t *testing.T) {
 	}
 	before[0] = privilege.Dedicated
 	if m.Status().Selection.Supported[0] != privilege.Shared {
-		t.Fatal("caller mutated component capability snapshot")
+		t.Fatal("caller mutated subsystem capability snapshot")
 	}
 }

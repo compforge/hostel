@@ -69,7 +69,7 @@ func (m *Manager) Close(ctx context.Context) error { return m.StopTransfers(ctx,
 
 // Persistence policy does not grade the Bed execution boundary.
 
-var _ bed.Component[Status] = (*Manager)(nil)
+var _ bed.Subsystem[Status] = (*Manager)(nil)
 
 func (m *Manager) PersistBed(ctx context.Context, b *bed.Bed, generation int64) error {
 	spec := b.Spec()

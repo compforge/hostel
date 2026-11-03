@@ -84,16 +84,16 @@ func TestStatusReportsResourcePressure(t *testing.T) {
 			CPU    *bool `json:"cpu_pressure"`
 			Memory *bool `json:"memory_pressure"`
 		} `json:"instance"`
-		Components struct {
+		Subsystems struct {
 			Resource struct {
 				Admission resource.AdmissionReport `json:"admission"`
 			} `json:"resource"`
-		} `json:"components"`
+		} `json:"subsystems"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Code != 200 || status.Instance.Bed == nil || *status.Instance.Bed || status.Instance.CPU == nil || *status.Instance.CPU || status.Instance.Memory == nil || !*status.Instance.Memory || status.Components.Resource.Admission.Accepting {
+	if rec.Code != 200 || status.Instance.Bed == nil || *status.Instance.Bed || status.Instance.CPU == nil || *status.Instance.CPU || status.Instance.Memory == nil || !*status.Instance.Memory || status.Subsystems.Resource.Admission.Accepting {
 		t.Fatalf("/v1/status: %s", rec.Body.String())
 	}
 

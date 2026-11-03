@@ -174,4 +174,4 @@ func (m *Manager) UpdatePolicy(ctx context.Context, b *bed.Bed, mutation PolicyM
 	return result, err
 }
 
-var _ bed.Component[Status] = (*Manager)(nil)
+var _ bed.Subsystem[Status] = (*Manager)(nil)

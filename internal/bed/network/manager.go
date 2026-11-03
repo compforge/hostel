@@ -14,7 +14,7 @@ import (
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
-// Status is the component status: mechanism facts plus the Bed execution scope.
+// Status is the subsystem status: mechanism facts plus the Bed execution scope.
 type Status struct {
 	Expected  Level                  `json:"expected"`
 	Effective Level                  `json:"effective"`
@@ -43,7 +43,6 @@ var ErrInvalidPolicy = hostnetwork.ErrInvalidPolicy
 func NormalizePolicy(p Policy) (Policy, error) { return hostnetwork.NormalizePolicy(p) }
 
 type Manager struct {
-	selectionErr error
 	portMappings *PortMappings
 	config       Config
 	bed.Noop
@@ -63,11 +62,6 @@ func (m *Manager) SetPortManager(ports *hostnetwork.PortManager) {
 	if m.pool != nil {
 		m.pool.SetPortManager(ports)
 	}
-}
-func NewSelected(ctx context.Context, selected Selection) *Manager {
-	m := NewConfigured(ctx, selected.Config)
-	m.selectionErr = selected.Err
-	return m
 }
 
 func NewConfigured(ctx context.Context, cfg Config) *Manager {
@@ -142,16 +136,6 @@ func (m *Manager) describe(s Status) Status {
 		s.Err = hostel.WrapError(hostel.ErrUnavailable, "network namespace disabled", hostel.CauseRequest, ErrUnavailable)
 	}
 	s.Expected = Private
-	if m != nil && m.config.Level == Shared {
-		s.Effective, s.Backend, s.Scope = Shared, "shared", "carrier"
-		if policy != tool.Off && available {
-			s.Reason = "shared network selected after combination probe"
-			s.Err = m.selectionErr
-			if s.Err != nil {
-				s.Reason = s.Err.Error()
-			}
-		}
-	}
 	selected := s.Effective == Private
 	s.Effective, s.Supported = Shared, []Level{Shared}
 	if available && policy != tool.Off {

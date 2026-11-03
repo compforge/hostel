@@ -14,18 +14,18 @@ import (
 // Status reads expose global domain facts and only the tenants bound to the
 // selected Bed. Polling must neither allocate a tenant nor renew Bed activity.
 func TestStatusScopesAndTenantIdentity(t *testing.T) {
-	assertComponents := func(scope string, got map[string]json.RawMessage, want ...string) {
+	assertSubsystems := func(scope string, got map[string]json.RawMessage, want ...string) {
 		t.Helper()
 		if len(got) != len(want) {
-			t.Fatalf("%s components: got %d, want %d (%v)", scope, len(got), len(want), want)
+			t.Fatalf("%s subsystems: got %d, want %d (%v)", scope, len(got), len(want), want)
 		}
 		for _, name := range want {
 			if got[name] == nil {
-				t.Fatalf("%s components: missing %q", scope, name)
+				t.Fatalf("%s subsystems: missing %q", scope, name)
 			}
 		}
 	}
-	target := startTarget(t, targetOptions{isolation: "dorm"})
+	target := startTarget(t, targetOptions{})
 	c := target.client
 	name := "状态测试"
 	must2xx(t, "create", c.createBed(t, name))
@@ -48,7 +48,7 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 			Pillows      []json.RawMessage          `json:"pillows"`
 			PortMappings []json.RawMessage          `json:"port_mappings"`
 			Lifecycle    bedLifecycleView           `json:"lifecycle"`
-			Components   map[string]json.RawMessage `json:"components"`
+			Subsystems   map[string]json.RawMessage `json:"subsystems"`
 			Amenities    map[string]tenantView      `json:"amenities"`
 		} `json:"status"`
 	}
@@ -67,7 +67,7 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 	if before.Name != name || before.ID == "" || before.ID == name || !before.Status.Lifecycle.Readiness.Ready || before.Status.Pillows == nil || before.Status.PortMappings == nil {
 		t.Fatalf("detail: %+v", before)
 	}
-	assertComponents("bed", before.Status.Components,
+	assertSubsystems("bed", before.Status.Subsystems,
 		"filesystem", "privilege", "network", "store", "executor", "resource")
 	if _, exists := before.Status.Amenities["mcp"]; exists {
 		t.Fatal("status allocated MCP tenant")
@@ -96,7 +96,7 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 				Ports []json.RawMessage `json:"ports"`
 			} `json:"status"`
 		} `json:"host"`
-		Components map[string]json.RawMessage `json:"components"`
+		Subsystems map[string]json.RawMessage `json:"subsystems"`
 		Amenities  map[string]struct {
 			Tenants int `json:"tenants"`
 		} `json:"amenities"`
@@ -113,15 +113,15 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 		t.Fatalf("missing host facts: %+v", global.Host)
 	}
 	if global.Combinations != nil {
-		t.Fatal("status must report final components, not startup attempt history")
+		t.Fatal("status must report final subsystems, not startup attempt history")
 	}
-	if global.Schema != 12 || global.Amenities["mcp"].Tenants != 1 {
+	if global.Schema != 13 || global.Amenities["mcp"].Tenants != 1 {
 		t.Fatalf("global status: %+v", global)
 	}
-	assertComponents("instance", global.Components,
+	assertSubsystems("instance", global.Subsystems,
 		"configuration", "filesystem", "privilege", "network", "executor", "store", "resource")
 	for _, b := range global.Beds {
-		if b.Status["amenities"] != nil || b.Status["components"] != nil {
+		if b.Status["amenities"] != nil || b.Status["subsystems"] != nil {
 			t.Fatal("inventory expanded unit details")
 		}
 	}

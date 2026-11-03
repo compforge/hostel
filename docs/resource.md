@@ -72,7 +72,7 @@ working set 更保守，更贴近 cgroup OOM 边界，适合“还能不能接�
 
 同一份资源事实按受众投影，不要求调用方自己拼装结论：
 
-- `resource_admission`：在 `/healthz`、`GET /v1/status` 的 Resource Component 和 capabilities 中报告有限 cgroup 配额、
+- `resource_admission`：在 `/healthz`、`GET /v1/status` 的 Resource Subsystem 和 capabilities 中报告有限 cgroup 配额、
   最新 CPU/内存占比、配置水位、采样状态、reason 和 `accepting` verdict。
 - `resource_accounting`：报告 per-bed 精确记账是否可用及 backend；它与 carrier admission 的
   available 状态相互独立。
@@ -200,7 +200,7 @@ per-bed 配额，容易把高密度、强突发的 agent workload 错配成传�
 隔离目标。共享 amenity 仍计入 Carrier 总量，不能虚构 tenant 级精确归因。未完成能力统一见
 [backlog.md](backlog.md)。
 
-## 组件生命周期
+## 子系统生命周期
 
 构造阶段只组装依赖，Resource Manager.Start 才初始化 cgroup accounting，并报告真实可用性；无可用机制时按资源领域策略降级。Run 驱动采样，Bed hooks 管理单元归属，Close 释放所持资源。Bed Manager 在 Start 前登记清理责任，部分初始化失败也必须经过 Close；失败清理保留责任供重试。host/cgroup 提供操作机制，不决定 Bed 组织和准入策略。
 
@@ -208,4 +208,4 @@ per-bed 配额，容易把高密度、强突发的 agent workload 错配成传�
 
 容量控制中的硬边界与软水位成对表达：`max_beds` 是 Bed 数量的硬准入边界，`bed_pressure` 是更早出现的软信号；CPU、内存的 admission threshold 是资源硬准入边界，`cpu_pressure`、`memory_pressure` 是对应的软信号。软水位必须低于对应硬边界，让控制面在 Hostel 开始拒绝请求前完成新 Carrier 的准备、分流和补位；硬边界只负责最后的本实例保护，不能代替提前扩容信号。
 
-`/v1/status` 在 `instance` 中并列报告 `bed_pressure`、`cpu_pressure` 和 `memory_pressure`；`/v1/beds` 只保留 Bed 列表及由同一批 inventory 推导的原始容量计数，不输出 pressure verdict。资源 pressure 与 admission 复用同一份缓存采样，但分别使用软硬阈值；CPU、内存软水位默认 80%，硬准入水位默认 90%。对应维度禁用或不可测时不报告 pressure，`components.resource.admission.accepting` 只表达硬准入结论。
+`/v1/status` 在 `instance` 中并列报告 `bed_pressure`、`cpu_pressure` 和 `memory_pressure`；`/v1/beds` 只保留 Bed 列表及由同一批 inventory 推导的原始容量计数，不输出 pressure verdict。资源 pressure 与 admission 复用同一份缓存采样，但分别使用软硬阈值；CPU、内存软水位默认 80%，硬准入水位默认 90%。对应维度禁用或不可测时不报告 pressure，`subsystems.resource.admission.accepting` 只表达硬准入结论。

@@ -11,7 +11,7 @@ import (
 )
 
 func TestFilesystemAPIContract(t *testing.T) {
-	target := startTarget(t, targetOptions{isolation: "dorm"})
+	target := startTarget(t, targetOptions{})
 	c := target.client
 	const (
 		bedID   = "filesystem-bed"

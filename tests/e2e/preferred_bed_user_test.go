@@ -23,9 +23,9 @@ func TestPreferredBedUser(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			options := restrictedOptions()
 			options.Bed.Privilege = privilege.Options{UID: value(1200), GID: value(1300)}
-			c := startTarget(t, targetOptions{isolation: "dorm", executor: backend, config: &options}).client
+			c := startTarget(t, targetOptions{executor: backend, config: &options}).client
 			var status struct {
-				Components struct{ Privilege privilege.Status }
+				Subsystems struct{ Privilege privilege.Status }
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			response, err := c.json(ctx, "GET", "/v1/status", "", nil, &status)
@@ -34,7 +34,7 @@ func TestPreferredBedUser(t *testing.T) {
 				t.Fatal(err)
 			}
 			must2xx(t, "identity status", response)
-			p := status.Components.Privilege
+			p := status.Subsystems.Privilege
 			if p.BedUser.Strategy != "fixed" || !p.PreconditionsSatisfied {
 				t.Fatalf("invalid identity status: %+v", p)
 			}

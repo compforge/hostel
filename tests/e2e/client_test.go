@@ -46,7 +46,6 @@ type healthView struct {
 	} `json:"process_view"`
 	MaxBeds   int `json:"max_beds"`
 	Isolation struct {
-		Requested string `json:"requested"`
 		Effective string `json:"effective"`
 	} `json:"isolation"`
 	Amenities map[string]string `json:"amenities"`
@@ -62,9 +61,9 @@ type filesystemView struct {
 func (c *apiClient) filesystemStatus(t *testing.T) filesystemView {
 	t.Helper()
 	var status struct {
-		Components struct {
+		Subsystems struct {
 			Filesystem filesystemView `json:"filesystem"`
-		} `json:"components"`
+		} `json:"subsystems"`
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -73,7 +72,7 @@ func (c *apiClient) filesystemStatus(t *testing.T) filesystemView {
 		t.Fatal(err)
 	}
 	must2xx(t, "filesystem status", response)
-	return status.Components.Filesystem
+	return status.Subsystems.Filesystem
 }
 
 type readinessView struct {

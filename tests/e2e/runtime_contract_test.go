@@ -11,7 +11,7 @@ import (
 )
 
 func TestRuntimeContract(t *testing.T) {
-	target := startTarget(t, targetOptions{isolation: "dorm", maxBeds: 2})
+	target := startTarget(t, targetOptions{maxBeds: 2})
 	c := target.client
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -21,7 +21,7 @@ func TestRuntimeContract(t *testing.T) {
 	if err != nil || healthResult.Status != http.StatusOK {
 		t.Fatalf("healthz: status=%d err=%v body=%s", healthResult.Status, err, healthResult.Body)
 	}
-	if !health.OK || health.MaxBeds != 2 || health.Isolation.Requested != "dorm" || health.Isolation.Effective != "dorm" {
+	if !health.OK || health.MaxBeds != 2 || isolationRank(health.Isolation.Effective) == 0 {
 		t.Fatalf("unexpected health contract: %+v", health)
 	}
 
@@ -38,7 +38,7 @@ func TestRuntimeContract(t *testing.T) {
 	inventory := c.waitInventory(t, "two resident idle beds", func(got inventoryView) bool {
 		return got.Instance.PhaseCounts["resident"] == 2 && got.Instance.ActivityCount["idle"] == 2
 	})
-	if inventory.Instance.MaxBeds != 2 || inventory.Instance.Isolation != "dorm" {
+	if inventory.Instance.MaxBeds != 2 || inventory.Instance.Isolation != health.Isolation.Effective {
 		t.Fatalf("unexpected inventory instance: %+v", inventory.Instance)
 	}
 

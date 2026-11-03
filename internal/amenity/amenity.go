@@ -19,6 +19,6 @@ type Amenity interface {
 	Name() string
 	Start(context.Context) error
 	Close(context.Context) error
-	// Status returns facility-wide Component Status without probes or remote I/O.
+	// Status returns facility-wide Subsystem Status without probes or remote I/O.
 	Status() Status
 }

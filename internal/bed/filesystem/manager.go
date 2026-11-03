@@ -68,7 +68,7 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	return nil
 }
 
-// PrepareView runs after cooperating components have prepared their files.
+// PrepareView runs after cooperating subsystems have prepared their files.
 // Bed Manager owns this ordering; the resulting view stays fixed until Release.
 func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Mapping) error {
 	if b.Status().Filesystem.Prepared {
@@ -193,4 +193,4 @@ func (m *Manager) supportedLevels() []isolation.Level {
 	return levels
 }
 
-var _ bed.Component[Status] = (*Manager)(nil)
+var _ bed.Subsystem[Status] = (*Manager)(nil)

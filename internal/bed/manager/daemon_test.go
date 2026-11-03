@@ -87,8 +87,8 @@ func TestStartFailureDoesNotAdmitBeds(t *testing.T) {
 	if _, err := declareTestBed(m, t.Context(), "a"); err == nil {
 		t.Fatal("admitted after failed startup")
 	}
-	if len(m.components) != 0 {
-		t.Fatal("failed startup retained initialized components")
+	if len(m.subsystems) != 0 {
+		t.Fatal("failed startup retained initialized subsystems")
 	}
 }
 
@@ -100,21 +100,21 @@ type partiallyStartedNetwork struct {
 
 func (*partiallyStartedNetwork) Start(context.Context) error   { return errors.New("partial allocation") }
 func (p *partiallyStartedNetwork) Close(context.Context) error { p.closes++; return p.cleanupErr }
-func TestFailedComponentStartRetainsCleanupOwner(t *testing.T) {
+func TestFailedSubsystemStartRetainsCleanupOwner(t *testing.T) {
 	m := newTestManager(t)
 	p := &partiallyStartedNetwork{cleanupErr: errors.New("resource busy")}
 	m.network = network.WithProvider(p, m.owners.Network)
 	if err := m.Start(t.Context()); err == nil {
 		t.Fatal("partial startup accepted")
 	}
-	if p.closes != 1 || len(m.components) == 0 {
-		t.Fatal("failed component lost cleanup owner")
+	if p.closes != 1 || len(m.subsystems) == 0 {
+		t.Fatal("failed subsystem lost cleanup owner")
 	}
 	p.cleanupErr = nil
-	if err := m.closeComponents(t.Context()); err != nil {
+	if err := m.closeSubsystems(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if p.closes != 2 || len(m.components) != 0 {
-		t.Fatal("failed component cleanup not retried")
+	if p.closes != 2 || len(m.subsystems) != 0 {
+		t.Fatal("failed subsystem cleanup not retried")
 	}
 }

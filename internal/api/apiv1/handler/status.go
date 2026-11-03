@@ -34,7 +34,7 @@ func (o statusObserver) Status() apiview.InstanceStatus {
 }
 
 func (o statusObserver) BedStatus(b *bed.Bed, lifecycle manager.BedStatus) protocol.BedStatus {
-	report := protocol.BedStatus{Lifecycle: lifecycle, Isolation: o.beds.RoomStatus(), Amenities: make(map[string]protocol.AmenityBinding)}
+	report := protocol.BedStatus{Lifecycle: lifecycle, Amenities: make(map[string]protocol.AmenityBinding)}
 	if b == nil {
 		return report
 	}
@@ -42,13 +42,13 @@ func (o statusObserver) BedStatus(b *bed.Bed, lifecycle manager.BedStatus) proto
 		report.Amenities[name] = protocol.AmenityBinding{TenantID: string(binding.TenantID), Status: binding.Status}
 	}
 	state := b.Status()
-	report.Isolation = o.beds.BedRoomStatus(b)
-	report.Components.Filesystem = state.Filesystem.FilesystemStatus
-	report.Components.Privilege = state.Privilege
-	report.Components.Network = state.Network
-	report.Components.Store = state.Store
-	report.Components.Executor = state.Executor
-	report.Components.Resource = state.Resource
+	report.Isolation = bed.SummarizeRoom(state.Filesystem.Room, state.Network.Room)
+	report.Subsystems.Filesystem = state.Filesystem.FilesystemStatus
+	report.Subsystems.Privilege = state.Privilege
+	report.Subsystems.Network = state.Network
+	report.Subsystems.Store = state.Store
+	report.Subsystems.Executor = state.Executor
+	report.Subsystems.Resource = state.Resource
 	report.Pillows = []protocol.PillowStatus{}
 	for _, status := range o.beds.Pillows().Status(b) {
 		report.Pillows = append(report.Pillows, apiview.PillowStatusFrom(status))

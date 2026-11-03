@@ -68,7 +68,7 @@ type Executor struct {
 	State               string `json:"state"`
 }
 
-// BedDetail adds component observations and data versions to a Bed summary.
+// BedDetail adds subsystem observations and data versions to a Bed summary.
 // Its status replaces the summary status with the complete BedStatus object.
 type BedDetail struct {
 	Bed

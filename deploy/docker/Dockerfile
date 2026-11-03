@@ -126,7 +126,7 @@ RUN set -eu; \
 
 # --- runtime stage --------------------------------------------------------
 # Debian (not distroless/alpine) because the optional facilities need a real
-# base: bubblewrap for --isolation suite, chromium for the browser amenity.
+# base: bubblewrap for private filesystem views, chromium for the browser amenity.
 # Both stay OPTIONAL at runtime — hostel probes them at boot and degrades
 # honestly, so a locked-down pod without namespaces still serves. No --platform
 # here: this stage IS the target platform, so apt installs the correct arch.
@@ -178,7 +178,6 @@ ENV PYTHONUSERBASE=/usr/local \
     UV_TOOL_BIN_DIR=/usr/local/bin \
     PATH=/usr/local/bin:${PATH} \
     HOSTEL_BEDS_ROOT=/workspace \
-    HOSTEL_ISOLATION=suite \
     HOSTEL_CHROMIUM_PATH=/usr/bin/chromium
 # No VOLUME: it would bake the default path in at build time and silently
 # stop applying when HOSTEL_BEDS_ROOT is overridden. To keep beds across

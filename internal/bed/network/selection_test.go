@@ -15,24 +15,23 @@ type reportedNetwork struct {
 
 func (p reportedNetwork) Status() Status { return p.report }
 
-// +case:id=network_selection_cause,desc=`A weaker network is selected after a classified failure`,expect=`Selection never rewrites the original error attribution`
+// +case:id=network_selection_cause,desc=`Network probing fails and Auto uses shared networking`,expect=`The subsystem preserves the original failure attribution`
 func TestSelectedNetworkPreservesFailure(t *testing.T) {
 	carrier := hostel.WrapError(hostel.ErrUnavailable, "IPv4 forwarding", hostel.CauseCarrier, errors.New("forwarding disabled"))
 	bed := hostel.WrapError(hostel.ErrPreparationFailed, "namespace entry", hostel.CauseBed, errors.New("entry failed"))
 	unknown := errors.New("composition failed")
 	for _, tc := range []struct {
-		name      string
-		probe     Status
-		selection error
-		want      error
-		cause     hostel.ErrorCause
+		name  string
+		probe Status
+		want  error
+		cause hostel.ErrorCause
 	}{
-		{"carrier probe survives selection", Status{Effective: Shared, Err: carrier}, unknown, carrier, hostel.CauseCarrier},
-		{"typed composition failure", Status{Effective: Private}, bed, bed, hostel.CauseBed},
-		{"unclassified composition failure", Status{Effective: Private}, unknown, unknown, hostel.CauseUnknown},
+		{"carrier probe failure", Status{Effective: Shared, Err: carrier}, carrier, hostel.CauseCarrier},
+		{"namespace entry failure", Status{Effective: Shared, Err: bed}, bed, hostel.CauseBed},
+		{"unclassified probe failure", Status{Effective: Shared, Err: unknown}, unknown, hostel.CauseUnknown},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manager{config: Config{NetNS: tool.Auto, Level: Shared}, selectionErr: tc.selection, provider: reportedNetwork{report: tc.probe}}
+			m := &Manager{config: Config{NetNS: tool.Auto}, provider: reportedNetwork{report: tc.probe}}
 			if err := m.Start(t.Context()); err != nil {
 				t.Fatalf("optional capability rejected startup: %v", err)
 			}
@@ -56,8 +55,8 @@ func TestRequiredNetworkPreservesProbeError(t *testing.T) {
 	}
 }
 
-func TestPrivateNetworkDoesNotRetainFailedCandidate(t *testing.T) {
-	m := &Manager{config: Config{Level: Private}, selectionErr: errors.New("earlier attempt failed"), provider: reportedNetwork{report: Status{Effective: Private}}}
+func TestPrivateNetworkReportsRealizedCapability(t *testing.T) {
+	m := &Manager{config: Config{}, provider: reportedNetwork{report: Status{Effective: Private}}}
 	if got := m.Status(); got.Err != nil || got.Cause != "" || got.Reason != "" {
 		t.Fatalf("successful capability retained failure: %+v", got)
 	}

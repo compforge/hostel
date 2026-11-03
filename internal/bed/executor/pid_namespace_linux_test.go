@@ -55,10 +55,4 @@ func TestPIDNamespaceUnavailablePolicies(t *testing.T) {
 			t.Fatalf("policy %s evidence: %+v", policy, status)
 		}
 	}
-	// Losing privileges after selection cannot silently weaken a live factory.
-	cfg := (Config{Backend: "supervisor", PIDNS: tool.Auto}).WithSelection(map[string]tool.Status{"pidns": pidnsStatus(tool.Auto, true, true, "")})
-	if factory, err := ResolveFactory(t.Context(), cfg, nil); err == nil {
-		factory.Close()
-		t.Fatal("frozen private selection downgraded")
-	}
 }

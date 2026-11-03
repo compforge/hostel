@@ -61,9 +61,9 @@ readiness：是否可服务，以及当前等待或失败原因
 正交事实；容量统计对这些事实做集合投影，具体口径和状态图见 [resource.md](resource.md#容量状态口径)。
 对外状态及最近动作摘要的投影见 [observability.md](observability.md#生命周期接口投影)。
 
-## 组件参与生命周期
+## 子系统参与生命周期
 
-每个 Bed hook 接收同一个 `*bed.Bed`，资源按具体 allocation 归属。组件还提供类型化
+每个 Bed hook 接收同一个 `*bed.Bed`，资源按具体 allocation 归属。子系统还提供类型化
 `Status() S`，由 Bed Manager 聚合，API handler 组合领域报告与设施状态，view 只定义响应结构及纯转换。报告契约见 [observability.md](observability.md)。
 
 | Hook | Bed Manager 驱动时机与完成条件 |
@@ -82,7 +82,7 @@ Executor 的实际创建与替换仍按需进行，Store 的 Persist / Delete �
 
 daemon 组装 Bed Manager 与 Amenity Manager，驱动全局启动。Bed Manager 的 Start 同步完成
 领域初始化、本地目录恢复和 UID 保留；组合环境探测完成后才开放 Web。启动失败逆序关闭
-已启动的组件，不能让未恢复的本地身份进入准入。
+已启动的子系统，不能让未恢复的本地身份进入准入。
 
 Run 启动 Store 同步、Resource 采样与 Bed 回收循环，并在取消或终止错误后等待循环退出。
 各领域自己安排周期、合并和退避；后台终止错误通知 daemon 进入统一关闭流程。
@@ -100,7 +100,7 @@ Run 启动 Store 同步、Resource 采样与 Bed 回收循环，并在取消或�
 已 Ready 返回 200。Store Stat/Restore 延迟属于数据准备，不占住创建连接。原生数据面通过
 Ensure 仅等待已经声明的任务就绪；Bed 不存在时返回 404，不创建、不恢复、不重试失败任务。远端故障不能被当成空 Bed，也不能暴露半恢复目录。
 
-单 Bed 状态查询在 Manager 的同一次加锁中选择 resident 或过渡态及其身份，避免初始化发布时两次查询分别读到“不存在”。这保证生命周期集合之间的可见性，不承诺各 Component 的状态是跨领域原子快照。
+单 Bed 状态查询在 Manager 的同一次加锁中选择 resident 或过渡态及其身份，避免初始化发布时两次查询分别读到“不存在”。这保证生命周期集合之间的可见性，不承诺各 Subsystem 的状态是跨领域原子快照。
 
 同 Name 初始化合并为一个任务，在任何 Store I/O 前预占容量。原生请求通过 header/query
 显式选择 Bed，省略返回 400；isolated-session 映射 Bed，不维护平行生命周期。
@@ -181,7 +181,7 @@ Purge 显式终结 Bed 身份，进入 purging，取消并等待同 ID 初始化
 ## 关闭与实例释放
 
 关闭先停止准入，取消并等待后台循环，再取消并等待初始化，清理各 Bed 的运行资源，最后
-逆序关闭领域组件。daemon 随后关闭共享 Amenity。正常关闭保留本地数据与 UID 对应关系，
+逆序关闭领域子系统。daemon 随后关闭共享 Amenity。正常关闭保留本地数据与 UID 对应关系，
 不对所有 Bed 执行 Forget；Purge 才表达显式销毁。
 
 生命周期终结由上层 owner 驱动：调用方取消请求，Bed Manager 回收 Bed，上层调度释放
@@ -194,6 +194,6 @@ Hostel。Hostel 没有 drain 接口，也不因空闲自行退出；它通过 `i
 ### 关闭与清理预算
 
 `Close(ctx)` 的 deadline 是整个实例关闭的总预算。等待已有清理 owner、停止初始化/Purge、
-逐 Bed Stop/Release 和组件 Close 都使用这一边界，不再给每个 Bed 重置独立关闭时间。
+逐 Bed Stop/Release 和子系统 Close 都使用这一边界，不再给每个 Bed 重置独立关闭时间。
 请求取消后的初始化回滚和 Purge 由 Bed Manager 持有，daemon 关闭会取消并 join；失败保持
 清理 owner、已完成 hook 游标和名字占位，后续 Close/Evict 可重试，不能提前复用 UID 或资源。

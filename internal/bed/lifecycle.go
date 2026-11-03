@@ -19,8 +19,8 @@ type BedLifecycle interface {
 	Forget(context.Context, *Bed) error
 }
 
-// Noop supplies only hooks a component does not participate in. A component
-// must still explicitly provide Status to satisfy Component.
+// Noop supplies only hooks a subsystem does not participate in. A subsystem
+// must still explicitly provide Status to satisfy Subsystem.
 type Noop struct{}
 
 func (Noop) Recover(context.Context, *Bed) error { return nil }

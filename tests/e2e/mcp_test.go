@@ -39,7 +39,7 @@ func TestMCPRemoteTools(t *testing.T) {
 			}
 			fixture := httptest.NewServer(handler)
 			defer fixture.Close()
-			target := startTarget(t, targetOptions{isolation: "dorm", maxBeds: 2})
+			target := startTarget(t, targetOptions{maxBeds: 2})
 			c := target.client
 			request := func(method, path, bed string, body any) httpResult {
 				t.Helper()

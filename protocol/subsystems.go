@@ -66,10 +66,7 @@ type RoomType string
 
 // RoomStatus summarizes attained isolation guarantees.
 type RoomStatus struct {
-	Requested RoomType `json:"requested"`
-	Satisfied bool     `json:"satisfied"`
 	Effective RoomType `json:"effective"`
-	Reasons   []string `json:"reasons,omitempty"`
 }
 
 const (

@@ -185,7 +185,7 @@ func (m *Manager) Close(context.Context) error { return m.factory.Close() }
 // Supervising processes alone does not imply a private process view.
 func (m *Manager) Status() Status { return Describe(m.factory) }
 
-var _ bed.Component[Status] = (*Manager)(nil)
+var _ bed.Subsystem[Status] = (*Manager)(nil)
 
 // Failed preparation cannot be returned as a runnable Executor on retry.
 type unpreparedExecutor struct{ Executor }

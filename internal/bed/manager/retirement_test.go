@@ -110,14 +110,14 @@ func (n *retryReleaseNetwork) Acquire(context.Context, string) (network.Attachme
 }
 func (n *retryReleaseNetwork) Close(context.Context) error { n.calls++; return n.err }
 
-func TestRetirementResumesAtFailedComponent(t *testing.T) {
+func TestRetirementResumesAtFailedSubsystem(t *testing.T) {
 	m := newTestManager(t)
 	facility := &failingRelease{}
 	m.amenities = amenity.NewManager(hostfacts.Collect())
 	m.amenities.Register(facility)
 	net := &retryReleaseNetwork{err: errors.New("network busy")}
 	m.SetNetworkManager(network.WithProvider(net, m.owners.Network))
-	b, err := declareTestBed(m, t.Context(), "retry-components")
+	b, err := declareTestBed(m, t.Context(), "retry-subsystems")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,7 +15,7 @@ import (
 
 func TestPyPIInstallPersistsAcrossExecutions(t *testing.T) {
 	requireUserland(t)
-	target := startTarget(t, targetOptions{isolation: "dorm"})
+	target := startTarget(t, targetOptions{})
 	const load = `python -c 'import cowsay; print("HOSTEL_PIP_PATH=" + cowsay.__file__)'`
 	must2xx(t, "declare Bed", target.client.createBed(t, "pypi"))
 	install, response := target.client.command(t, "pypi", map[string]any{
@@ -32,7 +32,7 @@ func TestPyPIInstallPersistsAcrossExecutions(t *testing.T) {
 
 func TestNPMInstallPersistsAcrossExecutions(t *testing.T) {
 	requireUserland(t)
-	target := startTarget(t, targetOptions{isolation: "dorm"})
+	target := startTarget(t, targetOptions{})
 	const load = `node -e 'const root = require("child_process").execFileSync("npm", ["root", "-g"], {encoding: "utf8"}).trim(); const modulePath = root + "/is-number"; const isNumber = require(modulePath); if (!isNumber("42")) process.exit(1); console.log("HOSTEL_NPM_PATH=" + require.resolve(modulePath));'`
 	must2xx(t, "declare Bed", target.client.createBed(t, "npm"))
 	install, response := target.client.command(t, "npm", map[string]any{
@@ -56,7 +56,7 @@ func TestChromiumOperationsAndArtifact(t *testing.T) {
 	}))
 	defer page.Close()
 
-	target := startTarget(t, targetOptions{isolation: "dorm"})
+	target := startTarget(t, targetOptions{})
 	c := target.client
 	bedID := "chromium"
 	must2xx(t, "declare Bed", c.createBed(t, bedID))

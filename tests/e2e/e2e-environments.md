@@ -117,8 +117,8 @@ AppArmor 的实际约束测试必须使用编译并启用 AppArmor 的节点。�
 进程中是否可读写，只读声明在哪一层生效。UID/GID、capabilities、ptrace 和所选 helper
 是解释结果的前提，不能替代文件操作断言。
 
-`TestFilesystemPermissions` 在同一 Environment 内复用 dorm / room / suite 请求与
-local / supervisor 执行后端。文件机制保持 Auto，以观察真实权限下的选择；另设全关闭
+`TestFilesystemPermissions` 在同一 Environment 内覆盖 local / supervisor 执行后端。
+文件机制保持 Auto，以观察真实权限下的选择；另设全关闭
 机制的 carrier 对照。非 Linux 只运行 local。Network 和 cgroup 在该用例中关闭，
 避免其他领域决定文件测试是否能启动。
 

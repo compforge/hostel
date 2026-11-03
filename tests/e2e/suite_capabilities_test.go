@@ -26,7 +26,7 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 			options.Bed.Filesystem.Bwrap = value(tool.Required)
 			options.Bed.Privilege.UID, options.Bed.Privilege.GID = value(1000), value(1000)
 			options.Bed.Executor.PIDNS = value(tool.Off)
-			targetConfig := targetOptions{isolation: "dorm", executor: "supervisor", config: &options}
+			targetConfig := targetOptions{executor: "supervisor", config: &options}
 			if scenario == "network-probe-failure" {
 				options.Bed.Network.NetNS = value(tool.Auto)
 				helpers := t.TempDir()
@@ -87,7 +87,7 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 			}
 			assertMixedIsolationStatus(t, c, bed)
 			var status struct {
-				Components struct {
+				Subsystems struct {
 					Filesystem struct{ Effective string }
 					Privilege  struct{ Selection struct{ Effective string } }
 					Network    struct {
@@ -101,11 +101,11 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			must2xx(t, "suite component facts", response)
-			if status.Components.Filesystem.Effective != "private" || status.Components.Privilege.Selection.Effective != "shared" || status.Components.Network.Effective != "shared" || status.Components.Executor.Tools["pidns"].Selected {
-				t.Fatalf("unexpected components: %+v", status)
+			must2xx(t, "suite subsystem facts", response)
+			if status.Subsystems.Filesystem.Effective != "private" || status.Subsystems.Privilege.Selection.Effective != "shared" || status.Subsystems.Network.Effective != "shared" || status.Subsystems.Executor.Tools["pidns"].Selected {
+				t.Fatalf("unexpected subsystems: %+v", status)
 			}
-			if scenario == "network-probe-failure" && (status.Components.Network.Tools["netns"].Probe != "unavailable" || status.Components.Network.Reason == "") {
+			if scenario == "network-probe-failure" && (status.Subsystems.Network.Tools["netns"].Probe != "unavailable" || status.Subsystems.Network.Reason == "") {
 				t.Fatalf("missing failed probe evidence: %+v", status)
 			}
 			// Dorm preserves a desired policy without pretending the shared network enforces it.
@@ -127,8 +127,7 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 func assertMixedIsolationStatus(t *testing.T, c *apiClient, bed string) {
 	t.Helper()
 	type room struct {
-		Requested, Effective string
-		Reasons              []string
+		Effective string
 	}
 	for _, endpoint := range []string{"/healthz", "/v1/status", "/v1/beds", "/v1/beds/" + url.PathEscape(bed)} {
 		var body struct {
@@ -153,7 +152,7 @@ func assertMixedIsolationStatus(t *testing.T, c *apiClient, bed string) {
 		if strings.HasPrefix(endpoint, "/v1/beds/") {
 			got = body.Status.Isolation
 		}
-		if got.Requested != "dorm" || got.Effective != "dorm" || len(got.Reasons) != 0 {
+		if got.Effective != "dorm" {
 			t.Fatalf("%s: %+v", endpoint, got)
 		}
 	}

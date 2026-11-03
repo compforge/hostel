@@ -2,6 +2,6 @@ package filesystem
 
 import "github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 
-// Selection is owned by the filesystem isolation subcomponent.
+// Selection is owned by the filesystem isolation implementation.
 type Config = isolation.Config
 type Options = isolation.Options

@@ -60,7 +60,6 @@ type InitializationStatus struct {
 }
 
 type bedInitialization struct {
-	probe     bool
 	model     *model.Bed
 	local     *localIdentity
 	startedAt time.Time
@@ -221,11 +220,6 @@ func (m *Manager) beginInitialization(
 		}
 		options.NetworkPolicy = &normalized
 	}
-	if !options.probe {
-		if err := m.checkIsolation(id, m.iso.Level().Room(), m.network.Status().Room); err != nil {
-			return nil, nil, err
-		}
-	}
 	if err := validBedID(id); err != nil {
 		return nil, nil, err
 	}
@@ -329,7 +323,6 @@ func (m *Manager) beginInitialization(
 	now := time.Now()
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), initializationTimeout)
 	initialization := &bedInitialization{
-		probe:     options.probe,
 		local:     m.localIdentityLocked(id),
 		startedAt: now,
 		done:      make(chan struct{}),
@@ -578,7 +571,6 @@ func residentInitializationStatus(resident *managedBed) InitializationStatus {
 // empty). Native Ensure instead joins the existing declaration. After eviction,
 // callers must repeat overrides because the local identity has been removed.
 type CreateOptions struct {
-	probe         bool
 	Volumes       []model.VolumeSpec
 	PortMappings  []model.PortMappingSpec
 	Pillows       []model.PillowSpec

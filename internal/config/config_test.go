@@ -25,18 +25,10 @@ func TestBedUserConfig(t *testing.T) {
 	}
 }
 
-func TestIsolationAndManagedPillowConfigContract(t *testing.T) {
-	// The three north-facing room types are configuration values; resolution to
-	// a host mechanism is deliberately tested in internal/isolation.
-	for _, mode := range []string{"dorm", "room", "suite", "auto"} {
-		c := mustLoad(t, []string{"-isolation", mode, "-beds-root", "/var/lib/hostel"})
-		if c.Bed.RoomType != mode || c.BedsRoot != "/var/lib/hostel" {
-			t.Fatalf("mode %q: isolation=%q root=%q", mode, c.Bed.RoomType, c.BedsRoot)
-		}
-		wantFiles := "private"
-		if c.Bed.Filesystem.Level != wantFiles {
-			t.Fatalf("profile %s maps to files %s, want %s", mode, c.Bed.Filesystem.Level, wantFiles)
-		}
+func TestSubsystemAndManagedPillowConfigContract(t *testing.T) {
+	c := mustLoad(t, []string{"-beds-root", "/var/lib/hostel"})
+	if c.BedsRoot != "/var/lib/hostel" || c.Bed.Filesystem.Level != "private" {
+		t.Fatalf("subsystems must seek available capabilities: %+v", c.Bed)
 	}
 	// Pillow main processes are optional and configured independently of isolation;
 	// Chromium launch and attach forms are mutually exclusive deployment

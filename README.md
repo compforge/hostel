@@ -5,7 +5,9 @@ English | [简体中文](README.zh-CN.md)
 **Hostel is a sandbox runtime for AI agents.** Think of Hostel / Bed as a lightweight
 take on kubelet / Pod: one daemon manages multiple sandboxes, called **beds**,
 on a laptop, VM, CI runner or in a container, making a best effort to meet each
-bed's needs within the host's capabilities.
+bed's needs within the host's capabilities. Hostel coordinates its **subsystems**
+to realize BedSpec and reports what each subsystem actually provides; callers
+decide whether those results meet their requirements.
 Each bed declares shared resources and named execution environments called **pillows**.
 A pillow holds environment variables, a working directory and volume mounts; commands,
 shell sessions and an optional supervised main process run in that environment.
@@ -34,7 +36,7 @@ From a source checkout with Go and Make installed:
 
 ```bash
 make build
-./bin/hostel --isolation dorm --beds-root ./.workspace --addr 127.0.0.1:8872
+./bin/hostel --beds-root ./.workspace --addr 127.0.0.1:8872
 ```
 
 In another terminal, declare a Bed, run a command and download its output file:
@@ -78,21 +80,15 @@ without Chromium. Available isolation depends on host and container permissions.
 
 ## Isolation and access
 
-`--isolation` / `HOSTEL_ISOLATION` sets the minimum acceptable isolation, not a ceiling.
-Hostel always attempts the strongest supported combination while preserving BedSpec usability through
-mechanism alternatives, path mapping and API compensation.
-
-| Minimum | Required guarantees |
-|---|---|
-| `dorm` (default) | Shared boundaries are acceptable; missing network enforcement is disclosed |
-| `room` | Both filesystem and network must attain at least room |
-| `suite` | Both filesystem and network must attain suite |
-
-Filesystem shared/confined/private maps to dorm/room/suite. Network shared/private maps to dorm/suite;
-there is no intermediate network backend today. Bed isolation is the minimum of the two attained rooms.
-A weaker domain never strips stronger features from another. A Bed below the minimum is rejected;
-status remains available for diagnosis. Legacy `auto` is an alias for the dorm admission floor.
-Network grades cover Bed processes and the documented DNS/IP policy semantics, not all carrier traffic.
+Subsystems select the strongest permitted mechanisms they can execute together.
+Filesystem shared/confined/private maps to dorm/room/suite; network shared/private
+maps to dorm/suite. The reported room is the minimum of those attained grades.
+It is an observation, not a startup option or an admission gate. Callers decide
+whether to use a Bed from its subsystem reports. Shared networking may retain
+requested policies without enforcing them; status explicitly reports that gap.
+Required tools and functional contracts such as read-only mounts must still work.
+Network grades cover Bed processes and the documented DNS/IP policy semantics,
+not shared Chromium/MCP or all carrier traffic.
 
 Check `/healthz` and `/v1/status` for actual capabilities. Profiles depend on the
 host; shared Chromium/MCP traffic uses the carrier network, and per-bed resource

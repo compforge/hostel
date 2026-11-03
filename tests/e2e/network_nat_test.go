@@ -40,7 +40,7 @@ func TestNetworkNAT(t *testing.T) {
 		t.Run(executor, func(t *testing.T) {
 			options := config.Options{}
 			options.Bed.Network.NetNS = value(tool.Required)
-			c := startTarget(t, targetOptions{executor: executor, isolation: "dorm", config: &options}).client
+			c := startTarget(t, targetOptions{executor: executor, config: &options}).client
 			command := "E2E_NETWORK_PROBE=nat-client E2E_NETWORK_ADDRESS=" + shellx.Quote(address) +
 				" E2E_NAT_SOURCE=" + shellx.Quote(source) + " " + shellx.Quote(binary) + " -test.run=^TestNetworkNATProbe$"
 			for _, bed := range []string{"nat-a", "nat-b"} {
