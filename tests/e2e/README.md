@@ -362,3 +362,13 @@ Caller-side runner expectations may assert a room, but Hostel itself has no room
 Mechanism-specific mount/PID tests require their own tools without requiring a separate network backend.
 `TestPrivateFilesWithSharedNetwork` verifies private file boundaries while reporting an overall dorm room
 and explicitly unenforced network rules.
+
+## Carrier IPv4 forwarding unavailable
+
+`HOSTEL_E2E_REQUIRE_FORWARDING_DISABLED=1` enables `TestCarrierForwardingDisabled`.
+The runner must already have `ip_forward=0` and the `ip`/`nft` tools. This case never
+writes the sysctl: it verifies `cause=carrier`, `probe.stage=forwarding`, shared
+networking with an unenforced requested policy, an unchanged filesystem grade,
+working commands for local/supervisor, and startup rejection for required netns.
+Use a disposable Pod with its own network namespace; do not disable forwarding
+on a shared node to prepare this case.
