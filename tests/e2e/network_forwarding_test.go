@@ -61,8 +61,8 @@ func TestCarrierForwardingDisabled(t *testing.T) {
 				} `json:"subsystems"`
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
 			response, err := c.json(ctx, http.MethodGet, "/v1/status", "", nil, &status)
+			cancel()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -73,14 +73,18 @@ func TestCarrierForwardingDisabled(t *testing.T) {
 			}
 			t.Logf("ip_forward=0 filesystem=%s/%s network=%s/%s cause=%s stage=%s room=%s", status.Subsystems.Filesystem.Effective, status.Subsystems.Filesystem.Room, n.Effective, n.Room, n.Cause, n.Probe.Stage, status.Isolation.Effective)
 			const name = "forwarding-disabled"
+			ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
 			response, err = c.json(ctx, http.MethodPost, "/v1/beds", "", map[string]any{"id": name, "networkPolicy": map[string]any{"defaultAction": "deny"}, "pillows": workspacePillows()}, nil)
+			cancel()
 			if err != nil {
 				t.Fatal(err)
 			}
 			must2xx(t, "declare forwarding-disabled Bed", response)
 			c.waitBed(t, name, func(b bedView) bool { return b.Status.Readiness.Ready }, "ready despite carrier forwarding gap")
 			var detail protocol.BedDetail
+			ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
 			response, err = c.json(ctx, http.MethodGet, "/v1/beds/"+name, "", nil, &detail)
+			cancel()
 			if err != nil {
 				t.Fatal(err)
 			}
