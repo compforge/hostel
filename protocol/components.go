@@ -7,9 +7,14 @@ type PrivilegeStatus struct {
 }
 
 type NetworkStatus struct {
-	Enabled bool           `json:"enabled"`
-	Gateway string         `json:"gateway"`
-	Policy  *NetworkPolicy `json:"policy"`
+	Room            RoomType       `json:"room,omitempty"`
+	Level           string         `json:"level"`
+	RequestedPolicy *NetworkPolicy `json:"requested_policy,omitempty"`
+	PolicyStatus    string         `json:"policy_status"`
+	Reason          string         `json:"reason,omitempty"`
+	Cause           string         `json:"cause,omitempty"`
+	Gateway         string         `json:"gateway"`
+	Policy          *NetworkPolicy `json:"policy"`
 }
 
 type StoreStatus struct {
@@ -42,6 +47,7 @@ type VolumeMountStatus struct {
 }
 
 type FilesystemStatus struct {
+	Room     RoomType            `json:"room,omitempty"`
 	Mounts   []VolumeMountStatus `json:"mounts,omitempty"`
 	Prepared bool                `json:"prepared"`
 }
@@ -61,6 +67,7 @@ type RoomType string
 // RoomStatus summarizes attained isolation guarantees.
 type RoomStatus struct {
 	Requested RoomType `json:"requested"`
+	Satisfied bool     `json:"satisfied"`
 	Effective RoomType `json:"effective"`
 	Reasons   []string `json:"reasons,omitempty"`
 }

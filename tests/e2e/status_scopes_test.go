@@ -115,7 +115,7 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 	if global.Combinations != nil {
 		t.Fatal("status must report final components, not startup attempt history")
 	}
-	if global.Schema != 11 || global.Amenities["mcp"].Tenants != 1 {
+	if global.Schema != 12 || global.Amenities["mcp"].Tenants != 1 {
 		t.Fatalf("global status: %+v", global)
 	}
 	assertComponents("instance", global.Components,

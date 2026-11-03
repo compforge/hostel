@@ -27,7 +27,7 @@ func TestExplicitComponentConfigOverridesEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.MaxBeds != 0 || c.Bed.RoomType != "room" || c.Bed.Filesystem.Level != "confined" || c.Bed.Filesystem.Bwrap != tool.Off || c.Bed.Filesystem.PRoot != tool.Auto {
+	if c.MaxBeds != 0 || c.Bed.RoomType != "room" || c.Bed.Filesystem.Level != "private" || c.Bed.Filesystem.Bwrap != tool.Off || c.Bed.Filesystem.PRoot != tool.Auto {
 		t.Fatal("explicit component options lost")
 	}
 	s := c.Bed.Store
@@ -49,7 +49,7 @@ func TestStartupRejectsFeatureConflictsAndUnknownFlags(t *testing.T) {
 		}
 	}
 	_, err := Load(nil, Options{Bed: BedOptions{RoomType: ptr("room"), Filesystem: filesystem.Options{Bwrap: ptr(tool.Required)}}})
-	if err == nil {
-		t.Fatal("accepted room with required bwrap")
+	if err != nil {
+		t.Fatalf("minimum room must allow required bwrap: %v", err)
 	}
 }

@@ -9,10 +9,11 @@ const (
 	Private Level = "private"
 )
 
-func ExpectedLevel(room bed.RoomType) Level {
-	if room == bed.Suite {
-		return Private
+// Room maps realized network guarantees, not tool availability. The current
+// implementation has shared and private paths; private also satisfies room.
+func (l Level) Room() bed.RoomType {
+	if l == Private {
+		return bed.Suite
 	}
-	return Shared
+	return bed.Dorm
 }
-func (c Config) ForRoom(room bed.RoomType) Config { c.Level = ExpectedLevel(room); return c }

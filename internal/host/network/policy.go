@@ -24,11 +24,14 @@ type Policy struct {
 	Egress        []Rule `json:"egress"`
 }
 type PolicyStatus struct {
-	Status          string `json:"status"`
-	Mode            string `json:"mode"`
-	EnforcementMode string `json:"enforcementMode"`
-	Scope           string `json:"scope"`
-	Policy          Policy `json:"policy"`
+	RequestedPolicy *Policy           `json:"requested_policy,omitempty"`
+	Reason          string            `json:"reason,omitempty"`
+	Cause           hostel.ErrorCause `json:"cause,omitempty"`
+	Status          string            `json:"status"`
+	Mode            string            `json:"mode"`
+	EnforcementMode string            `json:"enforcementMode"`
+	Scope           string            `json:"scope"`
+	Policy          Policy            `json:"policy"`
 }
 type PolicyMutation struct {
 	Replace *Policy
@@ -137,14 +140,9 @@ type policyControl struct {
 	learn    func(context.Context, []dnsAddress) error
 }
 
-func (p *policyControl) update(ctx context.Context, mutation PolicyMutation) (PolicyStatus, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.closed {
-		return PolicyStatus{}, ErrUnavailable
-	}
-	next := p.current
-	changed := mutation.Replace != nil || mutation.Merge != nil || mutation.Remove != nil
+// ApplyMutation validates the entire desired policy before any state is published.
+func ApplyMutation(current Policy, mutation PolicyMutation) (Policy, error) {
+	next := current
 	if mutation.Replace != nil {
 		next = *mutation.Replace
 	}
@@ -153,7 +151,7 @@ func (p *policyControl) update(ctx context.Context, mutation PolicyMutation) (Po
 		for _, rule := range mutation.Merge {
 			normalized, err := normalizeTarget(rule.Target)
 			if err != nil {
-				return PolicyStatus{}, err
+				return Policy{}, err
 			}
 			rule.Target = normalized
 			kept := next.Egress[:0]
@@ -170,19 +168,29 @@ func (p *policyControl) update(ctx context.Context, mutation PolicyMutation) (Po
 		for _, target := range mutation.Remove {
 			normalized, err := normalizeTarget(target)
 			if err != nil {
-				return PolicyStatus{}, err
+				return Policy{}, err
 			}
 			remove[normalized] = true
 		}
-		next.Egress = make([]Rule, 0, len(p.current.Egress))
-		for _, rule := range p.current.Egress {
+		next.Egress = make([]Rule, 0, len(current.Egress))
+		for _, rule := range current.Egress {
 			if !remove[rule.Target] {
 				next.Egress = append(next.Egress, rule)
 			}
 		}
 	}
+	return NormalizePolicy(next)
+}
+
+func (p *policyControl) update(ctx context.Context, mutation PolicyMutation) (PolicyStatus, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return PolicyStatus{}, ErrUnavailable
+	}
+	changed := mutation.Replace != nil || mutation.Merge != nil || mutation.Remove != nil
 	if changed {
-		normalized, err := NormalizePolicy(next)
+		normalized, err := ApplyMutation(p.current, mutation)
 		if err != nil {
 			return PolicyStatus{}, err
 		}

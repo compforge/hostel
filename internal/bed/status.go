@@ -53,6 +53,7 @@ type ResourceStatus = protocol.ResourceStatus
 
 func cloneStatus(s Status) Status {
 	s.Network.Policy = clonePolicy(s.Network.Policy)
+	s.Network.RequestedPolicy = clonePolicy(s.Network.RequestedPolicy)
 	s.Filesystem.Mounts = slices.Clone(s.Filesystem.Mounts)
 	return s
 }
@@ -93,7 +94,11 @@ func NewOwners() Owners {
 	filesystem := writer(func(s *Status) *FilesystemStatus { return &s.Filesystem })
 	filesystem.clone = func(s FilesystemStatus) FilesystemStatus { s.Mounts = slices.Clone(s.Mounts); return s }
 	network := writer(func(s *Status) *NetworkStatus { return &s.Network })
-	network.clone = func(s NetworkStatus) NetworkStatus { s.Policy = clonePolicy(s.Policy); return s }
+	network.clone = func(s NetworkStatus) NetworkStatus {
+		s.Policy = clonePolicy(s.Policy)
+		s.RequestedPolicy = clonePolicy(s.RequestedPolicy)
+		return s
+	}
 	return Owners{
 		Lifecycle:  writer(func(s *Status) *LifecycleStatus { return &s.Lifecycle }),
 		Filesystem: filesystem,

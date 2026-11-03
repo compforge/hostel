@@ -7,9 +7,8 @@ import (
 )
 
 type Config struct {
-	NetNS          tool.Policy
-	Level          Level
-	FallbackReason string
+	NetNS tool.Policy
+	Level Level
 }
 type Options struct{ NetNS *tool.Policy }
 

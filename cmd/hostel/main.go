@@ -167,7 +167,7 @@ func main() {
 		log.Printf("hostel: filtered reserved carrier environment from bed processes: keys=%v", filtered)
 	}
 
-	networks := network.NewConfigured(context.Background(), selection.Network)
+	networks := network.NewSelected(context.Background(), selection.Network)
 	networks.SetPortManager(ports)
 	mgr.SetNetworkManager(networks)
 	resources := resource.NewConfigured(cfg.Bed.Resource)

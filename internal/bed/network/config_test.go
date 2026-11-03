@@ -19,7 +19,7 @@ func TestOffNetworkDoesNotConstructHostPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := m.Status()
-	if s.Enabled || s.Tools["netns"].Probe != "not_probed" || s.Reason != "disabled_by_config" {
+	if s.Effective == Private || s.Tools["netns"].Probe != "not_probed" || s.Reason != "disabled_by_config" {
 		t.Fatalf("%+v", s)
 	}
 	if a, err := m.Acquire(t.Context(), "bed"); err != nil || a != nil {
@@ -35,25 +35,16 @@ func TestOffNetworkDoesNotConstructHostPool(t *testing.T) {
 
 func TestNetworkCapabilityFactsDoNotFollowSelection(t *testing.T) {
 	m := &Manager{config: Config{Level: Shared}}
-	s := m.describe(Status{Enabled: true, Backend: "netns", Scope: "bed_processes"})
-	if s.Enabled || s.Effective != Shared || !reflect.DeepEqual(s.Supported, []Level{Shared, Private}) {
+	s := m.describe(Status{Effective: Private, Backend: "netns", Scope: "bed_processes"})
+	if s.Effective == Private || s.Effective != Shared || !reflect.DeepEqual(s.Supported, []Level{Shared, Private}) {
 		t.Fatalf("profile hid host support or enabled unrequested isolation: %+v", s)
 	}
 	m.config = Config{Level: Private}
-	strong := m.describe(Status{Enabled: true, Backend: "netns", Scope: "bed_processes"})
-	if !strong.Enabled || !reflect.DeepEqual(strong.Supported, s.Supported) {
+	strong := m.describe(Status{Effective: Private, Backend: "netns", Scope: "bed_processes"})
+	if strong.Effective != Private || !reflect.DeepEqual(strong.Supported, s.Supported) {
 		t.Fatalf("selection changed capability list: %+v", strong)
 	}
-	next, ok := m.config.WithoutOptionalNamespace("combination failed")
-	if !ok || next.NetNS != m.config.NetNS || next.Level != Shared {
-		t.Fatalf("fallback changed tool policy: %+v", next)
-	}
-	if _, ok := next.WithoutOptionalNamespace("still failed"); ok {
-		t.Fatal("fallback made no progress")
-	}
-	if _, ok := (Config{NetNS: tool.Required, Level: Private}).WithoutOptionalNamespace("failed"); ok {
-		t.Fatal("dropped required namespace")
-	}
+
 }
 
 type unavailableProvider struct{}
@@ -70,5 +61,28 @@ func TestRequiredNetworkFailsStartup(t *testing.T) {
 	m := &Manager{config: Config{NetNS: tool.Required}, provider: unavailableProvider{}}
 	if err := m.Start(t.Context()); err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestNetworkCandidatesRespectToolRequirements(t *testing.T) {
+	for _, tc := range []struct {
+		policy tool.Policy
+		want   []Level
+	}{
+		{tool.Auto, []Level{Private, Shared}},
+		{tool.Required, []Level{Private}},
+		{tool.Off, []Level{Shared}},
+	} {
+		candidates := (Config{NetNS: tc.policy}).Candidates()
+		var got []Level
+		for _, candidate := range candidates {
+			if candidate.NetNS != tc.policy {
+				t.Fatal("candidate changed the tool requirement")
+			}
+			got = append(got, candidate.Level)
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("policy=%s levels=%v want=%v", tc.policy, got, tc.want)
+		}
 	}
 }

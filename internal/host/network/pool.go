@@ -23,6 +23,7 @@ type Status struct {
 }
 
 type Probe struct {
+	Err        error             `json:"-"`
 	Attempted  bool              `json:"attempted"`
 	Stage      string            `json:"stage"`
 	DurationMS int64             `json:"duration_ms"`
@@ -86,7 +87,7 @@ func probePool(ctx context.Context, ports ...*PortManager) *Pool {
 		report.Reason = probe.Error
 		report.Cause = probe.Cause
 	}
-	log.Printf("network: enabled=%t backend=%s stage=%s cause=%s reason=%q", report.Available, report.Backend, probe.Stage, report.Cause, report.Reason)
+	log.Printf("network: private_available=%t backend=%s stage=%s cause=%s reason=%q", report.Available, report.Backend, probe.Stage, report.Cause, report.Reason)
 	return &Pool{report: report, backend: b, allocations: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 
@@ -319,7 +320,7 @@ func (m *Pool) Start(ctx context.Context) error {
 	p := probePool(ctx, m.ports)
 	m.backend, m.report, m.needsProbe = p.backend, p.report, false
 	if p.backend != nil && !p.report.Available {
-		m.startErr = fmt.Errorf("network probe cleanup remains pending: %s", p.report.Reason)
+		m.startErr = fmt.Errorf("network probe cleanup remains pending: %w", p.report.Probe.Err)
 	}
 	return m.startErr
 }

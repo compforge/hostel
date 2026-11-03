@@ -48,13 +48,13 @@ func TestIsolatedSessionCompatibility(t *testing.T) {
 	var diagnostics struct {
 		Components struct {
 			Network struct {
-				Enabled bool `json:"enabled"`
+				Effective string `json:"effective"`
 			} `json:"network"`
 		} `json:"components"`
 	}
 	verdict, err := c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
 	cancel()
-	if err != nil || verdict.Status != http.StatusOK || state.ShareNet == diagnostics.Components.Network.Enabled {
+	if err != nil || verdict.Status != http.StatusOK || state.ShareNet == (diagnostics.Components.Network.Effective == "private") {
 		t.Fatalf("isolated share_net=%t disagrees with network=%+v: %v", state.ShareNet, diagnostics.Components.Network, err)
 	}
 

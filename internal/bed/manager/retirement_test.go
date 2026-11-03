@@ -102,7 +102,9 @@ type retryReleaseNetwork struct {
 	calls int
 }
 
-func (*retryReleaseNetwork) Status() network.Status { return network.Status{Enabled: true} }
+func (*retryReleaseNetwork) Status() network.Status {
+	return network.Status{Effective: network.Private}
+}
 func (n *retryReleaseNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	return n, nil
 }

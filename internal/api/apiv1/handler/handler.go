@@ -153,6 +153,10 @@ func (s *Handler) RegisterRoutes(e *gin.Engine) {
 // respondBedError maps bed resolution/admission failures: a full or
 // resource-pressured instance is 429 backpressure, anything else is a bad id.
 func respondBedError(c *gin.Context, err error) {
+	if errors.Is(err, hostel.ErrUnavailable) {
+		respondFailure(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, "required Bed capability is unavailable", err)
+		return
+	}
 	if errors.Is(err, hostel.ErrNotFound) {
 		respondError(c, http.StatusNotFound, apiview.ErrBedInvalid, "bed not found")
 		return

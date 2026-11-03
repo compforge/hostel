@@ -9,5 +9,6 @@ import (
 )
 
 func probeBackend(context.Context, ...*PortManager) (backend, Probe) {
-	return nil, Probe{Cause: hostel.CauseCarrier, Stage: "platform", Error: "per-allocation network namespaces require Linux"}
+	err := hostel.WrapError(hostel.ErrUnavailable, "per-allocation network namespaces require Linux", hostel.CauseCarrier, nil)
+	return nil, Probe{Err: err, Cause: hostel.CauseCarrier, Stage: "platform", Error: err.Error()}
 }

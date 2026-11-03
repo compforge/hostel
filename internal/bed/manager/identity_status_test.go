@@ -135,7 +135,7 @@ type deadlineNetwork struct {
 }
 type deadlineAttachment struct{ owner *deadlineNetwork }
 
-func (*deadlineNetwork) Status() network.Status { return network.Status{Enabled: true} }
+func (*deadlineNetwork) Status() network.Status { return network.Status{Effective: network.Private} }
 func (n *deadlineNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	return &deadlineAttachment{n}, nil
 }

@@ -18,7 +18,7 @@ type orderedPolicies struct {
 	calls         atomic.Int32
 }
 
-func (p *orderedPolicies) Status() Status                                      { return Status{Enabled: true} }
+func (p *orderedPolicies) Status() Status                                      { return Status{Effective: Private} }
 func (p *orderedPolicies) Acquire(context.Context, string) (Attachment, error) { return p, nil }
 func (*orderedPolicies) Enter(*exec.Cmd) error                                 { return nil }
 func (*orderedPolicies) Gateway() string                                       { return "" }
@@ -75,5 +75,45 @@ func TestConcurrentPolicyPublicationFollowsAppliedOrder(t *testing.T) {
 	}
 	if b.Status().Network.Policy != nil {
 		t.Fatal("released allocation retained policy")
+	}
+}
+
+func TestSharedNetworkPreservesDesiredPolicyWithoutClaimingEnforcement(t *testing.T) {
+	m := WithProvider(unavailableProvider{}, bed.NewOwners().Network)
+	b := bed.New("tenant", "", bed.Spec{NetworkPolicy: &bed.NetworkPolicy{DefaultAction: "deny"}})
+	if err := m.Prepare(t.Context(), b); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Release(t.Context(), b)
+	s := b.Status().Network
+	if s.Room != bed.Dorm || s.Policy != nil || s.RequestedPolicy.DefaultAction != "deny" || s.PolicyStatus != "unenforced" {
+		t.Fatalf("%+v", s)
+	}
+	updated, err := m.UpdatePolicy(t.Context(), b, PolicyMutation{Merge: []Rule{{Action: "allow", Target: "EXAMPLE.com"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated.RequestedPolicy.Egress[0].Target = "changed-response.example"
+
+	if _, err := m.UpdatePolicy(t.Context(), b, PolicyMutation{Replace: &Policy{DefaultAction: "invalid"}}); !errors.Is(err, ErrInvalidPolicy) {
+		t.Fatal(err)
+	}
+	result, err := m.UpdatePolicy(t.Context(), b, PolicyMutation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != "unenforced" || result.RequestedPolicy.DefaultAction != "deny" || len(result.RequestedPolicy.Egress) != 1 || result.RequestedPolicy.Egress[0].Target != "example.com" {
+		t.Fatalf("%+v", result)
+	}
+	result.RequestedPolicy.Egress[0].Target = "mutated.example"
+	again, _ := m.UpdatePolicy(t.Context(), b, PolicyMutation{})
+	if again.RequestedPolicy.Egress[0].Target != "example.com" {
+		t.Fatal("published policy aliases owned state")
+	}
+	if _, err := m.UpdatePolicy(t.Context(), b, PolicyMutation{Remove: []string{"EXAMPLE.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Status().Network.RequestedPolicy; len(got.Egress) != 0 {
+		t.Fatalf("delete not reflected: %+v", got)
 	}
 }

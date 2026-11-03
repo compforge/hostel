@@ -4,6 +4,7 @@ package e2e_test
 
 import (
 	"context"
+	"github.com/qiankunli/hostel/protocol"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,8 +32,15 @@ func TestIsolationLevels(t *testing.T) {
 			if health.Isolation.Requested != requested {
 				t.Fatalf("isolation resolution: %+v", health.Isolation)
 			}
-			if required[requested] && health.Isolation.Effective != requested {
+			if required[requested] && isolationRank(health.Isolation.Effective) < isolationRank(requested) {
 				t.Fatalf("required isolation %s degraded to %s (files=%+v)", requested, health.Isolation.Effective, files)
+			}
+			if isolationRank(health.Isolation.Effective) < isolationRank(requested) {
+				response := c.createBed(t, "below-floor")
+				if response.Status != http.StatusServiceUnavailable {
+					t.Fatalf("below-floor create: %d %s", response.Status, response.Body)
+				}
+				return
 			}
 			if (health.ProcessView.Mode == "mount") != (files.Effective == "private") {
 				t.Fatalf("process_view=%s for effective isolation %s", health.ProcessView.Mode, health.Isolation.Effective)
@@ -58,6 +66,20 @@ func TestIsolationLevels(t *testing.T) {
 			c.waitBed(t, "isolation-a", func(b bedView) bool {
 				return b.Status.Phase == "resident" && b.Status.Readiness.Ready && b.Workdir == "/workspace"
 			}, "ready with Bed workdir")
+
+			var detail protocol.BedDetail
+			detailCtx, detailCancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer detailCancel()
+			response, err = c.json(detailCtx, "GET", "/v1/beds/isolation-a", "", nil, &detail)
+			if err != nil {
+				t.Fatal(err)
+			}
+			must2xx(t, "Bed domain isolation", response)
+			state := detail.Status
+			actual := min(isolationRank(string(state.Components.Filesystem.Room)), isolationRank(string(state.Components.Network.Room)))
+			if actual == 0 || isolationRank(string(state.Isolation.Effective)) != actual || !state.Isolation.Satisfied || state.Isolation.Requested != protocol.RoomType(requested) {
+				t.Fatalf("Bed status does not reflect prepared domains: %+v", state)
+			}
 
 			read, response := c.command(t, "isolation-b", map[string]any{
 				"command": "cat \"$TARGET\"",
@@ -300,3 +322,5 @@ func requiredIsolationLevels() map[string]bool {
 	}
 	return required
 }
+
+func isolationRank(level string) int { return map[string]int{"dorm": 1, "room": 2, "suite": 3}[level] }

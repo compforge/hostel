@@ -30,25 +30,36 @@ Bed 是跨机制不变的单元；Executor 是它当前可替换的进程承载�
 
 ### 对外房型与领域等级
 
-房型是以文件隔离保证为代表特征的用户分档，将多种能力组合概括为 dorm/room/suite。
-Hostel 常在已有 Pod 内运行，Bed 的核心需求是独立工作空间；房型按实际文件保证确定，
-网络、进程、身份和资源隔离在此基础上尽量增强，各 Component 分别披露实际边界。
+Hostel 通过共享 Carrier 提高 workload 密度，优先把 BedSpec 的使用语义兑现。缺少 mount namespace 时，
+路径投影和文件 API 补偿仍可提供独立工作空间的使用体验；这不等于进程侧已经具备同样强的访问屏障。
+房型评价隔离保证，不评价功能多少。dorm 也应尽力提供完整的文件、执行与网络体验。
 
-| 房型 | 文件最低保证 |
-|---|---|
-| dorm | shared：文件按 Bed 组织，进程侧共享访问边界 |
-| room | confined：阻止跨 Bed 文件访问，可以共享路径视图 |
-| suite | private：独立文件视图，并限制跨 Bed 文件访问 |
+`--isolation` / `HOSTEL_ISOLATION` 是实例接纳 Bed 的最低房型，默认 dorm。所有房型均尝试环境和工具策略
+允许的最强组合；dorm 不关闭可用增强，suite 不允许自动降到 room。旧的 auto 拼写兼容为 dorm 门槛，
+仍尽力选择最高能力。房型不进入 BedSpec。
 
-文件等级由 Filesystem 根据机制探测和实际组合验证确定，房型在用户请求档位内映射该等级。
-显式 Volumes/Mounts 表达各执行方允许共享的数据；PRoot/pathshim 只改善路径兼容性，不提高隔离等级。
-共享身份、网络或 PID namespace 不降低已兑现的文件房型，也不能提高弱文件边界的房型。
-例如 private 文件与共享网络、private 文件与独立网络，都可以满足 suite。
+领域保留自己的能力模型，只在汇总边界映射到房型，不要求每个领域都有三个实现档位：
 
-房型同时提供默认能力偏好：room/suite 尽力使用独立身份，suite/auto 尽力使用独立网络；
-PID namespace 等能力按各自策略选择。`auto` 请求最高文件档位，环境不足时按实际保证降级。
-组件拥有自己的能力类型、支持集合、选择和失败原因；统一 Component 契约只组合生命周期与
-类型化诊断，不要求不同领域映射到房型。`auto/off/required` 的选择规则见下文。
+| 领域能力 | 映射房型 | 保证范围 |
+|---|---|---|
+| filesystem shared | dorm | 文件按 Bed 归属，进程访问边界可能共享 |
+| filesystem confined | room | 限制跨 Bed 文件访问，可以共享路径视图 |
+| filesystem private | suite | 独立文件视图，并限制跨 Bed 文件访问 |
+| network shared | dorm | 共享 Carrier 网络，网络策略尽力兑现，未执行的规则明确披露 |
+| network private | suite | Bed 进程独立 netns，现有 DNS/nft 策略与跨 Bed 转发规则；具体限制见 network.md |
+
+当前网络没有独立的 room backend，suite 能力满足 room 门槛。进程、身份和资源组件暂不参与房型汇总。
+网络房型不扩大策略语义：域名规则控制 DNS，不等于 HTTP Host/SNI 或任意应用流量识别；共享设施出站不在
+Bed 进程作用域内，也不承诺 Carrier 管理服务已全部隔离。
+
+`Bed.actual = min(filesystem.room, network.room)`；只有 actual >= isolation 才能发布 Ready。
+实例能力已确定不足时，在 Bed 分配及 Store stage-in 前拒绝；具体 Bed 准备后再次检查实际保证。
+未准备的领域不报告已达到的房型，释放后清除。能力不足不关闭诊断服务，创建 API 返回 503 和 cause。
+实例探测用临时 Bed 验证能力，不受客户最低门槛限制；这个豁免不进入公开创建参数。
+
+各领域继续披露原生等级、选用机制和缺口。例如 fs=suite、net=dorm 时整体为 dorm，文件能力保留。
+机制组合存在冲突时优先选择整体房型较高的可执行组合；整体相同时优先保留较强文件保证，再比较网络保证。
+PRoot/pathshim 只改善路径体验，不提高文件隔离评级。显式只读 mount 仍必须兑现，不能降成可写。
 
 ### 各维度的目标与当前兑现程度
 
@@ -68,7 +79,7 @@ Store 管持久化与恢复，和这些能力协作，但不提供隔离屏障�
 
 - Component 拥有领域行为、生命周期、配置和状态。
 - 组件拥有自己的能力类型与支持集合，结合 Config 选择机制，并在类型化 Status 中报告实际结果。
-- 房型由文件隔离保证决定，其他组件的能力分别报告。
+- 文件和网络各自映射房型，Bed 取两者较低值，与实例最低要求比较。
 - Tool 是组件为兑现 Bed 能力而选择、组合的工具，既包括外部程序，也包括内核机制和身份技术，例如 Filesystem 的 Bwrap、Landlock、UID、PRoot、Pathshim，
   Network 的 NetNS，以及 Resource 的 cgroup accounting。
 - Requirements 是使用该 Tool 的环境前提，包含 Linux Capabilities、外部程序和系统条件。
@@ -82,12 +93,10 @@ Tool 使用统一的 Policy：
 | off | 排除该工具，不执行其运行探测，不创建其运行资源 |
 | required | 必须可用且实际采用，不允许其他工具替代 |
 
-`--isolation` / `HOSTEL_ISOLATION` 和内部 `BedOptions.RoomType` 设置实例的文件房型目标和默认增强偏好。
-这是实例级配置，Filesystem 的内部预期等级由房型推导。dorm 请求 shared 文件、shared 身份、shared 网络；
-room 请求 confined 文件，偏好 dedicated 身份、shared 网络；suite/auto 请求 private 文件，偏好 dedicated 身份、private 网络。
-房型是否达标只取决于文件保证；身份和网络偏好未兑现时由各组件解释原因。
+`--isolation` / `HOSTEL_ISOLATION` 和内部 `BedOptions.RoomType` 设置最低隔离要求。
+Filesystem 和 Network 始终以最高原生等级为选择目标，独立身份也在允许范围内尽力采用。
 Tool Policy 控制采用哪个实现。例如 room、UID=required 要求使用 UID/DAC 文件机制。互斥功能同时 required，
-或房型与 required 实现冲突，在探测前拒绝配置。Required process path helper 会排除互斥的 Bwrap 挂载视图。
+或 required 实现互相冲突，在探测前拒绝配置。Required process path helper 会排除互斥的 Bwrap 挂载视图。
 
 基础 BedFS 路径归属和必要的执行降权没有通用关闭开关。关闭可选隔离不绕过这些契约。
 Requirements 由实现声明，caller 不给环境前提设置 Policy；实际准备顺序和依赖校验由所属组件负责。
@@ -97,7 +106,7 @@ Requirements 由实现声明，caller 不给环境前提设置 Policy；实际�
 ### 启动、失败与观测
 
 启动入口合并配置并校验冲突，各组件按策略探测、选择和准备，再以临时 Bed 验证 command/session/Pillow 主进程的组合。
-组合失败时先保留文件保证，依次尝试可选进程、网络和身份组合；耗尽后才更换文件候选，并恢复原始增强偏好重新探测。
+每个文件候选尝试可选进程、网络和身份组合，恢复原始增强偏好探测下一个候选；比较验证成功的组合，优先最大化 fs/net 的最低房型。
 整体选择、单次组合执行与清理都有独立的有界预算；候选耗尽或选择预算耗尽则失败。
 Required 功能启动时无法满足就启动失败；清理失败也终止回退，保留资源 owner 和错误，不继续尝试下一组。
 启动后具体 Bed 准备失败则该 Bed 不进入 Ready。已经采用的隔离实现执行失败，不能静默降级或放开边界。
@@ -272,7 +281,7 @@ Carrier 环境继承与配置来源见 [pillow.md](pillow.md#配置来源)。环
 
 ### 网络与资源独立演进
 
-网络由 Network 按默认偏好和显式策略选择，不从实际文件 backend 推导。suite/auto 尽力使用 private 网络；dorm/room 默认 shared。
+网络由 Network 按宿主能力和工具策略尽力选择 private，不从请求房型或文件 backend 推导。
 实例探测 netns 可用且实际选用时为 Bed 分配网络，命令、shell 和 Pillow 主进程共用，
 Executor 替换不改变该 resident Bed 的网络身份；能力不可用时共享 Carrier 网络。
 当前 netns 作用域是 Bed 进程，Chromium/MCP 的出站仍来自 Carrier。BrowserContext
@@ -284,7 +293,7 @@ Executor 替换不改变该 resident Bed 的网络身份；能力不可用时共
 
 ## 能力披露与验证
 
-`/healthz.isolation` 和 `/v1/status.isolation` 报告文件保证对应的房型的 requested/effective/reasons；
+`/healthz.isolation` 和 `/v1/status.isolation` 报告最低要求与实际综合房型的 requested/effective/satisfied/reasons；
 `/v1/status.components.filesystem` 报告 shared/confined/private 文件等级、上限、机制及视图；
 Privilege 与 Network 分别报告自己的 supported 和最终选择结果；启动组合失败原因通过日志排查。
 状态 schema 见 [observability.md](observability.md)；文件机制从 `components.filesystem` 查询。

@@ -31,7 +31,7 @@ func TestRootfulPreparedMount(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			options := restrictedOptions()
 			options.Bed.Filesystem.Bwrap = value(tool.Required)
-			target := startTarget(t, targetOptions{isolation: "suite", executor: backend, config: &options})
+			target := startTarget(t, targetOptions{isolation: "dorm", executor: backend, config: &options})
 			c := target.client
 			const bed = "rootful"
 			// Seed a private root as existing local data. Bed preparation must retain

@@ -66,7 +66,7 @@ func TestRuntimePreservesFilesBeforeOptionalNetwork(t *testing.T) {
 				}{s.Files.Level(), s.Network.Level})
 				a := runtimeProbeResult{Filesystem: s.Files.Name(), Network: string(s.Network.Level), Executor: "local"}
 				if s.Files.Level() == isolation.Private && (tc.failPrivate || s.Network.Level == network.Private) {
-					a.Error = "incompatible environment"
+					a.Err = errors.New("incompatible environment")
 				}
 				return a, nil
 			}
@@ -105,12 +105,12 @@ func TestRuntimeIdentityFallbackMustPreserveFileGuarantee(t *testing.T) {
 			calls++
 			a := runtimeProbeResult{Executor: "local", Network: "shared"}
 			if s.Identity.Effective == privilege.Dedicated {
-				a.Error = "dedicated identity rejected"
+				a.Err = errors.New("dedicated identity rejected")
 			}
 			return a, nil
 		}
 		got, reason, err := tryFileCombination(t.Context(), facts, t.TempDir(), "/bin/bash", cfg, cfg.Filesystem, selection, nil, resolver, probe)
-		ok := reason == ""
+		ok := reason == nil
 		if err != nil || ok == identityRequiredByFiles {
 			t.Fatalf("required=%t ok=%t error=%v", identityRequiredByFiles, ok, err)
 		}
@@ -143,7 +143,7 @@ func TestRuntimeRestoresPIDCandidateForSharedNetwork(t *testing.T) {
 		selected := status.Probe != "available"
 		a := runtimeProbeResult{Executor: "local", Network: string(s.Network.Level), ExecutorTools: map[string]tool.Status{"pidns": tool.Describe(tool.Auto, tool.Requirements{}, true, true, selected, "")}}
 		if s.Network.Level == network.Private {
-			a.Error = "private network combination failed"
+			a.Err = errors.New("private network combination failed")
 		}
 		if s.Network.Level == network.Shared && !selected {
 			return a, errors.New("lost original PID candidate")
@@ -153,5 +153,44 @@ func TestRuntimeRestoresPIDCandidateForSharedNetwork(t *testing.T) {
 	got, err := resolveRuntime(t.Context(), facts, t.TempDir(), "/bin/bash", cfg, nil, probe)
 	if err != nil || calls != 3 {
 		t.Fatalf("calls=%d result=%+v error=%v", calls, got, err)
+	}
+}
+
+func TestRuntimeSelectsHigherCombinedRoomRegardlessOfFloor(t *testing.T) {
+	cfg := baselineRuntimeConfig()
+	cfg.Room = bed.Dorm
+	cfg.Filesystem.Bwrap, cfg.Filesystem.UID = tool.Auto, tool.Auto
+	cfg.Network.NetNS = tool.Auto
+	facts := hostfacts.Collect()
+	facts.EffectiveCaps = 0
+	base, err := isolation.Resolve(facts, baselineRuntimeConfig().Filesystem, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := func(_ hostfacts.Snapshot, c isolation.Config, _ string) (isolation.Isolator, error) {
+		if c.Level != "private" {
+			t.Fatalf("floor capped file selection: %s", c.Level)
+		}
+		if c.Excluded["bwrap"] == "" {
+			return candidateFiles{Isolator: base, Report: base.(isolation.Report), name: "bwrap", level: isolation.Private}, nil
+		}
+		if c.Excluded["uid"] == "" {
+			return candidateFiles{Isolator: base, Report: base.(isolation.Report), name: "uid", level: isolation.Confined}, nil
+		}
+		return base, nil
+	}
+	probe := func(_ context.Context, _ hostfacts.Snapshot, _, _ string, _ RuntimeConfig, s RuntimeSelection, _ *hostnetwork.PortManager) (runtimeProbeResult, error) {
+		a := runtimeProbeResult{Network: string(s.Network.Level), Executor: "local"}
+		if s.Files.Level() == isolation.Private && s.Network.Level == network.Private {
+			a.Err = errors.New("private file view cannot compose with network")
+		}
+		return a, nil
+	}
+	selected, err := selectRuntime(t.Context(), facts, t.TempDir(), "/bin/bash", cfg, nil, resolver, probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Files.Level() != isolation.Confined || selected.NetworkLevel != network.Private {
+		t.Fatalf("selected weaker overall room: file=%s net=%s", selected.Files.Level(), selected.NetworkLevel)
 	}
 }

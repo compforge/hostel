@@ -35,7 +35,7 @@ backup integrity. The opt-in successful round trip below covers durable formats
 against a real S3-compatible service.
 
 By default, a host may honestly degrade an unavailable isolation request. A
-release runner can require complete room profiles to be realized instead (suite now includes dedicated identity and private network, not only bwrap):
+release runner can require complete room profiles to be realized instead (the floor must be met by both filesystem and network):
 
 ```sh
 HOSTEL_E2E_REQUIRE_ISOLATION=dorm,room,suite make e2e
@@ -213,8 +213,8 @@ to reach the test-owned browser fixture.
 
 In a disposable Linux container with the required namespace, routing and nft
 permissions, set `HOSTEL_E2E_REQUIRE_NETWORK=1` and run `make e2e` in binary
-mode. `TestNetworkNamespaces` requires an enabled diagnostic verdict and checks
-the `local` / `supervisor` × `dorm` / `room` / `suite` matrix: shared Bed namespaces for dorm/room and separate namespaces for suite,
+mode. `TestNetworkNamespaces` requires a private network diagnostic verdict and checks
+the `local` / `supervisor` × `dorm` / `room` / `suite` matrix: separate Bed namespaces at every minimum isolation setting,
 command/session namespace consistency, zero capability sets, `no_new_privs`, and
 purge/recreate. Set `HOSTEL_E2E_REQUIRE_ISOLATION=dorm,room,suite` to reject profile
 degradation as well. Binary fixtures use a traversable workspace root so a selected
@@ -333,7 +333,7 @@ path is built into Hostel.
 
 ### 文件房型与增强能力
 
-`TestSuiteWithSharedCapabilities` 在 rootful binary profile 下验证私有文件视图配合共享身份、
+`TestPrivateFilesWithSharedNetwork` 在 rootful binary profile 下验证私有文件视图配合共享身份、
 网络和 PID namespace 仍为 suite；通过 run-owned nft 失败验证真实网络探测降级，检查命令、
 session、Pillow main process 与 file API 的一致性、跨 Bed 文件拒绝访问，以及显式 NetworkPolicy 不被忽略。
 该用例与 `TestPrivatePIDNamespaceRecovery` 共同覆盖静态组合和 Executor 替换后的房型保证。
@@ -353,3 +353,13 @@ make e2e E2E_ARGS='-run ^TestBedVolumeConsumers -timeout 3m'
 
 `TestManagedVolumeRoundTrip` covers CAS/Pack/Tar/Auto with two Beds and two persistent volumes each,
 changed mount paths on a fresh Carrier, temporary-volume and Rootfs exclusion, and purge cleanup.
+
+## Minimum isolation admission
+
+`TestIsolationLevels` verifies that a floor below the attained room still uses stronger capabilities,
+while an unattainable floor returns 503 on Bed creation without hiding diagnostics. On macOS the
+room/suite cases verify rejection, not Linux isolation. `TestFeaturePoliciesOff` verifies that dorm
+retains file/command usability with mechanisms disabled and reports policy enforcement gaps.
+Mechanism-specific mount/PID tests use a dorm floor plus required tools so they do not accidentally
+require a separate network backend. `TestPrivateFilesWithSharedNetwork` preserves private file
+checks while expecting an overall dorm room and explicitly unenforced network rules.

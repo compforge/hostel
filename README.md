@@ -78,18 +78,21 @@ without Chromium. Available isolation depends on host and container permissions.
 
 ## Isolation and access
 
-`--isolation` requests an instance-wide profile:
+`--isolation` / `HOSTEL_ISOLATION` sets the minimum acceptable isolation, not a ceiling.
+Hostel always attempts the strongest supported combination while preserving BedSpec usability through
+mechanism alternatives, path mapping and API compensation.
 
-| Profile | Requested boundaries |
+| Minimum | Required guarantees |
 |---|---|
-| `dorm` | Files organized per bed, with shared process-side access |
-| `room` | Restricted cross-bed file access |
-| `suite` | Private filesystem views and restricted cross-bed file access |
-| `auto` | Request suite and allow degradation to supported mechanisms |
+| `dorm` (default) | Shared boundaries are acceptable; missing network enforcement is disclosed |
+| `room` | Both filesystem and network must attain at least room |
+| `suite` | Both filesystem and network must attain suite |
 
-Room types summarize file isolation. Network, identity, PID namespaces and resource
-controls are additional capabilities, reported independently; shared networking does
-not lower a suite. Explicit requirements must be fulfilled.
+Filesystem shared/confined/private maps to dorm/room/suite. Network shared/private maps to dorm/suite;
+there is no intermediate network backend today. Bed isolation is the minimum of the two attained rooms.
+A weaker domain never strips stronger features from another. A Bed below the minimum is rejected;
+status remains available for diagnosis. Legacy `auto` is an alias for the dorm admission floor.
+Network grades cover Bed processes and the documented DNS/IP policy semantics, not all carrier traffic.
 
 Check `/healthz` and `/v1/status` for actual capabilities. Profiles depend on the
 host; shared Chromium/MCP traffic uses the carrier network, and per-bed resource

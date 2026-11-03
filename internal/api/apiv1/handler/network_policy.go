@@ -77,7 +77,7 @@ func (s *Handler) networkPolicy(c *gin.Context) {
 		return
 	}
 	if c.Request.Method != http.MethodGet {
-		tracing.InfoContext(ctx, "network policy applied", "bed", b.Name, "mode", status.Mode, "rules", len(status.Policy.Egress))
+		tracing.InfoContext(ctx, "network policy evaluated", "bed", b.Name, "mode", status.Mode, "rules", len(status.Policy.Egress))
 	}
 	c.JSON(http.StatusOK, status)
 }

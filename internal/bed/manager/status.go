@@ -15,8 +15,12 @@
 package manager
 
 import (
+	"errors"
+	"fmt"
+	"log"
 	"time"
 
+	hostel "github.com/qiankunli/hostel/internal"
 	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/configuration"
 
@@ -99,11 +103,41 @@ func (m *Manager) Status() Status {
 }
 
 func (m *Manager) RoomStatus() model.RoomStatus {
-	requested := m.roomType
-	if requested == "" {
-		requested = m.iso.Level().Room()
+	return model.SummarizeRoom(m.roomType, m.iso.Level().Room(), m.network.Status().Room)
+}
+
+func (m *Manager) BedRoomStatus(b *model.Bed) model.RoomStatus {
+	s := b.Status()
+	return model.SummarizeRoom(m.roomType, s.Filesystem.Room, s.Network.Room)
+}
+
+// checkIsolation is the only tenant admission comparison. Component guarantees
+// are evaluated independently; diagnostic text never determines attribution.
+func (m *Manager) checkIsolation(name string, files, net model.RoomType) error {
+	s := model.SummarizeRoom(m.roomType, files, net)
+	if s.Satisfied {
+		return nil
 	}
-	return model.SummarizeRoom(requested, m.iso.Level().Room())
+	var failures []error
+	for _, domain := range []struct {
+		name   string
+		actual model.RoomType
+		err    error
+	}{{"filesystem", files, nil}, {"network", net, m.network.UnavailableError()}} {
+		if model.Rank(domain.actual) < model.Rank(s.Requested) {
+			message := fmt.Sprintf("%s below required isolation: required=%s actual=%s", domain.name, s.Requested, domain.actual)
+			failure := domain.err
+			if failure == nil {
+				failure = errors.New(message)
+			} else {
+				failure = fmt.Errorf("%s: %w", message, failure)
+			}
+			failures = append(failures, hostel.WrapError(hostel.ErrUnavailable, "bed isolation", hostel.CauseUnknown, failure))
+		}
+	}
+	err := errors.Join(failures...)
+	log.Printf("bed isolation admission rejected bed=%s required=%s actual=%s cause=%s reasons=%v", name, s.Requested, s.Effective, hostel.CauseOf(err), s.Reasons)
+	return err
 }
 
 func (m *Manager) startEnvironmentProbe(started time.Time) {
@@ -134,6 +168,10 @@ func (m *Manager) finishEnvironmentProbe(started time.Time, err error) {
 func (m *Manager) BedModel(name string) *model.Bed {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.bedModelLocked(name)
+}
+
+func (m *Manager) bedModelLocked(name string) *model.Bed {
 	if b := m.beds[name]; b != nil {
 		return b.Bed
 	}
@@ -144,4 +182,30 @@ func (m *Manager) BedModel(name string) *model.Bed {
 		return init.model
 	}
 	return nil
+}
+
+// BedObservation selects one lifecycle representation and its identity. Resident
+// is set for a resident Bed; otherwise Initialization describes its transition.
+// The handles are observations, not admitted operations or frozen component state.
+type BedObservation struct {
+	Resident       *managedBed
+	Model          *model.Bed
+	Initialization InitializationStatus
+}
+
+// ObserveBed resolves existence across lifecycle collections in one critical
+// section. A concurrent publication cannot fall between two absence checks.
+// +rule=`A declared Bed must remain observable while it moves from initializing to resident.`
+// +link:doc=docs/bed.md
+func (m *Manager) ObserveBed(name string) (BedObservation, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if b := m.beds[name]; b != nil {
+		return BedObservation{Resident: b, Model: b.Bed}, true
+	}
+	initialization, ok := m.initializationLocked(name)
+	if !ok {
+		return BedObservation{}, false
+	}
+	return BedObservation{Model: m.bedModelLocked(name), Initialization: initialization}, true
 }
