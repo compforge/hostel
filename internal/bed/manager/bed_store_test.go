@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
@@ -148,13 +149,16 @@ func TestBedStoreUsesLocalMetadataAndDefaultsAfterEviction(t *testing.T) {
 		t.Fatal(err)
 	}
 	// An orphaned working copy retains its own Store across a daemon restart.
-	if err := saveMeta(dir, bedMeta{Version: 2, BedID: "one", Sync: "noop", Volumes: testWorkspaceVolume("none")}); err != nil {
+	if err := saveMeta(dir, bedMeta{Version: 2, BedID: "one", Sync: "noop", Volumes: []model.VolumeSpec{}}); err != nil {
 		t.Fatal(err)
 	}
 	st := newFakeStore()
 	m := storeTestManager(t, root, st)
 	defer m.Close(ctx)
-	b, err := declareTestBed(m, ctx, "one")
+	if _, err := m.InitializeBed(ctx, "one", CreateOptions{Pillows: []model.PillowSpec{{Name: "main"}}}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := m.Ensure(ctx, "one")
 	if err != nil {
 		t.Fatal(err)
 	}

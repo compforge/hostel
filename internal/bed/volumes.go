@@ -112,12 +112,14 @@ func ValidateVolumeMounts(spec Spec) error {
 	return nil
 }
 
-// ManagedVolumes is the portable data contract. Host paths and Pillow process
-// configuration belong to the local declaration, never the snapshot.
-func ManagedVolumes(volumes []VolumeSpec) []VolumeSpec {
+// PersistentVolumes is the portable data contract; temporary volumes and host
+// paths belong to the local declaration.
+// +spec=`Only managed persistence=sync volumes constrain snapshot restoration. Temporary volumes are supplied by the new Bed declaration.`
+// +link=component://docs/volumes.md
+func PersistentVolumes(volumes []VolumeSpec) []VolumeSpec {
 	out := make([]VolumeSpec, 0, len(volumes))
 	for _, v := range CloneVolumes(volumes) {
-		if v.Managed != nil {
+		if v.Managed != nil && v.Managed.Persistence == "sync" {
 			out = append(out, v)
 		}
 	}

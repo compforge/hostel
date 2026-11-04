@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	hostel "github.com/qiankunli/hostel/internal"
 	"os"
@@ -158,4 +159,87 @@ func TestCustomVolumeRestoreRequiresPillowDeclaration(t *testing.T) {
 			t.Fatalf("restored=%q err=%v", data, err)
 		}
 	})
+}
+
+// +case:id=temporary_volumes_after_restore,desc=`Restore persistent data with a changed temporary-volume declaration from a snapshot`,expect=`Persistent data survives, temporary volumes are empty and only the new declaration is used`
+func TestRestoreUsesCurrentTemporaryVolumes(t *testing.T) {
+	st := &dataVolumeStore{newFakeStore()}
+	first := storeTestManager(t, t.TempDir(), st)
+	defer first.Close(t.Context())
+	durable := model.VolumeSpec{Name: "data", Managed: &model.ManagedVolume{Persistence: "sync"}}
+	temporary := model.VolumeSpec{Name: "exchange", Managed: &model.ManagedVolume{Persistence: "none"}}
+	options := CreateOptions{Volumes: []model.VolumeSpec{durable, temporary}, Pillows: []model.PillowSpec{{Name: "main", Mounts: []model.VolumeMount{{Volume: "data", Path: "/data"}, {Volume: "exchange", Path: "/exchange"}}}}}
+	if _, err := first.InitializeBed(t.Context(), "custom", options); err != nil {
+		t.Fatal(err)
+	}
+	b, err := first.Ensure(t.Context(), "custom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"data", "exchange"} {
+		if err := os.WriteFile(filepath.Join(b.Spec().Dir, "volumes", name, "marker.txt"), []byte(name), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ok, err := first.Evict(t.Context(), "custom"); err != nil || !ok {
+		t.Fatalf("evict: %v %v", ok, err)
+	}
+	var meta bedMeta
+	if err := json.Unmarshal(st.metas["custom"], &meta); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(meta.Volumes, []model.VolumeSpec{durable}) {
+		t.Fatalf("snapshot includes temporary declaration: %+v", meta.Volumes)
+	}
+	for _, scenario := range []struct {
+		name        string
+		temporary   string
+		omitVolumes bool
+	}{
+		{name: "recreate", temporary: "exchange"},
+		{name: "replace", temporary: "replacement"},
+		{name: "remove"},
+		{name: "omit", omitVolumes: true},
+	} {
+		name := scenario.temporary
+		t.Run(scenario.name, func(t *testing.T) {
+			next := storeTestManager(t, t.TempDir(), st)
+			defer next.Close(t.Context())
+			restore := CreateOptions{Volumes: []model.VolumeSpec{durable}, Pillows: []model.PillowSpec{{Name: "main", Mounts: []model.VolumeMount{{Volume: "data", Path: "/data"}}}}}
+			if name != "" {
+				restore.Volumes = append(restore.Volumes, model.VolumeSpec{Name: name, Managed: &model.ManagedVolume{Persistence: "none"}})
+				restore.Pillows[0].Mounts = append(restore.Pillows[0].Mounts, model.VolumeMount{Volume: name, Path: "/scratch"})
+			}
+			if scenario.omitVolumes {
+				restore.Volumes = nil
+			}
+			if _, err := next.InitializeBed(t.Context(), "custom", restore); err != nil {
+				t.Fatal(err)
+			}
+			restored, err := next.Ensure(t.Context(), "custom")
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(restored.Spec().Dir, "volumes", "data", "marker.txt"))
+			if err != nil || string(data) != "data" {
+				t.Fatalf("persistent data=%q err=%v", data, err)
+			}
+			if name != "" {
+				entries, err := os.ReadDir(filepath.Join(restored.Spec().Dir, "volumes", name))
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("temporary contents=%v err=%v", entries, err)
+				}
+			}
+			if name != "exchange" {
+				if _, err := os.Stat(filepath.Join(restored.Spec().Dir, "volumes", "exchange")); !os.IsNotExist(err) {
+					t.Fatalf("obsolete temporary volume exists: %v", err)
+				}
+			}
+			changed := restore
+			changed.Volumes = append(model.CloneVolumes(restored.Spec().Volumes), model.VolumeSpec{Name: "live-change", Managed: &model.ManagedVolume{Persistence: "none"}})
+			if _, err := next.InitializeBed(t.Context(), "custom", changed); !errors.Is(err, ErrPathsConflict) {
+				t.Fatalf("live declaration change=%v", err)
+			}
+		})
+	}
 }

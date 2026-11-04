@@ -564,7 +564,7 @@ func (m *Manager) persistBed(ctx context.Context, b *managedBed, trigger string)
 			meta = bedMeta{Version: 1, BedID: b.Name, CreatedAt: b.Spec().CreatedAt, Sync: b.Spec().StoreKind}
 		}
 		meta.Version = 2
-		meta.Volumes = model.ManagedVolumes(b.Spec().Volumes)
+		meta.Volumes = model.PersistentVolumes(b.Spec().Volumes)
 		meta.Generation++
 		// Flush counters before packing so they travel with the snapshot.
 		// LastPersistMs necessarily lags one persist behind because this

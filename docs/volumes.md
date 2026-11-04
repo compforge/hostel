@@ -55,7 +55,7 @@ Pillow 列表必须显式声明，Hostel 不推断任何挂载；每个 Pillow
 <beds-root>/
 ├── .identities/                 # 本地身份和执行声明，不进入快照
 ├── bed1/
-│   ├── meta.json                # generation 与 managed 卷契约
+│   ├── meta.json                # generation 与 sync 卷契约
 │   ├── rootfs/                  # 临时根数据，例如 /tmp
 │   └── volumes/
 │       ├── workspace/           # sync
@@ -71,8 +71,8 @@ Rootfs 为未命中挂载的数据提供本地根，不参与自动持久化。P
 替换以及保留目录的 daemon 恢复都保留本地卷数据；正常 evict 删除整个本地 Bed 目录，
 再次创建只恢复 sync 卷内容，none 卷和 Rootfs 重新建立。HostPath 生命周期始终由外部管理。
 
-本地身份记录保存 Pillow、卷和宿主资源声明；远端快照保存 managed 卷契约与 sync 卷内容，
-排除 Rootfs、none 卷内容、HostPath、环境配置和凭据。`meta.json` 位于进程 Rootfs 外；
+本地身份记录保存 Pillow、卷和宿主资源声明；远端快照只保存 sync 卷声明与内容，
+排除 Rootfs、none 卷声明及内容、HostPath、环境配置和凭据。`meta.json` 位于进程 Rootfs 外；
 private 视图遮蔽 Bed 父目录，再挂回自己的根与卷。其他机制的访问保证见 [isolation.md](isolation.md)。
 
 ## 路径与文件视图
@@ -161,7 +161,10 @@ Store 复用实例的 S3 bucket、prefix、endpoint、region 与凭据；凭据�
 最终回收 → 停止所有写入 → 同步成功 → 释放和删除本地数据
 ```
 
-恢复时依据已有 managed 卷契约补全或核对声明，不把未声明卷一律替换成默认 workspace。
+恢复时只依据已有 sync 卷契约补全或核对持久卷声明，不把未声明卷一律替换成默认 workspace。
+none 卷按本次声明创建为空目录，可增加、删除或改名。
+省略 volumes 时只从快照补全 sync 卷，临时卷及其 Pillow mounts 必须由创建方声明。
+同一本地生命周期（包括运行中和保留本地身份的 daemon 恢复）仍要求完整卷声明一致。
 恢复失败清理旁路目录、保留原本地现场；数据契约不匹配不能发布。持久化失败阻止删除唯一
 本地副本。异常遗留目录称 luggage，初始化按 generation 判断新鲜度，过期时替换而不合并；
 回收与 UID 保留见 [bed.md](bed.md)。正常关闭保留本地数据，但宿主丢失后的恢复依赖远端快照。
