@@ -8,6 +8,7 @@ Hostel 当前未交付的演进项与待修复项（隔离目标及组合约束�
 - 透明凭据代理（见 `network.md`）
 - Chromium：创建各 Bed 的 BrowserContext 时指定 `proxyServer`，代理按 Bed 执行出站策略；验证 bypass、QUIC/WebRTC 等路径后再声明浏览器网络治理能力（见 `network.md`）
 - bwrap 安全纵深（seccomp memfd / 真 setuid）
+- 按需加载文件树（待做）：manifest 先提供目录与元数据，首次读取获取内容；go-fuse 探索、写入与生命周期边界见 [lazy-file-tree.md](lazy-file-tree.md)。
 - overlay CoW（临时层）
 - PTY WebSocket
 - Jupyter amenity 实例
