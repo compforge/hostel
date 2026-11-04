@@ -29,10 +29,7 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 			}
 			target := startTarget(t, options)
 			c := target.client
-			health := requireSupportedArchiveReplaceView(t, c)
-			if forcePathshim && health.ProcessView.Mode != "pathshim" {
-				t.Fatalf("requested real pathshim coverage but selected %+v", health.ProcessView)
-			}
+			health := requireSupportedArchiveReplaceView(t, c, forcePathshim)
 
 			t.Logf("scenario=%s effective=%s process_view=%s", scenario, health.Isolation.Effective, health.ProcessView.Mode)
 			type bedCase struct {
@@ -206,7 +203,7 @@ exit 99
 	return path
 }
 
-func requireSupportedArchiveReplaceView(t *testing.T, c *apiClient) healthView {
+func requireSupportedArchiveReplaceView(t *testing.T, c *apiClient, requirePathshim bool) healthView {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -214,6 +211,10 @@ func requireSupportedArchiveReplaceView(t *testing.T, c *apiClient) healthView {
 	result, err := c.json(ctx, "GET", "/healthz", "", nil, &health)
 	if err != nil || result.Status != http.StatusOK {
 		t.Fatalf("healthz: status=%d err=%v body=%s", result.Status, err, result.Body)
+	}
+	// +rule=`Explicit pathshim coverage must fail on unavailable or fallback views before the optional auto profile can skip.`
+	if requirePathshim && (!health.ProcessView.Available || health.ProcessView.Mode != "pathshim") {
+		t.Fatalf("requested real pathshim coverage but selected %+v", health.ProcessView)
 	}
 	if !health.ProcessView.Available || (health.ProcessView.Mode != "mount" && health.ProcessView.Mode != "pathshim" && health.ProcessView.Mode != "proot") {
 		t.Skipf("archive replacement requires a process view: %+v", health.ProcessView)

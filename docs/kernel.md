@@ -2,7 +2,13 @@
 
 ## 定位与目标
 
-**Hostel 协调各 Subsystem，尽力满足 BedSpec，并按 Subsystem 如实报告落实状态；caller 决定这些结果是否满足使用要求。**
+**Hostel 协调各 Subsystem，尽力满足 BedSpec，并按 Subsystem 如实报告落实状态；caller 根据真实状态决定是否使用。**
+
+Hostel 的启动与持续运行独立于 caller 的使用决策。各 Subsystem 在宿主条件允许的范围内
+尽力提供能力并报告实际状态；caller 发现能力不满足需求时可以不用，Hostel 仍继续运行。
+caller 的选择不构成验收或激活阶段，声明的 Pillow 主进程按 Bed 生命周期启动。
+能力等级不足本身不阻止运行；实际准备、执行或清理失败仍按所属生命周期报告和处理，
+显式 required 工具与只读挂载等功能契约的失败语义见 [隔离与能力选择](isolation.md#启动失败与观测)。
 
 **Hostel 是面向 Agent 的 Pod 式工作负载运行时，通过 BedSpec 组织执行环境与共享资源，内建工作数据同步，并根据宿主能力分级兑现运行与隔离需求。**
 
