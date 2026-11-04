@@ -71,7 +71,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		}
 		meta.Sync = spec.StoreKind
 		meta.Version = 2
-		meta.Volumes = model.ManagedVolumes(spec.Volumes)
+		meta.Volumes = model.PersistentVolumes(spec.Volumes)
 		if staged.Snapshot != nil {
 			meta.SnapshotGeneration = staged.Snapshot.Generation
 			meta.SnapshotBytes = staged.Snapshot.Bytes

@@ -31,8 +31,8 @@ func (m *Manager) preparePaths(init *bedInitialization) error {
 	if exists {
 		if spec.Volumes == nil {
 			spec.Volumes = restored
-		} else if !reflect.DeepEqual(model.ManagedVolumes(spec.Volumes), restored) {
-			return fmt.Errorf("%w: snapshot managed volumes", ErrPathsConflict)
+		} else if !reflect.DeepEqual(model.PersistentVolumes(spec.Volumes), restored) {
+			return fmt.Errorf("%w: snapshot persistent volumes", ErrPathsConflict)
 		}
 	}
 	if spec.Volumes == nil {
