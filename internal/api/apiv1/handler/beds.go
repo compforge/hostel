@@ -69,11 +69,10 @@ func (s *Handler) bedList(c *gin.Context) {
 }
 
 type createBedRequest struct {
-	Volumes       []model.VolumeSpec      `json:"volumes,omitempty"`
-	PortMappings  []model.PortMappingSpec `json:"port_mappings,omitempty"`
-	Pillows       pillowDeclarations      `json:"pillows,omitempty"`
-	NetworkPolicy *network.Policy         `json:"networkPolicy,omitempty"`
-	ID            string                  `json:"id,omitempty"`
+	Volumes       []model.VolumeSpec `json:"volumes,omitempty"`
+	Pillows       pillowDeclarations `json:"pillows,omitempty"`
+	NetworkPolicy *network.Policy    `json:"networkPolicy,omitempty"`
+	ID            string             `json:"id,omitempty"`
 }
 
 // POST /v1/beds — create (or return existing) a bed. Empty id → server-assigned.
@@ -92,7 +91,7 @@ func (s *Handler) bedCreate(c *gin.Context) {
 	if id == "" {
 		id = "bed-" + randx.Hex(6)
 	}
-	status, err := s.mgr.InitializeBed(c.Request.Context(), id, bed.CreateOptions{Volumes: req.Volumes, PortMappings: req.PortMappings, NetworkPolicy: req.NetworkPolicy, Pillows: req.Pillows})
+	status, err := s.mgr.InitializeBed(c.Request.Context(), id, bed.CreateOptions{Volumes: req.Volumes, NetworkPolicy: req.NetworkPolicy, Pillows: req.Pillows})
 	if err != nil {
 		if errors.Is(err, network.ErrUnavailable) {
 			respondFailure(c, http.StatusServiceUnavailable, apiview.ErrServiceUnavailable, "bed network policy is unavailable", err)

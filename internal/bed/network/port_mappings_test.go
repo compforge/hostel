@@ -23,18 +23,18 @@ func TestPortMappingModesAndOwnership(t *testing.T) {
 	})
 	mappings := NewPortMappings(ports)
 	makeBed := func(name string) *bed.Bed {
-		return bed.New(name, "", bed.Spec{PortMappings: []bed.PortMappingSpec{{Name: "http", Protocol: "tcp", BedPort: 8080, Publish: true}}})
+		return bed.New(name, "", bed.Spec{Pillows: []bed.PillowSpec{{Name: "web", Ports: []bed.PillowPort{{Name: "http", Dynamic: true, Publish: true}}}}})
 	}
 	a, b := makeBed("a"), makeBed("b")
-	first, err := mappings.Reserve(a, "http", "web", "", "127.0.0.1", false)
+	first, err := mappings.Reserve(a, "http", "web", "", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := mappings.Reserve(b, "http", "web", "", "127.0.0.1", false)
+	second, err := mappings.Reserve(b, "http", "web", "", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Port() == second.Port() || first.Port() == 8080 || first.Status().Reason != "SharedNetworkUsesHostPort" {
+	if first.Port() == second.Port() || first.Port() == 8080 {
 		t.Fatalf("shared allocation: %+v %+v", first.Status(), second.Status())
 	}
 	first.Bind("execution-one")
@@ -54,7 +54,7 @@ func TestPortMappingModesAndOwnership(t *testing.T) {
 	if err := first.Release(); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := mappings.Reserve(a, "http", "web", "", "127.0.0.1", false)
+	replacement, err := mappings.Reserve(a, "http", "web", "", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,11 +69,11 @@ func TestPortMappingModesAndOwnership(t *testing.T) {
 		b     *bed.Bed
 		scope string
 	}{{a, "ns-a"}, {b, "ns-b"}} {
-		p, err := mappings.Reserve(entry.b, "http", "web", entry.scope, "127.0.0.1", false)
+		p, err := mappings.Reserve(entry.b, "http", "web", entry.scope, "127.0.0.1")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if p.Port() != 8080 {
+		if p.Port() == 0 {
 			t.Fatalf("private port=%d", p.Port())
 		}
 		if err := p.Publish(); err != nil {
@@ -98,15 +98,15 @@ func TestRequiredAndUnpublishedPorts(t *testing.T) {
 	}
 	defer ports.Close()
 	mappings := NewPortMappings(ports)
-	b := bed.New("fixed", "", bed.Spec{PortMappings: []bed.PortMappingSpec{{Name: "fixed", BedPort: port, RequireBedPort: true}}})
-	if _, err := mappings.Reserve(b, "fixed", "server", "", "127.0.0.1", false); !errors.Is(err, hostnetwork.ErrPortsExhausted) {
+	b := bed.New("fixed", "", bed.Spec{Pillows: []bed.PillowSpec{{Name: "server", Ports: []bed.PillowPort{{Name: "fixed", ContainerPort: port}}}}})
+	if _, err := mappings.Reserve(b, "fixed", "server", "", "127.0.0.1"); !errors.Is(err, hostnetwork.ErrPortsExhausted) {
 		t.Fatalf("required port silently changed: %v", err)
 	}
 	if len(ports.Status()) != 0 {
 		t.Fatal("failed allocation leaked")
 	}
-	b = bed.New("internal", "", bed.Spec{PortMappings: []bed.PortMappingSpec{{Name: "internal", Protocol: "tcp"}}})
-	p, err := mappings.Reserve(b, "internal", "worker", "", "127.0.0.1", false)
+	b = bed.New("internal", "", bed.Spec{Pillows: []bed.PillowSpec{{Name: "worker", Ports: []bed.PillowPort{{Name: "internal", Dynamic: true}}}}})
+	p, err := mappings.Reserve(b, "internal", "worker", "", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}

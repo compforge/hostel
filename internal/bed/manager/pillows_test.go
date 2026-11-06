@@ -32,7 +32,7 @@ func TestPillowHelperProcess(t *testing.T) {
 	if os.Getenv("SERVICE_TEST_HELPER") != "1" {
 		return
 	}
-	listener, err := net.Listen("tcp", os.Getenv("SERVICE_LISTEN"))
+	listener, err := net.Listen("tcp", os.Args[len(os.Args)-1])
 	if err != nil {
 		os.Exit(32)
 	}
@@ -46,7 +46,7 @@ func TestPillowHelperProcess(t *testing.T) {
 		if token := os.Getenv("SERVICE_TOKEN"); token != "" {
 			expected = "Bearer " + token
 		}
-		if r.Header.Get("Authorization") != expected {
+		if r.URL.Path != "/ready" && r.Header.Get("Authorization") != expected {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -105,19 +105,21 @@ func testPillowManager(t *testing.T) (*Manager, []model.PillowSpec, *hostnetwork
 		ports.Close()
 	})
 	pillowSpec := model.PillowSpec{
-		Command:        []string{os.Args[0], "-test.run=^TestPillowHelperProcess$"},
-		Env:            map[string]string{"SERVICE_TEST_HELPER": "1", "SERVICE_LISTEN": "${LISTEN_ADDR}", "GORACE": "atexit_sleep_ms=0"},
+		Command:        []string{os.Args[0], "-test.run=^TestPillowHelperProcess$", "--", "${LISTEN_ADDR}"},
+		Env:            map[string]string{"SERVICE_TEST_HELPER": "1", "GORACE": "atexit_sleep_ms=0"},
 		EnvFiles:       map[string]string{"SERVICE_FILE_VALUE": credential},
 		Required:       true,
 		RestartPolicy:  "on-failure",
 		MaxRestarts:    2,
-		StartupSeconds: 10,
 		StopSeconds:    1,
-		HTTP:           &model.PillowHTTPSpec{ReadyPath: "/ready", Authentication: &model.Authentication{Scheme: "bearer", TokenSource: model.TokenSourceGenerated, TokenEnv: "SERVICE_TOKEN"}},
+		ReadinessProbe: &model.Probe{HTTPGet: &model.HTTPGetAction{Path: "/ready", Port: "http"}, PeriodSeconds: 1, FailureThreshold: 1},
 	}
 	main, tools := pillowSpec, pillowSpec
 	main.Name, tools.Name = "main", "tools"
-	main.PortMapping, tools.PortMapping = "main", "tools"
+	main.Ports = []model.PillowPort{{Name: "main", Dynamic: true, Publish: true}}
+	tools.Ports = []model.PillowPort{{Name: "tools", Dynamic: true, Publish: true}}
+	main.ReadinessProbe = &model.Probe{HTTPGet: &model.HTTPGetAction{Path: "/ready", Port: "main"}, PeriodSeconds: 1, FailureThreshold: 1}
+	tools.ReadinessProbe = &model.Probe{HTTPGet: &model.HTTPGetAction{Path: "/ready", Port: "tools"}, PeriodSeconds: 1, FailureThreshold: 1}
 	return m, []model.PillowSpec{main, tools}, ports
 }
 
@@ -150,7 +152,7 @@ func TestPillowMainProcessesAreOptionalPerBed(t *testing.T) {
 	}
 	a, _ := m.pillows.Access(b.Bed, "main")
 	other, _ := m.pillows.Access(b.Bed, "tools")
-	if testPillowURL(a.PortMapping.HostPort) == testPillowURL(other.PortMapping.HostPort) || a.Token == other.Token || a.PortMapping.ExecutionID == other.PortMapping.ExecutionID {
+	if testPillowURL(a.Ports[0].HostPort) == testPillowURL(other.Ports[0].HostPort) || a.Ports[0].ExecutionID == other.Ports[0].ExecutionID {
 		t.Fatal("pillow instances share runtime identity")
 	}
 	data, err := os.ReadFile(filepath.Join(b.Workdir(), "pillow-started"))
@@ -179,7 +181,7 @@ func TestPillowMainProcessesAreOptionalPerBed(t *testing.T) {
 	}
 	encoded, _ := json.Marshal(m.pillows.Status(b.Bed))
 	identity, _ := os.ReadFile(m.identityPath(b.Name))
-	if strings.Contains(string(encoded), a.Token) || strings.Contains(string(identity), a.Token) {
+	if strings.Contains(string(encoded), "from-file") || strings.Contains(string(identity), "from-file") {
 		t.Fatal("runtime credentials leaked to status/local metadata")
 	}
 	if err := m.pillows.Stop(t.Context(), b.Bed); err != nil {
@@ -194,7 +196,7 @@ func TestPillowMainProcessesAreOptionalPerBed(t *testing.T) {
 	}
 }
 
-func TestBedPillowRestartChangesIdentityAndToken(t *testing.T) {
+func TestBedPillowRestartChangesIdentity(t *testing.T) {
 	m, specs, _ := testPillowManager(t)
 	_, err := m.InitializeBed(t.Context(), "restart", testPillowOptions(specs[:1]))
 	if err != nil {
@@ -209,21 +211,16 @@ func TestBedPillowRestartChangesIdentityAndToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitPillow(t, m, b, "main", func(s pillow.Status) bool {
-		return s.Phase == "running" && s.Ready && s.ExecutionID != old.PortMapping.ExecutionID
+		return s.Phase == "running" && s.Ready && s.ExecutionID != old.Ports[0].ExecutionID
 	})
 	current, _ := m.pillows.Access(b.Bed, "main")
-	if old.Token == current.Token {
-		t.Fatal("restarted pillow reused token")
-	}
-	req, _ := http.NewRequest(http.MethodGet, testPillowURL(current.PortMapping.HostPort)+"/ready", nil)
-	req.Header.Set("Authorization", "Bearer "+old.Token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.Get(testPillowURL(current.Ports[0].HostPort) + "/ready")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatal("old credentials authorized new execution")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatal("restarted process unavailable")
 	}
 	if _, err := m.HoldPillow(b, 150*time.Millisecond); err != nil {
 		t.Fatal(err)
@@ -248,7 +245,7 @@ func TestBedPillowExecutionsUseCommonRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	access, _ := m.pillows.Access(b.Bed, "main")
-	e, ok := m.executions.Get(access.PortMapping.ExecutionID)
+	e, ok := m.executions.Get(access.Ports[0].ExecutionID)
 	if !ok || e.Mode != ExecutionMain || e.ExecutorID != b.Bed.Status().Executor.ID {
 		t.Fatal("pillow bypassed execution registry")
 	}
@@ -350,7 +347,7 @@ func TestBedPillowLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := recovered.Spec().PortMappings; len(got) != 1 || got[0].Name != "main" || !got[0].Publish {
+	if got := recovered.Spec().NetworkPorts(); len(got) != 1 || got[0].Name != "main" || !got[0].Publish {
 		t.Fatalf("lost port declaration: %+v", got)
 	}
 	if got := recovered.Spec().Pillows; len(got) != 1 || got[0].Name != "main" || got[0].SpecDigest == "" {
@@ -359,11 +356,7 @@ func TestBedPillowLocalRecoveryUsesPersistedDeclaration(t *testing.T) {
 }
 
 func testPillowOptions(specs []model.PillowSpec) CreateOptions {
-	options := CreateOptions{Pillows: specs}
-	for _, s := range specs {
-		options.PortMappings = append(options.PortMappings, model.PortMappingSpec{Name: s.PortMapping, Protocol: "tcp", Publish: true})
-	}
-	return options
+	return CreateOptions{Pillows: specs}
 }
 
 func testPillowURL(port int) string {

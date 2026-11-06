@@ -102,10 +102,6 @@ func (m *Manager) recoverLocalIdentities() error {
 			if err != nil {
 				return fmt.Errorf("recover bed %s volumes: %w", local.bed.Name, err)
 			}
-			spec.PortMappings, err = model.NormalizePortMappings(record.PortMappings)
-			if err != nil {
-				return fmt.Errorf("recover bed %s ports: %w", local.bed.Name, err)
-			}
 			if !strings.HasPrefix(id, "bed-") || len(id) != 36 {
 				return fmt.Errorf("invalid local identity for bed %s", local.bed.Name)
 			}
@@ -134,7 +130,7 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 		return err
 	}
 	spec := local.bed.Spec()
-	data, err := json.Marshal(localIdentityRecord{Volumes: spec.Volumes, PortMappings: spec.PortMappings, ID: local.bed.ID.String(), Pillows: spec.Pillows})
+	data, err := json.Marshal(localIdentityRecord{Volumes: spec.Volumes, ID: local.bed.ID.String(), Pillows: spec.Pillows})
 	if err != nil {
 		return err
 	}
@@ -142,10 +138,9 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 }
 
 type localIdentityRecord struct {
-	ID           string                  `json:"id"`
-	Volumes      []model.VolumeSpec      `json:"volumes"`
-	Pillows      []model.PillowSpec      `json:"pillows"`
-	PortMappings []model.PortMappingSpec `json:"port_mappings,omitempty"`
+	ID      string             `json:"id"`
+	Volumes []model.VolumeSpec `json:"volumes"`
+	Pillows []model.PillowSpec `json:"pillows"`
 }
 
 // waitForLocalCleanup only joins an active attempt. An idle/failed cleanup is

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -54,7 +55,7 @@ func TestReadinessRetainsForwardingConnections(t *testing.T) {
 	if len(allocations) != 2 {
 		t.Fatalf("expected backend and forwarder allocations: %+v", allocations)
 	}
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, testPillowURL(first.PortMapping.HostPort)+"/task", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, testPillowURL(first.Ports[0].HostPort)+"/task", nil)
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -77,7 +78,7 @@ func TestReadinessRetainsForwardingConnections(t *testing.T) {
 	unavailable.Store(false)
 	waitHTTPStatus(t, m, b, func(s Status) bool { return s.Ready })
 	current, err := m.Access(b, "web")
-	if err != nil || current != first {
+	if err != nil || !reflect.DeepEqual(current, first) {
 		t.Fatalf("changed run on recovery: %+v %v", current, err)
 	}
 	once.Do(func() { close(release) })
@@ -117,7 +118,7 @@ func TestTransientObservationsDoNotTerminateExecution(t *testing.T) {
 		mode.Store(tc.mode)
 		waitHTTPStatus(t, m, b, func(s Status) bool { return !s.Ready && s.Reason == tc.reason })
 		status := m.Status(b)[0]
-		if status.Phase != "running" || status.ExecutionID != first.PortMapping.ExecutionID || status.Restarts != 0 {
+		if status.Phase != "running" || status.ExecutionID != first.Ports[0].ExecutionID || status.Restarts != 0 {
 			t.Fatalf("observation ended execution: %+v", status)
 		}
 		mode.Store(0)

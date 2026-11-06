@@ -2,11 +2,11 @@ package protocol
 
 // PillowSpec is the immutable, non-secret definition of a named execution environment
 // and its optional supervised main process. A Bed must explicitly declare at least
-// one Pillow; its first declaration is the default. Runtime addresses and generated
-// credentials never enter it.
+// one Pillow; its first declaration is the default. Runtime addresses never enter it.
 type PillowSpec struct {
+	Ports          []PillowPort                   `json:"ports,omitempty"`
+	ReadinessProbe *Probe                         `json:"readinessProbe,omitempty"`
 	Mounts         []VolumeMount                  `json:"mounts,omitempty"`
-	PortMapping    string                         `json:"port_mapping,omitempty"`
 	Name           string                         `json:"name"`
 	Args           []string                       `json:"args,omitempty"`
 	Command        []string                       `json:"command,omitempty"`
@@ -18,34 +18,9 @@ type PillowSpec struct {
 	Required       bool                           `json:"required,omitempty"`
 	RestartPolicy  string                         `json:"restart_policy,omitempty"`
 	MaxRestarts    int                            `json:"max_restarts,omitempty"`
-	StartupSeconds int                            `json:"startup_seconds,omitempty"`
 	StopSeconds    int                            `json:"stop_seconds,omitempty"`
-	HTTP           *PillowHTTPSpec                `json:"http,omitempty"`
 	SpecDigest     string                         `json:"spec_digest,omitempty"`
 }
-
-type PillowHTTPSpec struct {
-	ReadyPath string `json:"ready_path"`
-	// Authentication is optional; nil publishes HTTP without credentials.
-	Authentication *Authentication `json:"authentication,omitempty"`
-}
-
-// Authentication describes credentials used by both readiness and pillow access.
-// The pillow process itself is responsible for enforcing authentication.
-type Authentication struct {
-	Scheme      string      `json:"scheme"`
-	TokenSource TokenSource `json:"token_source"`
-	TokenEnv    string      `json:"token_env"`
-}
-
-type TokenSource string
-
-const (
-	// TokenSourceGenerated rotates the credential for every pillow execution.
-	TokenSourceGenerated TokenSource = "generated"
-	// TokenSourceEnvironment reads the pillow's resolved Env/EnvFiles value.
-	TokenSourceEnvironment TokenSource = "environment"
-)
 
 type VolumeSpec struct {
 	Name     string          `json:"name"`

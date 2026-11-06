@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -41,16 +40,16 @@ func httpTestManager(t *testing.T) (*Manager, *hostnetwork.PortManager) {
 
 func httpTestBed(name string) *bed.Bed {
 	return newPillowTestBed(name, "", bed.Spec{Pillows: []bed.PillowSpec{{
-		Name: "web", Command: []string{"server"}, Env: map[string]string{"LISTEN": "${LISTEN_ADDR}"},
-		Required: true, RestartPolicy: "never", StartupSeconds: 1, StopSeconds: 1,
-		HTTP: &bed.PillowHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}},
+		Name: "web", Command: []string{"server", "${LISTEN_ADDR}"},
+		Required: true, RestartPolicy: "never", StopSeconds: 1,
+		ReadinessProbe: &bed.Probe{HTTPGet: &bed.HTTPGetAction{Path: "/ready", Port: "http"}, PeriodSeconds: 1, FailureThreshold: 1},
 	}}})
 }
 
 func httpTestRuntime(handler http.Handler) *fakeRuntime {
 	var next int
 	return &fakeRuntime{start: func(launch Launch) (Process, error) {
-		ln, err := net.Listen("tcp", launch.Env["LISTEN"])
+		ln, err := net.Listen("tcp", launch.Command[len(launch.Command)-1])
 		if err != nil {
 			return nil, err
 		}
@@ -90,10 +89,10 @@ func TestSharedHTTPPillowDegradesAfterReadyAndRestarts(t *testing.T) {
 	degraded.Store(true)
 	waitHTTPStatus(t, m, b, func(s Status) bool { return s.Listener != nil && s.Listener.State == hostnetwork.ListenerUnavailable })
 	status := m.Status(b)[0]
-	if status.Phase != "running" || !status.Ready || status.ExecutionID != first.PortMapping.ExecutionID || status.Restarts != 0 {
+	if status.Phase != "running" || !status.Ready || status.ExecutionID != first.Ports[0].ExecutionID || status.Restarts != 0 {
 		t.Fatalf("inspection failure killed pillow: %+v", status)
 	}
-	resp, err := http.Get(testPillowURL(first.PortMapping.HostPort) + "/ready")
+	resp, err := http.Get(testPillowURL(first.Ports[0].HostPort) + "/ready")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,14 +104,11 @@ func TestSharedHTTPPillowDegradesAfterReadyAndRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitHTTPStatus(t, m, b, func(s Status) bool {
-		return s.Phase == "running" && s.Ready && s.ExecutionID != first.PortMapping.ExecutionID
+		return s.Phase == "running" && s.Ready && s.ExecutionID != first.Ports[0].ExecutionID
 	})
-	second, err := m.Access(b, "web")
+	_, err = m.Access(b, "web")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if second.Token == first.Token {
-		t.Fatal("restart reused token")
 	}
 	if len(ports.Status()) != 1 {
 		t.Fatalf("restart leaked ports: %+v", ports.Status())
@@ -141,7 +137,7 @@ func TestSharedHTTPPillowsHaveDistinctEndpoints(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			endpoints <- testPillowURL(a.PortMapping.HostPort)
+			endpoints <- testPillowURL(a.Ports[0].HostPort)
 		}()
 	}
 	wg.Wait()
@@ -187,28 +183,27 @@ func TestForeignListenerRetriesButUnavailableDoesNot(t *testing.T) {
 }
 
 func TestUnavailableInspectionStillRequiresHTTPReadiness(t *testing.T) {
-	m, _ := httpTestManager(t)
+	m, ports := httpTestManager(t)
 	m.inspectListener = unavailableInspection
 	runtime := httpTestRuntime(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(503) }))
 	b := httpTestBed("unhealthy")
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 1500*time.Millisecond)
 	defer cancel()
 	if err := m.PrepareBed(ctx, b, runtime); err == nil {
 		t.Fatal("unhealthy pillow ready")
 	}
 	status := m.Status(b)[0]
-	if len(m.mappings.Status(b)) != 0 || !strings.Contains(status.Reason, "readiness timeout") {
-		t.Fatalf("status=%+v", status)
+	if status.Phase != "running" || status.Ready || status.Reason != "ReadinessHTTPStatus503" || len(ports.Status()) != 1 {
+		t.Fatalf("readiness failure terminated or published the process: %+v", status)
 	}
-	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	if status.Ready || status.Phase != "failed" || len(runtime.processes) != 1 {
-		t.Fatalf("startup timeout changed lifecycle: %+v", status)
+	if _, err := m.Access(b, "web"); err == nil {
+		t.Fatal("unready process admitted access")
 	}
-	select {
-	case <-runtime.processes[0].Done():
-	default:
-		t.Fatal("startup timeout left the failed execution running")
+	if err := m.Stop(t.Context(), b); err != nil {
+		t.Fatal(err)
+	}
+	if len(ports.Status()) != 0 {
+		t.Fatal("stop leaked allocation")
 	}
 }
 
@@ -252,7 +247,7 @@ func TestExitDuringProbeDoesNotPublishOrRetryAsConflict(t *testing.T) {
 		t.Fatal("exited pillow published ready")
 	}
 	status := m.Status(b)[0]
-	if len(m.mappings.Status(b)) != 0 || status.Reason != "process exited before readiness" {
+	if len(m.mappings.Status(b)) != 0 || status.Ready {
 		t.Fatalf("status=%+v", status)
 	}
 	runtime.mu.Lock()

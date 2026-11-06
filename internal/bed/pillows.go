@@ -8,18 +8,28 @@ import (
 )
 
 type PillowSpec = protocol.PillowSpec
-type PillowHTTPSpec = protocol.PillowHTTPSpec
-type Authentication = protocol.Authentication
-type TokenSource = protocol.TokenSource
-
-const (
-	TokenSourceGenerated   = protocol.TokenSourceGenerated
-	TokenSourceEnvironment = protocol.TokenSourceEnvironment
-)
+type PillowPort = protocol.PillowPort
+type Probe = protocol.Probe
+type ProbePort = protocol.ProbePort
+type HTTPGetAction = protocol.HTTPGetAction
+type TCPSocketAction = protocol.TCPSocketAction
 
 func ClonePillows(in []PillowSpec) []PillowSpec {
 	out := slices.Clone(in)
 	for i, s := range in {
+		s.Ports = slices.Clone(s.Ports)
+		if s.ReadinessProbe != nil {
+			probe := *s.ReadinessProbe
+			if probe.HTTPGet != nil {
+				action := *probe.HTTPGet
+				probe.HTTPGet = &action
+			}
+			if probe.TCPSocket != nil {
+				action := *probe.TCPSocket
+				probe.TCPSocket = &action
+			}
+			s.ReadinessProbe = &probe
+		}
 		s.Mounts = slices.Clone(s.Mounts)
 		s.Command = slices.Clone(s.Command)
 		s.Args = slices.Clone(s.Args)
@@ -27,14 +37,6 @@ func ClonePillows(in []PillowSpec) []PillowSpec {
 		s.EnvFiles = maps.Clone(s.EnvFiles)
 		s.EnvFrom = slices.Clone(s.EnvFrom)
 		s.EnvValueFrom = maps.Clone(s.EnvValueFrom)
-		if s.HTTP != nil {
-			http := *s.HTTP
-			if http.Authentication != nil {
-				auth := *http.Authentication
-				http.Authentication = &auth
-			}
-			s.HTTP = &http
-		}
 		out[i] = s
 	}
 	return out
@@ -56,4 +58,13 @@ func (s Spec) HasMainProcesses() bool {
 		}
 	}
 	return false
+}
+
+// NetworkPorts derives network demands without duplicating Pillow declarations in durable state.
+func (s Spec) NetworkPorts() []PillowPort {
+	var out []PillowPort
+	for _, pillow := range s.Pillows {
+		out = append(out, pillow.Ports...)
+	}
+	return out
 }

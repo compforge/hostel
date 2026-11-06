@@ -32,6 +32,7 @@
 - **luggage**：非正常生命周期状态，只表达异常退出遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
 - **amenity**：bed 外由 hostel 统一管理、按 bed 分配状态的共享设施（Chromium / Jupyter / MCP 连接池）。
 - **pillow**：Bed 内的命名执行环境，拥有 env、workdir、mounts 与可选主进程，与用户命令共用 Bed Environment/Executor；创建者提交通用完整 `PillowSpec`，Carrier 镜像提供程序与依赖，Hostel 不依赖具体业务服务。端口通过 daemon 级 Port Manager 统一申请，见 `docs/pillow.md`。
+- **Pillow 端口与探针**：只在 `ports` 声明端口，由 Network 分配和回收；`readinessProbe` 是通用就绪检查。Hostel 不管理业务 HTTP 认证或 token。Bed/Pillow 与 Pod/Container 的模型对应和能力差异见 [核心架构](docs/kernel.md#pod--container-式声明与职责边界)。
 - **executor**：某个 bed 当前的、可替换的进程承载域。bed 持久存在，executor 丢失或关闭后可用新 id 重建；Linux 默认使用 supervisor backend，非 Linux / 显式 local 使用 daemon 直接派生。
 - **execution**：一次命令运行。每次有独立 id，且记录其所属 bed id、pillow name 与 executor id。
 - **bedinit**：每次进程启动前的可信初始化路径，按 Bed Manager 绑定的方案进入环境、降权并 exec 用户程序；不是 Bed 生命周期初始化或常驻进程，详见 `docs/pillow.md`。

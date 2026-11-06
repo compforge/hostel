@@ -1,7 +1,6 @@
 package network
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -36,7 +35,7 @@ type PortMapping struct {
 	mu           sync.Mutex
 	owner        *PortMappings
 	bed          *bed.Bed
-	spec         bed.PortMappingSpec
+	spec         bed.PillowPort
 	allocation   *hostnetwork.PortAllocation
 	forward      *hostnetwork.TCPForwarder
 	probeAddress string
@@ -50,9 +49,9 @@ func (m *PortMappings) Available() bool {
 	return m != nil && m.ports != nil
 }
 
-func (m *PortMappings) Reserve(b *bed.Bed, name, pillow, scope, host string, avoidPreferred bool) (*PortMapping, error) {
-	var spec bed.PortMappingSpec
-	for _, s := range b.Spec().PortMappings {
+func (m *PortMappings) Reserve(b *bed.Bed, name, pillow, scope, host string) (*PortMapping, error) {
+	var spec bed.PillowPort
+	for _, s := range b.Spec().NetworkPorts() {
 		if s.Name == name {
 			spec = s
 			break
@@ -69,26 +68,13 @@ func (m *PortMappings) Reserve(b *bed.Bed, name, pillow, scope, host string, avo
 	if m.beds[b][name] != nil {
 		return nil, fmt.Errorf("port mapping %s is already allocated", name)
 	}
-	port, reason := 0, ""
-	if spec.RequireBedPort || (scope != "" && !avoidPreferred) {
-		port = spec.BedPort
-	}
-	if port == 0 && spec.BedPort != 0 {
-		reason = "SharedNetworkUsesHostPort"
-		if scope != "" {
-			reason = "PreferredPortOccupied"
-		}
-	}
+	port := spec.ContainerPort
 	owner := b.ID.String() + "/port/" + name
 	listenHost := "0.0.0.0"
 	if scope == "" && !spec.Publish {
 		listenHost = "127.0.0.1"
 	}
 	allocation, err := m.ports.Reserve(owner, scope, net.JoinHostPort(listenHost, strconv.Itoa(port)))
-	if err != nil && port != 0 && !spec.RequireBedPort && errors.Is(err, hostnetwork.ErrPortsExhausted) {
-		reason = "PreferredPortOccupied"
-		allocation, err = m.ports.Reserve(owner, scope, net.JoinHostPort(listenHost, "0"))
-	}
 	if err != nil {
 		return nil, fmt.Errorf("port mapping %s: %w", name, err)
 	}
@@ -97,13 +83,13 @@ func (m *PortMappings) Reserve(b *bed.Bed, name, pillow, scope, host string, avo
 		mode = "private"
 	}
 	p := &PortMapping{owner: m, bed: b, spec: spec, allocation: allocation, probeAddress: net.JoinHostPort(host, strconv.Itoa(allocation.Port())), status: PortMappingStatus{
-		Name: name, Protocol: spec.Protocol, Pillow: pillow, Network: mode, State: "reserved", BedPort: allocation.Port(), Reason: reason,
+		Name: name, Protocol: spec.Protocol, Pillow: pillow, Network: mode, State: "reserved", BedPort: allocation.Port(),
 	}}
 	if m.beds[b] == nil {
 		m.beds[b] = make(map[string]*PortMapping)
 	}
 	m.beds[b][name] = p
-	log.Printf("hostel port mapping reserved: bed=%s mapping=%s network=%s bed_port=%d reason=%s", b.ID, name, mode, p.status.BedPort, reason)
+	log.Printf("hostel port mapping reserved: bed=%s mapping=%s network=%s bed_port=%d", b.ID, name, mode, p.status.BedPort)
 	return p, nil
 }
 func (p *PortMapping) ListenAddress() string { return p.allocation.Address() }

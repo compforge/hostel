@@ -5,27 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
-	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/executor"
-	"github.com/qiankunli/hostel/internal/bed/network"
 )
-
-var readinessClient = &http.Client{
-	Transport:     &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, MaxIdleConns: 32, MaxIdleConnsPerHost: 1, IdleConnTimeout: 10 * time.Second, ResponseHeaderTimeout: time.Second},
-	Timeout:       2 * time.Second,
-	CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
-}
-
-var errBindingConflict = errors.New("pillow port occupied by another process")
-
-var probeSlots = make(chan struct{}, 16)
 
 func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 	defer close(r.done)
@@ -36,8 +20,8 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 		var outcome executor.ProcessOutcome
 		var err error
 		for attempt := 0; attempt < 3; attempt++ {
-			explicit, outcome, err = m.run(ctx, g, r, attempt > 0)
-			if !errors.Is(err, errBindingConflict) || requiredPort(g.bed, r.spec.PortMapping) {
+			explicit, outcome, err = m.run(ctx, g, r)
+			if !retryPortConflict(err, r.spec) {
 				break
 			}
 		}
@@ -96,8 +80,9 @@ func (m *Manager) supervise(ctx context.Context, g *group, r *record) {
 	}
 }
 
-// +spec=`Readiness loss changes admission only: preserve the process, Execution ID, token, port allocations, forwarder and existing connections until this run actually ends.`
-func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred bool) (explicit bool, outcome executor.ProcessOutcome, retErr error) {
+// +spec=`Readiness failure preserves the process, Execution ID, port allocations and existing connections; it never consumes the process restart budget.`
+// +link=component://docs/pillow.md
+func (m *Manager) run(ctx context.Context, g *group, r *record) (explicit bool, outcome executor.ProcessOutcome, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return false, outcome, err
 	}
@@ -107,83 +92,22 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 	if err != nil {
 		return false, outcome, err
 	}
-	var mapping *network.PortMapping
-	var address, token string
-	if spec.HTTP != nil && spec.HTTP.Authentication != nil {
-		auth := spec.HTTP.Authentication
-		switch auth.TokenSource {
-		case bed.TokenSourceGenerated:
-			if _, exists := env[auth.TokenEnv]; exists {
-				return false, outcome, fmt.Errorf("pillow %s generated token conflicts with resolved configuration", spec.Name)
-			}
-			token = randx.Hex(32)
-			env[auth.TokenEnv] = token
-		case bed.TokenSourceEnvironment:
-			// Resolve once per execution so probes and discovery match the process,
-			// even if the credential file changes while it is running.
-			token = env[auth.TokenEnv]
-			if token == "" {
-				return false, outcome, fmt.Errorf("pillow %s token env %s is empty", spec.Name, auth.TokenEnv)
-			}
-		}
+	mappings, err := m.reservePorts(g, r)
+	defer m.releasePorts(g, r, mappings)
+	if err != nil {
+		return false, outcome, err
 	}
-	if spec.PortMapping != "" {
-		scope, host, err := g.runtime.Network()
-		if err != nil {
-			return false, outcome, err
-		}
-		mapping, err = m.mappings.Reserve(g.bed, spec.PortMapping, spec.Name, scope, host, avoidPreferred)
-		if err != nil {
-			return false, outcome, err
-		}
-		g.mu.Lock()
-		r.mapping = mapping
-		g.mu.Unlock()
-		defer func() {
-			for {
-				if err := mapping.Release(); err == nil {
-					break
-				}
-				m.update(g, r, func(s *Status) { s.Reason = "PortCleanupPending" })
-				time.Sleep(time.Second)
-			}
-			g.mu.Lock()
-			if r.mapping == mapping {
-				r.mapping = nil
-			}
-			g.mu.Unlock()
-		}()
-		address = mapping.ProbeAddress()
-	}
-
-	command := append(append([]string(nil), spec.Command...), spec.Args...)
-	if mapping != nil {
-		replace := strings.NewReplacer("${PORT}", strconv.Itoa(mapping.Port()), "${LISTEN_ADDR}", mapping.ListenAddress())
-		for i, v := range command {
-			command[i] = replace.Replace(v)
-		}
-		for k, v := range env {
-			// Credentials are opaque and must not undergo address substitution.
-			if spec.HTTP == nil || spec.HTTP.Authentication == nil || k != spec.HTTP.Authentication.TokenEnv {
-				env[k] = replace.Replace(v)
-			}
-		}
-	}
+	command := portCommand(spec, mappings)
 	proc, err := g.runtime.Start(ctx, Launch{Name: spec.Name, Command: command, Directory: spec.Workdir, Env: env})
 	if err != nil {
 		return false, outcome, fmt.Errorf("pillow process start failed: %w", err)
 	}
 	defer func() {
-		// Withdraw discovery before terminating; existing forwarding connections
-		// are closed before the process/environment can be reused.
 		m.update(g, r, func(s *Status) { s.Phase = "stopping" })
-		if mapping != nil {
-			if err := mapping.Withdraw(); err != nil {
-				retErr = errors.Join(retErr, err)
-			}
+		for _, mapping := range mappings {
+			retErr = errors.Join(retErr, mapping.Withdraw())
 		}
-		// Keep this owner alive if cleanup fails. Stop callers retain the group
-		// and can retry; never release a live process's port or filesystem.
+		// Cleanup retains ownership until the whole process group has stopped.
 		for {
 			cleanup, cancel := context.WithTimeout(context.Background(), time.Duration(spec.StopSeconds+5)*time.Second)
 			err := proc.Stop(cleanup, time.Duration(spec.StopSeconds)*time.Second)
@@ -192,13 +116,12 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 				break
 			}
 			m.update(g, r, func(s *Status) { s.Reason = "ProcessCleanupPending" })
-			timer := time.NewTimer(time.Second)
-			<-timer.C
+			time.Sleep(time.Second)
 		}
 		outcome = proc.Outcome()
 		m.update(g, r, func(s *Status) { s.Outcome = &outcome })
 	}()
-	if mapping != nil {
+	for _, mapping := range mappings {
 		mapping.Bind(proc.ExecutionID())
 	}
 	m.update(g, r, func(s *Status) {
@@ -207,57 +130,17 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 		s.ExecutorID = proc.ExecutorID()
 		s.Outcome = nil
 	})
-	startup, cancel := context.WithTimeout(ctx, time.Duration(spec.StartupSeconds)*time.Second)
-	defer cancel()
-	checkReadiness := m.readinessCheck(g, r, proc, address, token)
-	for {
-		select {
-		case <-proc.Done():
-			return false, proc.Outcome(), fmt.Errorf("process exited before readiness")
-		default:
-		}
-		result := readinessResult{Ready: spec.HTTP == nil}
-		if spec.HTTP != nil {
-			result, err = checkReadiness(startup)
-			if err != nil {
-				return false, outcome, err
-			}
-		}
-		if result.Ready {
-			select {
-			case <-proc.Done():
-				return false, proc.Outcome(), fmt.Errorf("process exited before readiness")
-			default:
-			}
-			break
-		}
-		m.update(g, r, func(s *Status) { s.Reason = result.Reason })
-		timer := time.NewTimer(100 * time.Millisecond)
-		select {
-		case <-startup.Done():
-			timer.Stop()
-			return false, outcome, fmt.Errorf("pillow readiness timeout")
-		case <-proc.Done():
-			timer.Stop()
-			return false, proc.Outcome(), fmt.Errorf("process exited before readiness")
-		case <-r.restart:
-			timer.Stop()
-			return true, outcome, nil
-		case <-timer.C:
-		}
+	check := m.readinessCheck(g, r, proc, mappings)
+	tracker := readinessTracker{}
+	period := time.Second
+	delay := time.Duration(0)
+	if spec.ReadinessProbe != nil {
+		period = time.Duration(spec.ReadinessProbe.PeriodSeconds) * time.Second
+		delay = time.Duration(spec.ReadinessProbe.InitialDelaySeconds) * time.Second
 	}
-	if mapping != nil {
-		if err := mapping.Publish(); err != nil {
-			return false, outcome, err
-		}
-	}
-
-	g.mu.Lock()
-	r.token = token
-	g.mu.Unlock()
-	m.update(g, r, func(s *Status) { s.Ready = true; s.Reason = "" })
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	published := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -266,57 +149,64 @@ func (m *Manager) run(ctx context.Context, g *group, r *record, avoidPreferred b
 			return true, outcome, nil
 		case <-proc.Done():
 			return false, proc.Outcome(), nil
-		case <-ticker.C:
-			if spec.HTTP != nil {
-				result, err := checkReadiness(ctx)
-				if err != nil {
-					return false, outcome, err
-				}
-				// A completed probe must not republish an execution that stopped
-				// during the check. Only this loop owns readiness transitions.
-				select {
-				case <-ctx.Done():
-					return false, outcome, ctx.Err()
-				case <-proc.Done():
-					return false, proc.Outcome(), nil
-				default:
-				}
-				m.update(g, r, func(s *Status) { s.Ready = result.Ready; s.Reason = result.Reason })
+		case <-timer.C:
+			result, err := check(ctx)
+			if err != nil {
+				return false, outcome, err
 			}
+			// A probe completing after process exit must never republish that execution.
+			select {
+			case <-ctx.Done():
+				return false, outcome, ctx.Err()
+			case <-proc.Done():
+				return false, proc.Outcome(), nil
+			default:
+			}
+			result = tracker.observe(result, spec.ReadinessProbe)
+			if result.Ready && !published {
+				for _, mapping := range mappings {
+					if err := mapping.Publish(); err != nil {
+						return false, outcome, err
+					}
+				}
+				published = true
+			}
+			m.update(g, r, func(s *Status) { s.Ready = result.Ready; s.Reason = result.Reason })
+			timer.Reset(period)
 		}
 	}
 }
 
-func probeHTTP(ctx context.Context, address, path, token string) readinessResult {
-	select {
-	case probeSlots <- struct{}{}:
-		defer func() { <-probeSlots }()
-	case <-ctx.Done():
-		return readinessResult{Reason: "ReadinessProbeUnavailable"}
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+path, nil)
-	if err != nil {
-		return readinessResult{Reason: "ReadinessProbeInvalid"}
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := readinessClient.Do(req)
-	if err != nil {
-		return readinessResult{Reason: "ReadinessProbeFailed"}
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return readinessResult{Reason: fmt.Sprintf("ReadinessHTTPStatus%d", resp.StatusCode)}
-	}
-	return readinessResult{Ready: true}
+// Threshold counters belong to one execution and reset on an opposite result.
+type readinessTracker struct {
+	ready     bool
+	successes int
+	failures  int
 }
 
-func requiredPort(b *bed.Bed, name string) bool {
-	for _, p := range b.Spec().PortMappings {
-		if p.Name == name {
-			return p.RequireBedPort
+func (s *readinessTracker) observe(result readinessResult, probe *bed.Probe) readinessResult {
+	success, failure := 1, 1
+	if probe != nil {
+		success, failure = probe.SuccessThreshold, probe.FailureThreshold
+	}
+	if result.Ready {
+		s.failures = 0
+		s.successes = min(s.successes+1, success)
+		if s.successes >= success {
+			s.ready = true
+		}
+	} else {
+		s.successes = 0
+		s.failures = min(s.failures+1, failure)
+		if s.failures >= failure {
+			s.ready = false
 		}
 	}
-	return false
+	if s.ready {
+		return readinessResult{Ready: true}
+	}
+	if result.Ready {
+		return readinessResult{Reason: "ReadinessSuccessThresholdPending"}
+	}
+	return result
 }

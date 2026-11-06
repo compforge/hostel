@@ -44,11 +44,10 @@ func TestPrivatePIDNamespace(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{
-			"id":            id,
-			"port_mappings": []map[string]any{{"name": "http", "bed_port": 8080, "publish": true}},
-			"volumes":       []map[string]any{{"name": "control", "host_path": map[string]any{"path": source}}},
+			"id":      id,
+			"volumes": []map[string]any{{"name": "control", "host_path": map[string]any{"path": source}}},
 
-			"pillows": append([]map[string]any{{"name": "workspace", "mounts": []map[string]any{{"volume": "control", "path": "/run/application-control"}}}}, []map[string]any{{"name": "worker", "mounts": []map[string]any{{"volume": "control", "path": "/run/application-control"}}, "command": []string{"/bin/sh", "-c", `readlink /proc/self/ns/pid > /run/application-control/namespace; readlink /proc/self/ns/mnt > /run/application-control/mount; printf '%s' "$0" > /run/application-control/owner; while :; do sleep 1; done`, id}, "required": true, "restart_policy": "never", "stop_seconds": 1}, {"name": "web", "port_mapping": "http", "command": []string{python, "-u", "-c", portPillowProgram}, "env": map[string]string{"SERVICE_PORT": "${PORT}", "LABEL": id}, "required": true, "http": map[string]string{"ready_path": "/"}}}...),
+			"pillows": append([]map[string]any{{"name": "workspace", "mounts": []map[string]any{{"volume": "control", "path": "/run/application-control"}}}}, []map[string]any{{"name": "worker", "mounts": []map[string]any{{"volume": "control", "path": "/run/application-control"}}, "command": []string{"/bin/sh", "-c", `readlink /proc/self/ns/pid > /run/application-control/namespace; readlink /proc/self/ns/mnt > /run/application-control/mount; printf '%s' "$0" > /run/application-control/owner; while :; do sleep 1; done`, id}, "required": true, "restart_policy": "never", "stop_seconds": 1}, {"name": "web", "ports": []map[string]any{{"name": "http", "dynamic": true, "publish": true}}, "command": []string{python, "-u", "-c", portPillowProgram, "${PORT}"}, "env": map[string]string{"LABEL": id}, "required": true, "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/", "port": "http"}, "periodSeconds": 1}}}...),
 		}, nil)
 		cancel()
 		if err != nil {

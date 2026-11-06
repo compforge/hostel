@@ -3,7 +3,6 @@
 package bed
 
 import (
-	"slices"
 	"sync"
 	"time"
 
@@ -33,8 +32,7 @@ type bed struct {
 }
 
 type Spec struct {
-	Volumes      []VolumeSpec
-	PortMappings []PortMappingSpec
+	Volumes []VolumeSpec
 	// Pillows are ordered; the first is the default execution environment.
 	Pillows         []PillowSpec
 	Dir             string
@@ -59,7 +57,6 @@ func clonePolicy(p *NetworkPolicy) *NetworkPolicy {
 }
 func cloneSpec(s Spec) Spec {
 	s.Volumes = CloneVolumes(s.Volumes)
-	s.PortMappings = slices.Clone(s.PortMappings)
 	s.Pillows = ClonePillows(s.Pillows)
 	s.NetworkPolicy = clonePolicy(s.NetworkPolicy)
 	s.RecoveryDirs = append([]string(nil), s.RecoveryDirs...)

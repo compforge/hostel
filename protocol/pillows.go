@@ -6,11 +6,11 @@ import (
 
 // PillowStatus references a named PortMapping; the mapping owns allocated ports.
 type PillowStatus struct {
-	Prepared    bool   `json:"prepared"`
-	PortMapping string `json:"port_mapping,omitempty"`
-	Name        string `json:"name"`
-	Required    bool   `json:"required"`
-	Phase       string `json:"phase"`
+	Ports    []string `json:"ports,omitempty"`
+	Prepared bool     `json:"prepared"`
+	Name     string   `json:"name"`
+	Required bool     `json:"required"`
+	Phase    string   `json:"phase"`
 	// Ready is current availability, not a process-lifecycle phase.
 	Ready       bool   `json:"ready"`
 	ExecutionID string `json:"execution_id,omitempty"`

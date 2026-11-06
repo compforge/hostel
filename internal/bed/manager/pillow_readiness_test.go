@@ -12,7 +12,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/pillow"
 )
 
-// +case:id=pillow_readiness_continuity,desc=`A real Pillow returns 200, then 503, then 200 during one HTTP task`,expect=`Same process, execution, credentials, allocation and hold; actual exit still restarts`,forbid=`Readiness loss interrupts the task`
+// +case:id=pillow_readiness_continuity,desc=`A real Pillow returns 200, then 503, then 200 during one HTTP task`,expect=`Same process, execution, allocation and hold; actual exit still restarts`,forbid=`Readiness loss interrupts the task`
 func TestPillowReadinessPreservesRunningTask(t *testing.T) {
 	m, specs, ports := testPillowManager(t)
 	if _, err := m.InitializeBed(t.Context(), "readiness", testPillowOptions(specs[:1])); err != nil {
@@ -36,11 +36,10 @@ func TestPillowReadinessPreservesRunningTask(t *testing.T) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	request := func(path string) *http.Response {
 		t.Helper()
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testPillowURL(first.PortMapping.HostPort)+path, nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, testPillowURL(first.Ports[0].HostPort)+path, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		req.Header.Set("Authorization", "Bearer "+first.Token)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -62,7 +61,7 @@ func TestPillowReadinessPreservesRunningTask(t *testing.T) {
 	unready := waitPillow(t, m, b, "main", func(s pillow.Status) bool {
 		return !s.Ready && s.Reason == "ReadinessHTTPStatus503" && !b.Bed.Status().Lifecycle.Ready
 	})
-	if unready.Phase != "running" || unready.ExecutionID != before.ExecutionID || unready.ExecutorID != before.ExecutorID || unready.PortMapping != before.PortMapping || unready.Restarts != before.Restarts || unready.Outcome != nil {
+	if unready.Phase != "running" || unready.ExecutionID != before.ExecutionID || unready.ExecutorID != before.ExecutorID || !reflect.DeepEqual(unready.Ports, before.Ports) || unready.Restarts != before.Restarts || unready.Outcome != nil {
 		t.Fatalf("readiness changed run identity: before=%+v after=%+v", before, unready)
 	}
 	if !reflect.DeepEqual(ports.Status(), allocations) {
@@ -77,7 +76,7 @@ func TestPillowReadinessPreservesRunningTask(t *testing.T) {
 	if evicted, err := m.Evict(t.Context(), b.Name); err != nil || evicted {
 		t.Fatalf("unready pillow lost its hold: %t %v", evicted, err)
 	}
-	execution, ok := m.executions.Get(first.PortMapping.ExecutionID)
+	execution, ok := m.executions.Get(first.Ports[0].ExecutionID)
 	if !ok {
 		t.Fatal("missing execution")
 	}
@@ -91,7 +90,7 @@ func TestPillowReadinessPreservesRunningTask(t *testing.T) {
 	request("/recover").Body.Close()
 	waitPillow(t, m, b, "main", func(s pillow.Status) bool { return s.Ready && b.Bed.Status().Lifecycle.Ready })
 	recovered, err := m.pillows.Access(b.Bed, "main")
-	if err != nil || recovered != first {
+	if err != nil || !reflect.DeepEqual(recovered, first) {
 		t.Fatalf("recovery changed access: %+v %v", recovered, err)
 	}
 	request("/release-task").Body.Close()
@@ -100,12 +99,12 @@ func TestPillowReadinessPreservesRunningTask(t *testing.T) {
 		t.Fatalf("in-flight task interrupted or replaced: %q %v", completed, err)
 	}
 	request("/exit").Body.Close()
-	next := waitPillow(t, m, b, "main", func(s pillow.Status) bool { return s.Ready && s.ExecutionID != first.PortMapping.ExecutionID })
+	next := waitPillow(t, m, b, "main", func(s pillow.Status) bool { return s.Ready && s.ExecutionID != first.Ports[0].ExecutionID })
 	if next.Restarts != 1 {
 		t.Fatalf("real exit did not consume exactly one restart: %+v", next)
 	}
 	access, err := m.pillows.Access(b.Bed, "main")
-	if err != nil || access.Token == first.Token {
-		t.Fatal("actual restart did not rotate credentials")
+	if err != nil || access.Ports[0].ExecutionID == first.Ports[0].ExecutionID {
+		t.Fatal("actual restart did not change execution")
 	}
 }

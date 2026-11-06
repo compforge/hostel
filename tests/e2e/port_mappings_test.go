@@ -27,10 +27,10 @@ type pillowPortsView struct {
 	Status struct {
 		Subsystems map[string]json.RawMessage `json:"subsystems"`
 		Pillows    []struct {
-			Name        string `json:"name"`
-			Ready       bool   `json:"ready"`
-			ExecutionID string `json:"execution_id"`
-			PortMapping string `json:"port_mapping"`
+			Name        string   `json:"name"`
+			Ready       bool     `json:"ready"`
+			ExecutionID string   `json:"execution_id"`
+			Ports       []string `json:"ports"`
 		} `json:"pillows"`
 		PortMappings []struct {
 			Name        string `json:"name"`
@@ -46,14 +46,14 @@ type pillowPortsView struct {
 
 // This fixture is an ordinary HTTP program launched through the Pillow API.
 // The same endpoints are checked from both a Bed command and an external client.
-const portPillowProgram = `import http.server, os
+const portPillowProgram = `import http.server, os, sys
 class Handler(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
   self.send_response(200)
   self.end_headers()
   self.wfile.write(os.environ["LABEL"].encode())
  def log_message(self, *args): pass
-http.server.HTTPServer(("0.0.0.0", int(os.environ["SERVICE_PORT"])), Handler).serve_forever()
+http.server.HTTPServer(("0.0.0.0", int(sys.argv[1])), Handler).serve_forever()
 `
 
 func TestBedPortMappings(t *testing.T) {
@@ -115,7 +115,7 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 		if !s.Ready || p.State != "listening" || p.Network != mode || p.ExecutionID != s.ExecutionID || p.Name != "http" {
 			t.Fatalf("runtime identity: %+v", d)
 		}
-		if mode == "shared" && (p.BedPort != p.HostPort || p.BedPort == 8080 || p.Reason != "SharedNetworkUsesHostPort") {
+		if mode == "shared" && (p.BedPort != p.HostPort || p.BedPort == 8080) {
 			t.Fatalf("shared mapping: %+v", p)
 		}
 		if mode == "private" && p.BedPort != 8080 {
@@ -123,26 +123,26 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 		}
 		var access struct {
 			Access struct {
-				PortMapping struct {
+				Ports []struct {
 					Name        string `json:"name"`
 					ExecutionID string `json:"execution_id"`
 					BedPort     int    `json:"bed_port"`
 					HostPort    int    `json:"host_port"`
-				} `json:"port_mapping"`
+				} `json:"ports"`
 			} `json:"access"`
 			Hold struct {
 				ID string `json:"id"`
 			} `json:"hold"`
 		}
 		request("POST", "/v1/beds/"+name+"/pillows/web/access", map[string]int{"hold_seconds": 30}, &access)
-		if access.Access.PortMapping.HostPort != p.HostPort || access.Access.PortMapping.BedPort != p.BedPort || access.Access.PortMapping.Name != s.PortMapping || access.Access.PortMapping.ExecutionID != s.ExecutionID || access.Hold.ID == "" {
+		if access.Access.Ports[0].HostPort != p.HostPort || access.Access.Ports[0].BedPort != p.BedPort || access.Access.Ports[0].Name != s.Ports[0] || access.Access.Ports[0].ExecutionID != s.ExecutionID || access.Hold.ID == "" {
 			t.Fatalf("access disagrees with status: %+v", access)
 		}
 		target, err := url.Parse(c.baseURL)
 		if err != nil {
 			t.Fatal(err)
 		}
-		hostURL := "http://" + net.JoinHostPort(target.Hostname(), strconv.Itoa(access.Access.PortMapping.HostPort))
+		hostURL := "http://" + net.JoinHostPort(target.Hostname(), strconv.Itoa(access.Access.Ports[0].HostPort))
 		req, err := http.NewRequestWithContext(ctx, "GET", hostURL, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -156,7 +156,7 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 		if err != nil || response.StatusCode != 200 || string(body) != name {
 			t.Fatalf("external pillow: status=%d body=%s err=%v", response.StatusCode, body, err)
 		}
-		script := fmt.Sprintf("import urllib.request; print(urllib.request.urlopen(%q, timeout=3).read().decode())", "http://"+net.JoinHostPort("127.0.0.1", strconv.Itoa(access.Access.PortMapping.BedPort)))
+		script := fmt.Sprintf("import urllib.request; print(urllib.request.urlopen(%q, timeout=3).read().decode())", "http://"+net.JoinHostPort("127.0.0.1", strconv.Itoa(access.Access.Ports[0].BedPort)))
 		result, responseCommand := c.command(t, name, map[string]any{"command": shellx.Quote(python) + " -c " + shellx.Quote(script), "timeout": 5000})
 		must2xx(t, "internal pillow", responseCommand)
 		assertCommandExit(t, result, 0)
@@ -166,10 +166,15 @@ func testBedPortMappings(t *testing.T, mode, executor, python string) {
 		request("DELETE", "/v1/beds/"+name+"/pillow-holds/"+access.Hold.ID, nil, nil)
 		return d
 	}
+	portSpec := map[string]any{"name": "http", "protocol": "TCP", "publish": true, "dynamic": true}
+	if mode == "private" {
+		delete(portSpec, "dynamic")
+		portSpec["containerPort"] = 8080
+	}
 	for _, name := range []string{"ports-a", "ports-b"} {
 		request("POST", "/v1/beds", map[string]any{"id": name,
-			"port_mappings": []any{map[string]any{"name": "http", "bed_port": 8080, "publish": true}},
-			"pillows":       []any{map[string]any{"name": "web", "port_mapping": "http", "command": []string{python, "-u", "-c", portPillowProgram}, "env": map[string]string{"SERVICE_PORT": "${PORT}", "LABEL": name}, "required": true, "http": map[string]string{"ready_path": "/"}}},
+
+			"pillows": []any{map[string]any{"name": "web", "ports": []any{portSpec}, "command": []string{python, "-u", "-c", portPillowProgram, "${PORT}"}, "env": map[string]string{"LABEL": name}, "required": true, "readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/", "port": "http"}, "periodSeconds": 1}}},
 		}, nil)
 		c.waitBed(t, name, func(b bedView) bool { return b.Status.Readiness.Ready }, "pillow ready")
 	}
