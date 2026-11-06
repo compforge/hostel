@@ -30,7 +30,7 @@ func TestBedDetailWireContract(t *testing.T) {
 		t.Fatal("missing pillow or port mapping")
 	}
 	pillow, port := bed.Status.Pillows[0], bed.Status.PortMappings[0]
-	if !pillow.Ready || pillow.PortMapping != port.Name || pillow.ExecutionID != port.ExecutionID || port.State != "listening" || port.BedPort != 8080 || port.HostPort != 24000 {
+	if !pillow.Ready || len(pillow.Ports) != 1 || pillow.Ports[0] != port.Name || pillow.ExecutionID != port.ExecutionID || port.State != "listening" || port.BedPort != 8080 || port.HostPort != 24000 {
 		t.Fatalf("pillow/port association: %+v %+v", pillow, port)
 	}
 	if bed.Activity.Operations[protocol.OpExec] != 1 || bed.Activity.Sessions[protocol.SessionKindCDP] != 1 {

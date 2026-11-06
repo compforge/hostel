@@ -16,29 +16,60 @@ Pillow 的 workdir 默认 /workspace，统一作为进程默认 cwd 与文件 AP
 配置来源与覆盖规则见下文，卷及只读保证见 [volumes.md](volumes.md)。多个 Pillow 共享 Bed 根数据、用户身份、网络和资源。
 挂载视图不同不等于同 Bed 内进程之间有完整安全隔离。
 
+下面是 main + worker 的完整声明示例。可执行路径、参数、健康路径和环境变量由调用方按
+实际程序提供；Hostel 不内置业务程序知识。此例要求 Carrier 提供该二进制，
+`/healthz/ready` 无需业务认证，业务 token 由 Carrier 环境或 Pillow 配置来源提供。
+
 ```yaml
 volumes:
-  - name: exchange
+  - name: workspace
+    managed:
+      persistence: none
+  - name: shared-data
     managed:
       persistence: none
 pillows:
-  - name: workspace
+  - name: main
     workdir: /workspace
+    env:
+      APP_SESSION_ID: session-demo
     mounts:
-      - volume: exchange
-        path: /run/hictld
-        read_only: true
-  - name: hictld
-    command: ["/usr/local/bin/hictld"]
-    restart_policy: on-failure
+      - volume: workspace
+        path: /workspace
+      - volume: shared-data
+        path: /mnt
+  - name: worker
+    workdir: /workspace
+    command: ["/opt/example/bin/worker"]
+    args: ["--listen", "${LISTEN_ADDR}"]
+    env:
+      APP_SESSION_ID: session-demo
+      APP_WORKSPACE_PATH: /mnt/session
+      APP_DOWNLOAD_ALLOWED_NETWORKS: '[{"cidr":"10.5.125.33/32","ports":["8060"]}]'
+    mounts:
+      - volume: workspace
+        path: /workspace
+      - volume: shared-data
+        path: /mnt
+    ports:
+      - name: worker
+        protocol: TCP
+        dynamic: true
+        publish: true
+    readinessProbe:
+      httpGet:
+        path: /healthz/ready
+        port: worker
+      timeoutSeconds: 2
+      periodSeconds: 2
+      failureThreshold: 3
     required: true
-    mounts:
-      - volume: exchange
-        path: /run/hictld
+    restart_policy: always
 ```
 
-示例中的程序参数和就绪配置由调用方按真实程序契约提供。Carrier 提供可执行程序和依赖，
-Hostel 不内置 hictld 等业务程序目录，也不会因为镜像中存在程序就自动为每个 Bed 启动它。
+示例选择动态监听端口，使多个 Bed 在共享 Carrier 网络上也可并存。需要固定监听端口时将
+`dynamic: true` 换成 `containerPort: 18089`，运行时必须使用该端口，冲突直接失败。
+多个 Bed 都使用同一固定端口要求实际隔离的网络空间；不能把共享网络伪装成独立 Pod 网络。
 
 ## 配置来源
 
@@ -76,8 +107,7 @@ Bed 初始化检查所有 Pillow 引用的配置能否解析；启动每个消�
 已运行进程不自动刷新。Pillow 之间不隐式继承配置。
 
 先停止消费者，再释放 Bed 配置准备状态。本地身份记录保存非敏感声明与来源引用；
-从文件读取的值不会写回声明、状态或快照。主进程自动生成的鉴权值属于该次 Execution，
-不加入同 Pillow 普通命令的基础环境。
+从文件读取的值不会写回声明、状态或快照。业务凭据与其它配置采用同一解析规则，Hostel 不赋予特定变量名额外的优先级。
 
 ### 配置访问边界
 
@@ -88,31 +118,104 @@ Bed 初始化检查所有 Pillow 引用的配置能否解析；启动每个消�
 这里落实的是文件来源到进程环境变量的消费，不提供按 Bed 挂载配置文件的能力。
 文件视图、只读挂载和访问边界属于 Filesystem 的职责，不能用环境变量注入代替这些保证。
 
-环境按 Carrier 环境、Hostel 注入的 Bed 上下文、Pillow 配置、单次执行 env 的顺序组合。
+普通业务变量的覆盖顺序从高到低为：
+
+1. 单次执行显式 env。
+2. 当前 Pillow 的 `env` / `env_value_from` / `env_files`（同名不能重复声明）。
+3. 当前 Pillow 的 `env_from`（后一个来源覆盖前一个）。
+4. Carrier 的可继承环境。
+
+Hostel 注入的 Bed 上下文属于保留变量，不能通过以上业务配置覆盖。
 过滤 Carrier 中的 HOSTEL_*、外部 BED_* 和受管 CDP endpoint，其余环境默认继承；部署方
 负责其中敏感信息。Session export 只改变该 shell，不能改写声明或其他进程的环境。
 声明在本地生命周期内固定，Executor 替换和保留目录的 daemon 恢复继续使用它。
+
+Carrier 环境在 daemon 启动时获取；Kubernetes Pod 的 Secret/ConfigMap envFrom 更新不自动
+改变已运行 daemon 的环境，需要按部署流程重建容器。Pillow 命名文件来源则在消费者启动时
+重新读取；两条路径的刷新时机不同。
+
+### Kubernetes 部署中的两种配置供给
+
+整个 Carrier 共享的业务默认值可以直接注入 Hostel 容器：
+
+```yaml
+containers:
+  - name: hostel
+    envFrom:
+      - configMapRef:
+          name: sandbox-defaults
+      - secretRef:
+          name: worker-credentials
+```
+
+这些普通变量会被该 Carrier 的所有 Bed/Pillow 继承。只有某个 Pillow 需要的配置则继续使用
+已支持的命名文件来源：部署方把 Secret/ConfigMap 投影成 daemon 可读目录，注册
+`HOSTEL_CONFIGURATION_SOURCES='{"worker-config":"/run/config/worker","worker-secret":"/run/secrets/worker"}'`，
+然后在 worker Pillow 声明：
+
+```yaml
+env_from: [worker-config, worker-secret]
+env:
+  APP_DOWNLOAD_ALLOWED_NETWORKS: '[{"cidr":"10.0.0.0/8","ports":["443"]}]'
+```
+
+显式白名单覆盖文件来源中的同名键。main 不继承 worker 的导入；仅注册来源也不会让所有
+Pillow 获得其内容。Hostel 读取已注册的本地文件，不自行访问 Kubernetes Secret/ConfigMap API。
+
 
 ## 可选主进程
 
 command 和 args 直接属于 Pillow，拼接后作为 argv 执行，不隐式经过 shell。
 未声明 command 时只准备环境；有 command 时环境就绪后自动启动一个主进程。
-空 command、孤立 args 和没有 command 的监督或 HTTP 声明拒绝。
+空 command、孤立 args 和没有 command 的监督、ports 或探针声明拒绝。
 多个主进程使用多个 Pillow，通过相同 Volume 共享所需数据。
 
 required 表示 Bed 持续依赖该主进程就绪，不表示启动依赖或一次性 init 任务。
 主进程的 restart_policy 支持 never、on-failure、always，自动重启受退避和 max_restarts 约束。
-startup_seconds 限制首次就绪等待，stop_seconds 限制 TERM 后等待，再由 KILL 清理进程组。
-成功退出且不再重启报告 completed，失败或重试耗尽报告 failed。
+stop_seconds 限制 TERM 后等待，再由 KILL 清理进程组。成功退出且不再重启报告 completed，
+失败或重试耗尽报告 failed。环境准备状态与主进程阶段分别报告，没有主进程仍有 prepared 状态。
 
-http.ready_path 用于周期就绪检查；没有 HTTP 检查的主进程只以进程存活判定就绪。
-运行中就绪失败保留进程，不消耗重启预算；必需主进程未就绪阻止新工作，不取消已有执行。
-Pillow 环境准备状态与主进程阶段分别报告；没有主进程的 Pillow 仍有 prepared 状态。
+### 端口声明
 
-主进程引用 Bed port_mapping；端口预留、监听核验、发布和释放由 Network 拥有。
-HTTP 鉴权支持每 Execution 生成凭据或读取声明的环境配置；进程本身负责验证请求。
-生成 token、运行地址、内部路径不进入 PillowSpec，连接发现绑定当前 Execution 与端口实例。
-细节见 [network.md](network.md) 和 [protocol.md](protocol.md)。
+`ports` 是该 Pillow 的命名 TCP 监听列表；名称在整个 Bed 内唯一。同一固定监听端口不能
+由两个 Pillow 重复声明。每项支持：
+
+- `name`：探针和状态引用的名字，不能为纯数字。
+- `protocol`：默认 `TCP`，当前仅支持 TCP。
+- `containerPort`：1–65535 的固定监听端口，无法使用时失败，不自动换号。
+- `dynamic`：Hostel 扩展，显式申请动态监听端口，与非零 containerPort 互斥。
+- `publish`：Hostel 扩展，默认 false；是否通过 Carrier 发布外部访问端口。
+
+固定端口或 dynamic 必须二选一。声明不会替程序调用 bind，程序必须实际使用指定地址。
+多端口命令使用 `${PORT_<name>}` / `${LISTEN_ADDR_<name>}`；只有一个端口时也可用
+`${PORT}` / `${LISTEN_ADDR}`。仅 command/args 做地址展开，所有 env 值保持原样，
+不会因字符串含占位符而改写业务 token 等配置。分配结果只在运行状态中返回，重启后重新发现。
+分配、发布和回收归 Network，细节见 [network.md](network.md)。
+
+### 通用就绪探针
+
+`readinessProbe` 使用 Kubernetes 风格的 camelCase 字段，必须选择一种 action：
+
+- `httpGet: {path: /ready, port: worker}`：无认证的 HTTP GET；200–399 为成功，不跟随重定向。
+- `tcpSocket: {port: worker}`：能建立 TCP 连接即成功，不证明业务请求能完成。
+
+port 可以是当前 Pillow 的命名端口，也可以是已声明的固定 containerPort 数字。
+动态端口必须按名称引用。当前没有 exec、HTTPS、gRPC、livenessProbe 或 startupProbe；
+未知字段拒绝，不把 Kubernetes 完整 Probe API 当作已实现能力。
+
+`initialDelaySeconds` 默认 0；`timeoutSeconds` 默认 1；`periodSeconds` 默认 10；
+`successThreshold` 默认 1；`failureThreshold` 默认 3。每次检查完成后等待 periodSeconds，
+同一 Pillow 不并发探测；timeoutSeconds 包含等待全局探针并发槽与监听归属检查。
+计数按连续结果计算，反向结果清零。初始延迟最多 86400 秒，超时/间隔最多 3600 秒，
+连续阈值最多 1000；负数拒绝。
+
+初始就绪前以及运行期间，探针失败都只改变就绪状态，不杀进程、不消耗重启预算。
+必需主进程首次就绪前 Bed 保持 initializing；就绪丢失阻止新工作，不取消已有执行或连接。
+没有探针时只以进程存活判定就绪，不宣称应用已能响应。进程退出、显式停止和确认的
+端口归属冲突仍按执行生命周期处理；调用方可通过 Bed 生命周期取消初始化。
+
+健康检查不验证或推导业务认证。Hostel 不读取某个特定 token 变量、不发送业务 Authorization，
+也不从 access 返回凭据。业务进程与调用方各自持有配置，认证由业务进程执行。
 
 ## 执行与恢复
 
@@ -143,48 +246,35 @@ Bed 的共享设施使用边界见 [amenity.md](amenity.md)。
 | 接口 | 行为 |
 |---|---|
 | `GET /v1/beds/{bed}/pillows` | 查询所有 Pillow；不创建 Bed、不续租 |
-| `GET /v1/beds/{bed}/pillows/{pillow}` | 环境准备、主进程阶段、Execution/Executor ID 与 PortMapping 引用 |
+| `GET /v1/beds/{bed}/pillows/{pillow}` | 环境准备、主进程阶段、Execution/Executor ID 与 ports 名称列表 |
 | `GET /v1/beds/{bed}/pillows/{pillow}/logs?cursor=0` | 当前主 Execution 的有界日志、下一游标及截断状态 |
 | `POST /v1/beds/{bed}/pillows/{pillow}/process/restart` | 异步重启主进程，返回 202；不重建 Pillow |
-| `POST /v1/beds/{bed}/pillows/{pillow}/access` | 使用 `{"hold_seconds":300}` 获取当前端口快照、可选 token 与限时 hold |
+| `POST /v1/beds/{bed}/pillows/{pillow}/access` | 使用 `{"hold_seconds":300}` 获取当前 ports 快照与限时 hold |
 | `DELETE /v1/beds/{bed}/pillow-holds/{hold}` | 提前释放 hold，幂等 |
 
 hold 为 1–7200 秒，覆盖直连操作及 HTTP 返回后仍在执行的异步任务；期间 eviction 等待，
 到期自动结束 operation，daemon shutdown 仍可强制终止。提前释放不缩短已有 retained_until。
 诊断与内部 readiness 探测不续租，主进程常驻不等于 Bed 有业务活动。
 
-## 启动、监听与凭据
+## 启动与监听归属
 
 可执行绝对路径、相对路径和 PATH 查找均在降权后的 Pillow 视图内完成；workdir 决定 cwd，
 Pillow 的 PATH 决定裸命令查找范围。Carrier 提供的解释器、动态库和程序目录须在该视图可见。
-command / args / env 中的 `${PORT}` 和 `${LISTEN_ADDR}` 用于注入分配的监听地址，
-不把其它配置当作 shell 表达式求值。程序必须前台运行，子进程不能通过 daemonize/setsid 脱离监督进程组。
+程序必须前台运行，子进程不能通过 daemonize/setsid 脱离监督进程组。
 
 主进程策略默认值：required=false、restart_policy=never、max_restarts=5（0 使用默认值，上限 100），
-退避从一秒增长至三十秒；startup_seconds=30（1–120），stop_seconds=5（1–30）。
-Executor 丢失也受恢复预算约束；正常成功退出在 never/on-failure 下停止，在 always 下重启。
+退避从一秒增长至三十秒；stop_seconds=5（1–30）。Executor 丢失也受恢复预算约束；
+正常成功退出在 never/on-failure 下停止，在 always 下重启。
 
-HTTP 主进程引用 Bed 的 port_mapping，并声明 http.ready_path；authentication 可省略。
-省略时不生成凭据，readiness 不附加认证头，access 不返回 token。配置认证时，scheme=bearer，
-token_env 指定注入变量，token_source 支持：
+探针前的监听归属检查区分当前进程组、其他进程占用、尚未监听和无法检查。
+确认动态端口冲突时最多尝试三次分配/启动，固定 containerPort 不换号；缺权限不能当作冲突。
+无法检查时使用通用探针判断可用性，并披露 listener 检查缺口。暂时失去 readiness 保留当前
+Execution、端口及已有连接；拒绝新 access，不阻断已发现地址的直连流量。
+全实例最多 16 个并发 HTTP/TCP 网络探测。端口分配与回收契约见 [network.md](network.md)。
 
-- generated：每次主 Execution 生成新 token；不得与显式环境来源冲突。
-- environment：从 Pillow 配置读取指定变量；每次启动读取，缺失或空值使启动失败。
-
-敏感值使用 env_files/env_value_from 引用，避免明文进入持久化声明。readiness 和 access
-使用主进程启动时的同一份 token，文件轮换不会改变已运行实例。程序负责校验 Bearer token，
-Hostel 的 TCP 发布不代替程序认证。探活不跟随重定向，单请求两秒超时，最多 16 个并发探测。
+规范化声明保存在 daemon 私有的本地身份记录中，不进入卷快照；跨实例重建由调用方重新提交。
+运行状态与运行时日志不记录环境配置值；业务进程自己的 stdout/stderr 仍按普通执行日志收集。
 独立环境变量不提供对同 UID 进程或 /proc 的保密保证。
-
-监听归属检查区分当前进程组、其他进程占用、尚未监听和无法检查。明确冲突才触发换端口，
-自动或偏好端口最多尝试三次，硬要求不换号；缺权限不能当作冲突。无法检查时可降级为
-进程存活且 HTTP readiness 成功，并披露 listener 检查缺口。暂时失去 readiness 保留当前
-Execution、凭据、端口及已有连接；拒绝新 access，不阻断已发现地址的直连流量。
-端口分配与回收契约见 [network.md](network.md)。
-
-规范化声明保存在 daemon 私有的本地身份记录中，不进入卷快照；
-跨实例重建由调用方重新提交。
-状态和日志不包含环境配置值或 token。
 
 ## 命令、Session 与进程承载
 

@@ -50,6 +50,16 @@ Pillow 使用 `prepared` 区分环境准备，`phase`、`ready` 和 execution �
 Volume 使用互斥来源 `managed` 或 `host_path`；`managed.persistence` 为 `none` 或 `sync`。
 Pillow 的挂载路径与 Volume 的持久身份独立，完整数据契约见 [volumes.md](volumes.md)。
 
+端口在 `pillows[].ports` 声明，就绪条件在 `pillows[].readinessProbe` 声明。
+新增字段使用 Kubernetes 风格名称；现有 env_from/workdir/mounts 等字段继续采用 Hostel 命名。
+每个 Pillow 状态的 `ports` 是名称列表，Network 的实际分配仍由 `status.port_mappings` 报告。
+access 响应为 `access.ports` 数组和 hold，不含业务凭据。
+
+本次协议变更不保留历史兼容：创建请求拒绝 Bed `port_mappings`、Pillow `port_mapping`、
+`http` 和 `startup_seconds`。Go 调用方同步升级 protocol 并改用 Ports/ReadinessProbe；
+旧的 Authentication/TokenSource 类型已删除。旧版本本地声明不提供自动迁移，部署应按
+上层生命周期重新创建 Bed，不把旧 identity 文件视为支持跨版本恢复的契约。
+
 Pillow 主进程的 outcome 保留既有诊断 JSON；底层 executor 类型不成为公开依赖，私有 Detail
 继续清空。Amenity 的 status 是设施拥有的可扩展 JSON 值；公开契约不暴露内部 sealed Tenant
 接口。路径、资源句柄、锁和发布策略留在内部实现。

@@ -43,7 +43,7 @@ Bed 声明必须包含非空 Pillows；首项为默认 Pillow。创建入口拥�
 | 对象 | 身份与职责 |
 |---|---|
 | Bed | 路由、资源归属和生命周期单位；拥有 Pillows、Volumes、根数据、网络与资源需求 |
-| Pillow | Bed 内的命名执行环境；持有 env、配置引用、workdir、mounts 和可选主进程声明 |
+| Pillow | Bed 内的命名执行环境；持有 env、配置引用、workdir、mounts、ports、readinessProbe 和可选主进程声明 |
 | Volume | Bed 内命名的数据来源；由 Hostel 管理或引用外部目录，可声明自动持久化 |
 | Execution | 一次运行；属于 Pillow，由当前 Executor 承载，具有输出和结构化终态 |
 | Amenity | Carrier 共享设施；按 Bed 分配 Tenant 状态，如 Chromium BrowserContext、MCP 连接 |
@@ -66,6 +66,38 @@ Bed 的 Name 由调用方给定，用于寻址和定位远端快照；本地 ID 
 Executor 是 Bed 当前可替换的进程承载域；BedFS 是根数据、卷和各 Pillow 路径视图的实现。
 替换 Executor 保留 Bed 资源与数据，重新绑定执行视图。Store 实现卷的同步、恢复和显式传输。
 这些子系统服务于工作负载模型，各自拥有实现资源与状态。
+
+## Pod / Container 式声明与职责边界
+
+Bed / Pillow 在工作负载配置模型上对应简化的 Pod / Container：Bed 拥有共同生命周期、
+网络和命名卷，Pillow 声明进程、环境、工作目录、挂载、端口和就绪条件。这个对应帮助调用方
+组织配置，不承诺 Kubernetes API 兼容、每 Pillow 独立镜像或完整容器隔离。
+
+| 需求 | 声明位置 | 执行与状态 owner |
+|---|---|---|
+| 共同数据来源 | Bed `volumes` | Filesystem / Store |
+| 命令、环境与挂载视图 | Pillow `command/args/env/env_from/workdir/mounts` | Configuration / Filesystem / Executor |
+| 监听端口与是否发布 | Pillow `ports` | Network 分配、发布、撤销和回收；状态保存实际端口 |
+| 就绪条件 | Pillow `readinessProbe` | Pillow 调度通用探针，决定工作准入 |
+| 业务 HTTP 协议与认证 | 业务程序和调用方配置 | 业务程序验证，调用方持有凭据 |
+
+声明归属与实现归属分开：Pillow 声明需要哪些端口，不意味着 Pillow 自行实现网络分配。
+同一端口只声明一次，不要求额外的 Bed `port_mappings` 或 `network.ports`。
+`ports[].publish` 是 Hostel 的发布扩展，尚不需要独立 Service 对象；它不提供路由、
+负载均衡或业务鉴权，也不是防火墙规则。
+
+配置按作用对象分层。`HOSTEL_*` 是 Carrier/daemon 的基础设施配置，不自动转成业务变量。
+Carrier 中其余可继承环境作为所有 Bed/Pillow 的默认值，包括部署方通过 Pod envFrom
+提供的 Secret/ConfigMap。Pillow 可以再选择自己的命名文件来源；显式变量覆盖来源导入，
+来源导入覆盖 Carrier 默认值。不同 Pillow 不隐式继承彼此的显式配置。
+
+共享环境继承是 Hostel 的额外能力，不是 Kubernetes Pod 的顶层 env。部署方决定哪些业务
+配置可被整个 Carrier 共享。来源注册与环境注入也不等于把文件挂入 Pillow；文件视图仍通过
+Volume/Mount 表达。完整配置规则与 main + worker 示例见 [Pillow](pillow.md)。
+
+`readinessProbe.httpGet` 表达健康检查，不把 Pillow 定义成一种 HTTP 服务。Hostel 不生成、
+发现、旋转或返回业务 token，也不按 token/AWS 等业务变量名判断配置优先级。进程收到
+配置后自行解释；需要认证的业务接口可以与公开健康路径分开，或选择 TCP 就绪检查。
 
 ## 所有权与子系统契约
 

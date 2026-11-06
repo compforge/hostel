@@ -46,7 +46,7 @@ func TestNormalizeRejectsInvalidPillowSpecs(t *testing.T) {
 		{Name: "worker", Args: []string{"orphan"}},
 		{Name: "worker", Command: []string{"worker"}, Env: map[string]string{"HOSTEL_ADDR": "bad"}},
 		{Name: "worker", Command: []string{"worker"}, EnvFiles: map[string]string{"SECRET": "relative"}},
-		{Name: "worker", Command: []string{"worker"}, HTTP: &bed.PillowHTTPSpec{ReadyPath: "ready"}},
+		{Name: "worker", Command: []string{"worker"}, ReadinessProbe: &bed.Probe{HTTPGet: &bed.HTTPGetAction{Path: "ready", Port: "http"}, PeriodSeconds: 1, FailureThreshold: 1}},
 	}
 	for _, spec := range tests {
 		if _, err := Normalize([]bed.PillowSpec{spec}); err == nil {
@@ -58,78 +58,27 @@ func TestNormalizeRejectsInvalidPillowSpecs(t *testing.T) {
 	}
 }
 
-func TestNormalizeAuthentication(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		auth  *bed.Authentication
-		env   map[string]string
-		files map[string]string
-		valid bool
-	}{
-		{name: "none", valid: true},
-		{name: "generated", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}, valid: true},
-		{name: "environment", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}, env: map[string]string{"TOKEN": "test-token"}, valid: true},
-		{name: "file", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}, files: map[string]string{"TOKEN": "/run/secrets/token"}, valid: true},
-		{name: "empty authentication", auth: &bed.Authentication{}},
-		{name: "unknown scheme", auth: &bed.Authentication{Scheme: "basic", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}},
-		{name: "missing source", auth: &bed.Authentication{Scheme: "bearer", TokenEnv: "TOKEN"}},
-		{name: "unknown source", auth: &bed.Authentication{Scheme: "bearer", TokenSource: "none", TokenEnv: "TOKEN"}},
-		{name: "missing env name", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated}},
-		{name: "reserved env", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "HOSTEL_TOKEN"}},
-		{name: "generated env conflict", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}, env: map[string]string{"TOKEN": ""}},
-		{name: "generated file conflict", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "TOKEN"}, files: map[string]string{"TOKEN": "/run/secrets/token"}},
-		{name: "missing environment", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}},
-		{name: "empty environment", auth: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceEnvironment, TokenEnv: "TOKEN"}, env: map[string]string{"TOKEN": ""}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			input := []bed.PillowSpec{{Name: "web", PortMapping: "http", Command: []string{"server"}, Env: tc.env, EnvFiles: tc.files, HTTP: &bed.PillowHTTPSpec{ReadyPath: "/ready", Authentication: tc.auth}}}
-			resolved, err := Normalize(input)
-			if (err == nil) != tc.valid {
-				t.Fatalf("valid=%t, err=%v", tc.valid, err)
-			}
-			if err != nil || tc.auth == nil {
-				return
-			}
-			cloned := bed.ClonePillows(resolved)
-			cloned[0].HTTP.Authentication.TokenEnv = "OTHER_TOKEN"
-			if resolved[0].HTTP.Authentication.TokenEnv != "TOKEN" || input[0].HTTP.Authentication.TokenEnv != "TOKEN" {
-				t.Fatal("authentication aliases caller-owned storage")
-			}
-			if _, err := Normalize(cloned); err == nil {
-				t.Fatal("changed pinned authentication accepted")
-			}
-		})
+func TestResolvePortOwners(t *testing.T) {
+	m, _ := httpTestManager(t)
+	spec := bed.PillowSpec{Name: "web", Command: []string{"server"}, Ports: []bed.PillowPort{{Name: "http", Dynamic: true}}}
+	other := spec
+	other.Name = "other"
+	if _, err := m.Resolve([]bed.PillowSpec{spec, other}); err == nil {
+		t.Fatal("duplicate Bed port name accepted")
+	}
+	if _, err := m.Resolve([]bed.PillowSpec{spec}); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestResolvePortMappingConsumers(t *testing.T) {
+func TestNonHTTPPort(t *testing.T) {
 	m, _ := httpTestManager(t)
-	mappings := []bed.PortMappingSpec{{Name: "http", Protocol: "tcp", Publish: true}}
-	spec := bed.PillowSpec{Name: "web", PortMapping: "http", Command: []string{"server"}, HTTP: &bed.PillowHTTPSpec{ReadyPath: "/"}}
-	if _, err := m.Resolve([]bed.PillowSpec{spec}, nil); err == nil {
-		t.Fatal("undeclared mapping accepted")
-	}
-	other := spec
-	other.Name = "other"
-	if _, err := m.Resolve([]bed.PillowSpec{spec, other}, mappings); err == nil {
-		t.Fatal("shared consumer ownership accepted")
-	}
-	if _, err := m.Resolve([]bed.PillowSpec{spec}, mappings); err != nil {
+	b := bed.New("tcp", "", bed.Spec{Pillows: []bed.PillowSpec{{Name: "tcp", Command: []string{"worker"}, Ports: []bed.PillowPort{{Name: "tcp", Dynamic: true}}, Required: true}}})
+	if err := m.PrepareBed(t.Context(), b, &fakeRuntime{}); err != nil {
 		t.Fatal(err)
 	}
-	spec.PortMapping = ""
-	if _, err := Normalize([]bed.PillowSpec{spec}); err == nil {
-		t.Fatal("HTTP without mapping accepted")
-	}
-}
-func TestNonHTTPPortMapping(t *testing.T) {
-	m, _ := httpTestManager(t)
-	b := bed.New("tcp", "", bed.Spec{PortMappings: []bed.PortMappingSpec{{Name: "tcp", Protocol: "tcp"}}, Pillows: []bed.PillowSpec{{Name: "tcp", PortMapping: "tcp", Command: []string{"worker"}, Env: map[string]string{"LISTEN": "${LISTEN_ADDR}"}, Required: true}}})
-	runtime := &fakeRuntime{}
-	if err := m.PrepareBed(t.Context(), b, runtime); err != nil {
-		t.Fatal(err)
-	}
-	if !m.Status(b)[0].Ready {
-		t.Fatal("TCP process not ready")
+	access, err := m.Access(b, "tcp")
+	if err != nil || len(access.Ports) != 1 || access.Ports[0].HostPort != 0 {
+		t.Fatalf("TCP access: %+v %v", access, err)
 	}
 }

@@ -168,7 +168,7 @@ func respondBedError(c *gin.Context, err error) {
 			return
 		}
 	}
-	if errors.Is(err, bed.ErrPortsConflict) || errors.Is(err, bed.ErrPathsConflict) || errors.Is(err, bed.ErrPillowsConflict) {
+	if errors.Is(err, bed.ErrPathsConflict) || errors.Is(err, bed.ErrPillowsConflict) {
 		respondFailure(c, http.StatusConflict, apiview.ErrBedInvalid, err.Error(), err)
 		return
 	}

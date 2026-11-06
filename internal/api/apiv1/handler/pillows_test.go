@@ -72,7 +72,7 @@ func TestPillowManagementRoutesAndDeclarationConflict(t *testing.T) {
 	}
 	w = request(http.MethodPost, "/v1/beds/pillow-bed/pillows/worker/access", `{"hold_seconds":10}`)
 	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("non-HTTP access: %d %s", w.Code, w.Body)
+		t.Fatalf("portless access: %d %s", w.Code, w.Body)
 	}
 	w = request(http.MethodGet, "/v1/beds/pillow-bed/pillows/missing", "")
 	if w.Code != http.StatusNotFound {
@@ -86,6 +86,11 @@ func TestPillowDefaultHTTPContract(t *testing.T) {
 	s := newTestServerWithBed(t)
 	for _, body := range []string{
 		`{"id":"invalid","pillows":null}`,
+		`{"id":"invalid","port_mappings":[],"pillows":[{"name":"main"}]}`,
+		`{"id":"invalid","pillows":[{"name":"main","port_mapping":"http"}]}`,
+		`{"id":"invalid","pillows":[{"name":"main","http":{"ready_path":"/ready"}}]}`,
+		`{"id":"invalid","pillows":[{"name":"main","command":["server"],"readinessProbe":{"exec":{"command":["true"]}}}]}`,
+
 		`{"id":"invalid","pillows":[]}`,
 		`{"id":"invalid","services":[],"pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`,
 		`{"id":"invalid","env":{"VALUE":"legacy"},"pillows":[{"name":"main","mounts":[{"volume":"workspace","path":"/workspace"}]}]}`,

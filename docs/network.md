@@ -33,54 +33,50 @@ caller 决定是否使用该 Bed。Hostel 不修改 carrier sysctl。
 namespace 命令或连通性失败本身不能证明是 carrier 还是 Bed 实现的问题，证据不足则为 unknown。
 原始 probe 错误留在全局状态/日志，创建 API 保留固定安全消息。
 
-## Bed PortMapping
+## Pillow 端口与 Network allocation
 
-`Bed.Spec.PortMappings` 是命名的 TCP 端口需求；与 Volume/Mount 声明一样，调用方声明逻辑关系，
-Hostel 根据实际能力兑现。Pillow 主进程通过 `port_mapping` 引用其中一项，不再自行持有端口分配策略。
-当前由托管 Pillow 主进程消费映射，每项最多绑定一个 Pillow 主进程；没有消费者的声明不预占运行端口。
+调用方只在 Pillow `ports` 声明监听需求。Network 直接使用这份声明，为每个当前 Execution
+持有精确的 PortMapping 句柄；Bed Spec 不保存另一份端口配置。声明与示例见
+[Pillow 端口](pillow.md#端口声明)。
 
 ```yaml
-port_mappings:
-  - name: workspace-http
-    protocol: tcp
-    bed_port: 8080
-    require_bed_port: false
-    publish: true
 pillows:
-  - name: workspace-api
-    port_mapping: workspace-http
-    # command / env 通过 ${PORT} 或 ${LISTEN_ADDR} 接收实际监听地址
+  - name: web
+    command: ["server", "--listen", "${LISTEN_ADDR}"]
+    ports:
+      - name: http
+        protocol: TCP
+        dynamic: true
+        publish: true
+    readinessProbe:
+      tcpSocket:
+        port: http
 ```
 
-`protocol` 默认 `tcp`；`bed_port=0` 表示自动分配。非零端口默认是偏好，
-`require_bed_port=true` 才是硬要求，必须同时指定非零 `bed_port`。
-`publish` 显式控制 Carrier 入口与外部地址发现，默认 false。Host 端口由统一端口池动态分配，
-不接受静态 `host_port`，也不写入持久化声明。
+`containerPort` 是固定监听端口，不是偏好；`dynamic: true` 才允许运行时选取端口。
+固定端口冲突直接失败，不静默改号。共享网络中的多个 Bed 应使用动态端口或不同固定端口。
+Host 端口由统一端口池管理，不接受静态 hostPort，也不写入持久化声明。
 
-| 实际网络 | Bed 内监听 | Carrier 发布 | Bed 内访问 |
-|---|---|---|---|
-| private netns | 优先使用 `bed_port`；未指定或偏好冲突时动态分配 | 独立 Host 端口，TCP 转发至 Bed IP | `127.0.0.1:bed_port` |
-| shared | 普通请求使用 Host 动态端口池；硬要求才尝试指定端口 | 与 Bed 监听为同一个端口，无额外转发 | `127.0.0.1:host_port` |
+| 实际网络 | Bed 内监听 | publish=true 的 Carrier 发布 |
+|---|---|---|
+| private netns | containerPort 固定，或 dynamic 动态分配 | 另分配 Host 端口，TCP 转发到 Bed IP |
+| shared | containerPort 固定，或 dynamic 从 Host 端口池分配 | 使用进程的同一个端口，无额外转发 |
 
-硬要求冲突直接失败，不换端口。偏好降级原因通过 `reason` 披露；共享网络下的典型原因是
-`SharedNetworkUsesHostPort`。这不会提升网络隔离等级，也不能让共享网络中的每个 Bed 都使用
-`127.0.0.1:8080`。需要该假设的程序必须消费发现结果或修改监听配置。
-
-`publish=false` 时不返回外部地址、不创建转发；共享网络注入 loopback 监听地址。
-私有网络中的 listener 仍需供 Carrier readiness 探测。发布选项是监听/发现契约，不是防火墙：
-程序自行忽略 `${LISTEN_ADDR}` 或其他进程主动 bind 不受它约束。
+`publish=false` 不创建转发且不返回 host_port；共享网络注入 loopback 监听地址。
+私有网络的 listener 仍需供 Carrier 探针访问。publish 是监听地址与发现契约，不是防火墙：
+程序忽略注入地址、自行 bind，或其他进程访问已知地址，不受该选项拦截。
 
 ### 发现、归属与回收
 
 Bed 详情直接返回 `status.pillows` 和 `status.port_mappings`；`status.subsystems.network`
 继续描述隔离能力与网络状态。每项映射报告 `name`、`protocol`、`pillow`、`execution_id`、
 `network`、`state`、`bed_port`、`host_port` 和降级 `reason`。`host_port` 仅在发布时存在。
-端口事实只由 PortMapping 持有；Pillow 主进程状态通过 `port_mapping` 名称引用它。
+端口事实只由 PortMapping 持有；Pillow 主进程状态通过 `ports` 名称列表引用它。
 地址和应用 URL 是派生值，不作为独立状态或 API 字段，避免同一绑定出现多个信息源。
 
-HTTP Pillow 主进程的 access 返回当前 `port_mapping` 完整快照和可选 token，映射内包含
-`execution_id` 与实际端口。快照与凭据在同一 Pillow 主进程锁内读取，调用方无需另外查询
-映射来拼接本次执行的地址。它不是另一份运行时状态，也不保证服务不会随后重启。
+Pillow access 返回 `ports` 数组，每项是当前 PortMapping 的完整快照，包含 execution_id
+与实际端口。所有项在同一 Pillow 主进程锁内读取，不返回业务 token，不要求声明 HTTP。
+它是 Network 状态的查询投影，不是第二份可变状态，也不保证进程随后不会重启。
 
 调用方按以下规则推导地址；HTTP 服务再加 `http://`：
 
@@ -89,24 +85,22 @@ HTTP Pillow 主进程的 access 返回当前 `port_mapping` 完整快照和可�
 | Bed 内 | `127.0.0.1` + 映射的实际 `bed_port` |
 | Carrier 外 | 调用方已知的 Carrier IP/域名 + 映射的 `host_port` |
 
-Carrier host 来自调用方的部署或连接信息，例如 Sandctl 持有的 Carrier Pod IP；
+Carrier host 来自调用方的部署或连接信息，例如上层调度服务持有的 Carrier Pod IP；
 Hostel 不配置或推测这个地址。Host 指承载 Hostel 的网络域，Pod 部署时通常就是
 Carrier Pod。外部访问需要该 host 和端口可达；不能从经过代理的控制面 URL 假定数据端口可达。
 未发布时没有 `host_port`，调用方不得据此构造外部地址。
 
-例如偏好 `bed_port=8080`、`publish=true`，Host 实际分配 `23456`：私有 netns 且
-偏好端口可用时，Bed 内访问 `127.0.0.1:8080`，外部访问 `<CarrierPodIP>:23456`；
-共享网络时，实际 `bed_port = host_port = 23456`，Bed 内访问 `127.0.0.1:23456`。
-Bed 内访问不承诺独立 netns 或固定端口；`require_bed_port=true` 无法满足仍直接失败。
-私有 netns 的 loopback 属于 Bed，不能用自身的 `127.0.0.1:host_port` 访问 Host 入口；
-若特意走 Host 发布端口，需要可达的 Host 网关地址，普通 Bed 内调用直接使用 `bed_port`。
+例如 containerPort=18089、publish=true：私有 netns 下 Bed 内访问
+`127.0.0.1:18089`，外部使用分配的 `<CarrierPodIP>:host_port`；共享网络要求
+Carrier 的 18089 可用，bed_port 与 host_port 都为 18089。dynamic=true 时调用方读取实际端口。
+私有 netns 的 loopback 属于 Bed，不能用自己的 `127.0.0.1:host_port` 访问 Host 入口。
 
 端口属于当前 execution，重启后必须重新发现，不能将端口当成稳定身份。
 
 `internal/bed/network.PortMappings` 复用 Host PortManager/TCPForwarder，拥有 reserve、publish、
-withdraw、release；Pillow 主进程仅负责进程、HTTP readiness 和重启，并绑定具体映射句柄。
+withdraw、release；Pillow 主进程仅负责进程、通用 readiness 和重启，并绑定具体映射句柄。
 准备顺序是网络就绪 → 预留 Bed 端口 → 启动进程 → Pillow 主进程就绪 → 发布 Host 入口。
-纯 TCP 服务没有 HTTP readiness 时，发布以进程存活为准，不宣称应用已能服务请求。
+没有声明 readinessProbe 时，发布以进程存活为准，不宣称应用已能服务请求。
 
 Readiness 暂时丢失保留本次运行及连接，但拒绝新 access。真正停止时先撤销发现与转发、
 再停止进程、最后释放内部端口；清理失败保留责任并重试。网络 namespace 在映射回收后才可释放。

@@ -86,3 +86,50 @@ func TestConfigurationLifecycleAndProcessConsumers(t *testing.T) {
 		t.Fatal("eviction retained configuration")
 	}
 }
+
+// +case:id=pillow_env_precedence,desc=`Two Pillows inherit Carrier defaults but import different configuration sources`,expect=`Explicit env overrides ordered env_from; imports override Carrier; sibling explicit env never leaks`
+func TestPillowConfigurationOverridesCarrierDefaults(t *testing.T) {
+	root, configDir, secretDir := t.TempDir(), t.TempDir(), t.TempDir()
+	for dir, values := range map[string]map[string]string{
+		configDir: {"VALUE": "config", "IMPORTED": "config"},
+		secretDir: {"VALUE": "secret", "IMPORTED": "secret"},
+	} {
+		for key, value := range values {
+			if err := os.WriteFile(filepath.Join(dir, key), []byte(value), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	host := hostfacts.Collect()
+	m, err := NewManager(host, root, "/bin/sh", isolation.New(host, "shared", root), nil, 0, nil,
+		WithConfiguration(configuration.Config{Sources: map[string]string{"config": configDir, "secret": secretDir}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close(context.Background())
+	m.SetCarrierEnvironment(append(os.Environ(), "VALUE=carrier", "IMPORTED=carrier", "SHARED=shared", "HOSTEL_S3_BUCKET=infra"))
+	specs := []model.PillowSpec{
+		{Name: "main", Env: map[string]string{"VALUE": "explicit", "ONLY_MAIN": "main"}, EnvFrom: []string{"config", "secret"}},
+		{Name: "worker", EnvFrom: []string{"config"}},
+		{Name: "plain"},
+	}
+	if _, err := m.InitializeBed(t.Context(), "precedence", CreateOptions{Pillows: specs}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := m.Ensure(t.Context(), "precedence")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"main": "explicit/secret/shared/main/", "worker": "config/config/shared//", "plain": "carrier/carrier/shared//"} {
+		var out strings.Builder
+		e, err := m.StartPillowExecution(t.Context(), b, name, ExecutionForeground,
+			`printf '%s/%s/%s/%s/%s' "$VALUE" "$IMPORTED" "$SHARED" "$ONLY_MAIN" "$HOSTEL_S3_BUCKET"`, "", "", nil, time.Second, nil, func(o ExecutionOutput) { out.WriteString(o.Text) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := e.Wait()
+		if result.Process == nil || result.Process.ExitCode != 0 || out.String() != want {
+			t.Fatalf("%s: got %q want %q (%+v)", name, out.String(), want, result)
+		}
+	}
+}

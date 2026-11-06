@@ -5,7 +5,7 @@ binary or container on the runner, talks only to the public HTTP API, and cleans
 every process, container, bed, and temporary workspace it creates. The same
 binary suite can run on a host or inside a Kubernetes Pod. Environment selection,
 observations and runner setup are described in [E2E environments](e2e-environments.md).
-sandctl placement and cross-carrier orchestration remain outside this boundary.
+Control-plane placement and cross-carrier orchestration remain outside this boundary.
 
 ## Run the core contract
 
@@ -79,7 +79,7 @@ make e2e E2E_ARGS='-run TestFilesystemPermissions -timeout 3m'
 
 ## Verify Bed port mappings
 
-`TestBedPortMappings` starts two HTTP Pillows with the same preferred Bed port.
+`TestBedPortMappings` starts two HTTP Pillows using dynamic ports on shared networking and the same fixed containerPort in separate private networks.
 For local and supervisor executors it checks per-Bed status and access agreement,
 external HTTP access, Bed-command access through loopback and the discovered `bed_port`, restart
 identity, distinct Host ports, and allocation cleanup on eviction. It requires the

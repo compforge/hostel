@@ -189,12 +189,7 @@ func (m *Manager) beginInitialization(
 		return nil, nil, err
 	}
 	options.Volumes = volumes
-	ports, err := model.NormalizePortMappings(options.PortMappings)
-	if err != nil {
-		return nil, nil, err
-	}
-	options.PortMappings = ports
-	resolvedPillows, err := m.pillows.Resolve(options.Pillows, options.PortMappings)
+	resolvedPillows, err := m.pillows.Resolve(options.Pillows)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -265,7 +260,6 @@ func (m *Manager) beginInitialization(
 			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
 			checkPillows(options, actual.Pillows),
 			checkBedPaths(options, actual),
-			checkBedPorts(options, actual),
 		)
 	}
 	if current, ok := m.initializations[id]; ok && current.snapshot().Phase == PhaseInitializing {
@@ -275,7 +269,6 @@ func (m *Manager) beginInitialization(
 			checkInitialPolicy(options.NetworkPolicy, actual.NetworkPolicy),
 			checkPillows(options, actual.Pillows),
 			checkBedPaths(options, actual),
-			checkBedPorts(options, actual),
 		)
 	}
 	if m.retirements[id] != nil {
@@ -292,17 +285,16 @@ func (m *Manager) beginInitialization(
 	}
 	if local := m.localIdentities[id]; local != nil && len(local.bed.Spec().Pillows) > 0 {
 		actual := local.bed.Spec()
-		if err := errors.Join(checkPillows(options, actual.Pillows), checkBedPaths(options, actual), checkBedPorts(options, actual)); err != nil {
+		if err := errors.Join(checkPillows(options, actual.Pillows), checkBedPaths(options, actual)); err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
-		resolved, err := m.pillows.Resolve(actual.Pillows, actual.PortMappings)
+		resolved, err := m.pillows.Resolve(actual.Pillows)
 		if err != nil {
 			m.mu.Unlock()
 			return nil, nil, err
 		}
 		options.Pillows = resolved
-		options.PortMappings = actual.PortMappings
 		if options.Volumes == nil {
 			options.Volumes = actual.Volumes
 		}
@@ -332,7 +324,6 @@ func (m *Manager) beginInitialization(
 	spec := model.Spec{Dir: filepath.Join(m.root, id), StoreKind: selected, CreatedAt: localMeta.CreatedAt, LocalPresent: localPresent, LocalGeneration: localMeta.Generation}
 	spec.Volumes = options.Volumes
 	spec.Pillows = options.Pillows
-	spec.PortMappings = options.PortMappings
 	if options.NetworkPolicy != nil {
 		spec.NetworkPolicy = network.ToModel(*options.NetworkPolicy)
 	}
@@ -572,7 +563,6 @@ func residentInitializationStatus(resident *managedBed) InitializationStatus {
 // callers must repeat overrides because the local identity has been removed.
 type CreateOptions struct {
 	Volumes       []model.VolumeSpec
-	PortMappings  []model.PortMappingSpec
 	Pillows       []model.PillowSpec
 	NetworkPolicy *network.Policy
 }

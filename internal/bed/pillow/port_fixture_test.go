@@ -15,9 +15,8 @@ func newPillowTestBed(name string, id bed.ID, spec bed.Spec) *bed.Bed {
 	spec.Pillows = bed.ClonePillows(spec.Pillows)
 	for i := range spec.Pillows {
 		s := &spec.Pillows[i]
-		if s.HTTP != nil {
-			s.PortMapping = s.Name
-			spec.PortMappings = append(spec.PortMappings, bed.PortMappingSpec{Name: s.Name, Protocol: "tcp", Publish: true})
+		if s.ReadinessProbe != nil && len(s.Ports) == 0 {
+			s.Ports = []bed.PillowPort{{Name: "http", Dynamic: true, Publish: true}}
 		}
 	}
 	return bed.New(name, id, spec)

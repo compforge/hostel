@@ -152,15 +152,11 @@ func TestBedScopedHTTPPillowWithUnavailableInspection(t *testing.T) {
 		}
 	})
 	runtime := &fakeRuntime{scope: "bed-network", start: func(launch Launch) (Process, error) {
-		listener, err := net.Listen("tcp", launch.Env["SERVICE_LISTEN"])
+		listener, err := net.Listen("tcp", launch.Command[len(launch.Command)-1])
 		if err != nil {
 			return nil, err
 		}
 		server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-			if request.Header.Get("Authorization") != "Bearer "+launch.Env["SERVICE_TOKEN"] {
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
 			w.WriteHeader(http.StatusOK)
 		})}
 		go func() { _ = server.Serve(listener) }()
@@ -169,9 +165,9 @@ func TestBedScopedHTTPPillowWithUnavailableInspection(t *testing.T) {
 		return process, nil
 	}}
 	b := newPillowTestBed("scoped", "", bed.Spec{Pillows: []bed.PillowSpec{{
-		Name: "worker", Command: []string{"worker"}, Env: map[string]string{"SERVICE_LISTEN": "${LISTEN_ADDR}"},
-		Required: true, MaxRestarts: 1, StartupSeconds: 2, StopSeconds: 1,
-		HTTP: &bed.PillowHTTPSpec{ReadyPath: "/ready", Authentication: &bed.Authentication{Scheme: "bearer", TokenSource: bed.TokenSourceGenerated, TokenEnv: "SERVICE_TOKEN"}},
+		Name: "worker", Command: []string{"worker", "${LISTEN_ADDR}"},
+		Required: true, MaxRestarts: 1, StopSeconds: 1,
+		ReadinessProbe: &bed.Probe{HTTPGet: &bed.HTTPGetAction{Path: "/ready", Port: "http"}, PeriodSeconds: 1, FailureThreshold: 1},
 	}}})
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()

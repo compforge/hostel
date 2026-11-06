@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -39,19 +40,17 @@ type Runtime interface {
 	Network() (scope, host string, err error)
 }
 
-// Status references its PortMapping; network owns all allocated port facts.
+// Status references port names; Network owns all allocated port facts.
 type Status struct {
 	protocol.PillowStatus
 	// The internal outcome retains executor diagnostics. Public snapshots clear Detail.
 	Outcome *executor.ProcessOutcome `json:"outcome,omitempty"`
 }
 
-// Access snapshots the current mapping and credential under the Pillow lock.
-// Clients derive URLs from its ports and their reachable carrier host; storing
-// derived addresses here would create another source of network state.
+// Access snapshots the current execution's ports under the Pillow lock.
+// Callers own application protocols, credentials and reachable carrier addresses.
 type Access struct {
-	PortMapping network.PortMappingStatus `json:"port_mapping"`
-	Token       string                    `json:"token,omitempty"`
+	Ports []network.PortMappingStatus `json:"ports,omitempty"`
 }
 type Manager struct {
 	bed.Noop
@@ -72,13 +71,12 @@ type group struct {
 	stopped bool
 }
 type record struct {
-	mapping *network.PortMapping
-	spec    bed.PillowSpec
-	status  Status
-	token   string
-	restart chan struct{}
-	cancel  context.CancelFunc
-	done    chan struct{}
+	mappings []*network.PortMapping
+	spec     bed.PillowSpec
+	status   Status
+	restart  chan struct{}
+	cancel   context.CancelFunc
+	done     chan struct{}
 }
 
 func NewManager(mappings *network.PortMappings, onChange func(*bed.Bed)) *Manager {
@@ -88,37 +86,19 @@ func NewManager(mappings *network.PortMappings, onChange func(*bed.Bed)) *Manage
 
 // SetConfigurationManager binds the shared configuration domain before Start.
 func (m *Manager) SetConfigurationManager(c *configuration.Manager) { m.configurations = c }
-func (m *Manager) Resolve(specs []bed.PillowSpec, mappings []bed.PortMappingSpec) ([]bed.PillowSpec, error) {
+func (m *Manager) Resolve(specs []bed.PillowSpec) ([]bed.PillowSpec, error) {
 	resolved, err := Normalize(specs)
 	if err != nil {
 		return nil, err
 	}
-	declarations := make(map[string]bed.PortMappingSpec)
-	for _, p := range mappings {
-		declarations[p.Name] = p
-	}
-	used := make(map[string]bool)
-	for _, s := range resolved {
-		if s.PortMapping == "" {
-			continue
-		}
-		p, ok := declarations[s.PortMapping]
-		if !ok {
-			return nil, fmt.Errorf("pillow %s references undeclared port mapping %s", s.Name, s.PortMapping)
-		}
-		if used[p.Name] {
-			return nil, fmt.Errorf("port mapping %s has multiple pillow consumers", p.Name)
-		}
-		used[p.Name] = true
-		if !m.mappings.Available() {
-			return nil, fmt.Errorf("pillow %s requires a port manager", s.Name)
-		}
+	if len((bed.Spec{Pillows: resolved}).NetworkPorts()) > 0 && !m.mappings.Available() {
+		return nil, fmt.Errorf("Pillow ports require a port manager")
 	}
 	return resolved, nil
 }
 
 func (m *Manager) PrepareBed(ctx context.Context, b *bed.Bed, runtime Runtime) error {
-	specs, err := m.Resolve(b.Spec().Pillows, b.Spec().PortMappings)
+	specs, err := m.Resolve(b.Spec().Pillows)
 	if err != nil {
 		return err
 	}
@@ -133,7 +113,7 @@ func (m *Manager) PrepareBed(ctx context.Context, b *bed.Bed, runtime Runtime) e
 		return fmt.Errorf("pillows already prepared")
 	}
 	for _, spec := range specs {
-		r := &record{spec: spec, status: Status{PillowStatus: protocol.PillowStatus{Name: spec.Name, PortMapping: spec.PortMapping, Required: spec.Required, Phase: "starting"}}, restart: make(chan struct{}, 1), done: make(chan struct{})}
+		r := &record{spec: spec, status: Status{PillowStatus: protocol.PillowStatus{Name: spec.Name, Ports: portStatusNames(spec), Required: spec.Required, Phase: "starting"}}, restart: make(chan struct{}, 1), done: make(chan struct{})}
 		g.records = append(g.records, r)
 	}
 	m.groups[b] = g
@@ -204,6 +184,7 @@ func (m *Manager) Status(b *bed.Bed) []Status {
 	defer g.mu.Unlock()
 	for _, r := range g.records {
 		s := r.status
+		s.Ports = slices.Clone(s.Ports)
 		if s.Listener != nil {
 			v := *s.Listener
 			s.Listener = &v
@@ -225,16 +206,30 @@ func (m *Manager) Access(b *bed.Bed, name string) (Access, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for _, r := range g.records {
-		if r.spec.Name == name && !g.stopped && r.status.Ready && r.mapping != nil && r.spec.HTTP != nil {
-			p := r.mapping.Status()
-			if p.State != "listening" || p.ExecutionID != r.status.ExecutionID {
-				continue
-			}
-			return Access{PortMapping: p, Token: r.token}, nil
+		if r.spec.Name != name || g.stopped || !r.status.Ready || len(r.mappings) == 0 {
+			continue
 		}
+		access := Access{}
+		for _, mapping := range r.mappings {
+			p := mapping.Status()
+			if p.State != "listening" || p.ExecutionID != r.status.ExecutionID {
+				return Access{}, fmt.Errorf("pillow ports unavailable")
+			}
+			access.Ports = append(access.Ports, p)
+		}
+		return access, nil
 	}
-	return Access{}, fmt.Errorf("HTTP pillow unavailable")
+	return Access{}, fmt.Errorf("pillow ports unavailable")
 }
+
+func portStatusNames(s bed.PillowSpec) []string {
+	var names []string
+	for _, p := range s.Ports {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
 func (m *Manager) Restart(b *bed.Bed, name string) error {
 	g := m.group(b)
 	if g == nil {
@@ -272,7 +267,7 @@ func (m *Manager) update(g *group, r *record, fn func(*Status)) {
 	close(g.changed)
 	g.changed = make(chan struct{})
 	g.mu.Unlock()
-	if before.Phase != after.Phase || before.Ready != after.Ready || before.ExecutionID != after.ExecutionID {
+	if before.Phase != after.Phase || before.Ready != after.Ready || before.ExecutionID != after.ExecutionID || before.Reason != after.Reason {
 		log.Printf("hostel pillow transition: bed=%s id=%s pillow=%s phase=%s ready=%t execution=%s reason=%s", g.bed.Name, g.bed.ID, after.Name, after.Phase, after.Ready, after.ExecutionID, after.Reason)
 	}
 	if m.onChange != nil {
