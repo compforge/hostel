@@ -93,7 +93,7 @@ Carrier 中其余可继承环境作为所有 Bed/Pillow 的默认值，包括部
 
 共享环境继承是 Hostel 的额外能力，不是 Kubernetes Pod 的顶层 env。部署方决定哪些业务
 配置可被整个 Carrier 共享。来源注册与环境注入也不等于把文件挂入 Pillow；文件视图仍通过
-Volume/Mount 表达。完整配置规则与 main + hictld 示例见 [Pillow](pillow.md)。
+Volume/Mount 表达。完整配置规则与 main + worker 示例见 [Pillow](pillow.md)。
 
 `readinessProbe.httpGet` 表达健康检查，不把 Pillow 定义成一种 HTTP 服务。Hostel 不生成、
 发现、旋转或返回业务 token，也不按 token/AWS 等业务变量名判断配置优先级。进程收到

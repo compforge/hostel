@@ -110,7 +110,7 @@ func TestPillowConfigurationOverridesCarrierDefaults(t *testing.T) {
 	m.SetCarrierEnvironment(append(os.Environ(), "VALUE=carrier", "IMPORTED=carrier", "SHARED=shared", "HOSTEL_S3_BUCKET=infra"))
 	specs := []model.PillowSpec{
 		{Name: "main", Env: map[string]string{"VALUE": "explicit", "ONLY_MAIN": "main"}, EnvFrom: []string{"config", "secret"}},
-		{Name: "hictld", EnvFrom: []string{"config"}},
+		{Name: "worker", EnvFrom: []string{"config"}},
 		{Name: "plain"},
 	}
 	if _, err := m.InitializeBed(t.Context(), "precedence", CreateOptions{Pillows: specs}); err != nil {
@@ -120,7 +120,7 @@ func TestPillowConfigurationOverridesCarrierDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, want := range map[string]string{"main": "explicit/secret/shared/main/", "hictld": "config/config/shared//", "plain": "carrier/carrier/shared//"} {
+	for name, want := range map[string]string{"main": "explicit/secret/shared/main/", "worker": "config/config/shared//", "plain": "carrier/carrier/shared//"} {
 		var out strings.Builder
 		e, err := m.StartPillowExecution(t.Context(), b, name, ExecutionForeground,
 			`printf '%s/%s/%s/%s/%s' "$VALUE" "$IMPORTED" "$SHARED" "$ONLY_MAIN" "$HOSTEL_S3_BUCKET"`, "", "", nil, time.Second, nil, func(o ExecutionOutput) { out.WriteString(o.Text) })

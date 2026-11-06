@@ -13,7 +13,7 @@ import (
 )
 
 func TestPortsAndProbeValidation(t *testing.T) {
-	base := bed.PillowSpec{Name: "hictld", Command: []string{"server"}, Ports: []bed.PillowPort{{Name: "http", ContainerPort: 18089}}, ReadinessProbe: &bed.Probe{HTTPGet: &bed.HTTPGetAction{Path: "/ready", Port: "http"}}}
+	base := bed.PillowSpec{Name: "worker", Command: []string{"server"}, Ports: []bed.PillowPort{{Name: "http", ContainerPort: 18089}}, ReadinessProbe: &bed.Probe{HTTPGet: &bed.HTTPGetAction{Path: "/ready", Port: "http"}}}
 	for _, tc := range []struct {
 		name   string
 		mutate func(*bed.PillowSpec)
@@ -105,7 +105,7 @@ func TestMultiplePortsAndTCPReadiness(t *testing.T) {
 	m, ports := httpTestManager(t)
 	m.inspectListener = unavailableInspection
 	token := "opaque-${PORT}-${LISTEN_ADDR_api}"
-	spec := bed.PillowSpec{Name: "hictld", Command: []string{"server", "${LISTEN_ADDR_api}", "${LISTEN_ADDR_metrics}"}, Env: map[string]string{"TOKEN": token}, Required: true,
+	spec := bed.PillowSpec{Name: "worker", Command: []string{"server", "${LISTEN_ADDR_api}", "${LISTEN_ADDR_metrics}"}, Env: map[string]string{"TOKEN": token}, Required: true,
 		Ports:          []bed.PillowPort{{Name: "api", Dynamic: true, Publish: true}, {Name: "metrics", Dynamic: true}},
 		ReadinessProbe: &bed.Probe{TCPSocket: &bed.TCPSocketAction{Port: "api"}, PeriodSeconds: 1},
 	}
@@ -140,7 +140,7 @@ func TestMultiplePortsAndTCPReadiness(t *testing.T) {
 	if err := m.PrepareBed(ctx, b, runtime); err != nil {
 		t.Fatal(err)
 	}
-	first, err := m.Access(b, "hictld")
+	first, err := m.Access(b, "worker")
 	if err != nil || len(first.Ports) != 2 {
 		t.Fatalf("access=%+v err=%v", first, err)
 	}
@@ -153,7 +153,7 @@ func TestMultiplePortsAndTCPReadiness(t *testing.T) {
 	if _, exists := access["token"]; exists {
 		t.Fatal("runtime exposed business auth")
 	}
-	if err := m.Restart(b, "hictld"); err != nil {
+	if err := m.Restart(b, "worker"); err != nil {
 		t.Fatal(err)
 	}
 	waitHTTPStatus(t, m, b, func(s Status) bool { return s.Ready && s.ExecutionID != first.Ports[0].ExecutionID })

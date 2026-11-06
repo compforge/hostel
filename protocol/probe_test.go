@@ -7,7 +7,7 @@ import (
 )
 
 func TestProbePortWireContract(t *testing.T) {
-	for _, input := range []string{`"hictld"`, `18089`} {
+	for _, input := range []string{`"worker"`, `18089`} {
 		var action protocol.HTTPGetAction
 		if err := json.Unmarshal([]byte(`{"path":"/ready","port":`+input+`}`), &action); err != nil {
 			t.Fatal(err)

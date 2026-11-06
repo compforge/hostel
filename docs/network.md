@@ -85,7 +85,7 @@ Pillow access 返回 `ports` 数组，每项是当前 PortMapping 的完整快�
 | Bed 内 | `127.0.0.1` + 映射的实际 `bed_port` |
 | Carrier 外 | 调用方已知的 Carrier IP/域名 + 映射的 `host_port` |
 
-Carrier host 来自调用方的部署或连接信息，例如 Sandctl 持有的 Carrier Pod IP；
+Carrier host 来自调用方的部署或连接信息，例如上层调度服务持有的 Carrier Pod IP；
 Hostel 不配置或推测这个地址。Host 指承载 Hostel 的网络域，Pod 部署时通常就是
 Carrier Pod。外部访问需要该 host 和端口可达；不能从经过代理的控制面 URL 假定数据端口可达。
 未发布时没有 `host_port`，调用方不得据此构造外部地址。

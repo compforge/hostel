@@ -5,7 +5,7 @@ binary or container on the runner, talks only to the public HTTP API, and cleans
 every process, container, bed, and temporary workspace it creates. The same
 binary suite can run on a host or inside a Kubernetes Pod. Environment selection,
 observations and runner setup are described in [E2E environments](e2e-environments.md).
-sandctl placement and cross-carrier orchestration remain outside this boundary.
+Control-plane placement and cross-carrier orchestration remain outside this boundary.
 
 ## Run the core contract
 

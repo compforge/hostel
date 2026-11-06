@@ -16,8 +16,8 @@ Pillow 的 workdir 默认 /workspace，统一作为进程默认 cwd 与文件 AP
 配置来源与覆盖规则见下文，卷及只读保证见 [volumes.md](volumes.md)。多个 Pillow 共享 Bed 根数据、用户身份、网络和资源。
 挂载视图不同不等于同 Bed 内进程之间有完整安全隔离。
 
-下面是 main + hictld 的完整声明示例。可执行路径、参数、健康路径和环境变量由调用方按
-实际程序提供；Hostel 不内置 hictld 等业务程序知识。此例要求 Carrier 提供该二进制，
+下面是 main + worker 的完整声明示例。可执行路径、参数、健康路径和环境变量由调用方按
+实际程序提供；Hostel 不内置业务程序知识。此例要求 Carrier 提供该二进制，
 `/healthz/ready` 无需业务认证，业务 token 由 Carrier 环境或 Pillow 配置来源提供。
 
 ```yaml
@@ -32,34 +32,34 @@ pillows:
   - name: main
     workdir: /workspace
     env:
-      HIBOT_SESSION_ID: session-demo
+      APP_SESSION_ID: session-demo
     mounts:
       - volume: workspace
         path: /workspace
       - volume: shared-data
         path: /mnt
-  - name: hictld
+  - name: worker
     workdir: /workspace
-    command: ["/opt/hibot/bin/hictld"]
+    command: ["/opt/example/bin/worker"]
     args: ["--listen", "${LISTEN_ADDR}"]
     env:
-      HIBOT_SESSION_ID: session-demo
-      HICTLD_WORKSPACE_PATH: /mnt/session
-      HIBOT_SKILL_DOWNLOAD_TRUSTED_NETWORKS: '[{"cidr":"10.5.125.33/32","ports":["8060"]}]'
+      APP_SESSION_ID: session-demo
+      APP_WORKSPACE_PATH: /mnt/session
+      APP_DOWNLOAD_ALLOWED_NETWORKS: '[{"cidr":"10.5.125.33/32","ports":["8060"]}]'
     mounts:
       - volume: workspace
         path: /workspace
       - volume: shared-data
         path: /mnt
     ports:
-      - name: hictld
+      - name: worker
         protocol: TCP
         dynamic: true
         publish: true
     readinessProbe:
       httpGet:
         path: /healthz/ready
-        port: hictld
+        port: worker
       timeoutSeconds: 2
       periodSeconds: 2
       failureThreshold: 3
@@ -136,7 +136,7 @@ Carrier 环境在 daemon 启动时获取；Kubernetes Pod 的 Secret/ConfigMap e
 
 ### Kubernetes 部署中的两种配置供给
 
-整台 Bedbox 共享的业务默认值可以直接注入 Hostel 容器：
+整个 Carrier 共享的业务默认值可以直接注入 Hostel 容器：
 
 ```yaml
 containers:
@@ -145,21 +145,21 @@ containers:
       - configMapRef:
           name: sandbox-defaults
       - secretRef:
-          name: hictld-sync-secret
+          name: worker-credentials
 ```
 
 这些普通变量会被该 Carrier 的所有 Bed/Pillow 继承。只有某个 Pillow 需要的配置则继续使用
 已支持的命名文件来源：部署方把 Secret/ConfigMap 投影成 daemon 可读目录，注册
-`HOSTEL_CONFIGURATION_SOURCES='{"hictld-config":"/run/config/hictld","hictld-secret":"/run/secrets/hictld"}'`，
-然后在 hictld Pillow 声明：
+`HOSTEL_CONFIGURATION_SOURCES='{"worker-config":"/run/config/worker","worker-secret":"/run/secrets/worker"}'`，
+然后在 worker Pillow 声明：
 
 ```yaml
-env_from: [hictld-config, hictld-secret]
+env_from: [worker-config, worker-secret]
 env:
-  HIBOT_SKILL_DOWNLOAD_TRUSTED_NETWORKS: '[{"cidr":"10.0.0.0/8","ports":["443"]}]'
+  APP_DOWNLOAD_ALLOWED_NETWORKS: '[{"cidr":"10.0.0.0/8","ports":["443"]}]'
 ```
 
-显式白名单覆盖文件来源中的同名键。main 不继承 hictld 的导入；仅注册来源也不会让所有
+显式白名单覆盖文件来源中的同名键。main 不继承 worker 的导入；仅注册来源也不会让所有
 Pillow 获得其内容。Hostel 读取已注册的本地文件，不自行访问 Kubernetes Secret/ConfigMap API。
 
 
@@ -196,8 +196,8 @@ stop_seconds 限制 TERM 后等待，再由 KILL 清理进程组。成功退出�
 
 `readinessProbe` 使用 Kubernetes 风格的 camelCase 字段，必须选择一种 action：
 
-- `httpGet: {path: /ready, port: hictld}`：无认证的 HTTP GET；200–399 为成功，不跟随重定向。
-- `tcpSocket: {port: hictld}`：能建立 TCP 连接即成功，不证明业务请求能完成。
+- `httpGet: {path: /ready, port: worker}`：无认证的 HTTP GET；200–399 为成功，不跟随重定向。
+- `tcpSocket: {port: worker}`：能建立 TCP 连接即成功，不证明业务请求能完成。
 
 port 可以是当前 Pillow 的命名端口，也可以是已声明的固定 containerPort 数字。
 动态端口必须按名称引用。当前没有 exec、HTTPS、gRPC、livenessProbe 或 startupProbe；
