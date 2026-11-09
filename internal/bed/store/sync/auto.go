@@ -251,8 +251,11 @@ func exceedsSnapshotFileThreshold(root string, threshold int, filters ...snapsho
 
 // NewAuto assembles snapshot layouts over one shared backend. Explicit kinds
 // choose subsequent writes while all layouts remain readable and purgeable.
-func NewAuto(obj objects, prefix string, threshold int, restic *Restic) (*Auto, error) {
+func NewAuto(obj objects, prefix string, threshold int, restic *Restic, packTargetBytes int) (*Auto, error) {
 	s := newAutoStore(obj, prefix, threshold)
+	if packTargetBytes > 0 {
+		s.pack.targetBytes = packTargetBytes
+	}
 	s.restic = &resticStore{obj: obj, prefix: prefix, command: restic}
 	return s, nil
 }

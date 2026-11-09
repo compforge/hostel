@@ -55,8 +55,9 @@ func newS3Client(ctx context.Context, cfg Config) (*s3.Client, error) {
 
 // S3 adapts a shared S3-compatible client to snapshot and streaming object operations.
 type S3 struct {
-	client *s3.Client
-	bucket string
+	client   *s3.Client
+	bucket   string
+	partSize int64
 }
 
 func (o *S3) Head(ctx context.Context, key string) (map[string]string, int64, bool, error) {
@@ -84,9 +85,7 @@ func (o *S3) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 }
 
 func (o *S3) Put(ctx context.Context, key string, r io.ReadSeeker, size int64, meta map[string]string) error {
-	_, err := o.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: &o.bucket, Key: &key, Body: r, ContentLength: &size, Metadata: meta,
-	})
+	err := o.upload(ctx, key, r, size, meta, nil)
 	if err != nil {
 		return fmt.Errorf("store: put %s: %w", key, err)
 	}
@@ -136,15 +135,22 @@ type Config struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	SessionToken    string
+	PartSizeBytes   int64
 }
 
 // NewS3 opens the object client shared by automatic persistence and explicit transfers.
 func NewS3(ctx context.Context, cfg Config) (*S3, error) {
+	if cfg.PartSizeBytes == 0 {
+		cfg.PartSizeBytes = DefaultPartSizeBytes
+	}
+	if err := ValidatePartSize(cfg.PartSizeBytes); err != nil {
+		return nil, err
+	}
 	client, err := newS3Client(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &S3{client: client, bucket: cfg.Bucket}, nil
+	return &S3{client: client, bucket: cfg.Bucket, partSize: cfg.PartSizeBytes}, nil
 }
 
 // ErrConflict reports a failed conditional object write.

@@ -29,13 +29,15 @@ type Noop = storesync.Noop
 var ErrConflict = storesync.ErrConflict
 
 const (
-	SyncNoop   = storesync.KindNoop
-	SyncAuto   = storesync.KindAuto
-	SyncCAS    = storesync.KindCAS
-	SyncPack   = storesync.KindPack
-	SyncTar    = storesync.KindTar
-	SyncRestic = storesync.KindRestic
-	SyncCopy   = storesync.KindCopy
+	DefaultPackTargetBytes = storesync.DefaultPackTargetBytes
+	DefaultS3PartSizeBytes = backend.DefaultPartSizeBytes
+	SyncNoop               = storesync.KindNoop
+	SyncAuto               = storesync.KindAuto
+	SyncCAS                = storesync.KindCAS
+	SyncPack               = storesync.KindPack
+	SyncTar                = storesync.KindTar
+	SyncRestic             = storesync.KindRestic
+	SyncCopy               = storesync.KindCopy
 )
 
 // Config selects a synchronization policy and configures the optional S3 remote.
@@ -51,6 +53,8 @@ type Config struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	SessionToken    string
+	PackTargetBytes int
+	S3PartSizeBytes int64
 	// AutoPackFileThreshold switches an auto-routed CAS bed to pack when the
 	// persisted tree contains more than this many non-directory entries.
 	// Zero disables the automatic transition.
@@ -60,5 +64,5 @@ type Config struct {
 func (c Config) remoteConfig() backend.Config {
 	return backend.Config{Bucket: c.Bucket, Prefix: c.Prefix, Endpoint: c.Endpoint,
 		PathStyle: c.PathStyle, Region: c.Region, AccessKeyID: c.AccessKeyID,
-		SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken}
+		SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken, PartSizeBytes: c.S3PartSizeBytes}
 }

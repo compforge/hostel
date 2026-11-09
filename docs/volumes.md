@@ -254,3 +254,25 @@ Restic 保留普通权限、mtime、空目录与未逃逸的相对 symlink，拒
 [单机 E2E](../tests/e2e/README.md) 覆盖双 Bed、共享卷、只读挂载、临时数据、跨实例恢复、
 改变挂载路径及 purge；Store 测试覆盖多卷失败时旧快照仍可恢复。运行证据记录具体环境
 与格式，不能把文件 API 成功等同于进程路径或全部存储后端已验证。
+
+### Pack Object 大小与 S3 上传分片
+
+`HOSTEL_PACK_TARGET_BYTES` / `--pack-target-bytes` 默认 `33554432`（32 MiB），
+控制 pack 聚合后的 Object 目标大小；`HOSTEL_S3_PART_SIZE_BYTES` /
+`--s3-part-size-bytes` 默认 `8388608`（8 MiB），独立控制上传 part 大小。
+两者均支持显式 Store Options 覆盖，优先级为 Options > CLI > env > 默认值。
+Object 不超过一个 part 时直接 PUT，大于一个 part 时 multipart；最后一片可更小，
+完成后仍是一个 Object。pack 持久化和文件上传共用该规则，已有快照布局和读取方式不变。
+
+part 大小须在 5 MiB 至 5 GiB 之间；对限制 aws-chunked chunk 为 16 MiB 的 MinIO，
+保持默认 8 MiB（或不超过 16 MiB）。每个上传最多并发 2 个 part，保留 checksum 校验，
+失败或取消后使用独立的 30 秒上下文清理未完成上传。
+超过 10,000 个 part 的对象会在上传前报错，不会自动增大 part 而突破配置大小。
+
+S3 兼容性回归位于 `internal/bed/store/backend/s3_integration_test.go`。
+设置 `HOSTEL_TEST_S3_ENDPOINT`、`HOSTEL_TEST_S3_BUCKET`、`HOSTEL_TEST_S3_REGION`，
+并通过运行环境注入 `HOSTEL_TEST_S3_ACCESS_KEY` 和 `HOSTEL_TEST_S3_SECRET_KEY` 后，
+正常的 `make test` / `repocli validate` 会执行该用例；未设置 endpoint 时跳过。
+它只写随机 `diagnostics/hostel-multipart/` 前缀，校验分片边界、metadata、读回 SHA-256
+和取消清理，并逐个删除测试对象。HTTP endpoint 会经本地可信 TLS bridge，确保覆盖
+SDK 的 HTTPS aws-chunked 路径；这属于 S3 backend 集成验证，不代表 Bedbox 部署或业务 E2E。

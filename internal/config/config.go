@@ -24,6 +24,8 @@ import (
 
 	"github.com/qiankunli/go-stdx/osx"
 	"github.com/qiankunli/hostel/internal/bed/privilege"
+	"github.com/qiankunli/hostel/internal/bed/store"
+	"github.com/qiankunli/hostel/internal/bed/store/backend"
 	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
@@ -133,6 +135,8 @@ func Load(args []string, explicit Options) (*Config, error) {
 	c.Bed.Store.AccessKeyID = osx.EnvStr("HOSTEL_S3_ACCESS_KEY_ID", "")
 	c.Bed.Store.SecretAccessKey = osx.EnvStr("HOSTEL_S3_SECRET_ACCESS_KEY", "")
 	c.Bed.Store.SessionToken = osx.EnvStr("HOSTEL_S3_SESSION_TOKEN", "")
+	fs.IntVar(&c.Bed.Store.PackTargetBytes, "pack-target-bytes", osx.EnvInt("HOSTEL_PACK_TARGET_BYTES", store.DefaultPackTargetBytes), "target pack object size in bytes, independent of S3 upload parts")
+	fs.Int64Var(&c.Bed.Store.S3PartSizeBytes, "s3-part-size-bytes", osx.EnvInt64("HOSTEL_S3_PART_SIZE_BYTES", store.DefaultS3PartSizeBytes), "S3 upload part size and multipart threshold in bytes")
 	fs.IntVar(&c.Bed.Store.AutoPackFileThreshold, "sync-auto-pack-file-threshold", osx.EnvInt("HOSTEL_SYNC_AUTO_PACK_FILE_THRESHOLD", defaultAutoPackFileThreshold), "auto store: switch CAS to pack above this persistable file count, 0=disabled")
 	persist := fs.Duration("persist-interval", osx.EnvDuration("HOSTEL_PERSIST_INTERVAL", 0), "periodic snapshot interval, 0=lifecycle boundaries only")
 	fs.Int64Var(&c.LuggageHighBytes, "luggage-high-bytes", osx.EnvInt64("HOSTEL_LUGGAGE_HIGH_BYTES", 0), "luggage disk high watermark in bytes, 0=no luggage GC")
@@ -199,6 +203,12 @@ func Load(args []string, explicit Options) (*Config, error) {
 	}
 	if err := c.Bed.Resource.Validate(); err != nil {
 		return nil, fmt.Errorf("resource: %w", err)
+	}
+	if c.Bed.Store.PackTargetBytes <= 0 {
+		return nil, fmt.Errorf("HOSTEL_PACK_TARGET_BYTES must be positive")
+	}
+	if err := backend.ValidatePartSize(c.Bed.Store.S3PartSizeBytes); err != nil {
+		return nil, err
 	}
 	if c.PortRangeStart < 1 || c.PortRangeEnd > 65535 || c.PortRangeEnd < c.PortRangeStart {
 		return nil, fmt.Errorf("invalid dynamic port range")

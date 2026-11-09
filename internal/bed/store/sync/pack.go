@@ -52,9 +52,10 @@ type packStore struct {
 }
 
 const (
-	packTargetBytes = 32 << 20
-	packMetaBytes   = "bytes"
-	packReadCache   = 2
+	DefaultPackTargetBytes = 32 << 20
+	packTargetBytes        = DefaultPackTargetBytes
+	packMetaBytes          = "bytes"
+	packReadCache          = 2
 )
 
 type packHead struct {

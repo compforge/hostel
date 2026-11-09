@@ -18,11 +18,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
@@ -58,49 +56,12 @@ func transferWriteError(err error) error {
 	return err
 }
 
-// upload preserves overwrite=false at the S3 commit point, including multipart
-// uploads. HEAD followed by unconditional PUT would race another writer.
-func (o *S3) Upload(ctx context.Context, key string, file *os.File, size int64, overwrite bool) (retErr error) {
+// Upload preserves overwrite=false at the S3 commit point for both upload modes.
+func (o *S3) Upload(ctx context.Context, key string, file *os.File, size int64, overwrite bool) error {
 	var ifAbsent *string
 	if !overwrite {
 		value := "*"
 		ifAbsent = &value
 	}
-	const multipartThreshold = 16 << 20
-	if size <= multipartThreshold {
-		_, err := o.client.PutObject(ctx, &s3.PutObjectInput{Bucket: &o.bucket, Key: &key, Body: file, ContentLength: &size, IfNoneMatch: ifAbsent})
-		return transferWriteError(err)
-	}
-	created, err := o.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: &o.bucket, Key: &key})
-	if err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if committed {
-			return
-		}
-		// A canceled request must still attempt to reclaim its incomplete upload.
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), OperationTimeout)
-		defer cancel()
-		_, err := o.client.AbortMultipartUpload(cleanupCtx, &s3.AbortMultipartUploadInput{Bucket: &o.bucket, Key: &key, UploadId: created.UploadId})
-		retErr = errors.Join(retErr, err)
-	}()
-	partSize := max(int64(8<<20), (size+9999)/10000)
-	var parts []s3types.CompletedPart
-	for offset := int64(0); offset < size; offset += partSize {
-		length := min(partSize, size-offset)
-		number := int32(len(parts) + 1)
-		part, err := o.client.UploadPart(ctx, &s3.UploadPartInput{Bucket: &o.bucket, Key: &key, UploadId: created.UploadId, PartNumber: &number, ContentLength: &length, Body: io.NewSectionReader(file, offset, length)})
-		if err != nil {
-			return err
-		}
-		parts = append(parts, s3types.CompletedPart{PartNumber: &number, ETag: part.ETag})
-	}
-	_, err = o.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{Bucket: &o.bucket, Key: &key, UploadId: created.UploadId, MultipartUpload: &s3types.CompletedMultipartUpload{Parts: parts}, IfNoneMatch: ifAbsent})
-	if err != nil {
-		return transferWriteError(err)
-	}
-	committed = true
-	return nil
+	return transferWriteError(o.upload(ctx, key, file, size, nil, ifAbsent))
 }
