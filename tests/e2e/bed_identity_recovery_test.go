@@ -3,6 +3,7 @@
 package e2e_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -46,7 +47,7 @@ func uidBedDetail(t *testing.T, c *apiClient, name string) protocol.BedDetail {
 	}
 	must2xx(t, "Bed identity and policy", response)
 	u, n := detail.Status.Subsystems.Privilege, detail.Status.Subsystems.Network
-	if !u.Assigned || u.UID < privilege.UIDMin || u.UID > privilege.UIDMax || u.GID != u.UID || !slices.Equal(u.SupplementaryGIDs, []int{1000}) || n.Level != "shared" || n.PolicyBackend != "uid" {
+	if !u.Assigned || u.UID < privilege.UIDMin || u.UID > privilege.UIDMax || u.GID != u.UID || !slices.Equal(u.SupplementaryGIDs, []int{1000}) || n.Isolation.Level != "shared" || n.Egress.Backend != "uid_nft" {
 		t.Fatalf("unexpected identity/network realization: %+v", detail.Status.Subsystems)
 	}
 	return detail
@@ -92,6 +93,7 @@ func TestBedIdentityCrashRecovery(t *testing.T) {
 		must2xx(t, "declare control", c.createBed(t, "control"))
 		assertPolicyConnection(t, c, "control", "", address, true)
 		assertPolicyConnection(t, c, name, "", address, false)
+		assertPersistedIdentity(t, root, name, before)
 		target.crash()
 		t.Logf("crashed daemon after Bed %s acquired UID %d", before.ID, before.Status.Subsystems.Privilege.UID)
 	}) {
@@ -112,6 +114,7 @@ func TestBedIdentityCrashRecovery(t *testing.T) {
 		if after.ID != before.ID || after.Status.Subsystems.Privilege.UID != before.Status.Subsystems.Privilege.UID {
 			t.Fatalf("retained identity changed: before=%+v after=%+v", before, after)
 		}
+		assertPersistedIdentity(t, root, name, after)
 		uid := after.Status.Subsystems.Privilege.UID
 		command := fmt.Sprintf(`set -eu; test "$(cat marker)" = retained-data; test "$(id -u):$(id -g)" = %d:%d; test "$(stat -c '%%u:%%g' marker)" = %d:%d; awk '/^Groups:/ { if (NF != 2 || $2 != 1000) exit 1 }' /proc/self/status; printf resumed >> marker`, uid, uid, uid, uid)
 		result, response := c.command(t, name, map[string]any{"command": command, "timeout": 5000})
@@ -128,6 +131,9 @@ func TestBedIdentityCrashRecovery(t *testing.T) {
 		policyRequest(t, c, "PUT", "/v1/beds/"+name+"/network/policy", map[string]any{"defaultAction": "allow"}, http.StatusOK)
 		assertPolicyConnection(t, c, name, "", address, true)
 		policyRequest(t, c, "DELETE", "/v1/beds/"+name+"?purge=true", nil, http.StatusOK)
+		if _, err := os.Stat(filepath.Join(root, ".identities", name+".local")); !os.IsNotExist(err) {
+			t.Fatalf("purge retained identity record: %v", err)
+		}
 		must2xx(t, "recreate after purge", c.createBed(t, name))
 		c.waitBed(t, name, func(b bedView) bool { return b.Status.Readiness.Ready }, "fresh Bed ready")
 		fresh := uidBedDetail(t, c, name)
@@ -194,5 +200,25 @@ func assertNoNetworkRecords(t *testing.T, root string) {
 	records, err := filepath.Glob(filepath.Join(root, ".network", "*.json"))
 	if err != nil || len(records) != 0 {
 		t.Errorf("network ownership remains after cleanup: %v err=%v", records, err)
+	}
+}
+
+func assertPersistedIdentity(t *testing.T, root, name string, detail protocol.BedDetail) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".identities", name+".local"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		ID  string  `json:"id"`
+		UID *uint32 `json:"uid"`
+		GID *uint32 `json:"gid"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	user := detail.Status.Subsystems.Privilege
+	if record.ID != string(detail.ID) || record.UID == nil || record.GID == nil || *record.UID != user.UID || *record.GID != user.GID {
+		t.Fatalf("persisted identity differs from running Bed: record=%s bed=%+v", data, detail)
 	}
 }

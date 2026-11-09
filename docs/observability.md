@@ -163,7 +163,7 @@ Tenant 领域 Status → Bed/Tenant 绑定查询 ───┴→ Bed 详情组�
 ```
 
 Subsystem 状态分别表达期望配置、实际采用的机制与落实结果；具体结构由领域拥有。房型和 Ready 不替代这些事实，
-例如 shared Network 可以保留 requested_policy 而 policy=null、policy_status=unenforced；共享 Chromium/MCP 出站不继承 Bed 进程网络保证。
+例如 shared Network 可以保留 egress.requested 而 egress.effective=null、egress.state=unenforced；共享 Chromium/MCP 出站不继承 Bed 进程网络保证。
 
 **Subsystem Status** 表示领域的实例级报告，是粒度约定，不另抽跨领域公共类型。
 各领域定义自己的具体 Status，通过子系统的 `Status()` 提供，Bed Manager 聚合所属子系统。
@@ -194,7 +194,7 @@ Resource 分别拥有网络、执行、同步和资源报告。`environment` 保
 状态接口只报告各子系统最终采用的能力、探测结果与原因，`isolation.effective` 只报告 fs/net 实际房型的较低值，使用方自行判断是否满足要求。
 各子系统选择与执行环境验证的失败原因写入日志，不在实例内保存历史数组，也不进入 `/v1/status`。
 文件等级使用 shared/confined/private，网络使用 shared/private；各自通过 room 映射到统一房型。Bed detail 使用准备后的领域事实，不能复用实例支持上限。
-网络通过 effective/level、room 和 policy_status 报告实际能力，requested_policy 与已执行 policy 分开。
+网络通过 isolation.level/room 与 egress.state 报告实际能力，egress.requested 与 egress.effective 分开。
 实例组合探测与各子系统独立前置条件区分。Bed inventory 与容量是摘要，不展开 Bed 或 Tenant 详情。
 状态报告不披露凭据、远端存储地址或可操作其他 Tenant 的资源句柄。
 

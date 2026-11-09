@@ -68,7 +68,7 @@ func TestIsolationLevels(t *testing.T) {
 	}
 	must2xx(t, "Bed domain isolation", response)
 	state := detail.Status
-	actual := min(isolationRank(string(state.Subsystems.Filesystem.Room)), isolationRank(string(state.Subsystems.Network.Room)))
+	actual := min(isolationRank(string(state.Subsystems.Filesystem.Room)), isolationRank(string(state.Subsystems.Network.Isolation.Room)))
 	if actual == 0 || isolationRank(string(state.Isolation.Effective)) != actual {
 		t.Fatalf("Bed status does not reflect prepared domains: %+v", state)
 	}

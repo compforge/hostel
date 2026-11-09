@@ -18,6 +18,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/resource"
 	"github.com/qiankunli/hostel/internal/bed/tool"
 	"github.com/qiankunli/hostel/internal/config"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 func value[T any](v T) *T { return &v }
@@ -45,10 +46,7 @@ func TestFeaturePoliciesOff(t *testing.T) {
 				Effective string
 				Tools     map[string]tool.Status
 			}
-			Network struct {
-				Effective string
-				Tools     map[string]tool.Status
-			}
+			Network  network.Status `json:"network"`
 			Resource struct {
 				Accounting struct {
 					Available bool
@@ -64,7 +62,7 @@ func TestFeaturePoliciesOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	must2xx(t, "tool status", response)
-	if status.Subsystems.Filesystem.Effective != "shared" || status.Subsystems.Network.Effective == "private" || status.Subsystems.Resource.Accounting.Available {
+	if status.Subsystems.Filesystem.Effective != "shared" || status.Subsystems.Network.Isolation.Level == "private" || status.Subsystems.Resource.Accounting.Available {
 		t.Fatalf("disabled tools active: %+v", status)
 	}
 	for _, tools := range []map[string]tool.Status{status.Subsystems.Filesystem.Tools, status.Subsystems.Network.Tools, status.Subsystems.Resource.Accounting.Tools} {
@@ -84,11 +82,12 @@ func TestFeaturePoliciesOff(t *testing.T) {
 	if result.Stdout != "tool-policy-ok" {
 		t.Fatal(result.Stdout)
 	}
-	response, err = c.json(ctx, "GET", "/v1/beds/tools-off/network/policy", "", nil, nil)
+	var policy protocol.EgressStatus
+	response, err = c.json(ctx, "GET", "/v1/beds/tools-off/network/policy", "", nil, &policy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Status != http.StatusOK || !strings.Contains(string(response.Body), `"mode":"unenforced"`) {
+	if response.Status != http.StatusOK || policy.State != protocol.EgressUnenforced || policy.Backend != "none" || policy.Effective != nil {
 		t.Fatalf("shared network must report unenforced policy: status=%d body=%s", response.Status, response.Body)
 	}
 }

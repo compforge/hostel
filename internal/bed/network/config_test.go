@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"errors"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestOffNetworkDoesNotConstructHostPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := m.Status()
-	if s.Effective == Private || s.Tools["netns"].Probe != "not_probed" || s.Reason != "disabled_by_config" {
+	if s.Isolation.Level == string(Private) || s.Tools["netns"].Probe != "not_probed" || s.Isolation.Diagnostic.Code != "disabled_by_config" {
 		t.Fatalf("%+v", s)
 	}
 	if a, err := m.Acquire(t.Context(), "bed"); err != nil || a != nil {
@@ -35,11 +36,11 @@ func TestOffNetworkDoesNotConstructHostPool(t *testing.T) {
 type unavailableProvider struct{}
 
 func (unavailableProvider) Acquire(context.Context, string) (Attachment, error) { return nil, nil }
-func (unavailableProvider) NetworkPolicy(context.Context, string, PolicyMutation) (PolicyStatus, error) {
-	return PolicyStatus{}, ErrUnavailable
+func (unavailableProvider) NetworkPolicy(context.Context, string, PolicyMutation) (Policy, error) {
+	return Policy{}, ErrUnavailable
 }
-func (unavailableProvider) Status() Status {
-	return Status{Backend: "shared", Reason: "permission denied"}
+func (unavailableProvider) Status() hostnetwork.Status {
+	return hostnetwork.Status{Reason: "permission denied"}
 }
 func (unavailableProvider) Close(context.Context) error { return nil }
 func TestRequiredNetworkFailsStartup(t *testing.T) {
@@ -71,7 +72,7 @@ func TestUIDPolicyToolSelectionRequiresActualIdentity(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := m.Status()
-			if s.PolicyBackend != "none" || s.Tools["uid_nft"].Selected || s.Tools["uid_nft"].Probe != "not_probed" {
+			if s.Egress.Backend != "none" || s.Tools["uid_nft"].Selected || s.Tools["uid_nft"].Probe != "not_probed" {
 				t.Fatalf("%+v", s)
 			}
 		})

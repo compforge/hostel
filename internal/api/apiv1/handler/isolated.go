@@ -97,7 +97,7 @@ func (s *Handler) isolatedCreate(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	if !validateIsolatedCreate(c, req, s.mgr.NetworkReport().Effective != network.Private) {
+	if !validateIsolatedCreate(c, req, s.mgr.NetworkReport().Isolation.Level != string(network.Private)) {
 		return
 	}
 
@@ -181,7 +181,7 @@ func (s *Handler) isolatedGet(c *gin.Context) {
 	if b == nil {
 		return
 	}
-	c.JSON(http.StatusOK, isolatedState(b, s.mgr.NetworkReport().Effective != network.Private))
+	c.JSON(http.StatusOK, isolatedState(b, s.mgr.NetworkReport().Isolation.Level != string(network.Private)))
 }
 
 // GET /v1/isolated/sessions
@@ -190,7 +190,7 @@ func (s *Handler) isolatedList(c *gin.Context) {
 	sort.Slice(beds, func(i, j int) bool { return beds[i].Name < beds[j].Name })
 	items := make([]apiview.IsolatedSessionSummary, 0, len(beds))
 	for _, b := range beds {
-		state := isolatedState(b, s.mgr.NetworkReport().Effective != network.Private)
+		state := isolatedState(b, s.mgr.NetworkReport().Isolation.Level != string(network.Private))
 		items = append(items, apiview.IsolatedSessionSummary{
 			SessionID:            b.Name,
 			Status:               state.Status,

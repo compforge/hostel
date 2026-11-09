@@ -98,7 +98,7 @@ func TestUIDPolicyTraffic(t *testing.T) {
 	change := func(lease PolicyLease, p Policy) {
 		t.Helper()
 		s, err := lease.Update(t.Context(), PolicyMutation{Replace: &p})
-		if err != nil || s.Status != "ok" {
+		if err != nil || s.DefaultAction != p.DefaultAction {
 			t.Fatalf("policy=%+v %v", s, err)
 		}
 	}

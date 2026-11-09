@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,8 +103,8 @@ type retryReleaseNetwork struct {
 	calls int
 }
 
-func (*retryReleaseNetwork) Status() network.Status {
-	return network.Status{Effective: network.Private}
+func (*retryReleaseNetwork) Status() hostnetwork.Status {
+	return hostnetwork.Status{Available: true}
 }
 func (n *retryReleaseNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	return n, nil
@@ -133,9 +134,21 @@ func TestRetirementResumesAtFailedSubsystem(t *testing.T) {
 	if _, err := os.Stat(b.Spec().Dir); err != nil {
 		t.Fatalf("local identity removed before Release: %v", err)
 	}
+	if _, err := m.privileges.Identity(b.Bed); err != nil {
+		t.Fatalf("network failure released identity: %v", err)
+	}
+	if _, err := os.Stat(m.identityPath(b.Name)); err != nil {
+		t.Fatalf("network failure removed identity record: %v", err)
+	}
 	net.err = nil
 	if _, err := m.Evict(t.Context(), b.Name); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := m.privileges.Identity(b.Bed); err == nil {
+		t.Fatal("successful eviction retained identity lease")
+	}
+	if _, err := os.Stat(m.identityPath(b.Name)); !os.IsNotExist(err) {
+		t.Fatalf("successful eviction retained identity record: %v", err)
 	}
 	if facility.calls != 1 || net.calls != 2 {
 		t.Fatalf("replayed successful hooks: amenity=%d network=%d", facility.calls, net.calls)

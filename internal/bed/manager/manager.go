@@ -182,7 +182,7 @@ func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.I
 		maxPinnedBeds:   maxBeds,
 		pressurePercent: defaultBedPressureThresholdPercent,
 		store:           st,
-		network:         network.WithProvider((*network.Manager)(nil), model.NewOwners().Network),
+		network:         network.WithProvider(nil, model.NewOwners().Network),
 		processEnv:      processEnv,
 		beds:            make(map[string]*managedBed),
 		initializations: make(map[string]*bedInitialization),

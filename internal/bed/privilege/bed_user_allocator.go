@@ -20,99 +20,174 @@ import (
 	"sync"
 )
 
-// BedUserAllocator owns the one-to-one mapping between live Bed identities and
-// Unix users. Per-Bed allocation starts at a deterministic slot, then probes
-// the configured range so hash collisions never weaken isolation silently.
-type BedUserAllocator struct {
-	mu       sync.Mutex
-	fixed    *BedUser
-	uidMin   int
-	uidMax   int
-	byBed    map[string]BedUser
-	ownerUID map[int]string
+// BedUserLease is an exact allocation. An old handle cannot release a later
+// allocation, even when the Bed ID and UID are reused.
+type BedUserLease struct {
+	user      BedUser
+	allocator *BedUserAllocator
+	bedID     string
 }
+
+func (l *BedUserLease) UID() int { return l.user.UID() }
+func (l *BedUserLease) GID() int { return l.user.GID() }
+
+func (l *BedUserLease) Release() {
+	a := l.allocator
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.byBed[l.bedID] != l {
+		return
+	}
+	delete(a.byBed, l.bedID)
+	if a.fixed == nil {
+		delete(a.ownerUID, l.UID())
+		delete(a.ownerGID, l.GID())
+	}
+}
+
+// BedUserAllocator owns local Unix identity leases. Fixed strategy deliberately
+// shares a user; per-Bed strategy reserves each UID and primary GID for one Bed ID.
+type BedUserAllocator struct {
+	mu             sync.Mutex
+	fixed          *BedUser
+	uidMin, uidMax int
+	byBed          map[string]*BedUserLease
+	ownerUID       map[int]string
+	ownerGID       map[int]string
+	pending        map[string]identityReservation
+}
+
+type identityReservation struct{ uid, gid *int }
 
 func NewFixedBedUserAllocator(user BedUser) *BedUserAllocator {
-	return &BedUserAllocator{fixed: &user}
+	return &BedUserAllocator{fixed: &user, byBed: make(map[string]*BedUserLease), pending: make(map[string]identityReservation)}
 }
-
 func NewPerBedUserAllocator(uidMin, uidMax int) (*BedUserAllocator, error) {
 	if uidMin <= 0 || uidMax < uidMin {
 		return nil, fmt.Errorf("privilege: invalid bed user range %d..%d", uidMin, uidMax)
 	}
-	return &BedUserAllocator{
-		uidMin: uidMin, uidMax: uidMax,
-		byBed: make(map[string]BedUser), ownerUID: make(map[int]string),
-	}, nil
+	return &BedUserAllocator{uidMin: uidMin, uidMax: uidMax,
+		byBed: make(map[string]*BedUserLease), ownerUID: make(map[int]string), ownerGID: make(map[int]string), pending: make(map[string]identityReservation)}, nil
+}
+func (a *BedUserAllocator) allocateLocked(bedID string, user BedUser) *BedUserLease {
+	lease := &BedUserLease{user: user, allocator: a, bedID: bedID}
+	a.byBed[bedID] = lease
+	delete(a.pending, bedID)
+	if a.fixed == nil {
+		a.ownerUID[user.UID()] = bedID
+		a.ownerGID[user.GID()] = bedID
+	}
+	return lease
 }
 
-func (a *BedUserAllocator) reserveLocked(bedID string, uid int) error {
-	if a.fixed != nil {
-		return nil
+// Restore reserves only recorded fields. Call it for every recovered Bed before
+// Acquire fills missing fields, so allocation cannot steal another record's GID.
+// +spec=`UID and primary GID are independently reused when present and allocated when absent; dedicated identities never share either value across Beds.`
+// +link:doc=docs/bed.md
+func (a *BedUserAllocator) Restore(bedID string, uid, gid *int) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	prior := a.pending[bedID]
+	if lease := a.byBed[bedID]; lease != nil {
+		u, g := lease.UID(), lease.GID()
+		prior = identityReservation{uid: &u, gid: &g}
 	}
-	if uid < a.uidMin || uid > a.uidMax {
-		return nil
-	}
-	if user, ok := a.byBed[bedID]; ok {
-		if user.UID() != uid {
-			return fmt.Errorf("privilege: bed %s has conflicting uids %d and %d", bedID, user.UID(), uid)
+	validate := func(kind string, value, previous *int, owners map[int]string, fixed int) error {
+		if value == nil {
+			return nil
+		}
+		if previous != nil && *previous != *value {
+			return fmt.Errorf("privilege: bed %s has conflicting %s values %d and %d", bedID, kind, *previous, *value)
+		}
+		if a.fixed != nil {
+			if *value != fixed {
+				return fmt.Errorf("privilege: bed %s recorded %s %d conflicts with shared identity %d", bedID, kind, *value, fixed)
+			}
+		} else {
+			if *value < a.uidMin || *value > a.uidMax {
+				return fmt.Errorf("privilege: bed %s %s %d is outside per-bed range %d..%d", bedID, kind, *value, a.uidMin, a.uidMax)
+			}
+			if owner, occupied := owners[*value]; occupied && owner != bedID {
+				return fmt.Errorf("privilege: %s %d is owned by both %s and %s", kind, *value, owner, bedID)
+			}
 		}
 		return nil
 	}
-	if owner, occupied := a.ownerUID[uid]; occupied && owner != bedID {
-		return fmt.Errorf("privilege: uid %d is owned by both %s and %s", uid, owner, bedID)
+	var fixedUID, fixedGID int
+	if a.fixed != nil {
+		fixedUID, fixedGID = a.fixed.UID(), a.fixed.GID()
 	}
-	user, err := NewBedUser(uid, uid)
-	if err != nil {
+	if err := validate("uid", uid, prior.uid, a.ownerUID, fixedUID); err != nil {
 		return err
 	}
-	a.byBed[bedID] = user
-	a.ownerUID[uid] = bedID
+	if err := validate("gid", gid, prior.gid, a.ownerGID, fixedGID); err != nil {
+		return err
+	}
+	if a.byBed[bedID] != nil {
+		return nil
+	}
+	if uid != nil {
+		value := *uid
+		prior.uid = &value
+	}
+	if gid != nil {
+		value := *gid
+		prior.gid = &value
+	}
+	a.pending[bedID] = prior
+	if a.fixed == nil {
+		if prior.uid != nil {
+			a.ownerUID[*prior.uid] = bedID
+		}
+		if prior.gid != nil {
+			a.ownerGID[*prior.gid] = bedID
+		}
+	}
 	return nil
 }
 
-func (a *BedUserAllocator) Acquire(bedID string) (BedUser, error) {
-	if a == nil {
-		return BedUser{}, fmt.Errorf("privilege: bed user allocator is not configured")
-	}
-	if a.fixed != nil {
-		return *a.fixed, nil
-	}
+func (a *BedUserAllocator) Acquire(bedID string) (*BedUserLease, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if user, ok := a.byBed[bedID]; ok {
-		return user, nil
+	if lease := a.byBed[bedID]; lease != nil {
+		return lease, nil
 	}
+	if a.fixed != nil {
+		return a.allocateLocked(bedID, *a.fixed), nil
+	}
+	reservation := a.pending[bedID]
 	slots := a.uidMax - a.uidMin + 1
-	start := stableBedUserSlot(bedID, slots)
-	for offset := 0; offset < slots; offset++ {
-		uid := a.uidMin + (start+offset)%slots
-		if _, occupied := a.ownerUID[uid]; occupied {
-			continue
-		}
-		user, err := NewBedUser(uid, uid)
-		if err != nil {
-			return BedUser{}, err
-		}
-		a.byBed[bedID] = user
-		a.ownerUID[uid] = bedID
-		return user, nil
+	preferred := a.uidMin + stableBedUserSlot(bedID, slots)
+	if reservation.gid != nil {
+		preferred = *reservation.gid
 	}
-	return BedUser{}, fmt.Errorf("privilege: bed user range %d..%d exhausted", a.uidMin, a.uidMax)
+	uid, err := a.selectIDLocked(bedID, reservation.uid, preferred, a.ownerUID)
+	if err != nil {
+		return nil, fmt.Errorf("allocate uid: %w", err)
+	}
+	gid, err := a.selectIDLocked(bedID, reservation.gid, uid, a.ownerGID)
+	if err != nil {
+		return nil, fmt.Errorf("allocate gid: %w", err)
+	}
+	user, err := NewBedUser(uid, gid)
+	if err != nil {
+		return nil, err
+	}
+	return a.allocateLocked(bedID, user), nil
 }
 
-// Release frees a mapping only after the Bed's local tree has been removed.
-// Calling it for a fixed strategy is harmless.
-func (a *BedUserAllocator) Release(bedID string) {
-	if a == nil || a.fixed != nil {
-		return
+func (a *BedUserAllocator) selectIDLocked(bedID string, recorded *int, preferred int, owners map[int]string) (int, error) {
+	if recorded != nil {
+		return *recorded, nil
 	}
-	a.mu.Lock()
-	if user, ok := a.byBed[bedID]; ok {
-		delete(a.ownerUID, user.UID())
-		delete(a.byBed, bedID)
+	slots := a.uidMax - a.uidMin + 1
+	for offset := 0; offset < slots; offset++ {
+		value := a.uidMin + (preferred-a.uidMin+offset)%slots
+		if owner, occupied := owners[value]; !occupied || owner == bedID {
+			return value, nil
+		}
 	}
-	a.mu.Unlock()
+	return 0, fmt.Errorf("privilege: bed %s identity range %d..%d exhausted", bedID, a.uidMin, a.uidMax)
 }
 
 func stableBedUserSlot(bedID string, slots int) int {

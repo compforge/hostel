@@ -39,7 +39,6 @@ type Spec struct {
 	CreatedAt       time.Time
 	StoreKind       SyncKind // resolved Store implementation, derived from Volume policies
 	NetworkPolicy   *NetworkPolicy
-	RecoveryDirs    []string
 	LocalPresent    bool
 	LocalGeneration int64
 }
@@ -59,7 +58,6 @@ func cloneSpec(s Spec) Spec {
 	s.Volumes = CloneVolumes(s.Volumes)
 	s.Pillows = ClonePillows(s.Pillows)
 	s.NetworkPolicy = clonePolicy(s.NetworkPolicy)
-	s.RecoveryDirs = append([]string(nil), s.RecoveryDirs...)
 	return s
 }
 

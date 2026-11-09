@@ -329,7 +329,6 @@ func (m *Manager) beginInitialization(
 	}
 	initialization.model = initialization.local.bed
 	model.SpecWriter{}.Update(initialization.model, func(s *model.Spec) {
-		spec.RecoveryDirs = s.RecoveryDirs
 		*s = spec
 	})
 	m.setLifecycle(initialization.model, model.LifecycleStatus{Phase: PhaseInitializing, Reason: "InitializationQueued", UpdatedAt: now})
@@ -342,10 +341,16 @@ func (m *Manager) beginInitialization(
 
 func (m *Manager) runInitialization(ctx context.Context, initialization *bedInitialization) {
 	bedID := initialization.snapshot().Name
+	if err := m.privileges.Reserve(initialization.model); err != nil {
+		m.finishInitialization(initialization, nil, err)
+		return
+	}
 	if err := m.saveLocalIdentity(initialization.local); err != nil {
 		m.finishInitialization(initialization, nil, fmt.Errorf("save local bed identity: %w", err))
 		return
 	}
+	user := m.privileges.User(initialization.model)
+	log.Printf("hostel local identity prepared: bed=%s id=%s uid=%d gid=%d", bedID, initialization.model.ID, user.UID(), user.GID())
 	resident, err := m.initializeResidentBed(ctx, initialization)
 	if err != nil {
 		m.finishInitialization(initialization, nil, err)

@@ -92,7 +92,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 	}); err != nil {
 		return nil, fmt.Errorf("bed: write meta %s: %w", b.Name, err)
 	}
-	if m.network.Status().Effective == network.Private {
+	if m.network.Status().Isolation.Level == string(network.Private) {
 		m.updateInitialization(init, "PreparingNetwork", "preparing Bed network")
 		if err := trace.stage("prepare_network", func() error { return m.network.Prepare(ctx, b.Bed) }); err != nil {
 			return nil, err

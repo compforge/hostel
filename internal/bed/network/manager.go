@@ -3,7 +3,6 @@ package network
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -12,23 +11,25 @@ import (
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
+	"github.com/qiankunli/hostel/protocol"
 )
 
-// Status is the subsystem status: mechanism facts plus the Bed execution scope.
+type IsolationStatus struct {
+	protocol.NetworkIsolationStatus
+	Supported []Level           `json:"supported"`
+	Probe     hostnetwork.Probe `json:"probe"`
+}
+type EgressCapability struct {
+	Backend    string                      `json:"backend"`
+	Diagnostic *protocol.NetworkDiagnostic `json:"diagnostic,omitempty"`
+	Probe      hostnetwork.Probe           `json:"probe"`
+}
+
+// Status reports independent isolation and egress mechanism choices for new Beds.
 type Status struct {
-	Expected      Level                  `json:"expected"`
-	Effective     Level                  `json:"effective"`
-	Supported     []Level                `json:"supported"`
-	Tools         map[string]tool.Status `json:"tools"`
-	Room          bed.RoomType           `json:"room"`
-	Backend       string                 `json:"backend"`
-	Scope         string                 `json:"scope"`
-	Reason        string                 `json:"reason,omitempty"`
-	Cause         hostel.ErrorCause      `json:"cause,omitempty"`
-	Err           error                  `json:"-"`
-	Probe         hostnetwork.Probe      `json:"probe"`
-	PolicyBackend string                 `json:"policy_backend"`
-	PolicyProbe   hostnetwork.Probe      `json:"policy_probe"`
+	Isolation IsolationStatus        `json:"isolation"`
+	Egress    EgressCapability       `json:"egress"`
+	Tools     map[string]tool.Status `json:"tools"`
 }
 
 // These protocol types are shared with the network mechanism; Bed model
@@ -37,7 +38,6 @@ type Attachment = hostnetwork.Attachment
 type Policy = hostnetwork.Policy
 type Rule = hostnetwork.Rule
 type PolicyMutation = hostnetwork.PolicyMutation
-type PolicyStatus = hostnetwork.PolicyStatus
 
 var ErrUnavailable = hostnetwork.ErrUnavailable
 var ErrInvalidPolicy = hostnetwork.ErrInvalidPolicy
@@ -116,7 +116,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err := m.checkRequired(); err != nil {
 		return err
 	}
-	if m.Status().Effective == Shared && m.dedicatedUIDs && m.config.UIDNFT.Effective() != tool.Off && m.uidPolicies == nil {
+	if m.Status().Isolation.Level == string(Shared) && m.dedicatedUIDs && m.config.UIDNFT.Effective() != tool.Off && m.uidPolicies == nil {
 		m.uidPolicies, m.uidProbe = hostnetwork.ProbeUIDPolicy(ctx, m.ports, m.allocationsStore)
 		log.Printf("network: tool=uid_nft available=%t stage=%s cause=%s reason=%q", m.uidPolicies != nil, m.uidProbe.Stage, m.uidProbe.Cause, m.uidProbe.Error)
 	}
@@ -124,7 +124,7 @@ func (m *Manager) Start(ctx context.Context) error {
 }
 func (m *Manager) checkRequired() error {
 	if err := m.Status().Tools["netns"].CheckRequired("network.netns"); err != nil {
-		return fmt.Errorf("%s: %w", err, m.UnavailableError())
+		return fmt.Errorf("%s: %w", err, m.Status().Isolation.Probe.Err)
 	}
 	return nil
 }
@@ -136,74 +136,68 @@ func (m *Manager) Status() Status {
 	if m != nil {
 		pool = m.pool
 	}
-	report := pool.Status()
-	scope := "carrier"
-	if report.Available {
-		scope = "bed_processes"
-	}
-	level := Shared
-	if report.Available {
-		level = Private
-	}
-	return m.describe(Status{Effective: level, Backend: report.Backend, Scope: scope, Reason: report.Reason, Cause: report.Cause, Err: report.Probe.Err, Probe: report.Probe})
+	return m.describe(pool.Status())
 }
 
-func (m *Manager) describe(s Status) Status {
-	available := s.Effective == Private
-	policy := tool.Auto
+func (m *Manager) describe(report hostnetwork.Status) Status {
+	netnsPolicy, uidPolicy := tool.Auto, tool.Auto
+	uidAvailable, dedicated := false, false
+	var uidProbe hostnetwork.Probe
 	if m != nil {
-		policy = m.config.NetNS.Effective()
+		netnsPolicy, uidPolicy = m.config.NetNS.Effective(), m.config.UIDNFT.Effective()
+		uidAvailable, dedicated, uidProbe = m.uidPolicies != nil, m.dedicatedUIDs, m.uidProbe
 	}
-	if policy == tool.Off {
-		s.Effective = Shared
-		s.Backend = "shared"
-		s.Scope = "carrier"
-		s.Reason = "disabled_by_config"
-		s.Err = hostel.WrapError(hostel.ErrUnavailable, "network namespace disabled", hostel.CauseRequest, ErrUnavailable)
-	}
-	s.Expected = Private
-	selected := s.Effective == Private
-	s.Effective, s.Supported = Shared, []Level{Shared}
-	if available && policy != tool.Off {
-		s.Supported = append(s.Supported, Private)
-	}
+	selected := report.Available && netnsPolicy != tool.Off
+	s := Status{Isolation: IsolationStatus{NetworkIsolationStatus: protocol.NetworkIsolationStatus{Level: string(Shared), Room: bed.Dorm}, Supported: []Level{Shared}, Probe: report.Probe}, Egress: EgressCapability{Backend: "none", Probe: uidProbe}}
 	if selected {
-		s.Effective = Private
-		s.Err, s.Cause = nil, ""
-	}
-	if !selected {
-		if s.Err == nil {
-			// No failure evidence was supplied; do not infer attribution from a status label.
-			s.Err = hostel.WrapError(hostel.ErrUnavailable, "network namespace", hostel.CauseUnknown, ErrUnavailable)
+		s.Isolation.Level, s.Isolation.Room = string(Private), bed.Suite
+		s.Isolation.Supported = append(s.Isolation.Supported, Private)
+		s.Isolation.Probe.Err = nil
+		s.Egress.Backend, s.Egress.Probe = "netns_nft", report.Probe
+	} else {
+		code, reason, probe := "netns_unavailable", report.Reason, report.Probe
+		if netnsPolicy == tool.Off {
+			code, reason = "disabled_by_config", "Network namespace is disabled by configuration"
+			probe = hostnetwork.Probe{Err: hostel.WrapError(hostel.ErrUnavailable, "network namespace disabled", hostel.CauseRequest, ErrUnavailable)}
+		} else if probe.Stage == "forwarding" {
+			code = "ipv4_forwarding_unavailable"
 		}
-		s.Cause = hostel.CauseOf(s.Err)
-	}
-	requirements := tool.Requirements{Capabilities: []string{"CAP_NET_ADMIN", "CAP_SYS_ADMIN"}, Tools: []string{"ip", "nft"}, Conditions: []string{"Linux", "IPv4 forwarding", "DNS resolvers", "namespace entry and connectivity probe"}}
-	s.Tools = map[string]tool.Status{"netns": tool.Describe(policy, requirements, s.Probe.Stage != "", available, selected, s.Reason)}
-	s.PolicyBackend = "none"
-	if selected {
-		s.PolicyBackend = "netns"
-	}
-	uidAvailable, uidReason := false, "dedicated identity not selected"
-	uidPolicy := tool.Auto
-	if m != nil {
-		s.PolicyProbe = m.uidProbe
-		uidPolicy = m.config.UIDNFT.Effective()
-		uidAvailable = m.uidPolicies != nil
-		if m.dedicatedUIDs {
-			uidReason = m.uidProbe.Error
+		if probe.Err == nil {
+			probe.Err = hostel.WrapError(hostel.ErrUnavailable, "network namespace", hostel.CauseUnknown, ErrUnavailable)
 		}
+		s.Isolation.Probe = probe
+		s.Isolation.Diagnostic = &protocol.NetworkDiagnostic{Code: code, Cause: string(hostel.CauseOf(probe.Err)), Stage: probe.Stage, Message: reason}
 	}
+	netnsReason := ""
+	if d := s.Isolation.Diagnostic; d != nil {
+		netnsReason = d.Message
+	}
+	s.Tools = map[string]tool.Status{"netns": tool.Describe(netnsPolicy, tool.Requirements{Capabilities: []string{"CAP_NET_ADMIN", "CAP_SYS_ADMIN"}, Tools: []string{"ip", "nft"}, Conditions: []string{"Linux", "IPv4 forwarding", "DNS resolvers", "namespace entry and connectivity probe"}}, s.Isolation.Probe.Stage != "", report.Available, selected, netnsReason)}
 	uidSelected := !selected && uidAvailable
-	if uidSelected {
-		s.PolicyBackend = "uid"
+	uidReason := "dedicated identity not selected"
+	if dedicated {
+		uidReason = uidProbe.Error
 	}
-	s.Tools["uid_nft"] = tool.Describe(uidPolicy, tool.Requirements{Capabilities: []string{"CAP_NET_ADMIN"}, Tools: []string{"nft"}, Conditions: []string{"Linux", "dedicated workload UID", "DNS resolvers", "socket UID filter and DNS NAT"}}, s.PolicyProbe.Stage != "", uidAvailable, uidSelected, uidReason)
-	s.Room = s.Effective.Room()
+	s.Tools["uid_nft"] = tool.Describe(uidPolicy, tool.Requirements{Capabilities: []string{"CAP_NET_ADMIN"}, Tools: []string{"nft"}, Conditions: []string{"Linux", "dedicated workload UID", "DNS resolvers", "socket UID filter and DNS NAT"}}, uidProbe.Stage != "", uidAvailable, uidSelected, uidReason)
+	if uidSelected {
+		s.Egress.Backend = "uid_nft"
+	}
+	if s.Egress.Backend == "none" {
+		d := &protocol.NetworkDiagnostic{Code: "uid_nft_not_probed", Cause: string(hostel.CauseUnknown), Stage: "probe", Message: "UID egress has not been probed"}
+		switch {
+		case uidPolicy == tool.Off:
+			d.Code, d.Cause, d.Stage, d.Message = "disabled_by_config", string(hostel.CauseRequest), "configuration", "UID egress is disabled by configuration"
+		case !dedicated:
+			d.Code, d.Stage, d.Message = "dedicated_identity_unavailable", "identity", "Dedicated workload identity is not selected"
+		case uidProbe.Stage != "":
+			d.Code, d.Cause, d.Stage, d.Message = "uid_nft_unavailable", string(uidProbe.Cause), uidProbe.Stage, uidProbe.Error
+		}
+		s.Egress.Diagnostic = d
+	}
 	return s
 }
 func (m *Manager) Acquire(ctx context.Context, id string) (Attachment, error) {
-	if m.Status().Effective != Private {
+	if m.Status().Isolation.Level != string(Private) {
 		return nil, nil
 	}
 	if m != nil && m.provider != nil {
@@ -213,28 +207,27 @@ func (m *Manager) Acquire(ctx context.Context, id string) (Attachment, error) {
 	// unavailable error and never silently admits an unisolated allocation.
 	return m.pool.Acquire(ctx, id)
 }
-func (m *Manager) NetworkPolicy(ctx context.Context, id string, change PolicyMutation) (PolicyStatus, error) {
-	if m.Status().Effective != Private {
-		return PolicyStatus{}, m.UnavailableError()
+func (m *Manager) NetworkPolicy(ctx context.Context, id string, change PolicyMutation) (Policy, error) {
+	if m.Status().Isolation.Level != string(Private) {
+		return Policy{}, m.UnavailableError()
 	}
 	if m != nil && m.provider != nil {
 		return m.provider.NetworkPolicy(ctx, id, change)
 	}
 	if m == nil || m.pool == nil {
-		return PolicyStatus{}, m.UnavailableError()
+		return Policy{}, m.UnavailableError()
 	}
-	s, err := m.pool.NetworkPolicy(ctx, id, change)
-	if err == nil {
-		s.Scope = "bed_processes"
-	}
-	return s, err
+	return m.pool.NetworkPolicy(ctx, id, change)
 }
 
 // UnavailableError carries the same attribution exposed in the capability report.
 // Raw probe errors stay in operator status/logs, not client-facing messages.
 func (m *Manager) UnavailableError() error {
-	err := m.Status().Err
-	return hostel.WrapError(hostel.ErrUnavailable, "bed network policy", hostel.CauseOf(err), errors.Join(ErrUnavailable, err))
+	cause := hostel.CauseUnknown
+	if d := m.Status().Egress.Diagnostic; d != nil {
+		cause = hostel.ErrorCause(d.Cause)
+	}
+	return hostel.WrapError(hostel.ErrUnavailable, "bed network policy", cause, ErrUnavailable)
 }
 
 func (m *Manager) Close(ctx context.Context) error {

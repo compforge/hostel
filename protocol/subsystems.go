@@ -7,16 +7,47 @@ type PrivilegeStatus struct {
 	Assigned          bool   `json:"assigned"`
 }
 
+// NetworkDiagnostic attributes a gap or failed operation to its own dimension.
+type NetworkDiagnostic struct {
+	Code    string `json:"code"`
+	Cause   string `json:"cause"`
+	Stage   string `json:"stage"`
+	Message string `json:"message"`
+}
+
+type NetworkIsolationStatus struct {
+	Gateway    string             `json:"gateway,omitempty"`
+	Level      string             `json:"level"`
+	Room       RoomType           `json:"room,omitempty"`
+	Diagnostic *NetworkDiagnostic `json:"diagnostic,omitempty"`
+}
+
+type EgressState string
+
+const (
+	EgressPending    EgressState = "pending"
+	EgressEnforced   EgressState = "enforced"
+	EgressUnenforced EgressState = "unenforced"
+	EgressUnknown    EgressState = "unknown"
+	EgressReleased   EgressState = "released"
+)
+
+// EgressStatus reports the last confirmed realization, not a connectivity probe.
+//
+// +spec=`Backend selection does not imply enforcement; effective is null when the installed policy is unknown or absent.`
+// +link=`docs/network.md#状态契约`
+type EgressStatus struct {
+	Backend    string             `json:"backend"`
+	State      EgressState        `json:"state"`
+	Scope      string             `json:"scope"`
+	Requested  *NetworkPolicy     `json:"requested"`
+	Effective  *NetworkPolicy     `json:"effective"`
+	Diagnostic *NetworkDiagnostic `json:"diagnostic,omitempty"`
+}
+
 type NetworkStatus struct {
-	PolicyBackend   string         `json:"policy_backend,omitempty"`
-	Room            RoomType       `json:"room,omitempty"`
-	Level           string         `json:"level"`
-	RequestedPolicy *NetworkPolicy `json:"requested_policy,omitempty"`
-	PolicyStatus    string         `json:"policy_status"`
-	Reason          string         `json:"reason,omitempty"`
-	Cause           string         `json:"cause,omitempty"`
-	Gateway         string         `json:"gateway"`
-	Policy          *NetworkPolicy `json:"policy"`
+	Isolation NetworkIsolationStatus `json:"isolation"`
+	Egress    EgressStatus           `json:"egress"`
 }
 
 type StoreStatus struct {

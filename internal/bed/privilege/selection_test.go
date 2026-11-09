@@ -76,6 +76,9 @@ func TestPrivilegeOwnsDedicatedAllocationWithoutFilesystem(t *testing.T) {
 	}
 	a, b := bed.New("a", "", bed.Spec{}), bed.New("b", "", bed.Spec{})
 	for _, model := range []*bed.Bed{a, b} {
+		if err := m.Reserve(model); err != nil {
+			t.Fatal(err)
+		}
 		if err := m.Prepare(t.Context(), model); err != nil {
 			t.Fatal(err)
 		}

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/bed/network"
 )
 
 func TestNetworkNamespaces(t *testing.T) {
@@ -27,11 +29,7 @@ func testNetworkEnvironment(t *testing.T, backend string) {
 	defer cancel()
 	var diagnostics struct {
 		Subsystems struct {
-			Network struct {
-				Effective string `json:"effective"`
-				Scope     string `json:"scope"`
-				Reason    string `json:"reason"`
-			} `json:"network"`
+			Network network.Status `json:"network"`
 		} `json:"subsystems"`
 	}
 	response, err := c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
@@ -40,11 +38,7 @@ func testNetworkEnvironment(t *testing.T, backend string) {
 	}
 	must2xx(t, "diagnostics", response)
 	private := true // This runner requires private networking.
-	wantScope := "carrier"
-	if private {
-		wantScope = "bed_processes"
-	}
-	if (diagnostics.Subsystems.Network.Effective == "private") != private || diagnostics.Subsystems.Network.Scope != wantScope {
+	if (diagnostics.Subsystems.Network.Isolation.Level == "private") != private || diagnostics.Subsystems.Network.Egress.Backend != "netns_nft" {
 		t.Fatalf("network: %+v", diagnostics.Subsystems.Network)
 	}
 	var health healthView

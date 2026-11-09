@@ -36,6 +36,10 @@ func TestBedDetailWireContract(t *testing.T) {
 	if bed.Activity.Operations[protocol.OpExec] != 1 || bed.Activity.Sessions[protocol.SessionKindCDP] != 1 {
 		t.Fatal("activity kinds lost")
 	}
+	n := bed.Status.Subsystems.Network
+	if n.Isolation.Level != "shared" || n.Isolation.Room != protocol.Dorm || n.Egress.Backend != "none" || n.Egress.State != protocol.EgressUnenforced || n.Egress.Effective != nil || n.Egress.Requested.DefaultAction != "allow" {
+		t.Fatalf("network dimensions: %+v", n)
+	}
 	encoded, err := json.Marshal(bed)
 	if err != nil {
 		t.Fatal(err)

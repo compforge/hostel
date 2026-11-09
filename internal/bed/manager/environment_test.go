@@ -48,9 +48,9 @@ func TestEnvironmentFailureDoesNotReselectSubsystems(t *testing.T) {
 	files := &unavailableProbeFiles{Isolator: m.iso, err: original}
 	m.iso = files
 	m.files = filesystem.NewManager(files, m.owners.Filesystem)
-	before := m.network.Status().Effective
+	before := m.network.Status().Isolation.Level
 	err := m.ProbeEnvironment(t.Context())
-	if !errors.Is(err, original) || files.prepares != 1 || m.iso != files || m.network.Status().Effective != before {
+	if !errors.Is(err, original) || files.prepares != 1 || m.iso != files || m.network.Status().Isolation.Level != before {
 		t.Fatalf("probe reselected or lost failure: prepares=%d err=%v", files.prepares, err)
 	}
 	report := m.Status().Environment

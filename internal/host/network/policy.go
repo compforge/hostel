@@ -15,6 +15,13 @@ import (
 var ErrUnavailable = errors.New("network policy is unavailable")
 var ErrInvalidPolicy = hostel.WrapError(hostel.ErrInvalidArgument, "network policy", hostel.CauseRequest, nil)
 
+// PolicyUnchangedError is evidence that a failed transaction did not change
+// the installed rules. Timeouts and lost replies must not use this wrapper.
+type PolicyUnchangedError struct{ Err error }
+
+func (e *PolicyUnchangedError) Error() string { return e.Err.Error() }
+func (e *PolicyUnchangedError) Unwrap() error { return e.Err }
+
 type Rule struct {
 	Action string `json:"action"`
 	Target string `json:"target"`
@@ -22,16 +29,6 @@ type Rule struct {
 type Policy struct {
 	DefaultAction string `json:"defaultAction"`
 	Egress        []Rule `json:"egress"`
-}
-type PolicyStatus struct {
-	RequestedPolicy *Policy           `json:"requested_policy,omitempty"`
-	Reason          string            `json:"reason,omitempty"`
-	Cause           hostel.ErrorCause `json:"cause,omitempty"`
-	Status          string            `json:"status"`
-	Mode            string            `json:"mode"`
-	EnforcementMode string            `json:"enforcementMode"`
-	Scope           string            `json:"scope"`
-	Policy          Policy            `json:"policy"`
 }
 type PolicyMutation struct {
 	Replace *Policy
@@ -131,13 +128,14 @@ func (p Policy) deniesIP(ip netip.Addr) bool {
 // The lock serializes kernel commits and DNS learning. In-flight DNS replies
 // from an older policy revision cannot re-open addresses after a policy update.
 type policyControl struct {
-	mu       sync.Mutex
-	current  Policy
-	revision uint64
-	closed   bool
-	learned  map[netip.Addr]time.Time
-	apply    func(context.Context, Policy) error
-	learn    func(context.Context, []dnsAddress) error
+	mu        sync.Mutex
+	current   Policy
+	revision  uint64
+	closed    bool
+	uncertain bool
+	learned   map[netip.Addr]time.Time
+	apply     func(context.Context, Policy) error
+	learn     func(context.Context, []dnsAddress) error
 }
 
 // ApplyMutation validates the entire desired policy before any state is published.
@@ -182,59 +180,59 @@ func ApplyMutation(current Policy, mutation PolicyMutation) (Policy, error) {
 	return NormalizePolicy(next)
 }
 
-func (p *policyControl) update(ctx context.Context, mutation PolicyMutation) (PolicyStatus, error) {
+func (p *policyControl) update(ctx context.Context, mutation PolicyMutation) (Policy, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
-		return PolicyStatus{}, ErrUnavailable
+		return Policy{}, ErrUnavailable
 	}
 	changed := mutation.Replace != nil || mutation.Merge != nil || mutation.Remove != nil
 	if changed {
 		normalized, err := ApplyMutation(p.current, mutation)
 		if err != nil {
-			return PolicyStatus{}, err
+			return Policy{}, err
 		}
 		if err := p.apply(ctx, normalized); err != nil {
-			return PolicyStatus{}, fmt.Errorf("apply network policy: %w", err)
+			var unchanged *PolicyUnchangedError
+			if !errors.As(err, &unchanged) {
+				p.uncertain = true
+			}
+			return Policy{}, fmt.Errorf("apply network policy: %w", err)
 		}
+		p.uncertain = false
 		p.current = normalized
 		p.revision++
 		p.learned = nil
 	}
+	if p.uncertain {
+		return Policy{}, ErrUnavailable
+	}
 	policy := p.current
 	policy.Egress = append([]Rule{}, policy.Egress...)
-	mode := "enforcing"
-	if len(policy.Egress) == 0 {
-		if policy.DefaultAction == "allow" {
-			mode = "allow_all"
-		} else {
-			mode = "deny_all"
-		}
-	}
-	return PolicyStatus{Status: "ok", Mode: mode, EnforcementMode: "dns+nft", Scope: "processes", Policy: policy}, nil
+	return policy, nil
 }
 
 // NetworkPolicy only operates an already acquired namespace; it never
 // allocates networking or silently accepts a policy on a shared network.
-func (m *Pool) NetworkPolicy(ctx context.Context, key string, mutation PolicyMutation) (PolicyStatus, error) {
+func (m *Pool) NetworkPolicy(ctx context.Context, key string, mutation PolicyMutation) (Policy, error) {
 	if m == nil || !m.Status().Available {
-		return PolicyStatus{}, ErrUnavailable
+		return Policy{}, ErrUnavailable
 	}
 	m.mu.Lock()
 	lease := m.allocations[key]
 	closed := m.closed
 	m.mu.Unlock()
 	if lease == nil || closed {
-		return PolicyStatus{}, ErrUnavailable
+		return Policy{}, ErrUnavailable
 	}
 	lease.mu.Lock()
 	defer lease.mu.Unlock()
 	if !lease.active || !lease.current() {
-		return PolicyStatus{}, ErrUnavailable
+		return Policy{}, ErrUnavailable
 	}
 	provider, ok := lease.endpoint.(interface{ Policy() *policyControl })
 	if !ok {
-		return PolicyStatus{}, ErrUnavailable
+		return Policy{}, ErrUnavailable
 	}
 	return provider.Policy().update(ctx, mutation)
 }

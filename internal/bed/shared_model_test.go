@@ -7,16 +7,14 @@ import (
 
 func TestSnapshotsDoNotGrantWriteAccess(t *testing.T) {
 	policy := &NetworkPolicy{DefaultAction: "deny", Egress: []NetworkRule{{Action: "allow", Target: "example.org"}}}
-	spec := Spec{NetworkPolicy: policy, RecoveryDirs: []string{"original"}, Pillows: []PillowSpec{{Name: "main", Env: map[string]string{"KEY": "original"}}}}
+	spec := Spec{NetworkPolicy: policy, Pillows: []PillowSpec{{Name: "main", Env: map[string]string{"KEY": "original"}}}}
 	b := New("a", "", spec)
 	policy.Egress[0].Target = "mutated-input"
-	spec.RecoveryDirs[0] = "mutated-input"
 	spec.Pillows[0].Env["KEY"] = "mutated-input"
 	snapshot := b.Spec()
 	snapshot.NetworkPolicy.Egress[0].Target = "mutated-read"
-	snapshot.RecoveryDirs[0] = "mutated-read"
 	snapshot.Pillows[0].Env["KEY"] = "mutated-read"
-	if got := b.Spec(); got.Pillows[0].Env["KEY"] != "original" || got.NetworkPolicy.Egress[0].Target != "example.org" || got.RecoveryDirs[0] != "original" {
+	if got := b.Spec(); got.Pillows[0].Env["KEY"] != "original" || got.NetworkPolicy.Egress[0].Target != "example.org" {
 		t.Fatalf("spec aliased: %+v", got)
 	}
 	owners := NewOwners()
@@ -31,13 +29,13 @@ func TestSnapshotsDoNotGrantWriteAccess(t *testing.T) {
 	}
 	var retained *NetworkStatus
 	owners.Network.Update(b, func(s *NetworkStatus) {
-		s.Policy = &NetworkPolicy{Egress: []NetworkRule{{Target: "original"}}}
+		s.Egress.Effective = &NetworkPolicy{Egress: []NetworkRule{{Target: "original"}}}
 		retained = s
 	})
-	retained.Policy.Egress[0].Target = "mutated-callback"
+	retained.Egress.Effective.Egress[0].Target = "mutated-callback"
 	status := b.Status()
-	status.Network.Policy.Egress[0].Target = "mutated-read"
-	if got := b.Status().Network.Policy.Egress[0].Target; got != "original" {
+	status.Network.Egress.Effective.Egress[0].Target = "mutated-read"
+	if got := b.Status().Network.Egress.Effective.Egress[0].Target; got != "original" {
 		t.Fatalf("status aliased: %s", got)
 	}
 }

@@ -31,7 +31,7 @@ func (p *policyControl) exchange(ctx context.Context, payload []byte, upstream f
 	}
 	p.mu.Lock()
 	revision := p.revision
-	allowed := !p.closed && p.current.domainAction(query.Questions[0].Name.String()) == "allow"
+	allowed := !p.closed && !p.uncertain && p.current.domainAction(query.Questions[0].Name.String()) == "allow"
 	p.mu.Unlock()
 	if !allowed {
 		return refusedDNS(query)
@@ -49,7 +49,7 @@ func (p *policyControl) exchange(ctx context.Context, payload []byte, upstream f
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || p.revision != revision {
+	if p.closed || p.uncertain || p.revision != revision {
 		return refusedDNS(query)
 	}
 	var addresses []dnsAddress
