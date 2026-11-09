@@ -34,7 +34,7 @@ func TestLinuxNetworkTableCleanup(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	endpoint, err := b.Create(ctx)
+	endpoint, err := b.Create(ctx, "cleanup-test")
 	if err != nil {
 		t.Fatal(err)
 	}

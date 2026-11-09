@@ -55,15 +55,15 @@ func TestUIDPolicyTraffic(t *testing.T) {
 	backend := provider.(*uidPolicyBackend)
 	dns := startUIDDNSFixture(t)
 	backend.upstreams = []string{dns}
-	a, err := provider.Acquire(t.Context(), 200001)
+	a, err := provider.Acquire(t.Context(), "test-bed", 200001)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := provider.Acquire(t.Context(), 200002)
+	b, err := provider.Acquire(t.Context(), "test-bed", 200002)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.Acquire(t.Context(), 200001); err == nil {
+	if _, err := provider.Acquire(t.Context(), "test-bed", 200001); err == nil {
 		t.Fatal("duplicate UID acquired")
 	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -141,7 +141,7 @@ func TestUIDPolicyTraffic(t *testing.T) {
 	if err := a.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	replacement, err := provider.Acquire(t.Context(), 200001)
+	replacement, err := provider.Acquire(t.Context(), "test-bed", 200001)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -227,3 +227,29 @@ Network 在进程启动前取得身份并安装规则，Bed Manager 在停止进
 失败的准备或清理保留 allocation，UID 只能在资源与本地身份清理完成后复用。
 规则所有权使用 allocation 唯一表名，旧句柄的重复释放不影响同 UID 的新 allocation。
 验证入口见 [UID 策略 E2E](../tests/e2e/README.md#共享-netns-的-uid-出站策略)。
+
+### Allocation 归属与崩溃恢复
+
+Bed Manager 将 Network 的运行记录目录绑定到 `<beds-root>/.network`。Network
+负责持久记录和回收自己创建的 UID nft 表、独立 netns、veth 与 resolver 配置；
+Privilege 仍负责 UID 租约。该目录不属于 BedFS，不进入 Store 快照。
+
+创建内核资源前，先原子写入 allocation 记录，包含内部 Bed ID、唯一资源名、UID
+或 veth 名，以及 Carrier netns 与系统 boot ID。同目录的进程生命周期文件锁阻止
+两个 daemon 同时接管；不同目录只按各自记录清理，不按 `hu_*` / `hn*` 前缀全局删除。
+文件原子替换覆盖 daemon 进程崩溃，不提供断电落盘保证。
+
+Network 在全局 Start 中、机制探测和 Bed 准入之前 reconcile 旧 allocation，
+即使对应 Bed 目录已不存在或 caller 不再访问它也会处理。UID backend 先检查该 UID
+是否还有活进程；netns backend 检查 namespace 内的进程。仍有活进程、记录损坏或
+清理失败时，保留记录并阻止启动，不在运行中的旧 workload 下移除策略。正常 Executor
+进程承载的 parent-death 清理先终止旧执行；若仍有存活后代，须先完成进程回收再启动。
+
+同一 Carrier 的旧资源幂等清理成功后才删除记录，再按新的声明准备 Bed。
+Carrier netns 或 boot ID 已变化时，不触碰当前 namespace 的同名资源，仅丢弃旧记录。
+正常 Release 同样在资源回收成功后删除记录；失败保留归属供重试。Bed Manager 只有
+完成全部运行资源和本地数据清理后才 Forget 并释放 UID，避免 UID 复用继承旧规则。
+
+无记录的旧版本遗留资源无法可靠判断实例归属，升级不会按名称前缀猜测删除；这类
+遗留需通过原实例的正常清理或替换 Carrier 处理。恢复 E2E 见
+[TestBedIdentityCrashRecovery / TestPrivateNetworkCrashRecovery](../tests/e2e/README.md#verify-uid-egress-across-process-lifecycles)。

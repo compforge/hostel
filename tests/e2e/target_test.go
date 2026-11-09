@@ -42,6 +42,7 @@ type targetOptions struct {
 
 type target struct {
 	client   *apiClient
+	crash    func() // Binary-only fault injection; cleanup still owns logs and workspace.
 	bedsRoot string // Path in the target carrier, including container targets.
 }
 
@@ -72,10 +73,11 @@ func startTarget(t *testing.T, options targetOptions) *target {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	baseURL := "http://" + addr
 	var bedsRoot string
+	var crash func()
 	if image != "" {
 		bedsRoot = startImageTarget(t, image, addr, options)
 	} else {
-		bedsRoot = startBinaryTarget(t, binary, addr, options)
+		bedsRoot, crash = startBinaryTarget(t, binary, addr, options)
 	}
 
 	c := newAPIClient(baseURL)
@@ -87,7 +89,7 @@ func startTarget(t *testing.T, options targetOptions) *target {
 		_, lastErr = c.json(ctx, "GET", "/healthz", "", nil, &health)
 		cancel()
 		if lastErr == nil && health.OK {
-			return &target{client: c, bedsRoot: bedsRoot}
+			return &target{client: c, bedsRoot: bedsRoot, crash: crash}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -108,7 +110,7 @@ func reservePort(t *testing.T) int {
 	return port
 }
 
-func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions) string {
+func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions) (string, func()) {
 	t.Helper()
 	absolute, err := filepath.Abs(binary)
 	if err != nil {
@@ -192,8 +194,8 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 		_ = logFile.Close()
 		t.Fatalf("start hostel binary: %v", err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
 
 	t.Cleanup(func() {
 		_ = cmd.Process.Signal(os.Interrupt)
@@ -210,7 +212,17 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 			}
 		}
 	})
-	return bedsRoot
+	return bedsRoot, func() {
+		t.Helper()
+		if err := cmd.Process.Kill(); err != nil {
+			t.Fatalf("crash run-owned daemon: %v", err)
+		}
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("crashed daemon did not exit")
+		}
+	}
 }
 
 func startImageTarget(t *testing.T, image, addr string, options targetOptions) string {

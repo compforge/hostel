@@ -39,7 +39,7 @@ type endpoint interface {
 }
 
 type backend interface {
-	Create(context.Context) (endpoint, error)
+	Create(context.Context, string) (endpoint, error)
 	Close(context.Context) error
 }
 
@@ -52,6 +52,7 @@ type acquisition struct {
 // Pool owns named network allocations. Keys are opaque caller-owned identities.
 // allocationMu serializes address selection without blocking existing networks.
 type Pool struct {
+	store        *AllocationStore
 	ports        *PortManager
 	needsProbe   bool
 	startErr     error
@@ -75,10 +76,13 @@ func New(_ context.Context) *Pool {
 func (m *Pool) SetPortManager(ports *PortManager) { m.ports = ports }
 
 func probePool(ctx context.Context, ports ...*PortManager) *Pool {
+	return probePoolWithStore(ctx, nil, ports...)
+}
+func probePoolWithStore(ctx context.Context, store *AllocationStore, ports ...*PortManager) *Pool {
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	b, probe := probeBackend(ctx, ports...)
+	b, probe := probeBackendWithStore(ctx, store, ports...)
 	report := Status{Available: b != nil && probe.Error == "", Backend: "shared", Probe: probe}
 	report.Probe.DurationMS = time.Since(started).Milliseconds()
 	if report.Available {
@@ -156,7 +160,7 @@ func (m *Pool) Acquire(ctx context.Context, key string) (Attachment, error) {
 
 		createCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		m.allocationMu.Lock()
-		ep, err := m.backend.Create(createCtx)
+		ep, err := m.backend.Create(createCtx, key)
 		m.allocationMu.Unlock()
 		cancel()
 		if err != nil {
@@ -305,6 +309,8 @@ func (m *Pool) Close(ctx context.Context) error {
 	return err
 }
 
+func (m *Pool) SetAllocationStore(store *AllocationStore) { m.store = store }
+
 func (m *Pool) Start(ctx context.Context) error {
 	if m == nil {
 		return nil
@@ -317,7 +323,7 @@ func (m *Pool) Start(ctx context.Context) error {
 	if !m.needsProbe {
 		return m.startErr
 	}
-	p := probePool(ctx, m.ports)
+	p := probePoolWithStore(ctx, m.store, m.ports)
 	m.backend, m.report, m.needsProbe = p.backend, p.report, false
 	if p.backend != nil && !p.report.Available {
 		m.startErr = fmt.Errorf("network probe cleanup remains pending: %w", p.report.Probe.Err)

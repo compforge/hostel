@@ -22,6 +22,7 @@ import (
 )
 
 type linuxBackend struct {
+	store           *AllocationStore
 	ports           *PortManager
 	mu              sync.Mutex
 	ip, nft         string
@@ -39,6 +40,7 @@ type linuxEndpoint struct {
 	dns                              *dnsForwarder
 	policy                           *policyControl
 	namespace, device, table, config bool
+	record                           *allocationRecord
 }
 
 func run(ctx context.Context, input, command string, args ...string) ([]byte, error) {
@@ -56,8 +58,11 @@ func run(ctx context.Context, input, command string, args ...string) ([]byte, er
 }
 
 func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
+	return probeBackendWithStore(ctx, nil, ports...)
+}
+func probeBackendWithStore(ctx context.Context, store *AllocationStore, ports ...*PortManager) (backend, Probe) {
 	probe := Probe{Stage: "tools", Cause: hostel.CauseCarrier}
-	b := &linuxBackend{prefix: "hn" + randx.Hex(4), endpoints: make(map[string]*linuxEndpoint)}
+	b := &linuxBackend{store: store, prefix: "hn" + randx.Hex(4), endpoints: make(map[string]*linuxEndpoint)}
 	if len(ports) > 0 {
 		b.ports = ports[0]
 	}
@@ -90,7 +95,7 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 	probe.Cause = hostel.CauseUnknown
 	probe.Attempted = true
 	probe.Stage = "namespace_network"
-	ep, err := b.Create(ctx)
+	ep, err := b.Create(ctx, "probe")
 	if err == nil {
 		probe.Stage = "execution"
 		// Exercise the SAME namespace entry and capability drop as wrapped commands.
@@ -131,13 +136,17 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 	return b, probe
 }
 
-func (b *linuxBackend) Create(ctx context.Context) (endpoint, error) {
+func (b *linuxBackend) Create(ctx context.Context, key string) (endpoint, error) {
 	gateway, address, err := b.allocate(ctx)
 	if err != nil {
 		return nil, err
 	}
 	suffix := randx.Hex(2)
 	ep := &linuxEndpoint{owner: b, name: b.prefix + suffix, link: b.prefix + suffix, peer: "np" + randx.Hex(4), gateway: gateway, address: address}
+	ep.record, err = b.store.Add(allocationRecord{Kind: "netns", Key: key, Name: ep.name, Link: ep.link, Peer: ep.peer})
+	if err != nil {
+		return nil, err
+	}
 	b.mu.Lock()
 	b.endpoints[ep.name] = ep
 	b.mu.Unlock()
@@ -227,10 +236,10 @@ func (e *linuxEndpoint) create(ctx context.Context) error {
 			return err
 		}
 	}
+	e.table = true
 	if _, err := run(ctx, e.rules(), b.nft, "-f", "-"); err != nil {
 		return fmt.Errorf("install network filter and IPv4 NAT: %w", err)
 	}
-	e.table = true
 	if err := e.applyPolicy(ctx, e.policy.current); err != nil {
 		return err
 	}
@@ -288,6 +297,17 @@ func (e *linuxEndpoint) Close(ctx context.Context) error {
 	if e.dns != nil {
 		e.dns.Close()
 	}
+	if e.record != nil {
+		if err := e.owner.store.cleanupRecorded(ctx, e.record); err != nil {
+			return err
+		}
+		e.owner.mu.Lock()
+		delete(e.owner.endpoints, e.name)
+		e.owner.mu.Unlock()
+		e.record = nil
+		e.namespace, e.device, e.table, e.config = false, false, false, false
+		return nil
+	}
 	if e.device {
 		if _, x := run(ctx, "", e.owner.ip, "link", "del", e.link); x != nil {
 			err = errors.Join(err, x)
@@ -297,7 +317,7 @@ func (e *linuxEndpoint) Close(ctx context.Context) error {
 	}
 	if e.table {
 		// Delete the pair atomically so a failed cleanup can retry both tables.
-		rules := fmt.Sprintf("delete table inet %s\ndelete table ip %s\n", e.name, e.name)
+		rules := deleteTables(e.name)
 		if _, x := run(ctx, rules, e.owner.nft, "-f", "-"); x != nil {
 			err = errors.Join(err, fmt.Errorf("remove network filter and IPv4 NAT: %w", x))
 		} else {
@@ -317,6 +337,9 @@ func (e *linuxEndpoint) Close(ctx context.Context) error {
 		} else {
 			e.config = false
 		}
+	}
+	if err == nil {
+		err = e.owner.store.Remove(e.record)
 	}
 	if err == nil {
 		e.owner.mu.Lock()

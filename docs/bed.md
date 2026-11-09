@@ -81,7 +81,9 @@ Executor 的实际创建与替换仍按需进行，Store 的 Persist / Delete �
 ## 启动恢复与日常运行
 
 daemon 组装 Bed Manager 与 Amenity Manager，驱动全局启动。Bed Manager 的 Start 同步完成
-领域初始化、本地目录恢复和 UID 保留；组合环境探测完成后才开放 Web。启动失败逆序关闭
+领域初始化、各 subsystem 的遗留资源 reconcile、本地目录恢复和 UID 保留；组合环境探测完成后才开放 Web。
+Network 的 allocation 记录独立于 Bed 目录，在全局 Start 中回收，覆盖 caller 不再访问的
+孤儿资源；恢复失败不开放准入。归属、重试和 Carrier 边界见 [网络资源恢复](network.md#allocation-归属与崩溃恢复)。启动失败逆序关闭
 已启动的子系统，不能让未恢复的本地身份进入准入。
 
 Run 启动 Store 同步、Resource 采样与 Bed 回收循环，并在取消或终止错误后等待循环退出。

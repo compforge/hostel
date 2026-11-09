@@ -400,3 +400,38 @@ checks the same group in a Pillow main process under the private file view.
 `TestSharedSoftwareAcrossBedUsers` (HOSTEL_E2E_USERLAND=1) uses a disposable prepared image with
 software GID 1000, setgid directories and default ACLs to exercise cross-UID pip/npm/uv install,
 load, replacement and uninstall. It mutates carrier-wide packages; never run it on a shared carrier.
+
+## Verify UID egress across process lifecycles
+
+The disposable Linux UID policy profile also owns these cases:
+
+- `TestBedUIDPillowEgress`: local/supervisor Pillow main processes use the Bed UID
+  and exactly the approved extra group; allow/deny apply at startup and after
+  policy reversal plus an asynchronous Pillow restart.
+- `TestBedIdentityCrashRecovery`: kill only the fixture-owned daemon, start a new
+  daemon over its retained beds-root, and admit a newcomer before redeclaring the
+  old Bed. Verify UID reservation, Bed identity, private file ownership/access,
+  extra groups, egress updates, and eventual purge/recreation.
+
+Use a disposable carrier netns with root, CAP_NET_ADMIN, nft and ip_forward=0;
+leave the host firewall and host sysctl untouched. The crash case deliberately
+leaves kernel resources until recovery or carrier removal. Always remove the
+carrier after a failed run. The same compiled suite runs through the documented
+Linux container runner; the source entrypoint is:
+
+```sh
+HOSTEL_E2E_REQUIRE_UID_POLICY=1 make e2e \
+  E2E_ARGS="-run 'TestBedIdentityCrashRecovery|TestBedUIDPillowEgress' -timeout 3m"
+```
+
+The crash cases assert both policy recovery and complete cleanup of owned allocation
+records. See [the post-171 baseline](reports/2026-11-09-identity-recovery.md) for
+the original failure and [the recovery fix run](reports/2026-11-09-network-reconciliation.md)
+for current validation.
+
+`TestPrivateNetworkCrashRecovery` is the independent-netns counterpart. Run with
+`HOSTEL_E2E_REQUIRE_NETWORK=1` inside a disposable privileged Linux carrier with
+ip_forward=1. It asserts that the retained Bed ID/UID receive a new netns and
+that deny-to-allow policy updates work after the daemon crash. It also asserts that no namespaces, Carrier nft tables or allocation records remain
+after both daemon fixtures close, and preserves a separate unowned nft table.
+Remove the disposable carrier after the run.
