@@ -132,7 +132,7 @@ func (s *Manager) forSync(ctx context.Context, kind SyncKind) (Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	automatic, err := storesync.NewAuto(obj, s.cfg.Prefix, s.cfg.AutoPackFileThreshold, s.restic)
+	automatic, err := storesync.NewAuto(obj, s.cfg.Prefix, s.cfg.AutoPackFileThreshold, s.restic, s.cfg.PackTargetBytes)
 	if err != nil {
 		return nil, err
 	}

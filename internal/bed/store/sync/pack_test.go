@@ -31,7 +31,12 @@ func newTestPack(targetBytes int) (*packStore, *memObj) {
 
 func TestPackObjectLayoutAndRoundtrip(t *testing.T) {
 	ctx := context.Background()
-	s, obj := newTestPack(1 << 20)
+	obj := newMemObj()
+	automatic, err := NewAuto(obj, "sandbox", 100, nil, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := automatic.pack
 	src := t.TempDir()
 	writeTree(t, src)
 

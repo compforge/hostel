@@ -15,6 +15,7 @@
 package backend
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -26,8 +27,10 @@ import (
 )
 
 func TestTransferMultipartCommitAndAbort(t *testing.T) {
-	for _, outcome := range []string{"success", "conflict", "part_failure"} {
+	for _, outcome := range []string{"success", "conflict", "part_failure", "canceled"} {
 		t.Run(outcome, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 			var mu sync.Mutex
 			parts, aborts, commits := 0, 0, 0
 			var received int64
@@ -41,10 +44,13 @@ func TestTransferMultipartCommitAndAbort(t *testing.T) {
 				case r.Method == http.MethodPut && r.URL.Query().Get("uploadId") == "upload-1":
 					parts++
 					n, err := io.Copy(io.Discard, r.Body)
-					if err != nil {
+					if err != nil && outcome != "canceled" {
 						t.Errorf("part read: %v", err)
 					}
 					received += n
+					if outcome == "canceled" {
+						cancel()
+					}
 					if outcome == "part_failure" {
 						w.WriteHeader(403)
 						fmt.Fprint(w, `<Error><Code>AccessDenied</Code></Error>`)
@@ -88,7 +94,7 @@ func TestTransferMultipartCommitAndAbort(t *testing.T) {
 			if err := file.Truncate(size); err != nil {
 				t.Fatal(err)
 			}
-			err = object.Upload(t.Context(), "object", file, size, false)
+			err = object.Upload(ctx, "object", file, size, false)
 			mu.Lock()
 			defer mu.Unlock()
 			switch outcome {
@@ -100,7 +106,7 @@ func TestTransferMultipartCommitAndAbort(t *testing.T) {
 				if !errors.Is(err, ErrConflict) || commits != 1 || aborts != 1 {
 					t.Fatalf("conflict err=%v commits=%d aborts=%d", err, commits, aborts)
 				}
-			case "part_failure":
+			case "part_failure", "canceled":
 				if err == nil || commits != 0 || aborts != 1 {
 					t.Fatalf("part failure err=%v commits=%d aborts=%d", err, commits, aborts)
 				}

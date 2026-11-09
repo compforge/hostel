@@ -14,4 +14,6 @@ type Options struct {
 	SecretAccessKey       *string
 	SessionToken          *string
 	AutoPackFileThreshold *int
+	PackTargetBytes       *int
+	S3PartSizeBytes       *int64
 }
