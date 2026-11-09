@@ -138,3 +138,51 @@ func TestSharedSoftwarePreservesNamedDefaultACL(t *testing.T) {
 		t.Fatal("existing named ACL grant was erased")
 	}
 }
+
+// +case:id=shared_software_access_acl,desc=`Existing software has an extended access ACL with a read-only owning group`,expect=`Preparation grants the actual shared group write without erasing named grants`
+func TestSharedSoftwareUpdatesExtendedAccessACL(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires changing child credentials")
+	}
+	root, err := os.MkdirTemp("", "hostel-shared-access-acl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	if err := os.Chmod(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(root, "package")
+	if err := os.WriteFile(name, []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	acl, err := sharedDefaultACL(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := make([]byte, len(acl)+8)
+	copy(named, acl[:12])
+	binary.LittleEndian.PutUint16(named[12:], 2)
+	binary.LittleEndian.PutUint16(named[14:], 4)
+	binary.LittleEndian.PutUint32(named[16:], 12345)
+	copy(named[20:], acl[12:])
+	binary.LittleEndian.PutUint16(named[22:], 4) // owning group is read-only
+	if err := unix.Setxattr(name, "system.posix_acl_access", named, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareSharedSoftware(t.Context(), root, 1000); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("/bin/sh", "-ec", `printf updated >> "$1"`, "sh", name)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 200001, Gid: 200001, Groups: []uint32{1000}}}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("shared group write: %v %s", err, output)
+	}
+	got := make([]byte, len(named))
+	if _, err := unix.Getxattr(name, "system.posix_acl_access", got); err != nil {
+		t.Fatal(err)
+	}
+	if binary.LittleEndian.Uint32(got[16:]) != 12345 || binary.LittleEndian.Uint16(got[14:]) != 4 {
+		t.Fatal("named access grant changed")
+	}
+}

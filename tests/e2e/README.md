@@ -441,7 +441,9 @@ Remove the disposable carrier after the run.
 `TestSharedSoftwareRuntimePermissions` checks that final-image startup prepares `/usr/local`
 before Bed execution, then exercises cross-UID writes and replacement with umask 022.
 A runner already inside the disposable image may instead set `HOSTEL_E2E_BINARY`
-and `HOSTEL_E2E_ON_TARGET=1` with the normal environment-aware binary suite.
+and `HOSTEL_E2E_ON_TARGET=1`, plus the separate `HOSTEL_E2E_DISPOSABLE=1`
+acknowledgement, with the normal environment-aware binary suite. The disposable
+flag authorizes global package mutations; ordinary on-target runs do not.
 Run it with `TestSharedSoftwareAcrossBedUsers` for real pip/npm/uv installation, replacement
 and uninstall. Both require a disposable userland image with
 `HOSTEL_SHARED_SOFTWARE='[{"path":"/usr/local","gid":1000,"policy":"required"}]'`

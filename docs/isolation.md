@@ -166,6 +166,8 @@ Filesystem 幂等补齐组读写、目录组执行/setgid 与 default ACL，保�
 所有修改在运行时按文件句柄完成，保留 default ACL 中已有的命名用户/组条目；ACL 还须读回并验证新建文件的组/权限继承；不依赖镜像导出保留 ACL。
 不为每次 Bed 创建重复递归修改共享树，Bed 删除和实例 Close 也不删除共享软件或回滚目录权限。
 准备有 2 分钟实例级预算；日志包含 path、GID、policy、处理数、耗时和失败原因。
+已存在扩展 access ACL 时，同时补齐 owning group 与 mask 的组权限，保留 named user/group 条目；这些显式 named ACL 和应用后续 chmod 仍可能限制特定身份。
+
 `/v1/status.subsystems.filesystem.shared_software` 报告每项 path/GID、Tool policy/probe/selected/reason 与处理数；
 只投影启动结果，状态读取不操作文件系统。多目录准备不是事务，失败前已完成的权限设置保留。
 

@@ -215,10 +215,10 @@ func requireUserland(t *testing.T) {
 		// An on-target runner may already be inside the disposable userland
 		// image. Keep this explicit so a developer's workstation is not used
 		// accidentally for global package mutations.
-		if strings.TrimSpace(os.Getenv(binaryEnv)) != "" && os.Getenv("HOSTEL_E2E_ON_TARGET") == "1" {
+		if strings.TrimSpace(os.Getenv(binaryEnv)) != "" && os.Getenv("HOSTEL_E2E_ON_TARGET") == "1" && os.Getenv("HOSTEL_E2E_DISPOSABLE") == "1" {
 			return
 		}
-		t.Fatalf("%s=1 requires %s or an explicitly on-target binary", userlandEnv, imageEnv)
+		t.Fatalf("%s=1 requires %s or an on-target binary with HOSTEL_E2E_DISPOSABLE=1", userlandEnv, imageEnv)
 	}
 }
 

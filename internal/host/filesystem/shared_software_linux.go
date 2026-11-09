@@ -97,8 +97,13 @@ func PrepareSharedSoftware(ctx context.Context, path string, gid int) (int, erro
 				return fmt.Errorf("%s mode: %w", name, err)
 			}
 		}
+		// chmod updates the ACL mask, not an extended access ACL's owning
+		// group entry. Grant that entry too, preserving named grants.
+		if err := prepareSharedACL(f, false, uint16(mode.Perm()>>3)&7); err != nil {
+			return fmt.Errorf("%s access ACL: %w", name, err)
+		}
 		if directory {
-			if err := prepareSharedDefaultACL(f); err != nil {
+			if err := prepareSharedACL(f, true, 7); err != nil {
 				return fmt.Errorf("%s default ACL: %w", name, err)
 			}
 		}
@@ -117,13 +122,17 @@ func PrepareSharedSoftware(ctx context.Context, path string, gid int) (int, erro
 // Linux POSIX ACL xattr format: version 2, then little-endian tag/perm/id
 // entries. Group-object refers to each inode's group; no individual Bed UID is
 // encoded. The mask permits ordinary group-writable creations with umask 022.
-func prepareSharedDefaultACL(f *os.File) error {
+func prepareSharedACL(f *os.File, defaults bool, groupMode uint16) error {
+	attribute := "system.posix_acl_access"
+	if defaults {
+		attribute = "system.posix_acl_default"
+	}
 	fd := int(f.Fd())
-	size, err := unix.Fgetxattr(fd, "system.posix_acl_default", nil)
+	size, err := unix.Fgetxattr(fd, attribute, nil)
 	var current []byte
 	if err == nil {
 		current = make([]byte, size)
-		n, err := unix.Fgetxattr(fd, "system.posix_acl_default", current)
+		n, err := unix.Fgetxattr(fd, attribute, current)
 		if err != nil {
 			return err
 		}
@@ -131,25 +140,50 @@ func prepareSharedDefaultACL(f *os.File) error {
 	} else if !errors.Is(err, unix.ENODATA) {
 		return err
 	}
-	desired, err := sharedDefaultACL(current)
+	var desired []byte
+	if defaults {
+		desired, err = sharedDefaultACL(current)
+	} else {
+		desired, err = sharedAccessACL(current, groupMode)
+	}
 	if err != nil {
 		return err
 	}
 	if bytes.Equal(current, desired) {
 		return nil
 	}
-	if err := unix.Fsetxattr(fd, "system.posix_acl_default", desired, 0); err != nil {
+	if err := unix.Fsetxattr(fd, attribute, desired, 0); err != nil {
 		return err
 	}
 	actual := make([]byte, len(desired))
-	n, err := unix.Fgetxattr(fd, "system.posix_acl_default", actual)
+	n, err := unix.Fgetxattr(fd, attribute, actual)
 	if err != nil {
 		return err
 	}
 	if n != len(desired) || !bytes.Equal(actual, desired) {
-		return fmt.Errorf("default ACL was not retained")
+		return fmt.Errorf("%s was not retained", attribute)
 	}
 	return nil
+}
+
+// An absent access ACL is already represented by the inode mode. For an
+// extended ACL, chmod changed its mask; its owning group still needs updating.
+func sharedAccessACL(current []byte, groupMode uint16) ([]byte, error) {
+	if len(current) == 0 {
+		return nil, nil
+	}
+	if len(current) < 4 || (len(current)-4)%8 != 0 || binary.LittleEndian.Uint32(current) != 2 {
+		return nil, fmt.Errorf("unsupported POSIX access ACL encoding")
+	}
+	desired := bytes.Clone(current)
+	for off := 4; off < len(desired); off += 8 {
+		tag := binary.LittleEndian.Uint16(desired[off:])
+		if tag == 4 || tag == 16 {
+			perm := binary.LittleEndian.Uint16(desired[off+2:])
+			binary.LittleEndian.PutUint16(desired[off+2:], perm|groupMode)
+		}
+	}
+	return desired, nil
 }
 
 func sharedDefaultACL(current []byte) ([]byte, error) {

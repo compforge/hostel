@@ -6,7 +6,7 @@ in Start, before admitting Beds. Privilege still owns identities and supplementa
 groups. Bed teardown and instance Close do not delete shared software or undo its
 metadata. The permission and failure contracts are in [isolation](../../../docs/isolation.md).
 
-## Final environment and artifacts
+## Initial artifact-backed run
 
 Disposable, exported Docker image on the amd64 devbox; Debian 12 userland,
 kernel `5.15.120.bsk.3-amd64`. Base is the published Bedbox 0.1.7 index
@@ -29,7 +29,7 @@ No host sysctl or unrelated workload was changed.
 | amd64 host filesystem runner | `645ba04dd3785d33b5f04dd8c539f3915a1468873a45aefd0decea5c57debb3b` |
 | arm64 overlay image | `24de3dd0e120d42ada9a13a2f92d8d07a112cfbe8e29b21ce4c61f40fa254b4c` |
 
-## Results
+## Initial results
 
 Native macOS `repocli validate --base HEAD --check format,lint,test` passed:
 root Makefile lint and affected tests, complete=true, inputsConsistent=true.
@@ -48,7 +48,7 @@ not inferred from macOS skips:
 These kernel/lifecycle tests passed on native amd64 and arm64 under QEMU on the
 same amd64 host. QEMU is not evidence of a separate arm64 kernel or deployment.
 
-Final native amd64 public API E2E selected
+The initial native amd64 public API E2E selected
 `^TestSharedSoftware(RuntimePermissions|AcrossBedUsers)$`, no skips:
 
 - Two distinct Bed UIDs, ordinary nested file create/append/rename/replace/delete:
@@ -81,3 +81,42 @@ only authorizes Carrier metadata preparation.
 This run does not verify a new complete Bedbox Dockerfile, a registry round trip,
 customer kernels, native ARM execution, or the sandctl/hictld/HiBot business chain.
 The existing Network API adaptation requirement remains separate from this change.
+
+## Access ACL and disposable-runner follow-up
+
+A final review found that chmod updates the mask of an existing extended access
+ACL without necessarily granting its owning group write. Preparation now updates
+that entry and mask as well, retaining named grants. The Linux test
+`TestSharedSoftwareUpdatesExtendedAccessACL` creates a read-only owning-group
+entry plus a named user grant, then verifies a real supplementary-GID-1000 child
+can append after preparation. All four host filesystem cases passed on native
+amd64 and arm64 under QEMU; native format/lint/affected tests also passed with
+complete, consistent inputs.
+
+The direct binary userland route additionally requires
+`HOSTEL_E2E_DISPOSABLE=1`. A negative invocation without this flag fails before
+starting a Bed or installing packages; the explicit disposable invocation passes.
+This addresses the local automated review finding. That original review was
+incomplete for the host filesystem unit because its LLM stream terminated;
+it is not reported as a clean review.
+
+Final follow-up API run: `20261109T121647.731022288Z`, pass with no skips.
+The same exported amd64 overlay image was used, with the final daemon mounted
+read-only at `/usr/bin/hostel`; this follow-up is binary validation within an
+exported image, not a new final-image build. Cross-Bed pip/npm/uv took 7.66 seconds
+(2.35/2.19/0.97); ordinary cross-UID file operations took 1.69 seconds. The same
+ip_forward=0 and capability profile applies.
+
+| Follow-up artifact | SHA-256 |
+| --- | --- |
+| amd64 daemon | `b7d33e6e3e50af2b79341763d0ab7cb4f279c7743df389db57378028f281285c` |
+| arm64 daemon | `298843c706cd389719c26278fcb08c0bbed1c11c1c73c65fe5745f3aef11dd93` |
+| final amd64 API runner | `abce2424feefedd1f06e9634b123966b97946ff9d6e36f2d2de69679cda76384` |
+| amd64 host filesystem runner | `5890a7a660c24c34846f85ca2da4b5e126783da957e734d486e6e6f803f8584d` |
+| arm64 host filesystem runner | `844cbe1291f389aeb5a1dc7236be62c8d1d14fbba8e387377166a02463cc2b26` |
+
+Earlier complete Bedbox master-image registry validation used the preceding
+runtime revision, and remains separate evidence. Its initial smoke used the
+unsupported `hostel version` subcommand, then a wrong hictld PATH assumption;
+the corrected version/path smoke and public API suite passed. Subsequent full
+Bedbox builds must pin the access-ACL follow-up before release.
