@@ -5,13 +5,16 @@ package privilege
 import (
 	"fmt"
 	"runtime"
+	"slices"
 
 	"golang.org/x/sys/unix"
 )
 
 // DropCredentials runs only in a disposable helper. It supports both managed
 // identities and a rootless inherited identity without assuming host capabilities.
-func DropCredentials(uid, gid int) error {
+// +spec=`Before workload exec, supplementary groups equal the selected allowlist; daemon groups are never merged into it.`
+// +link=component://docs/isolation.md
+func DropCredentials(uid, gid int, groups []int) error {
 	runtime.LockOSThread()
 	if uid < 0 || gid < 0 {
 		return fmt.Errorf("privilege: invalid workload credentials or command")
@@ -48,11 +51,21 @@ func DropCredentials(uid, gid int) error {
 		return fmt.Errorf("privilege: clear ambient capabilities: %w", err)
 	}
 	// An unprivileged process cannot change groups. A privileged daemon must
-	// clear them even when the chosen UID/GID happens to equal its own.
+	// replace them with the selected allowlist even when UID/GID stay unchanged.
 	if current[0].Effective&(1<<unix.CAP_SETGID) != 0 {
-		if err := unix.Setgroups(nil); err != nil {
-			return fmt.Errorf("privilege: clear supplementary groups: %w", err)
+		if err := unix.Setgroups(groups); err != nil {
+			return fmt.Errorf("privilege: set supplementary groups %v: %w", groups, err)
 		}
+	}
+	actual, err := unix.Getgroups()
+	if err != nil {
+		return fmt.Errorf("privilege: read supplementary groups: %w", err)
+	}
+	desired := slices.Clone(groups)
+	slices.Sort(actual)
+	slices.Sort(desired)
+	if !slices.Equal(actual, desired) {
+		return fmt.Errorf("privilege: supplementary groups %v, want %v; CAP_SETGID required to change groups", actual, desired)
 	}
 	if err := unix.Setresgid(gid, gid, gid); err != nil {
 		return fmt.Errorf("privilege: set gid: %w", err)
@@ -65,4 +78,15 @@ func DropCredentials(uid, gid int) error {
 		return fmt.Errorf("privilege: clear process capabilities: %w", err)
 	}
 	return nil
+}
+
+// DefaultGroups clears inherited groups when the launcher can do so. A rootless
+// baseline must report the groups it actually inherits; it cannot shed them.
+func DefaultGroups() []int {
+	var caps [2]unix.CapUserData
+	if err := unix.Capget(&unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}, &caps[0]); err == nil && caps[0].Effective&(1<<unix.CAP_SETGID) != 0 {
+		return nil
+	}
+	groups, _ := unix.Getgroups()
+	return groups
 }

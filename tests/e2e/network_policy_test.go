@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/shellx"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 func TestNetworkPolicyTraffic(t *testing.T) {
@@ -27,11 +28,11 @@ func TestNetworkPolicyTraffic(t *testing.T) {
 		t.Fatal("network traffic probes require the binary profile")
 	}
 	for _, executor := range []string{"local", "supervisor"} {
-		t.Run(executor, func(t *testing.T) { testNetworkPolicyTraffic(t, executor) })
+		t.Run(executor, func(t *testing.T) { testNetworkPolicyTraffic(t, targetOptions{executor: executor}, false) })
 	}
 }
 
-func testNetworkPolicyTraffic(t *testing.T, executor string) {
+func testNetworkPolicyTraffic(t *testing.T, options targetOptions, shared bool) {
 	listener, err := net.Listen("tcp4", "0.0.0.0:0")
 	if err != nil {
 		t.Fatal(err)
@@ -48,22 +49,49 @@ func testNetworkPolicyTraffic(t *testing.T, executor string) {
 			_ = connection.Close()
 		}
 	}()
-	c := startTarget(t, targetOptions{executor: executor}).client
+	c := startTarget(t, options).client
 	deny := map[string]any{"defaultAction": "deny", "egress": []any{}}
 	policyRequest(t, c, "POST", "/v1/beds", map[string]any{"id": "policy-a", "networkPolicy": deny, "pillows": workspacePillows()}, http.StatusAccepted)
 	c.waitBed(t, "policy-a", func(b bedView) bool { return b.Status.Readiness.Ready }, "initial deny policy installed")
 	must2xx(t, "create control Bed", c.createBed(t, "policy-b"))
 	c.waitBed(t, "policy-b", func(b bedView) bool { return b.Status.Readiness.Ready }, "control Bed ready")
-	route, response := c.command(t, "policy-b", map[string]any{"command": "ip -4 route show default", "timeout": 5000})
-	must2xx(t, "read Bed gateway", response)
-	assertCommandExit(t, route, 0)
-	fields := strings.Fields(route.Stdout)
-	if len(fields) < 3 || fields[0] != "default" || fields[1] != "via" {
-		t.Fatalf("invalid gateway route: %q", route.Stdout)
+	if shared {
+		var previousUID uint32
+		for _, name := range []string{"policy-a", "policy-b"} {
+			var detail protocol.BedDetail
+			response, err := c.json(t.Context(), http.MethodGet, "/v1/beds/"+name, "", nil, &detail)
+			if err != nil {
+				t.Fatal(err)
+			}
+			must2xx(t, "shared Bed detail", response)
+			n, u := detail.Status.Subsystems.Network, detail.Status.Subsystems.Privilege
+			if n.Level != "shared" || n.PolicyBackend != "uid" || !u.Assigned || u.UID == 0 || u.UID == previousUID {
+				t.Fatalf("invalid UID realization: %+v", detail.Status)
+			}
+			previousUID = u.UID
+			command, response := c.command(t, name, map[string]any{"command": "readlink /proc/self/ns/net", "timeout": 5000})
+			must2xx(t, "shared namespace", response)
+			assertCommandExit(t, command, 0)
+			own, err := os.Readlink("/proc/self/ns/net")
+			if err != nil || strings.TrimSpace(command.Stdout) != own {
+				t.Fatalf("Bed unexpectedly changed netns: %q %s %v", command.Stdout, own, err)
+			}
+		}
 	}
-	ip, err := netip.ParseAddr(fields[2])
-	if err != nil {
-		t.Fatal(err)
+	ip := netip.MustParseAddr("127.0.0.1")
+	var response httpResult
+	if !shared {
+		route, response := c.command(t, "policy-b", map[string]any{"command": "ip -4 route show default", "timeout": 5000})
+		must2xx(t, "read Bed gateway", response)
+		assertCommandExit(t, route, 0)
+		fields := strings.Fields(route.Stdout)
+		if len(fields) < 3 || fields[0] != "default" || fields[1] != "via" {
+			t.Fatalf("invalid gateway route: %q", route.Stdout)
+		}
+		ip, err = netip.ParseAddr(fields[2])
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	address := net.JoinHostPort(ip.String(), fmt.Sprint(listener.Addr().(*net.TCPAddr).Port))
 	// Both Beds reach this same listening pillow. A denial is meaningful only
@@ -72,7 +100,7 @@ func testNetworkPolicyTraffic(t *testing.T, executor string) {
 	assertPolicyConnection(t, c, "policy-a", "", address, false)
 	path := "/v1/beds/policy-a/network/policy"
 	status := policyRequest(t, c, "GET", path, nil, http.StatusOK)
-	if status.Mode != "deny_all" || status.Scope != "bed_processes" {
+	if status.Mode != "deny_all" || status.Scope != "bed_processes" || status.Status != "ok" || status.EnforcementMode != "dns+nft" {
 		t.Fatalf("initial policy: %+v", status)
 	}
 	var session struct {
@@ -122,8 +150,10 @@ func testNetworkPolicyTraffic(t *testing.T, executor string) {
 }
 
 type policyView struct {
-	Mode  string `json:"mode"`
-	Scope string `json:"scope"`
+	Status          string `json:"status"`
+	EnforcementMode string `json:"enforcementMode"`
+	Mode            string `json:"mode"`
+	Scope           string `json:"scope"`
 }
 
 func policyRequest(t *testing.T, c *apiClient, method, path string, body any, want int) policyView {
@@ -131,7 +161,11 @@ func policyRequest(t *testing.T, c *apiClient, method, path string, body any, wa
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var result policyView
-	response, err := c.json(ctx, method, path, "", body, &result)
+	var destination any
+	if strings.HasSuffix(path, "/network/policy") && want == http.StatusOK {
+		destination = &result
+	}
+	response, err := c.json(ctx, method, path, "", body, destination)
 	if err != nil || (response.Status != want && !(want == http.StatusAccepted && response.Status == http.StatusOK)) {
 		t.Fatalf("%s %s: status=%d want=%d err=%v body=%s", method, path, response.Status, want, err, response.Body)
 	}

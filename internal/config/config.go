@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/osx"
+	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
@@ -97,10 +98,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 	c := &Config{}
 	var configurationSources string
 	fs.StringVar(&configurationSources, "configuration-sources", osx.EnvStr("HOSTEL_CONFIGURATION_SOURCES", "{}"), "JSON object of named configuration directories")
-	bedUID, bedGID := os.Geteuid(), os.Getegid()
-	if bedUID == 0 {
-		bedUID, bedGID = 1000, 1000
-	}
+	extraGIDs := fs.String("bed-extra-gids", osx.EnvStr("HOSTEL_BED_EXTRA_GIDS", ""), "comma-separated supplementary group IDs for Bed processes")
 	fs.StringVar(&c.Addr, "addr", osx.EnvStr("HOSTEL_ADDR", DefaultAddr), "HTTP listen address")
 	fs.IntVar(&c.PortRangeStart, "port-range-start", osx.EnvInt("HOSTEL_PORT_RANGE_START", 20000), "first dynamic TCP service port")
 	fs.IntVar(&c.PortRangeEnd, "port-range-end", osx.EnvInt("HOSTEL_PORT_RANGE_END", 29999), "last dynamic TCP service port")
@@ -124,8 +122,6 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs.IntVar(&c.Bed.Resource.Admission.MemoryThresholdPercent, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
 	fs.StringVar((*string)(&c.Bed.Executor.PIDNS), "executor-pid-namespace", osx.EnvStr("HOSTEL_EXECUTOR_PID_NAMESPACE", "off"), "Executor PID namespace policy: auto | off | required")
 	fs.StringVar(&c.Bed.Executor.Backend, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
-	fs.IntVar(&c.Bed.Privilege.UID, "bed-uid", osx.EnvInt("HOSTEL_BED_UID", bedUID), "preferred non-root uid for Bed processes")
-	fs.IntVar(&c.Bed.Privilege.GID, "bed-gid", osx.EnvInt("HOSTEL_BED_GID", bedGID), "preferred non-root gid for Bed processes")
 	fs.StringVar(&c.Bed.Store.Sync, "sync", osx.EnvStr("HOSTEL_SYNC", "auto"), "Bed data synchronization policy: auto (per-bed detection) | noop | cas | pack | tar | restic")
 	fs.StringVar(&c.Bed.Store.ResticBinary, "restic-binary", osx.EnvStr("HOSTEL_RESTIC_BINARY", "restic"), "restic binary (requires 0.19.1)")
 	c.Bed.Store.ResticPassword = osx.EnvStr("HOSTEL_RESTIC_PASSWORD", "")
@@ -159,20 +155,29 @@ func Load(args []string, explicit Options) (*Config, error) {
 			return nil, fmt.Errorf("configuration sources must be a JSON object of directory paths")
 		}
 	}
-	explicit.apply(c)
-	c.Bed.Privilege.Configured = explicit.Bed.Privilege.UID != nil || explicit.Bed.Privilege.GID != nil
-	for _, key := range []string{"HOSTEL_BED_UID", "HOSTEL_BED_GID"} {
-		if _, exists := os.LookupEnv(key); exists {
-			c.Bed.Privilege.Configured = true
-		}
-	}
+	_, groupsConfigured := os.LookupEnv("HOSTEL_BED_EXTRA_GIDS")
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "bed-uid" || f.Name == "bed-gid" {
-			c.Bed.Privilege.Configured = true
+		if f.Name == "bed-extra-gids" {
+			groupsConfigured = true
 		}
 	})
+	if explicit.Bed.Privilege.SupplementaryGIDs == nil && groupsConfigured {
+		var err error
+		c.Bed.Privilege.SupplementaryGIDs, err = privilege.ParseExtraGIDs(*extraGIDs)
+		if err != nil {
+			return nil, fmt.Errorf("bed extra gids: %w", err)
+		}
+	}
+	explicit.apply(c)
+	// Presence distinguishes an exact empty list from an unspecified rootless baseline.
+	if explicit.Bed.Privilege.SupplementaryGIDs != nil && c.Bed.Privilege.SupplementaryGIDs == nil {
+		c.Bed.Privilege.SupplementaryGIDs = []int{}
+	}
+	if err := c.Bed.Privilege.Validate(); err != nil {
+		return nil, err
+	}
 	c.Bed.Filesystem.Level = "private"
-	for _, p := range []*tool.Policy{&c.Bed.Filesystem.Bwrap, &c.Bed.Filesystem.Landlock, &c.Bed.Filesystem.UID, &c.Bed.Filesystem.PRoot, &c.Bed.Filesystem.Pathshim, &c.Bed.Network.NetNS, &c.Bed.Resource.Cgroup, &c.Bed.Executor.PIDNS} {
+	for _, p := range []*tool.Policy{&c.Bed.Filesystem.Bwrap, &c.Bed.Filesystem.Landlock, &c.Bed.Filesystem.UID, &c.Bed.Filesystem.PRoot, &c.Bed.Filesystem.Pathshim, &c.Bed.Network.NetNS, &c.Bed.Network.UIDNFT, &c.Bed.Resource.Cgroup, &c.Bed.Executor.PIDNS} {
 		*p = p.Effective()
 	}
 	// Low defaults to 80% of high so a bare --luggage-high-bytes works; a low

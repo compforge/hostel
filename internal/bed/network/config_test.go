@@ -48,3 +48,32 @@ func TestRequiredNetworkFailsStartup(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestUIDPolicyToolSelectionRequiresActualIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		policy    tool.Policy
+		dedicated bool
+		wantError bool
+	}{
+		{"disabled", tool.Off, true, false},
+		{"shared identity", tool.Auto, false, false},
+		{"required without identity", tool.Required, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewConfigured(t.Context(), Config{NetNS: tool.Off, UIDNFT: tc.policy})
+			m.SetDedicatedUIDs(tc.dedicated)
+			err := m.Start(t.Context())
+			if (err != nil) != tc.wantError {
+				t.Fatalf("start: %v", err)
+			}
+			if err != nil && !strings.Contains(err.Error(), "network.uid_nft required") {
+				t.Fatal(err)
+			}
+			s := m.Status()
+			if s.PolicyBackend != "none" || s.Tools["uid_nft"].Selected || s.Tools["uid_nft"].Probe != "not_probed" {
+				t.Fatalf("%+v", s)
+			}
+		})
+	}
+}

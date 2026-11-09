@@ -47,6 +47,43 @@ func TestNPMInstallPersistsAcrossExecutions(t *testing.T) {
 	assertSoftwareResult(t, "npm next execution", loaded, "HOSTEL_NPM_PATH=/usr/local/")
 }
 
+// +case:id=shared_software_groups,desc=`Two Beds have distinct UIDs and the software supplementary group`,expect=`pip, npm and uv installs remain usable and replaceable by the neighboring Bed`
+func TestSharedSoftwareAcrossBedUsers(t *testing.T) {
+	requireUserland(t)
+	target := startTarget(t, targetOptions{})
+	c := target.client
+	for _, name := range []string{"software-a", "software-b"} {
+		must2xx(t, "declare Bed", c.createBed(t, name))
+	}
+	run := func(t *testing.T, name, command string) string {
+		t.Helper()
+		result, response := c.command(t, name, map[string]any{"command": command, "timeout": 180000})
+		must2xx(t, "shared software command", response)
+		assertCommandExit(t, result, 0)
+		return strings.TrimSpace(result.Stdout)
+	}
+	a, b := run(t, "software-a", "id -u"), run(t, "software-b", "id -u")
+	for _, name := range []string{"software-a", "software-b"} {
+		run(t, name, "awk '/^Groups:/ { if (NF != 2 || $2 != 1000) exit 1 }' /proc/self/status")
+	}
+	if a == b {
+		t.Fatalf("software sharing was tested with the same UID: %s", a)
+	}
+	for _, tc := range []struct{ name, install, check, remove string }{
+		{"pip", "python -m pip install --no-cache-dir --force-reinstall cowsay==6.1", "python -c 'import cowsay; assert cowsay.__file__.startswith(\"/usr/local/\")'", "python -m pip uninstall -y cowsay"},
+		{"npm", "npm install --global --force --no-audit --no-fund is-number@7.0.0", "node -e 'if (!require(\"/usr/local/lib/node_modules/is-number\")(\"42\")) process.exit(1)'", "npm uninstall --global --no-audit --no-fund is-number"},
+		{"uv", "uv tool install --force --reinstall cowsay==6.1", "test -x /usr/local/bin/cowsay && /usr/local/bin/cowsay -t shared-software", "uv tool uninstall cowsay"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run(t, "software-a", tc.install)
+			run(t, "software-b", tc.check)
+			run(t, "software-b", tc.install)
+			run(t, "software-a", tc.check)
+			run(t, "software-b", tc.remove)
+		})
+	}
+}
+
 func TestChromiumOperationsAndArtifact(t *testing.T) {
 	requireUserland(t)
 	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

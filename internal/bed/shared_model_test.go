@@ -73,3 +73,16 @@ func TestNameAndLocalIdentityAreDistinct(t *testing.T) {
 		t.Fatal("name and local lifetime collapsed")
 	}
 }
+
+func TestPrivilegeGroupsAreDetachedFromStatus(t *testing.T) {
+	b := New("groups", "", Spec{})
+	owners := NewOwners()
+	groups := []int{1000}
+	owners.Privilege.Set(b, PrivilegeStatus{SupplementaryGIDs: groups})
+	groups[0] = 0
+	snapshot := b.Status()
+	snapshot.Privilege.SupplementaryGIDs[0] = 1
+	if got := b.Status().Privilege.SupplementaryGIDs[0]; got != 1000 {
+		t.Fatalf("group snapshot aliased: %d", got)
+	}
+}

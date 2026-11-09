@@ -24,7 +24,7 @@ func value[T any](v T) *T { return &v }
 func restrictedOptions() config.Options {
 	return config.Options{Bed: config.BedOptions{
 		Filesystem: filesystem.Options{Bwrap: value(tool.Off), Landlock: value(tool.Off), UID: value(tool.Off), PRoot: value(tool.Off), Pathshim: value(tool.Off)},
-		Network:    network.Options{NetNS: value(tool.Off)}, Resource: resource.Options{Cgroup: value(tool.Off)},
+		Network:    network.Options{NetNS: value(tool.Off), UIDNFT: value(tool.Off)}, Resource: resource.Options{Cgroup: value(tool.Off)},
 	}}
 }
 func requireTestBinary(t *testing.T) string {

@@ -16,6 +16,7 @@ import (
 type bedAllocation struct {
 	mu         *semaphore.Weighted
 	attachment Attachment
+	policy     hostnetwork.PolicyLease
 	released   bool
 	requested  *Policy
 }
@@ -42,8 +43,19 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	if m.allocations == nil {
 		m.allocations = make(map[*bed.Bed]*bedAllocation)
 	}
-	m.allocations[b] = &bedAllocation{mu: semaphore.NewWeighted(1), attachment: attachment}
+	a := &bedAllocation{mu: semaphore.NewWeighted(1), attachment: attachment}
+	m.allocations[b] = a
 	m.hookMu.Unlock()
+	if attachment == nil && m.uidPolicies != nil {
+		identity := b.Status().Privilege
+		if !m.dedicatedUIDs || !identity.Assigned {
+			return fmt.Errorf("UID network policy requires a prepared dedicated identity")
+		}
+		a.policy, err = m.uidPolicies.Acquire(ctx, identity.UID)
+		if err != nil {
+			return fmt.Errorf("prepare UID network policy: %w", err)
+		}
+	}
 	report := m.Status()
 	level := Shared
 	if attachment != nil {
@@ -52,7 +64,7 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	if report.Effective == Private && attachment == nil {
 		return fmt.Errorf("private network allocation returned no attachment")
 	}
-	status := bed.NetworkStatus{Level: string(level), PolicyStatus: "none", Reason: report.Reason, Cause: string(report.Cause)}
+	status := bed.NetworkStatus{PolicyBackend: report.PolicyBackend, Level: string(level), PolicyStatus: "none", Reason: report.Reason, Cause: string(report.Cause)}
 	if attachment != nil {
 		status.Gateway = attachment.Gateway()
 	}
@@ -95,6 +107,11 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 	if a.released {
 		return nil
 	}
+	if a.policy != nil {
+		if err := a.policy.Close(ctx); err != nil {
+			return err
+		}
+	}
 	if a.attachment != nil {
 		if err := a.attachment.Close(ctx); err != nil {
 			return err
@@ -133,7 +150,7 @@ func (m *Manager) UpdatePolicy(ctx context.Context, b *bed.Bed, mutation PolicyM
 	if a.released {
 		return PolicyStatus{}, m.UnavailableError()
 	}
-	if a.attachment == nil {
+	if a.attachment == nil && a.policy == nil {
 		current := Policy{DefaultAction: "allow"}
 		if a.requested != nil {
 			current = *a.requested
@@ -163,8 +180,18 @@ func (m *Manager) UpdatePolicy(ctx context.Context, b *bed.Bed, mutation PolicyM
 		}
 		return result, nil
 	}
-	result, err := m.NetworkPolicy(ctx, b.ID.String(), mutation)
+	var result PolicyStatus
+	var err error
+	if a.policy != nil {
+		result, err = a.policy.Update(ctx, mutation)
+		result.Scope = "bed_processes"
+	} else {
+		result, err = m.NetworkPolicy(ctx, b.ID.String(), mutation)
+	}
 	if err == nil {
+		if mutation.Replace != nil || mutation.Merge != nil || mutation.Remove != nil {
+			log.Printf("network: bed=%s policy=enforced backend=%s rules=%d", b.ID.String(), m.Status().PolicyBackend, len(result.Policy.Egress))
+		}
 		m.status.Update(b, func(s *bed.NetworkStatus) {
 			s.Policy = ToModel(result.Policy)
 			s.RequestedPolicy = ToModel(result.Policy)

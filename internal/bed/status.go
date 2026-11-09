@@ -52,6 +52,7 @@ type ExecutorStatus = protocol.ExecutorStatus
 type ResourceStatus = protocol.ResourceStatus
 
 func cloneStatus(s Status) Status {
+	s.Privilege.SupplementaryGIDs = slices.Clone(s.Privilege.SupplementaryGIDs)
 	s.Network.Policy = clonePolicy(s.Network.Policy)
 	s.Network.RequestedPolicy = clonePolicy(s.Network.RequestedPolicy)
 	s.Filesystem.Mounts = slices.Clone(s.Filesystem.Mounts)
@@ -91,6 +92,11 @@ type Owners struct {
 }
 
 func NewOwners() Owners {
+	privilege := writer(func(s *Status) *PrivilegeStatus { return &s.Privilege })
+	privilege.clone = func(s PrivilegeStatus) PrivilegeStatus {
+		s.SupplementaryGIDs = slices.Clone(s.SupplementaryGIDs)
+		return s
+	}
 	filesystem := writer(func(s *Status) *FilesystemStatus { return &s.Filesystem })
 	filesystem.clone = func(s FilesystemStatus) FilesystemStatus { s.Mounts = slices.Clone(s.Mounts); return s }
 	network := writer(func(s *Status) *NetworkStatus { return &s.Network })
@@ -102,7 +108,7 @@ func NewOwners() Owners {
 	return Owners{
 		Lifecycle:  writer(func(s *Status) *LifecycleStatus { return &s.Lifecycle }),
 		Filesystem: filesystem,
-		Privilege:  writer(func(s *Status) *PrivilegeStatus { return &s.Privilege }),
+		Privilege:  privilege,
 		Network:    network,
 		Store:      writer(func(s *Status) *StoreStatus { return &s.Store }),
 		Executor:   writer(func(s *Status) *ExecutorStatus { return &s.Executor }),

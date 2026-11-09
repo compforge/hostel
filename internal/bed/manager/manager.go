@@ -212,7 +212,7 @@ func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.I
 	m.network.SetPortMappings(m.portMappings)
 	m.store.SetStatusWriter(m.owners.Store)
 	var err error
-	policy := privilege.BedUserReport{Strategy: "fixed", UID: m.bedUser.UID(), GID: m.bedUser.GID()}
+	policy := privilege.BedUserReport{Strategy: "fixed", UID: m.bedUser.UID(), GID: m.bedUser.GID(), SupplementaryGIDs: m.bedUser.SupplementaryGIDs()}
 	if m.identitySelection != nil {
 		policy = m.identitySelection.Policy
 	}
@@ -223,6 +223,7 @@ func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.I
 	if m.identitySelection != nil {
 		m.privileges.SetSelection(*m.identitySelection)
 	}
+	m.network.SetDedicatedUIDs(policy.Strategy == "per_bed")
 	return m, nil
 }
 

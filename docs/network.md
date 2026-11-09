@@ -12,7 +12,7 @@ Bed 的每次命令和常驻 shell 使用相同 netns，Executor 替换不改变
 当前覆盖 `bed_processes`：共享 Chromium/MCP 等 amenity 的出站仍走 carrier 网络。
 
 Network 保留 shared/private 两级原生能力，分别映射 dorm/suite；不为了对应三种房型增加虚构的中间 backend。
-Network 尽力选择 private，实例探测失败可选择 shared，并报告缺口；Hostel 不按房型拦截 Bed。探测成功后单个 Bed 的分配、策略安装失败仍使初始化失败，不静默撤销已选边界。
+Network 尽力选择 private，实例探测失败可选择 shared，并报告网络空间的缺口；出站策略另行选择 netns 或 UID 执行机制。Hostel 不按房型拦截 Bed。探测成功后单个 Bed 的分配、策略安装失败仍使初始化失败，不静默撤销已选边界。
 
 ## 能力失败归因
 
@@ -27,7 +27,7 @@ Network 尽力选择 private，实例探测失败可选择 shared，并报告缺
 `scope` 仍表示网络执行范围，不是错误归因。
 
 例如 carrier netns 的 `ip_forward=0` 得到 `cause=carrier, probe.stage=forwarding`。
-这会令当前独立网络路径不可用。Hostel 可继续准备 shared Bed，策略标为 unenforced，保留所请求的规则和 cause；
+这会令当前独立网络路径不可用。Hostel 可继续准备 shared Bed；若已采用独立 UID 且 UID+nft 探测通过，仍可执行出站策略，否则标为 unenforced，保留所请求的规则和 cause；
 caller 决定是否使用该 Bed。Hostel 不修改 carrier sysctl。
 配置显式禁用独立网络却请求其策略时归 request；地址耗尽归 resource；机制验证未兑现归 bed。
 namespace 命令或连通性失败本身不能证明是 carrier 还是 Bed 实现的问题，证据不足则为 unknown。
@@ -165,14 +165,14 @@ Bed 的 `status.subsystems.network` 报告准备后实际 room/level、gateway�
 
 NetworkManager 同时拥有 Bed netns 和有效策略。控制面可以在 `POST /v1/beds` 的
 `networkPolicy` 字段指定初始策略，规则安装成功后才发布 Bed 就绪；重复创建相同 Bed
-不会重置运行期策略，初始参数冲突则拒绝。shared 网络下可以接纳声明，并明确报告请求规则未执行；caller 根据实际状态决定是否使用。
+不会重置运行期策略，初始参数冲突则拒绝。shared 网络下优先用实际分配的独立 UID 执行策略；该机制不可用时仍可接纳声明，并明确报告请求规则未执行；caller 根据实际状态决定是否使用。
 `/v1/beds/capabilities` 的 `network_policy` 表示 API 支持，不代表当前环境可执行全部规则。
 
 每个现存 Bed 提供 `/v1/beds/{id}/network/policy`：GET 查询、POST/PUT 替换、PATCH 合并
 规则数组、DELETE 删除 target 字符串数组。`/network/healthz` 查询同一 Bed 的有效状态。
 这些控制面接口按路径中的 Bed 定位，不接受 header 覆盖；操作引用防止执行期间被回收。
 缺少 Bed 返回 404，非法规则返回 400，nft 提交失败返回 500。查询不会创建 Bed。
-shared Bed 的策略 API 保存和更新 desired policy，返回 status=degraded、mode=unenforced、enforcementMode=none；
+没有可用策略执行机制的 shared Bed 保存和更新 desired policy，返回 status=degraded、mode=unenforced、enforcementMode=none；
 requested_policy 是请求，policy=allow 仅表示 Hostel 没有安装限制，不保证外部 CNI/防火墙放行。Bed status 的已执行 policy 保持 null。
 非法更新保留之前声明；运行中已经采用的执行机制失败不能转为这个降级路径。
 
@@ -185,9 +185,45 @@ HTTPS、DoH 或已经由调用方掌握的 IP，不能作为 HTTP Host/SNI 校�
 
 策略更新使用原子 nft transaction，失败保留旧策略；更新清除旧的 DNS 放行集，旧版本下
 尚未返回的 DNS 响应不能重新开放地址。已缓存 DNS 的客户端在收紧规则后可能需要重新解析。
-规则在 Bed 自己的网络 namespace 内执行，不修改 carrier 默认出站策略；现有跨 Bed 隔离
-规则仍然成立。当前网络 backend 仅提供 IPv4 外部连通，IPv6 转发仍被阻断。
+private 网络的规则在 Bed 自己的网络 namespace 内执行；shared 网络按实际 socket UID 匹配。
+两者都不修改 Carrier 的默认出站策略；private 网络现有的跨 Bed 隔离规则仍然成立。当前网络 backend 仅提供 IPv4 外部连通，IPv6 转发仍被阻断。
 
 响应的 `scope=bed_processes` 明确限定命令和 shell；共享 Chromium、Hostel 代办的文件下载
 等 carrier 进程不在其作用域。策略随 resident Bed 网络存在，evict 后销毁，不随 workspace
 Store 保存；控制面重建 Bed 时需重传初始策略。透明凭据注入与 browser proxy 仍是独立能力。
+
+
+### 共享网络下的 UID 策略
+
+BedSpec 继续使用 `networkPolicy.defaultAction` 与 `networkPolicy.egress`，不指定底层机制。
+Network 将网络空间与策略执行分别报告：网络 `level=shared`、房型 dorm 时，仍可有
+`policy_backend=uid` 和 `policy_status=enforced`。策略接口返回 `status=ok`、
+`enforcementMode=dns+nft`；`mode` 随规则为 allow_all、deny_all 或 enforcing。
+实例的 `policy_backend`、`policy_probe` 和 `tools.uid_nft` 报告实际选择与探测结果。
+网络原有 reason/cause/probe 继续解释独立 netns 的缺口，不代表 UID 策略未执行。
+
+前提是 Privilege **实际采用** `per_bed` 独立 UID，用户进程以该身份创建 socket，
+并已清除 capabilities、设置 no_new_privs；所有 Pillow、命令和 session 共用该 Bed 身份。
+仅 supported 包含 dedicated、实际仍配置固定 UID/GID，不满足前提。嵌入方的
+`Bed.Network.UIDNFT` 使用 auto/off/required，默认 auto；`NetNS=off` 只关闭 namespace
+机制，关闭全部网络机制需同时指定 `UIDNFT=off`。required 未被选用时启动失败。
+当前 CLI 不额外暴露这些工具配置；`HOSTEL_BED_EXTRA_GIDS` 不改变独立身份选择，也不参与 nft 的 UID 匹配。
+镜像或部署若默认注入这两个变量，启用 per-Bed UID 前须真正移除它们；设为空字符串
+仍被视为显式配置。升级 Hostel 二进制本身不会覆盖现有固定身份选择。
+
+此 backend 在 Carrier OUTPUT 路径按 `meta skuid` 分流，每个 allocation 独占 nft 表、
+DNS listener 与 DNS 地址集合。UDP/TCP 53 按 UID DNAT 到本 Bed 的 DNS listener，
+其他 Bed 不能直接访问该 listener。域名解析沿用现有默认动作、deny 优先、TTL 和容量限制。
+不依赖独立 netns、`ip_forward` 或 cgroup；需要当前 netns 的 `CAP_NET_ADMIN`、nft 的
+UID 过滤和 IPv4 OUTPUT NAT 能力。启动验证完整 nft 规则并执行空表创建/删除，实际
+DNS listener 和 Bed 规则在 Prepare 中创建；这些步骤失败会使该次 Bed 初始化失败。
+
+共享 loopback 不再隐式全放行，访问本地服务同样受 egress 规则约束；允许连接的回复流量
+仍可返回。规则逐包执行，更新会撤销既有连接的出站权限，并原子清空旧 DNS 放行集合。
+IPv6 继续阻断，不通过共享 IPv6 路径绕过 IPv4 策略。该机制提供出站过滤，不提供独立
+端口空间、Ingress 隔离或共享浏览器/代理的代办流量归属；允许的本地代理也能代表调用方发起请求。
+
+Network 在进程启动前取得身份并安装规则，Bed Manager 在停止进程后释放规则和 DNS；
+失败的准备或清理保留 allocation，UID 只能在资源与本地身份清理完成后复用。
+规则所有权使用 allocation 唯一表名，旧句柄的重复释放不影响同 UID 的新 allocation。
+验证入口见 [UID 策略 E2E](../tests/e2e/README.md#共享-netns-的-uid-出站策略)。

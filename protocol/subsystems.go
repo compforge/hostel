@@ -1,12 +1,14 @@
 package protocol
 
 type PrivilegeStatus struct {
-	UID      uint32 `json:"uid"`
-	GID      uint32 `json:"gid"`
-	Assigned bool   `json:"assigned"`
+	SupplementaryGIDs []int  `json:"supplementary_gids,omitempty"`
+	UID               uint32 `json:"uid"`
+	GID               uint32 `json:"gid"`
+	Assigned          bool   `json:"assigned"`
 }
 
 type NetworkStatus struct {
+	PolicyBackend   string         `json:"policy_backend,omitempty"`
 	Room            RoomType       `json:"room,omitempty"`
 	Level           string         `json:"level"`
 	RequestedPolicy *NetworkPolicy `json:"requested_policy,omitempty"`

@@ -49,7 +49,10 @@ func TestCarrierForwardingDisabled(t *testing.T) {
 	}
 	for _, backend := range []string{"local", "supervisor"} {
 		t.Run(backend, func(t *testing.T) {
-			c := startTarget(t, targetOptions{executor: backend}).client
+			// Disable UID policy to exercise the unfulfilled policy path independently of identity selection.
+			options := config.Options{}
+			options.Bed.Network.UIDNFT = value(tool.Off)
+			c := startTarget(t, targetOptions{executor: backend, config: &options}).client
 			var status struct {
 				Isolation  protocol.RoomStatus `json:"isolation"`
 				Subsystems struct {

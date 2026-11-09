@@ -5,6 +5,7 @@ package isolation
 import (
 	"context"
 	"fmt"
+	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 	"io"
 	"log"
 	"os"
@@ -118,7 +119,7 @@ func (b *bwrap) rootfulSmoke() hostfacts.ProbeReport {
 		return hostfacts.ProbeReport{Error: err.Error()}
 	}
 	cmd := exec.Command("/bin/sh", "-c", "mkdir -p /mnt/probe && printf root-view > /mnt/probe/file")
-	err = BindBedInit(b, fs, os.Geteuid(), os.Getegid())(cmd, "")
+	err = BindBedInit(b, fs, os.Geteuid(), os.Getegid(), hostprivilege.DefaultGroups())(cmd, "")
 	var report hostfacts.ProbeReport
 	if err == nil {
 		report = hostfacts.RunExecProbe(cmd)

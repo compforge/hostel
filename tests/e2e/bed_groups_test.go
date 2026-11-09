@@ -5,7 +5,9 @@ package e2e_test
 import (
 	"context"
 	"fmt"
+	"github.com/qiankunli/hostel/protocol"
 	"net/url"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -14,15 +16,15 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/privilege"
 )
 
-func TestPreferredBedUser(t *testing.T) {
+func TestBedExtraGroups(t *testing.T) {
 	requireTestBinary(t)
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		t.Skip("Linux process credential contract")
 	}
 	for _, backend := range []string{"local", "supervisor"} {
 		t.Run(backend, func(t *testing.T) {
 			options := restrictedOptions()
-			options.Bed.Privilege = privilege.Options{UID: value(1200), GID: value(1300)}
+			options.Bed.Privilege = privilege.Options{SupplementaryGIDs: value([]int{1000})}
 			c := startTarget(t, targetOptions{executor: backend, config: &options}).client
 			var status struct {
 				Subsystems struct{ Privilege privilege.Status }
@@ -35,25 +37,32 @@ func TestPreferredBedUser(t *testing.T) {
 			}
 			must2xx(t, "identity status", response)
 			p := status.Subsystems.Privilege
-			if p.BedUser.Strategy != "fixed" || !p.PreconditionsSatisfied {
+			if p.BedUser.Strategy != "per_bed" || !p.PreconditionsSatisfied {
 				t.Fatalf("invalid identity status: %+v", p)
 			}
-			if p.BedUser.UID != 1200 || p.BedUser.GID != 1300 {
-				if p.BedUser.UID != p.Daemon.UID || p.BedUser.GID != p.Daemon.GID || !strings.Contains(p.Selection.Reason, "using daemon identity") {
-					t.Fatalf("unexplained identity fallback: %+v", p)
-				}
-			}
-			t.Logf("preferred=1200:1300 actual=%d:%d reason=%s", p.BedUser.UID, p.BedUser.GID, p.Selection.Reason)
-			const bed = "preferred-user"
+			const bed = "extra-groups"
 			must2xx(t, "declare Bed", c.createBed(t, bed))
+			c.waitBed(t, bed, func(b bedView) bool { return b.Status.Readiness.Ready }, "identity ready")
+			var detail protocol.BedDetail
+			ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
+			response, err = c.json(ctx, "GET", "/v1/beds/"+bed, "", nil, &detail)
+			cancel()
+			if err != nil {
+				t.Fatal(err)
+			}
+			must2xx(t, "Bed identity", response)
+			identity := detail.Status.Subsystems.Privilege
+			if identity.UID != identity.GID || identity.UID < privilege.UIDMin || len(identity.SupplementaryGIDs) != 1 || identity.SupplementaryGIDs[0] != 1000 {
+				t.Fatalf("identity: %+v", identity)
+			}
 
 			must2xx(t, "upload as selected user", c.upload(t, bed, "/workspace/seed.txt", []byte("seed")))
-			command := "test \"$(cat seed.txt)\" = seed && printf identity-ok > identity.txt && id -u && id -g && grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status"
+			command := "test \"$(cat seed.txt)\" = seed && /usr/bin/awk '/^Groups:/ { if (NF != 2 || $2 != 1000) exit 1 }' /proc/self/status && printf identity-ok > identity.txt && id -u && id -g && grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status"
 			check := func(result commandResult) {
 				t.Helper()
 				assertCommandExit(t, result, 0)
 				lines := strings.Split(strings.TrimSpace(result.Stdout), "\n")
-				if len(lines) != 8 || lines[0] != fmt.Sprint(p.BedUser.UID) || lines[1] != fmt.Sprint(p.BedUser.GID) {
+				if len(lines) != 8 || lines[0] != fmt.Sprint(identity.UID) || lines[1] != fmt.Sprint(identity.GID) {
 					t.Fatalf("process identity disagrees with status: %q", result.Stdout)
 				}
 				for _, line := range lines[2:] {
@@ -61,7 +70,7 @@ func TestPreferredBedUser(t *testing.T) {
 					if len(fields) != 2 {
 						t.Fatalf("invalid process status: %q", line)
 					}
-					if fields[0] == "CapBnd:" && p.BedUser.UID != 0 {
+					if fields[0] == "CapBnd:" && identity.UID != 0 {
 						continue
 					}
 					want := "0000000000000000"

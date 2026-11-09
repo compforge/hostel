@@ -20,27 +20,12 @@ func TestSharedIdentityBaselineNeedsNoSwitchingCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Effective != Shared || !s.Probe.Succeeded() || s.User != CurrentBedUser() || !reflect.DeepEqual(s.Supported, []Level{Shared}) {
+	if s.Effective != Shared || !s.Probe.Succeeded() || !reflect.DeepEqual(s.User, CurrentBedUser()) || !reflect.DeepEqual(s.Supported, []Level{Shared}) {
 		t.Fatalf("baseline: %+v", s)
 	}
 }
 
-func TestPreferredIdentityFallsBackWithoutSwitchingCapabilities(t *testing.T) {
-	facts := hostfacts.Collect()
-	facts.EffectiveCaps = 0
-	s, err := Resolve(t.Context(), facts, Config{UID: os.Geteuid() + 10000, GID: os.Getegid() + 10000, Configured: true}, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.User != CurrentBedUser() || s.Effective != Shared || !s.Probe.Succeeded() || !strings.Contains(s.Reason, "using daemon identity") {
-		t.Fatalf("preferred identity fallback: %+v", s)
-	}
-	if s.Policy.UID != os.Geteuid() || s.Policy.GID != os.Getegid() {
-		t.Fatalf("reported preference instead of actual identity: %+v", s.Policy)
-	}
-}
-
-func TestPreferredIdentityProbeFailureFallsBack(t *testing.T) {
+func TestIdentityProbeFailureFallsBack(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("foreign identity management is Linux-only")
 	}
@@ -53,7 +38,7 @@ func TestPreferredIdentityProbeFailureFallsBack(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.CommandContext(t.Context(), helper, "--bounding-set=-chown", "--no-new-privs", "--", os.Args[0], "-test.run=^TestPreferredIdentityProbeFailureFallsBack$", "-test.v")
+		cmd := exec.CommandContext(t.Context(), helper, "--bounding-set=-chown", "--no-new-privs", "--", os.Args[0], "-test.run=^TestIdentityProbeFailureFallsBack$", "-test.v")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("candidate probe failure regression: %v: %s", err, out)
 		}
@@ -65,42 +50,19 @@ func TestPreferredIdentityProbeFailureFallsBack(t *testing.T) {
 		facts.EffectiveCaps |= 1 << capability.Bit
 	}
 	root := t.TempDir()
-	s, err := Resolve(t.Context(), facts, Config{UID: os.Geteuid() + 10000, GID: os.Getegid() + 10000, Configured: true}, root)
+	s, err := Resolve(t.Context(), facts, Config{}, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.User != CurrentBedUser() || !strings.Contains(s.Reason, "using daemon identity") {
+	if !reflect.DeepEqual(s.User, CurrentBedUser()) || !strings.Contains(s.Reason, "using daemon identity") {
 		t.Fatalf("failed preference was not reported: %+v", s)
 	}
 }
 
-func TestPreferredIdentityKeepsUsableUser(t *testing.T) {
-	if os.Geteuid() == 0 || os.Getegid() == 0 {
-		t.Skip("this case uses an existing non-root identity")
-	}
-	facts := hostfacts.Collect()
-	s, err := Resolve(t.Context(), facts, Config{UID: os.Geteuid(), GID: os.Getegid(), Configured: true}, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.User != CurrentBedUser() || strings.Contains(s.Reason, "using daemon identity") {
-		t.Fatalf("usable preference was replaced: %+v", s)
-	}
-}
-
-func TestPreferredIdentityRejectsInvalidUser(t *testing.T) {
-	for _, uid := range []int{0, -1} {
-		_, err := Resolve(t.Context(), hostfacts.Collect(), Config{UID: uid, GID: 1000, Configured: true}, t.TempDir())
-		if err == nil {
-			t.Fatalf("accepted invalid preferred uid %d", uid)
-		}
-	}
-}
-
-func TestPreferredIdentityDoesNotBypassInheritedProbe(t *testing.T) {
+func TestIdentityDoesNotBypassInheritedProbe(t *testing.T) {
 	facts := hostfacts.Collect()
 	facts.EffectiveCaps = 0
-	_, err := Resolve(t.Context(), facts, Config{UID: 10000, GID: 10000, Configured: true}, filepath.Join(t.TempDir(), "missing"))
+	_, err := Resolve(t.Context(), facts, Config{}, filepath.Join(t.TempDir(), "missing"))
 	if err == nil {
 		t.Fatal("accepted an inherited identity without successful file access")
 	}
@@ -122,10 +84,10 @@ func TestPrivilegeOwnsDedicatedAllocationWithoutFilesystem(t *testing.T) {
 			t.Fatalf("dedicated allocation=%+v", u)
 		}
 	}
-	if m.User(a) == m.User(b) {
+	if reflect.DeepEqual(m.User(a), m.User(b)) {
 		t.Fatal("Beds share a dedicated identity")
 	}
-	if report := m.Status(); report.BedUser != policy || report.ReservedUsers != 2 {
+	if report := m.Status(); !reflect.DeepEqual(report.BedUser, policy) || report.ReservedUsers != 2 {
 		t.Fatalf("report=%+v", report)
 	}
 	for _, model := range []*bed.Bed{a, b} {

@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"sort"
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
@@ -30,17 +31,19 @@ import (
 
 // BedUser is the Unix user selected for processes and files owned by one Bed.
 type BedUser struct {
-	uid int
-	gid int
+	uid               int
+	gid               int
+	supplementaryGIDs []int
 }
 
 // BedUserReport describes how an instance assigns Unix users to Bed processes.
 type BedUserReport struct {
-	Strategy string `json:"strategy"`
-	UID      int    `json:"uid,omitempty"`
-	GID      int    `json:"gid,omitempty"`
-	UIDMin   int    `json:"uid_min,omitempty"`
-	UIDMax   int    `json:"uid_max,omitempty"`
+	SupplementaryGIDs []int  `json:"supplementary_gids"`
+	Strategy          string `json:"strategy"`
+	UID               int    `json:"uid,omitempty"`
+	GID               int    `json:"gid,omitempty"`
+	UIDMin            int    `json:"uid_min,omitempty"`
+	UIDMax            int    `json:"uid_max,omitempty"`
 }
 
 // Identity is the daemon's effective Unix identity at startup.
@@ -157,8 +160,14 @@ func NewBedUser(uid, gid int) (BedUser, error) {
 // may use it as the shared baseline after verifying child credentials; an
 // inherited UID 0 is accepted only with empty capability sets and no_new_privs.
 func CurrentBedUser() BedUser {
-	return BedUser{uid: os.Geteuid(), gid: os.Getegid()}
+	return BedUser{uid: os.Geteuid(), gid: os.Getegid(), supplementaryGIDs: hostprivilege.DefaultGroups()}
 }
+
+func (u BedUser) withGroups(groups []int) BedUser {
+	u.supplementaryGIDs = slices.Clone(groups)
+	return u
+}
+func (u BedUser) SupplementaryGIDs() []int { return slices.Clone(u.supplementaryGIDs) }
 
 func (u BedUser) UID() int { return u.uid }
 func (u BedUser) GID() int { return u.gid }
@@ -176,4 +185,6 @@ func (u BedUser) Prepare(fs *bedfs.FS) error {
 }
 
 // Wrap applies the Bed's process credentials outside any filesystem helper.
-func (u BedUser) Wrap(cmd *exec.Cmd) error { return hostprivilege.WrapCredentials(cmd, u.uid, u.gid) }
+func (u BedUser) Wrap(cmd *exec.Cmd) error {
+	return hostprivilege.WrapCredentials(cmd, u.uid, u.gid, u.supplementaryGIDs)
+}

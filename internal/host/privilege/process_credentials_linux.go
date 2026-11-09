@@ -17,6 +17,7 @@
 package privilege
 
 import (
+	"encoding/json"
 	"fmt"
 	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 	"io/fs"
@@ -37,20 +38,21 @@ func ProcessCredentialHelper() (string, error) {
 
 // WrapCredentials is the complete credential-only launch path, also used by
 // identity probes. Filesystem composition uses WrapBedInit around a sealed workload.
-func WrapCredentials(cmd *exec.Cmd, uid, gid int) error {
+func WrapCredentials(cmd *exec.Cmd, uid, gid int, groups []int) error {
 	cwd := cmd.Dir
 	if cwd == "" {
 		cwd = "."
 	}
 	hostprocess.WrapBedInit(cmd, hostprocess.Executable(), cwd)
-	WrapBedInit(cmd, hostprocess.Executable(), uid, gid)
+	WrapBedInit(cmd, hostprocess.Executable(), uid, gid, groups)
 	return nil
 }
 
 // WrapBedInit installs the credential stage of bedinit.
 // It keeps workload env sealed until the final bedinit stage.
-func WrapBedInit(cmd *exec.Cmd, helper string, uid, gid int) {
-	args := []string{helper, bedInitCredentialArg, strconv.Itoa(uid), strconv.Itoa(gid), "--", cmd.Path}
+func WrapBedInit(cmd *exec.Cmd, helper string, uid, gid int, groups []int) {
+	encoded, _ := json.Marshal(groups)
+	args := []string{helper, bedInitCredentialArg, strconv.Itoa(uid), strconv.Itoa(gid), string(encoded), "--", cmd.Path}
 	cmd.Args, cmd.Path = append(args, cmd.Args[1:]...), helper
 }
 
@@ -67,7 +69,7 @@ func init() {
 }
 
 func runBedInit(args []string) error {
-	if len(args) < 4 || args[2] != "--" {
+	if len(args) < 5 || args[3] != "--" {
 		return fmt.Errorf("invalid credential arguments")
 	}
 	uid, err := strconv.Atoi(args[0])
@@ -78,9 +80,12 @@ func runBedInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	// Pin the trusted image while it is still readable to the daemon. Embedded
-	// runtimes may live below a directory that the final UID cannot traverse.
-	executable := args[3]
+	var groups []int
+	if err := json.Unmarshal([]byte(args[2]), &groups); err != nil {
+		return fmt.Errorf("invalid supplementary groups: %w", err)
+	}
+	// Pin the trusted image before dropping access to the daemon installation.
+	executable := args[4]
 	if executable == hostprocess.Executable() || executable == hostprocess.BedInitPath {
 		f, err := os.Open(executable)
 		if err != nil {
@@ -89,10 +94,10 @@ func runBedInit(args []string) error {
 		defer f.Close()
 		executable = fmt.Sprintf("/proc/self/fd/%d", f.Fd())
 	}
-	if err := DropCredentials(uid, gid); err != nil {
+	if err := DropCredentials(uid, gid, groups); err != nil {
 		return err
 	}
-	return syscall.Exec(executable, args[3:], os.Environ())
+	return syscall.Exec(executable, args[4:], os.Environ())
 }
 
 // ChownTree recursively chowns root to uid:gid. Lchown retargets symlinks,
