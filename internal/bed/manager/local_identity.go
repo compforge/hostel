@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,83 +37,109 @@ func (m *Manager) localIdentityLocked(id string) *localIdentity {
 	if local := m.localIdentities[id]; local != nil {
 		return local
 	}
-	local := &localIdentity{bed: model.New(id, "", model.Spec{Dir: filepath.Join(m.root, id), RecoveryDirs: []string{
-		filepath.Join(m.root, id, "rootfs"), filepath.Join(m.root, gcTmpPrefix+id, "rootfs"),
-	}})}
+	local := &localIdentity{bed: model.New(id, "", model.Spec{Dir: filepath.Join(m.root, id)})}
 	m.localIdentities[id] = local
 	return local
 }
 
-// recoverLocalIdentities runs before admission. Restoring a cleanup fence is
-// mandatory even when disk-watermark GC is disabled.
+// recoverLocalIdentities reserves recorded identities before allocating missing
+// ones. Network has already reconciled its journal; admission is still closed.
+// +spec=`Reuse persisted UID/GID; allocate missing identities only after reserving every recorded UID/GID, and persist before use.`
+// +link:doc=docs/bed.md
 func (m *Manager) recoverLocalIdentities() error {
-	entries, err := os.ReadDir(m.root)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		id := strings.TrimPrefix(entry.Name(), gcTmpPrefix)
-		if validBedID(id) != nil {
-			continue
-		}
-		local := m.localIdentityLocked(id)
-		if strings.HasPrefix(entry.Name(), gcTmpPrefix) {
-			local.cleanup = &localCleanup{}
-		}
-	}
-	// A crash between reserving an ID and creating BedFS leaves no resources
-	// or data to recover. Remove only our orphan records, never arbitrary files.
 	records, err := os.ReadDir(filepath.Join(m.root, ".identities"))
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	for _, record := range records {
-		name, ok := strings.CutSuffix(record.Name(), ".local")
-		if !ok || record.IsDir() || validBedID(name) != nil || m.localIdentities[name] != nil {
+	owners := make(map[model.ID]string)
+	pending := make(map[string]localIdentityRecord)
+	for _, entry := range records {
+		name, ok := strings.CutSuffix(entry.Name(), ".local")
+		if !ok {
 			continue
 		}
-		if err := os.Remove(m.identityPath(name)); err != nil {
-			return fmt.Errorf("remove orphan identity %s: %w", name, err)
+		if entry.IsDir() || validBedID(name) != nil {
+			return fmt.Errorf("invalid local identity record %s", entry.Name())
+		}
+		data, err := os.ReadFile(m.identityPath(name))
+		if err != nil {
+			return fmt.Errorf("read bed %s identity: %w", name, err)
+		}
+		var record localIdentityRecord
+		if err := json.Unmarshal(data, &record); err != nil {
+			return fmt.Errorf("read bed %s identity: %w", name, err)
+		}
+		id := model.ID(record.ID)
+		_, hexErr := hex.DecodeString(strings.TrimPrefix(record.ID, "bed-"))
+		if !strings.HasPrefix(record.ID, "bed-") || len(record.ID) != 36 || hexErr != nil {
+			return fmt.Errorf("invalid local identity for bed %s", name)
+		}
+		if owner, exists := owners[id]; exists {
+			return fmt.Errorf("local identity %s is owned by both %s and %s", id, owner, name)
+		}
+		owners[id] = name
+		if len(record.Pillows) > 0 {
+			record.Pillows, err = pillow.Normalize(record.Pillows)
+			if err != nil {
+				return fmt.Errorf("recover bed %s pillows: %w", name, err)
+			}
+		}
+		volumes, err := model.NormalizeVolumes(record.Volumes)
+		if err != nil {
+			return fmt.Errorf("recover bed %s volumes: %w", name, err)
+		}
+		local := &localIdentity{bed: model.New(name, id, model.Spec{Dir: filepath.Join(m.root, name), Pillows: record.Pillows, Volumes: volumes})}
+		if err := m.privileges.Restore(local.bed, record.UID, record.GID); err != nil {
+			return fmt.Errorf("recover bed %s privilege: %w", name, err)
+		}
+		m.localIdentities[name] = local
+		pending[name] = record
+	}
+	entries, err := os.ReadDir(m.root)
+	if err != nil {
+		return err
+	}
+	present := make(map[string]bool)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := strings.TrimPrefix(entry.Name(), gcTmpPrefix)
+		if validBedID(name) != nil {
+			continue
+		}
+		local := m.localIdentityLocked(name)
+		present[name] = true
+		if strings.HasPrefix(entry.Name(), gcTmpPrefix) {
+			local.cleanup = &localCleanup{}
 		}
 	}
-	for _, local := range m.localIdentities {
-		data, err := os.ReadFile(m.identityPath(local.bed.Name))
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("read bed %s identity: %w", local.bed.Name, err)
+	for name, local := range m.localIdentities {
+		record := pending[name]
+		if err := m.privileges.Reserve(local.bed); err != nil {
+			return fmt.Errorf("allocate bed %s privilege: %w", name, err)
 		}
-		if err == nil {
-			spec := local.bed.Spec()
-			var record localIdentityRecord
-			if err := json.Unmarshal(data, &record); err != nil {
-				return fmt.Errorf("read bed %s identity: %w", local.bed.Name, err)
+		// Missing fields are filled once. Directory ownership never selects a UID;
+		// Privilege.Prepare hands retained files to the authoritative identity.
+		if record.UID == nil || record.GID == nil {
+			if err := m.saveLocalIdentity(local); err != nil {
+				return fmt.Errorf("save recovered bed %s identity: %w", name, err)
 			}
-			// A directory without a declaration is only a cleanup identity.
-			if len(record.Pillows) > 0 {
-				record.Pillows, err = pillow.Normalize(record.Pillows)
-				if err != nil {
-					return fmt.Errorf("recover bed %s pillows: %w", local.bed.Name, err)
-				}
-			}
-			id := record.ID
-			spec.Pillows = record.Pillows
-			spec.Volumes, err = model.NormalizeVolumes(record.Volumes)
-			if err != nil {
-				return fmt.Errorf("recover bed %s volumes: %w", local.bed.Name, err)
-			}
-			if !strings.HasPrefix(id, "bed-") || len(id) != 36 {
-				return fmt.Errorf("invalid local identity for bed %s", local.bed.Name)
-			}
-			local.bed = model.New(local.bed.Name, model.ID(id), spec)
 		}
-		if err := m.saveLocalIdentity(local); err != nil {
+		identity, err := m.privileges.Identity(local.bed)
+		if err != nil {
 			return err
 		}
 		m.setLifecycle(local.bed, model.LifecycleStatus{Phase: PhaseDormant, Reason: "NotResident", UpdatedAt: time.Now()})
-		if err := m.privileges.Recover(context.Background(), local.bed); err != nil {
-			return fmt.Errorf("recover bed %s privilege: %w", local.bed.Name, err)
+		log.Printf("hostel local identity recovered: bed=%s id=%s uid=%d gid=%d allocated_uid=%t allocated_gid=%t", name, local.bed.ID, identity.UID, identity.GID, record.UID == nil, record.GID == nil)
+	}
+	// Empty reservations can be forgotten after Network reconciliation. Their
+	// record is removed before the in-memory lease becomes reusable.
+	for name, local := range m.localIdentities {
+		if !present[name] {
+			if err := m.cleanLocalIdentity(context.Background(), local, false); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -129,8 +156,12 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	identity, err := m.privileges.Identity(local.bed)
+	if err != nil {
+		return err
+	}
 	spec := local.bed.Spec()
-	data, err := json.Marshal(localIdentityRecord{Volumes: spec.Volumes, ID: local.bed.ID.String(), Pillows: spec.Pillows})
+	data, err := json.Marshal(localIdentityRecord{Volumes: spec.Volumes, ID: local.bed.ID.String(), UID: &identity.UID, GID: &identity.GID, Pillows: spec.Pillows})
 	if err != nil {
 		return err
 	}
@@ -138,6 +169,8 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 }
 
 type localIdentityRecord struct {
+	UID     *int               `json:"uid"`
+	GID     *int               `json:"gid"`
 	ID      string             `json:"id"`
 	Volumes []model.VolumeSpec `json:"volumes"`
 	Pillows []model.PillowSpec `json:"pillows"`
@@ -261,15 +294,17 @@ func (m *Manager) removeIdentityTrees(ctx context.Context, local *localIdentity,
 	}
 	// History is bound to this Bed lifetime, never to a subsequently reused name.
 	m.executions.forgetBed(local.bed.Name)
-	// The caller has stopped this allocation's runtime resources. The cleanup
-	// fence remains visible until Forget completes, even if the hook fails.
-	forget := model.NewSequence(model.Forget, model.Participant{Name: "privilege", Lifecycle: m.privileges})
-	if err := forget.Run(ctx, local.bed); err != nil {
-		return err
-	}
+	// The caller has stopped this allocation's runtime resources. Delete the
+	// durable reservation before releasing its in-memory lease: failed removal
+	// must keep the UID occupied. A crash between these steps is safe because
+	// no processes, network allocations or local trees remain.
 	if err := os.Remove(m.identityPath(local.bed.Name)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove bed %s identity: %w", local.bed.Name, err)
 	}
+	if err := m.privileges.Forget(ctx, local.bed); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	if m.localIdentities[local.bed.Name] == local {
 		delete(m.localIdentities, local.bed.Name)

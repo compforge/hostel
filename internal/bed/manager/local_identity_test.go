@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -36,6 +37,12 @@ func claimTestUser(t *testing.T, m *Manager, id string) *localIdentity {
 	m.mu.Lock()
 	local := m.localIdentityLocked(id)
 	m.mu.Unlock()
+	if err := m.privileges.Reserve(local.bed); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.saveLocalIdentity(local); err != nil {
+		t.Fatal(err)
+	}
 	if err := m.privileges.Prepare(context.Background(), local.bed); err != nil {
 		t.Fatal(err)
 	}
@@ -44,13 +51,13 @@ func claimTestUser(t *testing.T, m *Manager, id string) *localIdentity {
 func assertUserReserved(t *testing.T, m *Manager) {
 	t.Helper()
 	other := model.New("other", "", model.Spec{})
-	if err := m.privileges.Prepare(context.Background(), other); err == nil {
+	if err := m.privileges.Reserve(other); err == nil {
 		t.Fatal("UID assigned to other while original local data survives")
 	}
 }
 func makeIdentityTree(t *testing.T, root, name string) string {
 	t.Helper()
-	path := filepath.Join(root, name, "rootfs")
+	path := filepath.Join(root, name, "volumes", "workspace")
 	if err := os.MkdirAll(path, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +86,7 @@ func TestPurgeRetainsUIDUntilFailedGCCleanupCompletes(t *testing.T) {
 		t.Fatal("Purge bypassed failed GC cleanup")
 	}
 	assertUserReserved(t, m)
-	if _, err := os.Stat(filepath.Join(m.root, gcTmpPrefix+"same", "rootfs")); err != nil {
+	if _, err := os.Stat(filepath.Join(m.root, gcTmpPrefix+"same", "volumes", "workspace")); err != nil {
 		t.Fatal(err)
 	}
 	reports := m.Status().LocalCleanups
@@ -93,7 +100,7 @@ func TestPurgeRetainsUIDUntilFailedGCCleanupCompletes(t *testing.T) {
 	if len(m.Status().LocalCleanups) != 0 {
 		t.Fatal("finished cleanup remains reported")
 	}
-	if err := m.privileges.Prepare(context.Background(), model.New("other", "", model.Spec{})); err != nil {
+	if err := m.privileges.Reserve(model.New("other", "", model.Spec{})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -101,6 +108,7 @@ func TestPurgeRetainsUIDUntilFailedGCCleanupCompletes(t *testing.T) {
 func TestRecoveryFencesGCResidueWithWatermarksDisabled(t *testing.T) {
 	root := t.TempDir()
 	makeIdentityTree(t, root, gcTmpPrefix+"same")
+	writeTestIdentity(t, root, "same", 200000, 200000)
 	m := newIdentityTestManager(t, root)
 	claimTestUser(t, m, "same")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -117,7 +125,7 @@ func TestRecoveryFencesGCResidueWithWatermarksDisabled(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, gcTmpPrefix+"same")); !os.IsNotExist(err) {
 		t.Fatalf("GC residue survived: %v", err)
 	}
-	if err := m.privileges.Prepare(ctx, model.New("other", "", model.Spec{})); err != nil {
+	if err := m.privileges.Reserve(model.New("other", "", model.Spec{})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -126,20 +134,21 @@ func TestRecoveredGCDoesNotForgetSurvivingColdIdentity(t *testing.T) {
 	root := t.TempDir()
 	makeIdentityTree(t, root, "same")
 	makeIdentityTree(t, root, gcTmpPrefix+"same")
+	writeTestIdentity(t, root, "same", 200000, 200000)
 	m := newIdentityTestManager(t, root)
 	local := claimTestUser(t, m, "same")
 	if err := m.RetryLocalCleanups(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	assertUserReserved(t, m)
-	if _, err := os.Stat(filepath.Join(root, "same", "rootfs", "secret")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "same", "volumes", "workspace", "secret")); err != nil {
 		t.Fatal(err)
 	}
 	// Eviction uses this same terminal cleanup entry after runtime teardown.
 	if err := m.cleanLocalIdentity(context.Background(), local, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.privileges.Prepare(context.Background(), model.New("other", "", model.Spec{})); err != nil {
+	if err := m.privileges.Reserve(model.New("other", "", model.Spec{})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -182,7 +191,7 @@ func TestPurgeJoinsRunningGCAndCreateWaitsForCleanup(t *testing.T) {
 	if err := <-purgeDone; err != nil {
 		t.Fatal(err)
 	}
-	if err := m.privileges.Prepare(context.Background(), model.New("other", "", model.Spec{})); err != nil {
+	if err := m.privileges.Reserve(model.New("other", "", model.Spec{})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -190,6 +199,7 @@ func TestPurgeJoinsRunningGCAndCreateWaitsForCleanup(t *testing.T) {
 func TestCloseRetriesPendingColdCleanup(t *testing.T) {
 	root := t.TempDir()
 	makeIdentityTree(t, root, gcTmpPrefix+"same")
+	writeTestIdentity(t, root, "same", 200000, 200000)
 	m := newIdentityTestManager(t, root)
 	claimTestUser(t, m, "same")
 	if err := m.Close(context.Background()); err != nil {
@@ -198,7 +208,7 @@ func TestCloseRetriesPendingColdCleanup(t *testing.T) {
 	if len(m.Status().LocalCleanups) != 0 {
 		t.Fatal("Close left cold cleanup pending")
 	}
-	if err := m.privileges.Prepare(context.Background(), model.New("other", "", model.Spec{})); err != nil {
+	if err := m.privileges.Reserve(model.New("other", "", model.Spec{})); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -221,7 +231,25 @@ func TestStaleIdentityCleanupCannotForgetReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertUserReserved(t, m)
-	if _, err := os.Stat(filepath.Join(m.root, "same", "rootfs", "secret")); err != nil {
+	if _, err := os.Stat(filepath.Join(m.root, "same", "volumes", "workspace", "secret")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeTestIdentity models the durable reservation that precedes all Bed data.
+func writeTestIdentity(t *testing.T, root, name string, uid, gid int) {
+	t.Helper()
+	b := model.New(name, "", model.Spec{})
+	record := localIdentityRecord{ID: b.ID.String(), UID: &uid, GID: &gid}
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".identities")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".local"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
 }

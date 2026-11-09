@@ -1609,6 +1609,7 @@ func TestPurgeFencesConcurrentInitializationUntilCanceledWorkStops(t *testing.T)
 		t.Fatal(err)
 	}
 	const id = "purge-fence"
+	writeTestIdentity(t, root, id, os.Geteuid(), os.Getegid())
 	if err := os.MkdirAll(filepath.Join(root, id), 0o755); err != nil {
 		t.Fatal(err)
 	}

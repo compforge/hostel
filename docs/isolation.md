@@ -158,8 +158,10 @@ UID 网络规则约束当前 socket 身份，不保证共享程序的来源隔�
 Bed 不可写的位置并通过可信路径调用。
 
 per-Bed UID 是本地数据身份的一部分。Bed Manager 识别本地目录及 `.gc-*` 清理占位，
-通过绑定到本地身份的 Recover / Prepare / Forget 驱动 Privilege Manager；权限子系统不推测磁盘目录布局。
-启动先根据目录 owner 恢复租约，资源与本地目录全部清理后才调用 Forget。luggage 和失败清理继续
+通过显式身份租约及 Prepare / Forget 驱动 Privilege Manager；权限子系统不推测磁盘目录布局。
+UID/主 GID 在使用前保存到 `.identities/{name}.local`。启动复用已有值，缺失则在保留所有已有
+UID/主 GID 后分别分配缺失字段并保存，不覆盖另一个已有字段；不从目录 owner 反推。资源、本地目录及身份记录全部清理后才调用 Forget。
+luggage 和失败清理继续
 保留 UID，具体重试与准入契约见 [Bed 生命周期](bed.md#子系统参与生命周期)。
 UID 范围须由部署侧预留，避免与宿主账号或 user namespace 映射重叠。
 

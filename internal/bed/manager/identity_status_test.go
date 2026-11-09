@@ -256,6 +256,9 @@ func TestLocalIDIsNotInsidePortableBedTree(t *testing.T) {
 func TestStartupRemovesIdentityReservedBeforeBedFS(t *testing.T) {
 	m := newTestManager(t)
 	local := m.localIdentityLocked("never-prepared")
+	if err := m.privileges.Reserve(local.bed); err != nil {
+		t.Fatal(err)
+	}
 	if err := m.saveLocalIdentity(local); err != nil {
 		t.Fatal(err)
 	}

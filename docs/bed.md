@@ -12,9 +12,19 @@ Bed 是 Hostel 的工作负载与资源归属单位。调用方声明期望状�
 使用 Hostel 生成的本地 ID；Amenity Manager 用本地 ID 绑定设施内的 Tenant ID。远端快照按 Name / 快照引用定位。
 
 一个本地生命周期只有一个共享 `*bed.Bed`，从 Recover 到 Forget 都使用它；初始化重试和
-Executor 重建只替换领域资源，不新建 Bed。ID 保存在 `{beds-root}/.identities/{name}.local`，
-重启时与本地目录一起恢复；该记录位于可替换 BedFS 树之外，不进入远端快照。正常 evict/purge
-在运行资源和所有本地目录清理成功后执行 Forget、删除记录；同名再次创建产生新 ID。
+Executor 重建只替换领域资源，不新建 Bed。Bed ID、UID、主 GID 与 Pillow/Volume 声明保存在
+`{beds-root}/.identities/{name}.local`；该记录位于可替换 BedFS 树之外，不进入远端快照。
+新建时先申请身份租约并原子保存记录，再准备 Store、文件、网络与进程；记录写入失败不得继续初始化。
+正常 evict/purge 在运行资源和所有本地目录清理成功后，先删除记录，再由 Forget 释放内存租约；
+记录删除失败继续保留 UID 和清理占位。同名再次创建产生新 ID，旧租约句柄不能释放新分配。
+
+启动先分别保留所有已记录的 UID 和主 GID，再按当前 Privilege 策略分配缺失字段并保存。
+两个字段独立处理：已有值保持不变，缺失一个不会覆盖另一个；均缺失时默认优先使用相同的空闲数值。缺失整个记录的本地目录获得新的 Bed ID 和身份。文件 owner 不用于推导
+UID；重新准备 BedFS 时由 Privilege 按确定的身份交接文件并刷新 owner。
+损坏记录、重复 Bed ID、独立 UID/主 GID 冲突或与当前身份策略不兼容的值导致启动失败，不能静默换号。
+不提供额外的数据迁移流程。只有记录、没有本地数据的空预留，在 Network reconcile 后删除并释放。
+网络策略由调用方在重新声明 Bed 时提交；`.network` allocation journal 继续由 Network 独立管理，
+不在身份记录中持久化策略。
 资源分配的 generation/租约由对应 Manager 持有，清理按原 allocation 执行。
 
 Lifecycle 状态是初始化进度与调度视图的唯一来源；Store 统一发布快照/磁盘提示，Executor
@@ -68,11 +78,11 @@ readiness：是否可服务，以及当前等待或失败原因
 
 | Hook | Bed Manager 驱动时机与完成条件 |
 |---|---|
-| Recover | 启动准入前恢复已有本地身份；Privilege 根据目录 owner 保留 UID |
-| Prepare | 初始化时先准备 Store、Filesystem 数据、Privilege、Network（含初始策略），再组装文件视图和 Environment，准备 Resource、Configuration、Executor、Amenity、Pillow 主进程；全部成功后才发布 Ready |
+| Recover | 启动准入前恢复已有本地身份；Privilege 先保留记录中的 UID/GID，再分配并保存缺失身份 |
+| Prepare | 身份租约已持久化后，初始化时先准备 Store、Filesystem 数据、Privilege、Network（含初始策略），再组装文件视图和 Environment，准备 Resource、Configuration、Executor、Amenity、Pillow 主进程；全部成功后才发布 Ready |
 | Stop | 已停止数据面准入后终止 Transfer 与 Executor，阻止继续使用资源 |
 | Release | Stop 成功后释放 Pillow 主进程、设施切片、Executor、资源组、Configuration、BedFS、网络和 Store 任务状态；文件视图先于其引用的网络配置释放，不释放 UID |
-| Forget | 运行资源和本地 Bed / `.gc-*` 目录全部清理后，由 Privilege 释放身份 |
+| Forget | 运行资源和本地 Bed / `.gc-*` 目录全部清理、身份记录删除成功后，由 Privilege 释放租约 |
 
 Stop / Release 保存每个参与者的完成进度，失败重试从未完成的 hook 继续；已成功的 hook 不重复执行。
 Prepare 的失败保留已有冷数据；若资源回滚失败，原 allocation 进入待清理集合。

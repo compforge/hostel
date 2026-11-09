@@ -148,6 +148,7 @@ func TestBedStoreUsesLocalMetadataAndDefaultsAfterEviction(t *testing.T) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
+	writeTestIdentity(t, root, "one", os.Geteuid(), os.Getegid())
 	// An orphaned working copy retains its own Store across a daemon restart.
 	if err := saveMeta(dir, bedMeta{Version: 2, BedID: "one", Sync: "noop", Volumes: []model.VolumeSpec{}}); err != nil {
 		t.Fatal(err)
