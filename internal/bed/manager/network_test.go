@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,8 +30,8 @@ type initializationNetwork struct {
 	released     atomic.Int32
 }
 
-func (n *initializationNetwork) Status() network.Status {
-	return network.Status{Effective: network.Private}
+func (n *initializationNetwork) Status() hostnetwork.Status {
+	return hostnetwork.Status{Available: true}
 }
 
 func (n *initializationNetwork) Acquire(ctx context.Context, _ string) (network.Attachment, error) {
@@ -188,8 +189,8 @@ func TestEvictionFencesSameIDUntilDirectoryCleanup(t *testing.T) {
 	}
 }
 
-func (n *initializationNetwork) NetworkPolicy(context.Context, string, network.PolicyMutation) (network.PolicyStatus, error) {
-	return network.PolicyStatus{}, network.ErrUnavailable
+func (n *initializationNetwork) NetworkPolicy(context.Context, string, network.PolicyMutation) (network.Policy, error) {
+	return network.Policy{}, network.ErrUnavailable
 }
 
 type policyInitializationNetwork struct {
@@ -200,8 +201,8 @@ type policyInitializationNetwork struct {
 	fail    bool
 }
 
-func (n *policyInitializationNetwork) Status() network.Status {
-	return network.Status{Effective: network.Private}
+func (n *policyInitializationNetwork) Status() hostnetwork.Status {
+	return hostnetwork.Status{Available: true}
 }
 func (n *policyInitializationNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	return n, nil
@@ -209,20 +210,20 @@ func (n *policyInitializationNetwork) Acquire(context.Context, string) (network.
 func (n *policyInitializationNetwork) Enter(*exec.Cmd) error { return nil }
 func (n *policyInitializationNetwork) Gateway() string       { return "" }
 func (*policyInitializationNetwork) ResolverPath() string    { return "" }
-func (n *policyInitializationNetwork) NetworkPolicy(ctx context.Context, _ string, _ network.PolicyMutation) (network.PolicyStatus, error) {
+func (n *policyInitializationNetwork) NetworkPolicy(ctx context.Context, _ string, _ network.PolicyMutation) (network.Policy, error) {
 	n.applied.Add(1)
 	if n.entered != nil {
 		close(n.entered)
 		select {
 		case <-n.proceed:
 		case <-ctx.Done():
-			return network.PolicyStatus{}, ctx.Err()
+			return network.Policy{}, ctx.Err()
 		}
 	}
 	if n.fail {
-		return network.PolicyStatus{}, errors.New("nft rejected policy")
+		return network.Policy{}, errors.New("nft rejected policy")
 	}
-	return network.PolicyStatus{}, nil
+	return network.Policy{}, nil
 }
 func TestInitialPolicyIsAppliedBeforeResidentPublication(t *testing.T) {
 	m := newTestManager(t)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,7 +136,7 @@ type deadlineNetwork struct {
 }
 type deadlineAttachment struct{ owner *deadlineNetwork }
 
-func (*deadlineNetwork) Status() network.Status { return network.Status{Effective: network.Private} }
+func (*deadlineNetwork) Status() hostnetwork.Status { return hostnetwork.Status{Available: true} }
 func (n *deadlineNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	return &deadlineAttachment{n}, nil
 }

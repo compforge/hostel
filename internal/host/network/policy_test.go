@@ -16,24 +16,26 @@ func TestPolicyMutationsAndFailedCommit(t *testing.T) {
 	p := newPolicyForTest()
 	ctx := context.Background()
 	status, err := p.update(ctx, PolicyMutation{Replace: &Policy{DefaultAction: "deny", Egress: []Rule{{Action: "allow", Target: "EXAMPLE.COM."}}}})
-	if err != nil || status.Policy.Egress[0].Target != "example.com" {
+	if err != nil || status.Egress[0].Target != "example.com" {
 		t.Fatalf("replace = %+v %v", status, err)
 	}
 	status, err = p.update(ctx, PolicyMutation{Merge: []Rule{{Action: "deny", Target: "example.com"}, {Action: "allow", Target: "10.1.2.3/8"}}})
-	if err != nil || len(status.Policy.Egress) != 2 || status.Policy.Egress[0].Action != "deny" || status.Policy.Egress[1].Target != "10.0.0.0/8" {
+	if err != nil || len(status.Egress) != 2 || status.Egress[0].Action != "deny" || status.Egress[1].Target != "10.0.0.0/8" {
 		t.Fatalf("merge = %+v %v", status, err)
 	}
 	status, err = p.update(ctx, PolicyMutation{Remove: []string{"EXAMPLE.COM."}})
-	if err != nil || len(status.Policy.Egress) != 1 || status.Policy.DefaultAction != "deny" {
+	if err != nil || len(status.Egress) != 1 || status.DefaultAction != "deny" {
 		t.Fatalf("delete = %+v %v", status, err)
 	}
-	p.apply = func(context.Context, Policy) error { return errors.New("kernel denied update") }
+	p.apply = func(context.Context, Policy) error {
+		return &PolicyUnchangedError{Err: errors.New("kernel denied update")}
+	}
 	_, err = p.update(ctx, PolicyMutation{Replace: &Policy{DefaultAction: "allow"}})
 	if err == nil {
 		t.Fatal("kernel error swallowed")
 	}
 	status, _ = p.update(ctx, PolicyMutation{})
-	if status.Policy.DefaultAction != "deny" || len(status.Policy.Egress) != 1 {
+	if status.DefaultAction != "deny" || len(status.Egress) != 1 {
 		t.Fatal("failed kernel update changed reported policy")
 	}
 }
@@ -142,5 +144,28 @@ func TestNetworkPolicyRejectsRetiredAttachment(t *testing.T) {
 	}
 	if ep.control.current.DefaultAction != "allow" {
 		t.Fatal("retired attachment policy changed")
+	}
+}
+
+func TestUncertainCommitCannotBeReadAsEnforced(t *testing.T) {
+	p := newPolicyForTest()
+	p.apply = func(context.Context, Policy) error { return context.DeadlineExceeded }
+	if _, err := p.update(t.Context(), PolicyMutation{Replace: &Policy{DefaultAction: "deny"}}); err == nil {
+		t.Fatal("lost acknowledgement ignored")
+	}
+	if _, err := p.update(t.Context(), PolicyMutation{}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("uncertain policy reported: %v", err)
+	}
+	// DNS cannot authorize an old-policy grant while the kernel policy is unknown.
+	query, response := dnsTestMessages(t)
+	queried := false
+	_, err := p.exchange(t.Context(), query, func() ([]byte, error) { queried = true; return response, nil })
+	if err != nil || queried {
+		t.Fatalf("unknown policy authorized DNS: %v queried=%t", err, queried)
+	}
+	p.apply = func(context.Context, Policy) error { return nil }
+	status, err := p.update(t.Context(), PolicyMutation{Replace: &Policy{DefaultAction: "deny"}})
+	if err != nil || status.DefaultAction != "deny" {
+		t.Fatalf("repair: %+v %v", status, err)
 	}
 }

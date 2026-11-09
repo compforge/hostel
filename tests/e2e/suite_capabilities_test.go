@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/tool"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 func TestPrivateFilesWithSharedNetwork(t *testing.T) {
@@ -91,11 +93,8 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 				Subsystems struct {
 					Filesystem struct{ Effective string }
 					Privilege  struct{ Selection struct{ Effective string } }
-					Network    struct {
-						Effective, Reason string
-						Tools             map[string]tool.Status
-					}
-					Executor struct{ Tools map[string]tool.Status }
+					Network    network.Status
+					Executor   struct{ Tools map[string]tool.Status }
 				}
 			}
 			response, err = c.json(ctx, "GET", "/v1/status", "", nil, &status)
@@ -103,10 +102,10 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 				t.Fatal(err)
 			}
 			must2xx(t, "suite subsystem facts", response)
-			if status.Subsystems.Filesystem.Effective != "private" || status.Subsystems.Privilege.Selection.Effective != "dedicated" || status.Subsystems.Network.Effective != "shared" || status.Subsystems.Executor.Tools["pidns"].Selected {
+			if status.Subsystems.Filesystem.Effective != "private" || status.Subsystems.Privilege.Selection.Effective != "dedicated" || status.Subsystems.Network.Isolation.Level != "shared" || status.Subsystems.Executor.Tools["pidns"].Selected {
 				t.Fatalf("unexpected subsystems: %+v", status)
 			}
-			if scenario == "network-probe-failure" && (status.Subsystems.Network.Tools["netns"].Probe != "unavailable" || status.Subsystems.Network.Reason == "") {
+			if scenario == "network-probe-failure" && (status.Subsystems.Network.Tools["netns"].Probe != "unavailable" || status.Subsystems.Network.Isolation.Diagnostic == nil) {
 				t.Fatalf("missing failed probe evidence: %+v", status)
 			}
 			// Dorm preserves a desired policy without pretending the shared network enforces it.
@@ -116,8 +115,9 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 			}
 			must2xx(t, "best effort policy", response)
 			c.waitBed(t, "needs-policy", func(b bedView) bool { return b.Status.Readiness.Ready }, "dorm policy Bed ready")
-			response, err = c.json(ctx, "GET", "/v1/beds/needs-policy/network/policy", "", nil, nil)
-			if err != nil || response.Status != http.StatusOK || !strings.Contains(string(response.Body), `"mode":"unenforced"`) {
+			var policy protocol.EgressStatus
+			response, err = c.json(ctx, "GET", "/v1/beds/needs-policy/network/policy", "", nil, &policy)
+			if err != nil || response.Status != http.StatusOK || policy.State != protocol.EgressUnenforced || policy.Backend != "none" || policy.Effective != nil {
 				t.Fatalf("missing policy gap: %v %+v", err, response)
 			}
 

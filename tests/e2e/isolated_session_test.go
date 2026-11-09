@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/bed/network"
 )
 
 func TestIsolatedSessionCompatibility(t *testing.T) {
@@ -47,14 +49,12 @@ func TestIsolatedSessionCompatibility(t *testing.T) {
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	var diagnostics struct {
 		Subsystems struct {
-			Network struct {
-				Effective string `json:"effective"`
-			} `json:"network"`
+			Network network.Status `json:"network"`
 		} `json:"subsystems"`
 	}
 	verdict, err := c.json(ctx, "GET", "/v1/status", "", nil, &diagnostics)
 	cancel()
-	if err != nil || verdict.Status != http.StatusOK || state.ShareNet == (diagnostics.Subsystems.Network.Effective == "private") {
+	if err != nil || verdict.Status != http.StatusOK || state.ShareNet == (diagnostics.Subsystems.Network.Isolation.Level == "private") {
 		t.Fatalf("isolated share_net=%t disagrees with network=%+v: %v", state.ShareNet, diagnostics.Subsystems.Network, err)
 	}
 

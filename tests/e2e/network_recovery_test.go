@@ -79,7 +79,7 @@ func TestPrivateNetworkCrashRecovery(t *testing.T) {
 		}
 		must2xx(t, "private network detail", response)
 		n := detail.Status.Subsystems.Network
-		if n.Level != "private" || n.Gateway == "" {
+		if n.Isolation.Level != "private" || n.Isolation.Gateway == "" {
 			t.Fatalf("private network unavailable: %+v", n)
 		}
 		result, response := c.command(t, name, map[string]any{"command": "readlink /proc/self/ns/net", "timeout": 5000})
@@ -89,7 +89,7 @@ func TestPrivateNetworkCrashRecovery(t *testing.T) {
 		if namespace == "" {
 			t.Fatal("missing namespace identity")
 		}
-		return detail, namespace, net.JoinHostPort(n.Gateway, fmt.Sprint(listener.Addr().(*net.TCPAddr).Port))
+		return detail, namespace, net.JoinHostPort(n.Isolation.Gateway, fmt.Sprint(listener.Addr().(*net.TCPAddr).Port))
 	}
 	if !t.Run("before-crash", func(t *testing.T) {
 		target := startTarget(t, targetOptions{executor: "supervisor", config: &options, bedsRoot: root})
@@ -117,6 +117,6 @@ func TestPrivateNetworkCrashRecovery(t *testing.T) {
 		assertPolicyConnection(t, c, name, "", address, false)
 		policyRequest(t, c, "PUT", "/v1/beds/"+name+"/network/policy", map[string]any{"defaultAction": "allow"}, http.StatusOK)
 		assertPolicyConnection(t, c, name, "", address, true)
-		t.Logf("retained Bed %s UID %d changed namespace %s -> %s and gateway %s -> %s; policy update passed", after.ID, after.Status.Subsystems.Privilege.UID, oldNamespace, namespace, before.Status.Subsystems.Network.Gateway, after.Status.Subsystems.Network.Gateway)
+		t.Logf("retained Bed %s UID %d changed namespace %s -> %s and gateway %s -> %s; policy update passed", after.ID, after.Status.Subsystems.Privilege.UID, oldNamespace, namespace, before.Status.Subsystems.Network.Isolation.Gateway, after.Status.Subsystems.Network.Isolation.Gateway)
 	})
 }

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"github.com/qiankunli/hostel/internal/bed/network"
 	"net/http"
 	"strings"
 	"testing"
@@ -15,11 +16,7 @@ func TestNetworkDiagnosticsWithoutManager(t *testing.T) {
 			t.Fatalf("%s: %s", path, rec.Body.String())
 		}
 		var body struct {
-			Network struct {
-				Effective string `json:"effective"`
-				Backend   string `json:"backend"`
-				Reason    string `json:"reason"`
-			} `json:"network"`
+			Network network.Status `json:"network"`
 		}
 		payload := rec.Body.Bytes()
 		if path == "/v1/status" {
@@ -34,7 +31,7 @@ func TestNetworkDiagnosticsWithoutManager(t *testing.T) {
 		if err := json.Unmarshal(payload, &body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Network.Effective != "shared" || body.Network.Backend != "shared" || body.Network.Reason == "" {
+		if body.Network.Isolation.Level != "shared" || body.Network.Isolation.Diagnostic == nil {
 			t.Fatalf("unavailable network not explained: %s", rec.Body.String())
 		}
 	}
@@ -53,7 +50,7 @@ func TestNetworkPolicyUnavailableDoesNotPretendSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := do(t, s, http.MethodPut, "/v1/beds/test-bed/network/policy", strings.NewReader(`{"defaultAction":"deny"}`), nil)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"mode":"unenforced"`) || !strings.Contains(rec.Body.String(), `"requested_policy":{"defaultAction":"deny"`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"state":"unenforced"`) || !strings.Contains(rec.Body.String(), `"requested":{"defaultAction":"deny"`) {
 		t.Fatalf("disabled policy: %d %s", rec.Code, rec.Body)
 	}
 }

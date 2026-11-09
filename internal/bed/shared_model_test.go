@@ -29,13 +29,13 @@ func TestSnapshotsDoNotGrantWriteAccess(t *testing.T) {
 	}
 	var retained *NetworkStatus
 	owners.Network.Update(b, func(s *NetworkStatus) {
-		s.Policy = &NetworkPolicy{Egress: []NetworkRule{{Target: "original"}}}
+		s.Egress.Effective = &NetworkPolicy{Egress: []NetworkRule{{Target: "original"}}}
 		retained = s
 	})
-	retained.Policy.Egress[0].Target = "mutated-callback"
+	retained.Egress.Effective.Egress[0].Target = "mutated-callback"
 	status := b.Status()
-	status.Network.Policy.Egress[0].Target = "mutated-read"
-	if got := b.Status().Network.Policy.Egress[0].Target; got != "original" {
+	status.Network.Egress.Effective.Egress[0].Target = "mutated-read"
+	if got := b.Status().Network.Egress.Effective.Egress[0].Target; got != "original" {
 		t.Fatalf("status aliased: %s", got)
 	}
 }

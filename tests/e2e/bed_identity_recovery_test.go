@@ -47,7 +47,7 @@ func uidBedDetail(t *testing.T, c *apiClient, name string) protocol.BedDetail {
 	}
 	must2xx(t, "Bed identity and policy", response)
 	u, n := detail.Status.Subsystems.Privilege, detail.Status.Subsystems.Network
-	if !u.Assigned || u.UID < privilege.UIDMin || u.UID > privilege.UIDMax || u.GID != u.UID || !slices.Equal(u.SupplementaryGIDs, []int{1000}) || n.Level != "shared" || n.PolicyBackend != "uid" {
+	if !u.Assigned || u.UID < privilege.UIDMin || u.UID > privilege.UIDMax || u.GID != u.UID || !slices.Equal(u.SupplementaryGIDs, []int{1000}) || n.Isolation.Level != "shared" || n.Egress.Backend != "uid_nft" {
 		t.Fatalf("unexpected identity/network realization: %+v", detail.Status.Subsystems)
 	}
 	return detail

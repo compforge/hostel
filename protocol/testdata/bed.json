@@ -14,7 +14,7 @@
     "subsystems": {
       "filesystem": {"prepared": true, "room": "suite"},
       "privilege": {"supplementary_gids": [1000], "uid": 1000, "gid": 1000, "assigned": true},
-      "network": {"room": "dorm", "level": "shared", "policy_status": "none", "gateway": "", "policy": null},
+      "network": {"isolation": {"level": "shared", "room": "dorm"}, "egress": {"backend": "none", "state": "unenforced", "scope": "bed_processes", "requested": {"defaultAction": "allow", "egress": null}, "effective": null}},
       "store": {"source": "noop", "restored": false, "snapshot_generation": 9007199254740992, "snapshot_bytes": 4096, "local_bytes": 8192},
       "executor": {"private_pid_namespace": false, "id": "executor-1", "backend": "local", "state": "ready"},
       "resource": {"accounting": false}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bed/tool"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 func TestRootfulNetworkResolver(t *testing.T) {
@@ -43,9 +44,7 @@ func TestRootfulNetworkResolver(t *testing.T) {
 			var detail struct {
 				Status struct {
 					Subsystems struct {
-						Network struct {
-							Gateway string `json:"gateway"`
-						} `json:"network"`
+						Network protocol.NetworkStatus `json:"network"`
 					} `json:"subsystems"`
 				} `json:"status"`
 			}
@@ -56,13 +55,13 @@ func TestRootfulNetworkResolver(t *testing.T) {
 				t.Fatal(err)
 			}
 			must2xx(t, "Bed network status", response)
-			if net.ParseIP(detail.Status.Subsystems.Network.Gateway) == nil {
+			if net.ParseIP(detail.Status.Subsystems.Network.Isolation.Gateway) == nil {
 				t.Fatal("missing Bed gateway")
 			}
 			result, response := c.command(t, bed, map[string]any{"command": "set -eu; for i in 1 2 3 4 5; do test -s /workspace/pillow-dns && break; sleep 1; done; cmp /etc/resolv.conf /workspace/pillow-resolver; test -s /workspace/pillow-dns; getent ahostsv4 example.com >/dev/null; cat /etc/resolv.conf", "timeout": 15000})
 			must2xx(t, "Bed DNS query", response)
 			assertCommandExit(t, result, 0)
-			if !strings.Contains(result.Stdout, "nameserver "+detail.Status.Subsystems.Network.Gateway+"\n") {
+			if !strings.Contains(result.Stdout, "nameserver "+detail.Status.Subsystems.Network.Isolation.Gateway+"\n") {
 				t.Fatalf("wrong resolver: %q", result.Stdout)
 			}
 		})

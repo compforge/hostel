@@ -4,8 +4,10 @@ package network
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -74,5 +76,31 @@ func TestLinuxPolicySeparatesNetworksAndRevokesAccess(t *testing.T) {
 		if err := a.learnDNS(t.Context(), []dnsAddress{{IP: netip.MustParseAddr("203.0.113.1"), TTL: 30}}); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestPolicyTransactionFailureEvidence(t *testing.T) {
+	rejected := exec.Command("sh", "-c", "exit 1").Run()
+	killed := exec.Command("sh", "-c", "kill -KILL $$").Run()
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, tc := range []struct {
+		name      string
+		ctx       context.Context
+		err       error
+		unchanged bool
+	}{
+		{"normal rejection", t.Context(), rejected, true},
+		{"killed", t.Context(), killed, false},
+		{"canceled", canceled, rejected, false},
+		{"unknown error", t.Context(), errors.New("lost acknowledgement"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := policyTransactionError(tc.ctx, tc.err)
+			var unchanged *PolicyUnchangedError
+			if errors.As(result, &unchanged) != tc.unchanged || !errors.Is(result, tc.err) {
+				t.Fatalf("failure classification: %v", result)
+			}
+		})
 	}
 }

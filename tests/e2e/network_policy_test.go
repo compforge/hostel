@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,32 @@ func testNetworkPolicyTraffic(t *testing.T, options targetOptions, shared bool) 
 	c.waitBed(t, "policy-a", func(b bedView) bool { return b.Status.Readiness.Ready }, "initial deny policy installed")
 	must2xx(t, "create control Bed", c.createBed(t, "policy-b"))
 	c.waitBed(t, "policy-b", func(b bedView) bool { return b.Status.Readiness.Ready }, "control Bed ready")
+
+	// Bed detail must publish both explicit and default policies before any GET
+	// of the policy endpoint; a read cannot be what makes enforcement visible.
+	expectedBackend, expectedLevel := "netns_nft", "private"
+	if shared {
+		expectedBackend, expectedLevel = "uid_nft", "shared"
+	}
+	for _, name := range []string{"policy-a", "policy-b"} {
+		var detail protocol.BedDetail
+		response, err := c.json(t.Context(), http.MethodGet, "/v1/beds/"+name, "", nil, &detail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		must2xx(t, "network realization before policy query", response)
+		n := detail.Status.Subsystems.Network
+		action := "allow"
+		if name == "policy-a" {
+			action = "deny"
+		}
+		if n.Isolation.Level != expectedLevel || n.Egress.Backend != expectedBackend || n.Egress.State != protocol.EgressEnforced || n.Egress.Effective == nil || n.Egress.Effective.DefaultAction != action || n.Egress.Requested == nil || n.Egress.Requested.DefaultAction != action || n.Egress.Diagnostic != nil {
+			t.Fatalf("network status: %+v", n)
+		}
+		if shared && (n.Isolation.Room != protocol.Dorm || n.Isolation.Diagnostic == nil || n.Isolation.Diagnostic.Stage != "forwarding") {
+			t.Fatalf("UID enforcement hid isolation gap: %+v", n)
+		}
+	}
 	if shared {
 		var previousUID uint32
 		for _, name := range []string{"policy-a", "policy-b"} {
@@ -71,7 +98,7 @@ func testNetworkPolicyTraffic(t *testing.T, options targetOptions, shared bool) 
 			}
 			must2xx(t, "shared Bed detail", response)
 			n, u := detail.Status.Subsystems.Network, detail.Status.Subsystems.Privilege
-			if n.Level != "shared" || n.PolicyBackend != "uid" || !u.Assigned || u.UID == 0 || u.UID == previousUID {
+			if n.Isolation.Level != "shared" || n.Egress.Backend != "uid_nft" || !u.Assigned || u.UID == 0 || u.UID == previousUID {
 				t.Fatalf("invalid UID realization: %+v", detail.Status)
 			}
 			previousUID = u.UID
@@ -107,7 +134,7 @@ func testNetworkPolicyTraffic(t *testing.T, options targetOptions, shared bool) 
 	assertPolicyConnection(t, c, "policy-a", "", address, false)
 	path := "/v1/beds/policy-a/network/policy"
 	status := policyRequest(t, c, "GET", path, nil, http.StatusOK)
-	if status.Mode != "deny_all" || status.Scope != "bed_processes" || status.Status != "ok" || status.EnforcementMode != "dns+nft" {
+	if status.State != protocol.EgressEnforced || status.Scope != "bed_processes" || status.Effective.DefaultAction != "deny" {
 		t.Fatalf("initial policy: %+v", status)
 	}
 	var session struct {
@@ -142,7 +169,7 @@ func testNetworkPolicyTraffic(t *testing.T, options targetOptions, shared bool) 
 	policyRequest(t, c, "PUT", path, map[string]any{"defaultAction": "allow"}, http.StatusOK)
 	assertPolicyConnection(t, c, "policy-a", session.ID, address, true)
 	policyRequest(t, c, "PUT", path, map[string]any{"defaultAction": "invalid"}, http.StatusBadRequest)
-	if status := policyRequest(t, c, "GET", path, nil, http.StatusOK); status.Mode != "allow_all" {
+	if status := policyRequest(t, c, "GET", path, nil, http.StatusOK); status.State != protocol.EgressEnforced || status.Effective.DefaultAction != "allow" {
 		t.Fatalf("invalid update changed policy: %+v", status)
 	}
 	assertPolicyConnection(t, c, "policy-a", "", address, true)
@@ -156,18 +183,11 @@ func testNetworkPolicyTraffic(t *testing.T, options targetOptions, shared bool) 
 	assertPolicyConnection(t, c, "policy-b", "", address, true)
 }
 
-type policyView struct {
-	Status          string `json:"status"`
-	EnforcementMode string `json:"enforcementMode"`
-	Mode            string `json:"mode"`
-	Scope           string `json:"scope"`
-}
-
-func policyRequest(t *testing.T, c *apiClient, method, path string, body any, want int) policyView {
+func policyRequest(t *testing.T, c *apiClient, method, path string, body any, want int) protocol.EgressStatus {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	var result policyView
+	var result protocol.EgressStatus
 	var destination any
 	if strings.HasSuffix(path, "/network/policy") && want == http.StatusOK {
 		destination = &result
@@ -175,6 +195,21 @@ func policyRequest(t *testing.T, c *apiClient, method, path string, body any, wa
 	response, err := c.json(ctx, method, path, "", body, destination)
 	if err != nil || (response.Status != want && !(want == http.StatusAccepted && response.Status == http.StatusOK)) {
 		t.Fatalf("%s %s: status=%d want=%d err=%v body=%s", method, path, response.Status, want, err, response.Body)
+	}
+	if destination != nil {
+		if result.State != protocol.EgressEnforced || result.Backend == "none" || result.Effective == nil || result.Requested == nil || result.Scope != "bed_processes" {
+			t.Fatalf("policy response did not report actual enforcement: %+v", result)
+		}
+		var detail protocol.BedDetail
+		bedPath := strings.TrimSuffix(path, "/network/policy")
+		response, err := c.json(ctx, http.MethodGet, bedPath, "", nil, &detail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		must2xx(t, "compare policy with Bed detail", response)
+		if !reflect.DeepEqual(result, detail.Status.Subsystems.Network.Egress) {
+			t.Fatalf("policy and detail disagree: %+v %+v", result, detail.Status.Subsystems.Network.Egress)
+		}
 	}
 	return result
 }

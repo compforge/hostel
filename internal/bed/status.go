@@ -53,8 +53,7 @@ type ResourceStatus = protocol.ResourceStatus
 
 func cloneStatus(s Status) Status {
 	s.Privilege.SupplementaryGIDs = slices.Clone(s.Privilege.SupplementaryGIDs)
-	s.Network.Policy = clonePolicy(s.Network.Policy)
-	s.Network.RequestedPolicy = clonePolicy(s.Network.RequestedPolicy)
+	s.Network = cloneNetworkStatus(s.Network)
 	s.Filesystem.Mounts = slices.Clone(s.Filesystem.Mounts)
 	return s
 }
@@ -100,11 +99,7 @@ func NewOwners() Owners {
 	filesystem := writer(func(s *Status) *FilesystemStatus { return &s.Filesystem })
 	filesystem.clone = func(s FilesystemStatus) FilesystemStatus { s.Mounts = slices.Clone(s.Mounts); return s }
 	network := writer(func(s *Status) *NetworkStatus { return &s.Network })
-	network.clone = func(s NetworkStatus) NetworkStatus {
-		s.Policy = clonePolicy(s.Policy)
-		s.RequestedPolicy = clonePolicy(s.RequestedPolicy)
-		return s
-	}
+	network.clone = cloneNetworkStatus
 	return Owners{
 		Lifecycle:  writer(func(s *Status) *LifecycleStatus { return &s.Lifecycle }),
 		Filesystem: filesystem,
@@ -114,4 +109,20 @@ func NewOwners() Owners {
 		Executor:   writer(func(s *Status) *ExecutorStatus { return &s.Executor }),
 		Resource:   writer(func(s *Status) *ResourceStatus { return &s.Resource }),
 	}
+}
+
+// cloneNetworkStatus detaches the domain snapshot from both writers and readers.
+func cloneNetworkStatus(s NetworkStatus) NetworkStatus {
+	s.Isolation.Diagnostic = cloneNetworkDiagnostic(s.Isolation.Diagnostic)
+	s.Egress.Diagnostic = cloneNetworkDiagnostic(s.Egress.Diagnostic)
+	s.Egress.Requested = clonePolicy(s.Egress.Requested)
+	s.Egress.Effective = clonePolicy(s.Egress.Effective)
+	return s
+}
+func cloneNetworkDiagnostic(d *protocol.NetworkDiagnostic) *protocol.NetworkDiagnostic {
+	if d == nil {
+		return nil
+	}
+	copy := *d
+	return &copy
 }

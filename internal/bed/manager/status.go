@@ -99,12 +99,12 @@ func (m *Manager) Status() Status {
 }
 
 func (m *Manager) RoomStatus() model.RoomStatus {
-	return model.SummarizeRoom(m.iso.Level().Room(), m.network.Status().Room)
+	return model.SummarizeRoom(m.iso.Level().Room(), m.network.Status().Isolation.Room)
 }
 
 func (m *Manager) BedRoomStatus(b *model.Bed) model.RoomStatus {
 	s := b.Status()
-	return model.SummarizeRoom(s.Filesystem.Room, s.Network.Room)
+	return model.SummarizeRoom(s.Filesystem.Room, s.Network.Isolation.Room)
 }
 
 func (m *Manager) startEnvironmentProbe(started time.Time) {

@@ -4,13 +4,27 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 )
 
 func (e *linuxEndpoint) Policy() *policyControl { return e.policy }
 func (e *linuxEndpoint) applyPolicy(ctx context.Context, p Policy) error {
 	_, err := run(ctx, renderPolicy(p, e.gateway.String()), e.owner.ip, "netns", "exec", e.name, e.owner.nft, "-f", "-")
+	return policyTransactionError(ctx, err)
+}
+
+// +spec=`A normal nft rejection leaves the old transaction intact; cancellation or a killed process leaves commit acknowledgement uncertain.`
+func policyTransactionError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	var exit *exec.ExitError
+	if ctx.Err() == nil && errors.As(err, &exit) && exit.ProcessState.Exited() {
+		return &PolicyUnchangedError{Err: err}
+	}
 	return err
 }
 

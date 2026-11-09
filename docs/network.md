@@ -23,14 +23,66 @@ Network 尽力选择 private，实例探测失败可选择 shared，并报告网
 
 
 `/v1/status` 的 `subsystems.network` 与 `/v1/beds/capabilities` 的 `network` 报告实例能力。
-失败时的 `cause` 表示归因，`probe.stage` 表示检测阶段，`reason`/`probe.error` 保存运维详情；
-`scope` 仍表示网络执行范围，不是错误归因。
+各维度的 `diagnostic.cause` 表示归因，`probe.stage` 表示检测阶段，`diagnostic.message` / `probe.error` 保存运维详情。
+Bed 的 `egress.scope` 表示策略执行范围，不是错误归因。
 
-例如 Carrier netns 的 `ip_forward=0` 得到 `cause=carrier, probe.stage=forwarding`，
+例如 Carrier netns 的 `ip_forward=0` 得到 `isolation.diagnostic.cause=carrier`、`isolation.probe.stage=forwarding`，
 当前独立网络路径不可用；共享网络是否能执行出站策略另行探测，详见下文 forwarding 关闭的 case。
 配置显式禁用独立网络却请求其策略时归 request；地址耗尽归 resource；机制验证未兑现归 bed。
 namespace 命令或连通性失败本身不能证明是 carrier 还是 Bed 实现的问题，证据不足则为 unknown。
 原始 probe 错误留在全局状态/日志，创建 API 保留固定安全消息。
+
+## 状态契约
+
+Network 如实报告两个独立维度：`isolation` 表示网络空间，`egress` 表示出站策略执行。
+Hostel 不承担 sandctl / Hibot 的协议适配或接纳判断。UID/GID 由 Privilege 持有，Network 消费已经准备好的身份。
+
+实例级 `/v1/status.subsystems.network` 和 `/v1/beds/capabilities.network`：
+
+- `isolation.level` / `room` 是当前选择，`supported` 是配置和探测确认可用的模式；shared 对应 dorm，private 对应 suite。
+- `egress.backend` 是供 Bed 使用的实现：`netns_nft`、`uid_nft` 或 `none`，不表示某个 Bed 已安装规则。
+- 各自的 `diagnostic` 包含 `code`、`cause`、`stage`、`message`；工具配置、要求与探测继续由 `tools`、`isolation.probe`、`egress.probe` 展示，区分 off、not_probed、unavailable。
+
+Bed 的 `status.subsystems.network`：
+
+```json
+{
+  "isolation": {
+    "level": "shared", "room": "dorm",
+    "diagnostic": {"code": "ipv4_forwarding_unavailable", "cause": "carrier", "stage": "forwarding", "message": "IPv4 forwarding is unavailable"}
+  },
+  "egress": {
+    "backend": "uid_nft", "state": "enforced", "scope": "bed_processes",
+    "requested": {"defaultAction": "deny", "egress": []},
+    "effective": {"defaultAction": "deny", "egress": []}
+  }
+}
+```
+
+`egress.backend` 是该 Bed 实际使用的机制。`requested` 是已接受且规范化的目标（未声明时为默认 allow），
+`effective` 是最近确认已落实的策略，不是每次读取时重新做的连通性探测。没有可确认的策略时为 null。
+空规则数组可编码为 null 或 []，语义相同。明确的 allow all、deny all 和规则策略都可以是 enforced。
+
+| state | 含义 |
+|---|---|
+| pending | 准备尚未完成 |
+| enforced | 已确认落实 effective 策略 |
+| unenforced | 没有机制执行目标，effective=null |
+| unknown | 无法确认当前实际策略，effective=null |
+| released | 资源已全部释放，backend=none、effective=null；保留 requested 供诊断 |
+
+只有 Network 发布这一份状态，Bed 详情、策略 GET、修改成功响应使用相同 egress 快照。
+GET 不调用后端、不探测、不更新状态。初始默认策略在资源准备成功时即发布，不能依赖第一次 GET。
+修改输入非法时不改变 requested；合法目标被接受后即更新 requested，成功提交后才更新 effective。
+明确拒绝的原子 nft 事务保留旧 effective/enforced，并记录 `policy_update_failed`。
+超时、进程被杀等无法确认提交结果时转 unknown，停止基于旧策略授予新的 DNS 地址，只有成功重装策略才能恢复 enforced。
+释放失败可能已移除部分规则或停止 DNS，因此保留 allocation 所有权并报告 unknown；完成清理才报告 released。私有 namespace 清理失败后也撤下无法确认的 isolation level/room 与 gateway。
+
+forwarding 缺口只归 isolation；UID 依赖、nft 权限和策略更新错误归 egress。
+共享网络的 UID 策略不会提高 room，`scope=bed_processes` 不覆盖共享代理、浏览器或 daemon 代发请求。
+
+策略 GET 和修改成功响应直接返回 `EgressStatus`，与 Bed 详情的 `network.egress` 内容相同。
+接口只保留这一套状态契约，不提供旧字段映射或历史数据迁移。Bed gateway 归属 `isolation.gateway`。
 
 ## Pillow 端口与 Network allocation
 
@@ -149,9 +201,9 @@ Evict/Purge 或实例关闭重试。网络地址和 namespace 不写入 workspac
   veth 访问的地址（默认 `:8872`），不是仅监听 carrier loopback。
 - 这些边界不等于安全容器：Hostel 的可信/半可信代码模型不变。透明 MITM 和 Credential Vault 不在当前能力范围。
 
-`GET /v1/status.subsystems.network` 和 `/healthz.network` 返回 expected/effective/supported 原生等级、room、backend、scope、reason/cause 和启动 probe。
-没有网络 enabled 开关。netns 是否采用从 effective=private 或工具 selected 判断；读取状态不触发探测。
-Bed 的 `status.subsystems.network` 报告准备后实际 room/level、gateway、requested_policy、已执行 policy、policy_status 与缺口。
+`/v1/status` 的 `subsystems.network` 与 `/healthz.network` 返回 isolation / egress 和工具状态，见上面的状态契约。
+netns 是否采用从 `isolation.level=private` 或工具 selected 判断；读取状态不触发探测。
+Bed 状态报告实际 isolation level/room/gateway，以及 egress requested/effective/state 和各自诊断。
 `/v1/isolated` 的 share_net 依据实际网络等级；显式参数与实际能力冲突仍报错。
 
 共享 Chromium 的 BrowserContext 不是 OS 网络边界。待办是在创建 Context 时设置各 Bed
@@ -201,10 +253,10 @@ UID backend 将 Bed 的 socket 视为 Carrier netns 内的本地出站流量，�
 其成立条件和规则边界见[共享网络下的 UID 策略](#共享网络下的-uid-策略)：需要实际独立 UID、
 `CAP_NET_ADMIN`、nft UID 匹配和 IPv4 OUTPUT NAT 等能力；共享网络仍不提供独立端口空间或完整 ingress 隔离。
 
-诊断时同时读取网络空间与策略执行事实：netns 探针可保留 `forwarding` 缺口，网络报告
-`level=shared` / `room=dorm`；UID 规则成功安装后仍可报告 `policy_backend=uid`、
-`policy_status=enforced`，策略 API 返回 `status=ok`、`enforcementMode=dns+nft`。
-UID 机制也不可用时才报告 `status=degraded`、`mode=unenforced`，caller 可据此拒绝使用；
+诊断时同时读取网络空间与策略执行事实：`isolation.probe` 可保留 `forwarding` 缺口，网络报告
+`isolation.level=shared` / `isolation.room=dorm`；UID 规则成功安装后，Bed 报告
+`egress.backend=uid_nft`、`egress.state=enforced`，策略 API 直接返回同一份 egress 快照。
+UID 机制也不可用时报告 `egress.backend=none`、`egress.state=unenforced`、`egress.effective=null`，并保留 requested 与独立诊断，caller 可据此拒绝使用；
 已选择机制后的具体规则安装失败则使 Bed 初始化失败，不能伪装成功。
 forwarding 配置由 Carrier 提供方决定，Hostel 不将其修改为 1，也不支持 live Bed 的跨机制热切换。
 
@@ -227,8 +279,8 @@ NetworkManager 同时拥有 Bed netns 和有效策略。控制面可以在 `POST
 规则数组、DELETE 删除 target 字符串数组。`/network/healthz` 查询同一 Bed 的有效状态。
 这些控制面接口按路径中的 Bed 定位，不接受 header 覆盖；操作引用防止执行期间被回收。
 缺少 Bed 返回 404，非法规则返回 400，nft 提交失败返回 500。查询不会创建 Bed。
-没有可用策略执行机制的 shared Bed 保存和更新 desired policy，返回 status=degraded、mode=unenforced、enforcementMode=none；
-requested_policy 是请求，policy=allow 仅表示 Hostel 没有安装限制，不保证外部 CNI/防火墙放行。Bed status 的已执行 policy 保持 null。
+没有可用策略执行机制的 shared Bed 保存和更新 desired policy，返回 state=unenforced、backend=none；
+requested 是目标，effective 为 null，不推测外部 CNI/防火墙是否放行。
 非法更新保留之前声明；运行中已经采用的执行机制失败不能转为这个降级路径。
 
 策略包含 `defaultAction: allow|deny` 和 `egress: [{action,target}]`；target 接受 IP、CIDR、
@@ -238,7 +290,7 @@ IP/CIDR 拒绝优先于允许；域名拒绝由 Bed DNS 执行，默认拒绝策
 Bed 进程只能向本 Bed DNS gateway 的 53 端口查询；IP 规则控制实际连接，域名规则不解释
 HTTPS、DoH 或已经由调用方掌握的 IP，不能作为 HTTP Host/SNI 校验或 MITM 的替代。
 
-策略更新使用原子 nft transaction，失败保留旧策略；更新清除旧的 DNS 放行集，旧版本下
+策略更新使用原子 nft transaction，明确拒绝保留旧策略，提交结果不确定则报告 unknown；更新清除旧的 DNS 放行集，旧版本下
 尚未返回的 DNS 响应不能重新开放地址。已缓存 DNS 的客户端在收紧规则后可能需要重新解析。
 private 网络的规则在 Bed 自己的网络 namespace 内执行；shared 网络按实际 socket UID 匹配。
 两者都不修改 Carrier 的默认出站策略；private 网络现有的跨 Bed 隔离规则仍然成立。当前网络 backend 仅提供 IPv4 外部连通，IPv6 转发仍被阻断。
@@ -251,11 +303,10 @@ Store 保存；控制面重建 Bed 时需重传初始策略。透明凭据注入
 ### 共享网络下的 UID 策略
 
 BedSpec 继续使用 `networkPolicy.defaultAction` 与 `networkPolicy.egress`，不指定底层机制。
-Network 将网络空间与策略执行分别报告：网络 `level=shared`、房型 dorm 时，仍可有
-`policy_backend=uid` 和 `policy_status=enforced`。策略接口返回 `status=ok`、
-`enforcementMode=dns+nft`；`mode` 随规则为 allow_all、deny_all 或 enforcing。
-实例的 `policy_backend`、`policy_probe` 和 `tools.uid_nft` 报告实际选择与探测结果。
-网络原有 reason/cause/probe 继续解释独立 netns 的缺口，不代表 UID 策略未执行。
+Network 将网络空间与策略执行分别报告：`isolation.level=shared`、房型 dorm 时，仍可有
+`egress.backend=uid_nft` 和 `egress.state=enforced`。allow all、deny all 和规则策略都可以落实为 enforced。
+实例的 `egress.backend`、`egress.probe` 和 `tools.uid_nft` 报告实际选择与探测结果。
+`isolation.diagnostic` / `isolation.probe` 解释独立 netns 的缺口，不代表 UID 策略未执行。
 
 前提是 Privilege **实际采用** `per_bed` 独立 UID，用户进程以该身份创建 socket，
 并已清除 capabilities、设置 no_new_privs；所有 Pillow、命令和 session 共用该 Bed 身份。

@@ -121,13 +121,13 @@ func (e *uidPolicyLease) apply(ctx context.Context, p Policy) error {
 		return err
 	}
 	_, err = run(ctx, renderUIDPolicy(e.name, e.uid, uint32(os.Geteuid()), host, n, p), e.owner.nft, "-f", "-")
-	return err
+	return policyTransactionError(ctx, err)
 }
 func (e *uidPolicyLease) learn(ctx context.Context, addresses []dnsAddress) error {
 	_, err := run(ctx, renderDNSSet(e.name, addresses), e.owner.nft, "-f", "-")
 	return err
 }
-func (e *uidPolicyLease) Update(ctx context.Context, change PolicyMutation) (PolicyStatus, error) {
+func (e *uidPolicyLease) Update(ctx context.Context, change PolicyMutation) (Policy, error) {
 	return e.policy.update(ctx, change)
 }
 func (e *uidPolicyLease) Close(ctx context.Context) error {

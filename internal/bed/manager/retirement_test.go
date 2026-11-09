@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,8 +103,8 @@ type retryReleaseNetwork struct {
 	calls int
 }
 
-func (*retryReleaseNetwork) Status() network.Status {
-	return network.Status{Effective: network.Private}
+func (*retryReleaseNetwork) Status() hostnetwork.Status {
+	return hostnetwork.Status{Available: true}
 }
 func (n *retryReleaseNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	return n, nil

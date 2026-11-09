@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bed/network"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 func TestLinuxNetworkPolicyAPI(t *testing.T) {
@@ -30,7 +31,7 @@ func TestLinuxNetworkPolicyAPI(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if manager.Status().Effective != network.Private {
+	if manager.Status().Isolation.Level != string(network.Private) {
 		t.Fatalf("network unavailable: %+v", manager.Status())
 	}
 	s.mgr.SetNetworkManager(manager)
@@ -58,19 +59,19 @@ func TestLinuxNetworkPolicyAPI(t *testing.T) {
 		}
 	}
 	rec = do(t, s, http.MethodGet, "/v1/beds/policy-a/network/policy", nil, nil)
-	var a network.PolicyStatus
+	var a protocol.EgressStatus
 	if err := json.Unmarshal(rec.Body.Bytes(), &a); err != nil {
 		t.Fatal(err)
 	}
-	if a.Policy.DefaultAction != "deny" || len(a.Policy.Egress) != 1 || a.Policy.Egress[0].Target != "169.254.169.254" || a.Scope != "bed_processes" {
+	if a.Effective.DefaultAction != "deny" || len(a.Effective.Egress) != 1 || a.Effective.Egress[0].Target != "169.254.169.254" || a.Scope != "bed_processes" {
 		t.Fatalf("policy A: %+v", a)
 	}
 	rec = do(t, s, http.MethodGet, "/v1/beds/policy-b/network/policy", nil, nil)
-	var b network.PolicyStatus
+	var b protocol.EgressStatus
 	if err := json.Unmarshal(rec.Body.Bytes(), &b); err != nil {
 		t.Fatal(err)
 	}
-	if b.Policy.DefaultAction != "allow" || len(b.Policy.Egress) != 0 {
+	if b.Effective.DefaultAction != "allow" || len(b.Effective.Egress) != 0 {
 		t.Fatalf("A API changed B: %+v", b)
 	}
 }

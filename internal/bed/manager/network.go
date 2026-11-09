@@ -7,11 +7,12 @@ import (
 	"path/filepath"
 
 	"github.com/qiankunli/hostel/internal/bed/network"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 func (m *Manager) SetNetworkManager(manager *network.Manager) {
 	if manager == nil {
-		manager = network.WithProvider((*network.Manager)(nil), m.owners.Network)
+		manager = network.WithProvider(nil, m.owners.Network)
 	}
 	manager.SetStateDirectory(filepath.Join(m.root, ".network"))
 	manager.SetStatusWriter(m.owners.Network)
@@ -40,6 +41,6 @@ func (m *Manager) networkEndpoint(b *managedBed, endpoint string) string {
 
 // NetworkPolicy consumes an existing Bed; the HTTP layer holds an operation
 // reference so eviction cannot destroy its namespace during a kernel update.
-func (m *Manager) NetworkPolicy(ctx context.Context, b *managedBed, mutation network.PolicyMutation) (network.PolicyStatus, error) {
+func (m *Manager) NetworkPolicy(ctx context.Context, b *managedBed, mutation network.PolicyMutation) (protocol.EgressStatus, error) {
 	return m.network.UpdatePolicy(ctx, b.Bed, mutation)
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -71,10 +72,10 @@ func TestCarrierForwardingDisabled(t *testing.T) {
 			}
 			must2xx(t, "forwarding diagnostics", response)
 			n := status.Subsystems.Network
-			if n.Effective != network.Shared || n.Room != protocol.Dorm || n.Cause != "carrier" || n.Probe.Stage != "forwarding" || n.Tools["netns"].Selected || n.Tools["netns"].Probe != "unavailable" || !strings.Contains(n.Reason, "forwarding") || status.Isolation.Effective != protocol.Dorm {
+			if n.Isolation.Level != string(network.Shared) || n.Isolation.Room != protocol.Dorm || n.Isolation.Diagnostic.Cause != "carrier" || n.Isolation.Probe.Stage != "forwarding" || n.Tools["netns"].Selected || n.Tools["netns"].Probe != "unavailable" || !strings.Contains(n.Isolation.Diagnostic.Message, "forwarding") || status.Isolation.Effective != protocol.Dorm {
 				t.Fatalf("forwarding gap misreported: %+v", status)
 			}
-			t.Logf("ip_forward=0 filesystem=%s/%s network=%s/%s cause=%s stage=%s room=%s", status.Subsystems.Filesystem.Effective, status.Subsystems.Filesystem.Room, n.Effective, n.Room, n.Cause, n.Probe.Stage, status.Isolation.Effective)
+			t.Logf("ip_forward=0 filesystem=%s/%s network=%s/%s cause=%s stage=%s room=%s", status.Subsystems.Filesystem.Effective, status.Subsystems.Filesystem.Room, n.Isolation.Level, n.Isolation.Room, n.Isolation.Diagnostic.Cause, n.Isolation.Probe.Stage, status.Isolation.Effective)
 			const name = "forwarding-disabled"
 			ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
 			response, err = c.json(ctx, http.MethodPost, "/v1/beds", "", map[string]any{"id": name, "networkPolicy": map[string]any{"defaultAction": "deny"}, "pillows": workspacePillows()}, nil)
@@ -93,8 +94,23 @@ func TestCarrierForwardingDisabled(t *testing.T) {
 			}
 			must2xx(t, "Bed realized guarantees", response)
 			b := detail.Status.Subsystems
-			if detail.Status.Isolation.Effective != protocol.Dorm || b.Network.Cause != "carrier" || b.Network.PolicyStatus != "unenforced" || b.Network.RequestedPolicy == nil || b.Network.Policy != nil || b.Filesystem.Room != status.Subsystems.Filesystem.Room {
+			if detail.Status.Isolation.Effective != protocol.Dorm || b.Network.Isolation.Diagnostic.Cause != "carrier" || b.Network.Egress.State != "unenforced" || b.Network.Egress.Requested == nil || b.Network.Egress.Effective != nil || b.Filesystem.Room != status.Subsystems.Filesystem.Room {
 				t.Fatalf("Bed hid the gap or weakened filesystem: %+v", detail.Status)
+			}
+			if n.Isolation.Diagnostic == nil || n.Isolation.Diagnostic.Stage != "forwarding" || n.Egress.Backend != "none" || n.Egress.Diagnostic == nil || n.Egress.Diagnostic.Code != "disabled_by_config" {
+				t.Fatalf("instance mixed isolation and egress: %+v", n)
+			}
+			if b.Network.Egress.State != protocol.EgressUnenforced || b.Network.Egress.Backend != "none" || b.Network.Egress.Effective != nil || b.Network.Egress.Diagnostic.Code != "disabled_by_config" {
+				t.Fatalf("Bed egress misreported: %+v", b.Network)
+			}
+			var policy protocol.EgressStatus
+			response, err = c.json(t.Context(), http.MethodGet, "/v1/beds/"+name+"/network/policy", "", nil, &policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			must2xx(t, "unenforced policy", response)
+			if policy.Effective != nil || !reflect.DeepEqual(policy, b.Network.Egress) {
+				t.Fatalf("policy invented enforcement: %+v", policy)
 			}
 			result, response := c.command(t, name, map[string]any{"command": "printf forwarding-gap-reported", "timeout": 5000})
 			must2xx(t, "execute with shared networking", response)

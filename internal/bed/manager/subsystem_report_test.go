@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 	"testing"
 
 	hostel "github.com/qiankunli/hostel/internal"
@@ -94,8 +95,8 @@ type unavailableReportNetwork struct {
 	err error
 }
 
-func (p unavailableReportNetwork) Status() network.Status {
-	return network.Status{Err: p.err, Effective: network.Shared, Cause: hostel.CauseCarrier, Reason: "IPv4 forwarding unavailable"}
+func (p unavailableReportNetwork) Status() hostnetwork.Status {
+	return hostnetwork.Status{Probe: hostnetwork.Probe{Err: p.err}, Reason: "IPv4 forwarding unavailable"}
 }
 func (unavailableReportNetwork) Acquire(context.Context, string) (network.Attachment, error) {
 	panic("shared network must not allocate a namespace")
@@ -109,7 +110,7 @@ func TestBedReportsNetworkFailureWithoutRejectingSharedExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := b.Bed.Status().Network
-	if got.Room != bed.Dorm || got.Cause != string(hostel.CauseCarrier) || got.Reason == "" {
+	if got.Isolation.Room != bed.Dorm || got.Isolation.Diagnostic.Cause != string(hostel.CauseCarrier) || got.Isolation.Diagnostic.Message == "" {
 		t.Fatalf("missing network realization evidence: %+v", got)
 	}
 }
