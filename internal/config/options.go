@@ -70,6 +70,7 @@ func (o Options) apply(c *Config) {
 	apply(&c.OTLPTracesHTTPEndpoint, o.OTLPTracesHTTPEndpoint)
 	apply(&c.Addr, o.Addr)
 	apply(&c.BedsRoot, o.BedsRoot)
+	apply(&c.Bed.Filesystem.SharedSoftware, o.Bed.Filesystem.SharedSoftware)
 	apply(&c.Bed.Filesystem.DormReadFallbackRoot, o.Bed.Filesystem.DormReadFallbackRoot)
 	apply(&c.BedIdleTTL, o.BedIdleTTL)
 	apply(&c.MaxBeds, o.MaxBeds)

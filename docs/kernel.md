@@ -176,6 +176,9 @@ CPU/内存、cgroup 记账与容量准入，职责见 [资源治理](resource.md
 挂载、进程、身份、cgroup 和事实采集能力，不依赖 Bed/Amenity，不解释房型或工作区。
 领域赋予资源身份、策略与生命周期，决定是否允许降级，并发布实际状态。
 
+Filesystem.Start 先准备 Carrier 明确授权的共享软件目录（组权限、setgid、default ACL），
+Bed 级 Prepare 只接入视图和身份；共享目录配置和结果见 [权限模型](isolation.md#权限与执行身份)。
+
 启动采集 Host facts，领域再用真实操作验证可用性；单个工具通过不等于组合可运行。
 状态读取只投影已观测事实。API handler 负责寻址、准入与协议转换，不能拼接内部路径或
 操作资源句柄；原生和 Execd adapter 直接复用领域能力，彼此不依赖。代码地图见
