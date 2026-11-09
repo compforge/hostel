@@ -129,7 +129,7 @@ func main() {
 	// Filesystem consumes Privilege's result; it never changes the identity choice.
 	filesConfig := cfg.Bed.Filesystem
 	filesConfig.DedicatedIdentity = identity.Effective == privilege.Dedicated
-	iso, err := isolation.Resolve(host, filesConfig, cfg.BedsRoot)
+	iso, err := isolation.Resolve(host, filesConfig.Config, cfg.BedsRoot)
 	if err != nil {
 		log.Fatalf("hostel: select filesystem: %v", err)
 	}
@@ -158,6 +158,7 @@ func main() {
 		bed.WithIdentitySelection(identity),
 		bed.WithPillows(ports),
 		bed.WithConfiguration(cfg.Bed.Configuration),
+		bed.WithSharedSoftware(cfg.Bed.Filesystem.SharedSoftware),
 	)
 	if err != nil {
 		log.Fatalf("hostel: init bed manager: %v", err)

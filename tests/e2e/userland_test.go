@@ -5,9 +5,11 @@ package e2e_test
 import (
 	"context"
 	"fmt"
+	"github.com/qiankunli/hostel/protocol"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -64,7 +66,19 @@ func TestSharedSoftwareAcrossBedUsers(t *testing.T) {
 	}
 	a, b := run(t, "software-a", "id -u"), run(t, "software-b", "id -u")
 	for _, name := range []string{"software-a", "software-b"} {
-		run(t, name, "awk '/^Groups:/ { if (NF != 2 || $2 != 1000) exit 1 }' /proc/self/status")
+		// A user namespace may display an unmapped supplementary group as
+		// overflow GID. Check the Carrier-space identity and prove effective
+		// access through the cross-UID package operations below.
+		var detail protocol.BedDetail
+		response, err := c.json(t.Context(), http.MethodGet, "/v1/beds/"+name, "", nil, &detail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		must2xx(t, "shared software identity", response)
+		u := detail.Status.Subsystems.Privilege
+		if !u.Assigned || !slices.Equal(u.SupplementaryGIDs, []int{1000}) {
+			t.Fatalf("unexpected Carrier-space identity: %+v", u)
+		}
 	}
 	if a == b {
 		t.Fatalf("software sharing was tested with the same UID: %s", a)
@@ -82,6 +96,56 @@ func TestSharedSoftwareAcrossBedUsers(t *testing.T) {
 			run(t, "software-b", tc.remove)
 		})
 	}
+}
+
+// +case:id=shared_software_runtime_acl,desc=`Final image boots without exported ACLs`,expect=`Filesystem.Start prepares shared software before Beds execute; distinct UIDs can update each other's files with umask 022`
+func TestSharedSoftwareRuntimePermissions(t *testing.T) {
+	requireUserland(t)
+	target := startTarget(t, targetOptions{})
+	c := target.client
+	var report struct {
+		Subsystems struct {
+			Filesystem struct {
+				SharedSoftware []struct {
+					Path string `json:"path"`
+					Tool struct {
+						Selected bool `json:"selected"`
+					} `json:"tool"`
+				} `json:"shared_software"`
+			} `json:"filesystem"`
+		} `json:"subsystems"`
+	}
+	response, err := c.json(t.Context(), "GET", "/v1/status", "", nil, &report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must2xx(t, "shared software diagnostics", response)
+	prepared := false
+	for _, s := range report.Subsystems.Filesystem.SharedSoftware {
+		if s.Path == "/usr/local" && s.Tool.Selected {
+			prepared = true
+		}
+	}
+	if !prepared {
+		t.Fatalf("shared software was not prepared before admission: %+v", report)
+	}
+	for _, name := range []string{"permissions-a", "permissions-b"} {
+		must2xx(t, "declare Bed", c.createBed(t, name))
+	}
+	run := func(name, command string) string {
+		t.Helper()
+		result, response := c.command(t, name, map[string]any{"command": command, "timeout": 30000})
+		must2xx(t, "shared software permissions", response)
+		assertCommandExit(t, result, 0)
+		return strings.TrimSpace(result.Stdout)
+	}
+	if run("permissions-a", "id -u") == run("permissions-b", "id -u") {
+		t.Fatal("distinct UID prerequisites were not realized")
+	}
+	dir := fmt.Sprintf("/usr/local/hostel-permissions-%d", time.Now().UnixNano())
+	run("permissions-a", fmt.Sprintf("umask 022; mkdir -p %s/nested; printf first > %s/nested/package", dir, dir))
+	run("permissions-b", fmt.Sprintf("printf second >> %s/nested/package; mv %s/nested/package %s/nested/replaced; umask 022; printf replacement > %s/nested/package", dir, dir, dir, dir))
+	run("permissions-a", fmt.Sprintf("printf third >> %s/nested/package; rm -r %s", dir, dir))
 }
 
 func TestChromiumOperationsAndArtifact(t *testing.T) {
@@ -148,7 +212,13 @@ func requireUserland(t *testing.T) {
 		t.Skip("set HOSTEL_E2E_USERLAND=1 to run PyPI/npm/Chromium image scenarios")
 	}
 	if strings.TrimSpace(os.Getenv(imageEnv)) == "" {
-		t.Fatalf("%s=1 requires %s", userlandEnv, imageEnv)
+		// An on-target runner may already be inside the disposable userland
+		// image. Keep this explicit so a developer's workstation is not used
+		// accidentally for global package mutations.
+		if strings.TrimSpace(os.Getenv(binaryEnv)) != "" && os.Getenv("HOSTEL_E2E_ON_TARGET") == "1" && os.Getenv("HOSTEL_E2E_DISPOSABLE") == "1" {
+			return
+		}
+		t.Fatalf("%s=1 requires %s or an on-target binary with HOSTEL_E2E_DISPOSABLE=1", userlandEnv, imageEnv)
 	}
 }
 

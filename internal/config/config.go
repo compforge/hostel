@@ -99,6 +99,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs := flag.NewFlagSet("hostel", flag.ContinueOnError)
 	c := &Config{}
 	var configurationSources string
+	sharedSoftware := fs.String("shared-software", osx.EnvStr("HOSTEL_SHARED_SOFTWARE", "[]"), "JSON array of Carrier shared software directories (path, gid, policy)")
 	fs.StringVar(&configurationSources, "configuration-sources", osx.EnvStr("HOSTEL_CONFIGURATION_SOURCES", "{}"), "JSON object of named configuration directories")
 	extraGIDs := fs.String("bed-extra-gids", osx.EnvStr("HOSTEL_BED_EXTRA_GIDS", ""), "comma-separated supplementary group IDs for Bed processes")
 	fs.StringVar(&c.Addr, "addr", osx.EnvStr("HOSTEL_ADDR", DefaultAddr), "HTTP listen address")
@@ -172,6 +173,11 @@ func Load(args []string, explicit Options) (*Config, error) {
 			return nil, fmt.Errorf("bed extra gids: %w", err)
 		}
 	}
+	if explicit.Bed.Filesystem.SharedSoftware == nil {
+		if err := json.Unmarshal([]byte(*sharedSoftware), &c.Bed.Filesystem.SharedSoftware); err != nil {
+			return nil, fmt.Errorf("shared software must be a JSON array of directory declarations: %w", err)
+		}
+	}
 	explicit.apply(c)
 	// Presence distinguishes an exact empty list from an unspecified rootless baseline.
 	if explicit.Bed.Privilege.SupplementaryGIDs != nil && c.Bed.Privilege.SupplementaryGIDs == nil {
@@ -196,6 +202,9 @@ func Load(args []string, explicit Options) (*Config, error) {
 		return nil, err
 	}
 	if err := c.Bed.Filesystem.Validate(); err != nil {
+		return nil, err
+	}
+	if err := c.Bed.Filesystem.ValidateSharedGroups(c.Bed.Privilege.SupplementaryGIDs); err != nil {
 		return nil, err
 	}
 	if err := c.Bed.Network.Validate(); err != nil {

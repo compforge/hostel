@@ -147,10 +147,33 @@ command、Session 和 Pillow 主进程使用同一个 BedUser，最终附加组�
 实例和 Bed 的 privilege 状态披露 Carrier 身份空间中的 `supplementary_gids`，配置的非空列表不能冒充实际执行结果。
 user namespace 内未映射的附加组可能显示为 overflow GID（例如 65534）；文件访问仍按内核保存的组身份判定，不能只凭内部 `id -G` 的显示值判断授权丢失。
 
-共享软件由 Carrier 镜像授权，例如 Bedbox 将 `/usr/local` 的组设为 1000、目录设为 setgid，
-配置组写权限和 default ACL，并给 Bed 附加组 1000。私有根和 managed Volume 继续按各 Bed
-UID/主 GID 管理，根目录以 0700 阻止其他 Bed 访问。共享组不自动授权所有路径；HostPath
-的权限由提供方准备，Hostel 不在创建 Bed 时递归修改共享软件目录。
+共享软件目录由 Carrier 配置显式授权，Filesystem 在实例级 Start 中准备，先于任何 Bed 执行。
+`HOSTEL_SHARED_SOFTWARE` / `--shared-software` 接受 JSON 数组，例如：
+
+```json
+[{"path":"/usr/local","gid":1000,"policy":"required"}]
+```
+
+Go Options 使用 `Bed.Filesystem.SharedSoftware`；显式 Options > CLI > env > 默认空列表。
+每项 path 必须是已有、规范化的绝对目录，不能是 `/`、不能经过 symlink，配置项不能重叠；
+GID 必须属于 `HOSTEL_BED_EXTRA_GIDS` 选择的附加组，并避开 root 与私有 Bed GID 范围。
+默认 policy 为 auto，失败报告 unavailable；required 无法落实时启动失败，off 不操作目录。
+普通 HostPath 仍由提供方准备，不因被 Bed 引用就自动获得权限修改授权。
+
+Filesystem 幂等补齐组读写、目录组执行/setgid 与 default ACL，保留原 UID，跳过 symlink，
+拒绝修改多硬链接普通文件或特权可执行文件，避免改变声明范围外共享 inode 或授予可写的特权程序。
+配置只授权 Carrier 目录权限准备，不自动增加 Pillow Mount；自定义路径仍按既有 Volume/Mount 规则接入，显式只读视图保持只读。
+所有修改在运行时按文件句柄完成，保留 default ACL 中已有的命名用户/组条目；ACL 还须读回并验证新建文件的组/权限继承；不依赖镜像导出保留 ACL。
+不为每次 Bed 创建重复递归修改共享树，Bed 删除和实例 Close 也不删除共享软件或回滚目录权限。
+准备有 2 分钟实例级预算；日志包含 path、GID、policy、处理数、耗时和失败原因。
+已存在扩展 access ACL 时，同时补齐 owning group 与 mask 的组权限，保留 named user/group 条目；这些显式 named ACL 和应用后续 chmod 仍可能限制特定身份。
+
+`/v1/status.subsystems.filesystem.shared_software` 报告每项 path/GID、Tool policy/probe/selected/reason 与处理数；
+只投影启动结果，状态读取不操作文件系统。多目录准备不是事务，失败前已完成的权限设置保留。
+
+Bedbox 声明 `/usr/local` 和共享组 1000，镜像负责安装软件及普通权限；default ACL 归 Hostel 运行时准备。
+私有根和 managed Volume 继续按各 Bed UID/主 GID 管理，根目录以 0700 阻止其他 Bed 访问。
+共享组不自动授权其他路径，也不要求所有 Bed 改用相同 UID。
 
 default ACL 只约束普通创建的初始权限，安装工具的显式 mode、chmod 或保留权限的移动仍可能收窄权限；
 镜像必须实测支持的软件安装、跨 UID 替换和卸载。共享软件修改会影响其他 Bed，属于共享信任域；
