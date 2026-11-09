@@ -113,9 +113,9 @@ Spec 声明，隐式需求来自既定的工作负载语义与默认契约；通
 [领域与 Host 机制](#领域与-host-机制)。
 
 `bed.Subsystem[S]` 统一 daemon 生命周期、单 Bed 生命周期和实例级 `Status()` 契约。
-资源与状态由所属子系统唯一写入；失败的准备也可能拥有部分 allocation，必须保留清理责任并支持重试。
+资源与状态由所属子系统唯一写入，分配与持有的共同契约见下文。
 `Stop` 停止活动，`Release` 释放运行资源，`Forget` 在进程、资源与本地数据清理完成后遗忘身份。
-旧 allocation 的清理不得影响同名新资源。Hostel 通过 Bed Manager 协调顺序并统一发布 Ready，
+Hostel 通过 Bed Manager 协调顺序并统一发布 Ready，
 局部 Prepare 成功不代表整个 Bed 已准备完成。后台循环使用可选 `Runnable`，不强制所有子系统运行后台任务。
 
 `Status()` 返回实例级快照，Bed 级事实通过所属状态分区发布；查询不执行探测、分配或远端 I/O，
@@ -139,6 +139,36 @@ Bed Manager 的请求句柄协调 operation/session 和清理进度，不另造�
 Start 同步完成准备，Run 自己管理周期、合并与退避，Close 取消并等待退出。Bed Manager
 显式安排跨领域依赖顺序；资源按具体 allocation 回收，失败保留清理责任。具体阶段与重试见
 [bed.md](bed.md#子系统参与生命周期)。
+
+### 资源分配与持有
+
+Subsystem 在准备和持续运行过程中按需申请资源、持有 allocation，并在所属生命周期结束时
+负责释放；Hostel 协调跨 Subsystem 的依赖和回收顺序。资源包括 port、UID/GID、网络地址、
+netns 和 cgroup 等，一次 Bed 初始化或运行活动可以持有多个不同生命周期的 allocation。
+
+**资源**是被分配的对象；**allocation** 是某个 owner 在特定作用域内对资源的一次具体分配，
+包含资源值与实际状态；**lease / handle** 是持有、使用和释放该 allocation 的具体句柄。
+Allocator 负责选择资源、登记占用及判定冲突；持有句柄的领域负责使用、交接和最终清理。
+排他性由资源的作用域与策略决定，例如 TCP port 按网络作用域和监听地址判断冲突，Privilege
+区分独立身份与显式共享身份。
+
+各领域遵守以下共同契约：
+
+- **归属明确**：记录 allocation 的 owner、作用域和资源值；清理使用原 allocation 的句柄，旧句柄不能释放同名或同值的新分配。
+- **状态真实**：区分逻辑预留和实际生效。例如 port 的 `reserved` 表示已登记占用，`listening` 表示监听已经落实；申请成功不等于消费者已就绪。
+- **按依赖释放**：先停止使用者、撤销依赖，再释放 allocation；进程停止是否结束预留，由所属领域的生命周期决定。
+- **失败保留责任**：准备失败也可能留下部分资源；清理失败继续持有占用与清理责任，后续重试不得提前将资源交给新使用者。重复释放同一 allocation 应安全。
+- **恢复由领域负责**：需要跨重启保留的身份先记录再使用；遗留运行资源按领域记录与宿主事实 reconcile，决定复用、重建或回收。持久化格式和恢复机制由对应 owner 维护。
+
+| 资源 | 分配与持有责任 | 存续与释放边界 |
+|---|---|---|
+| UID / 主 GID | Privilege 管理租约，Bed Manager 保存本地身份记录并协调 Forget | 随 Bed 本地身份保留；运行停止后仍可能占用，资源、本地数据和身份记录清理完成后释放 |
+| TCP port | PortManager 管理分配，Network 或服务领域持有句柄 | 随所属服务或网络 allocation 保留；使用它的监听器、进程和转发清理后才能结束占用 |
+| netns、网络地址与规则 | Network 管理 allocation 与恢复记录 | 随 Bed 网络 allocation 存续；依赖它的进程、文件视图等释放后回收 |
+
+这些契约由各领域的类型化 allocator、句柄和状态兑现。现有 Resource Subsystem 负责
+CPU/内存、cgroup 记账与容量准入，职责见 [资源治理](resource.md)；具体身份与网络恢复分别见
+[Bed 生命周期](bed.md#身份与声明)和[网络](network.md)。
 
 ### 领域与 Host 机制
 
