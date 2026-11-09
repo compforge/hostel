@@ -125,7 +125,7 @@ type fakeUIDPolicies struct {
 	acquireErr error
 }
 
-func (p *fakeUIDPolicies) Acquire(_ context.Context, uid uint32) (hostnetwork.PolicyLease, error) {
+func (p *fakeUIDPolicies) Acquire(_ context.Context, _ string, uid uint32) (hostnetwork.PolicyLease, error) {
 	p.uid = uid
 	return p.lease, p.acquireErr
 }

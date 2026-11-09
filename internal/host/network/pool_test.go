@@ -17,7 +17,7 @@ type fakeBackend struct {
 	createRelease chan struct{}
 }
 
-func (b *fakeBackend) Create(context.Context) (endpoint, error) {
+func (b *fakeBackend) Create(context.Context, string) (endpoint, error) {
 	b.creates++
 	if b.createStarted != nil {
 		close(b.createStarted)

@@ -51,7 +51,7 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 		if !m.dedicatedUIDs || !identity.Assigned {
 			return fmt.Errorf("UID network policy requires a prepared dedicated identity")
 		}
-		a.policy, err = m.uidPolicies.Acquire(ctx, identity.UID)
+		a.policy, err = m.uidPolicies.Acquire(ctx, b.ID.String(), identity.UID)
 		if err != nil {
 			return fmt.Errorf("prepare UID network policy: %w", err)
 		}

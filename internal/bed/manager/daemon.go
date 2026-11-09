@@ -31,6 +31,10 @@ func (m *Manager) Start(ctx context.Context) error {
 	if m.started || m.startErr != nil {
 		return m.startErr
 	}
+	if err := os.MkdirAll(m.root, 0755); err != nil {
+		m.startErr = err
+		return err
+	}
 	subsystems := []daemonSubsystem{
 		{"filesystem", m.files}, {"privilege", m.privileges}, {"resource", m.resourceManager},
 		{"store", m.store}, {"network", m.network}, {"executor", m.executorManager},
@@ -45,12 +49,9 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	if m.startErr == nil {
-		m.startErr = os.MkdirAll(m.root, 0755)
+		m.startErr = m.recoverLocalIdentities()
 		if m.startErr == nil {
-			m.startErr = m.recoverLocalIdentities()
-			if m.startErr == nil {
-				m.startErr = m.cleanupPreviousExecutionLogs(ctx)
-			}
+			m.startErr = m.cleanupPreviousExecutionLogs(ctx)
 		}
 	}
 	if m.startErr != nil {

@@ -32,7 +32,8 @@ func TestNetworkPolicyTraffic(t *testing.T) {
 	}
 }
 
-func testNetworkPolicyTraffic(t *testing.T, options targetOptions, shared bool) {
+func policyListener(t *testing.T) net.Listener {
+	t.Helper()
 	listener, err := net.Listen("tcp4", "0.0.0.0:0")
 	if err != nil {
 		t.Fatal(err)
@@ -49,6 +50,11 @@ func testNetworkPolicyTraffic(t *testing.T, options targetOptions, shared bool) 
 			_ = connection.Close()
 		}
 	}()
+	return listener
+}
+
+func testNetworkPolicyTraffic(t *testing.T, options targetOptions, shared bool) {
+	listener := policyListener(t)
 	c := startTarget(t, options).client
 	deny := map[string]any{"defaultAction": "deny", "egress": []any{}}
 	policyRequest(t, c, "POST", "/v1/beds", map[string]any{"id": "policy-a", "networkPolicy": deny, "pillows": workspacePillows()}, http.StatusAccepted)
@@ -78,6 +84,7 @@ func testNetworkPolicyTraffic(t *testing.T, options targetOptions, shared bool) 
 			}
 		}
 	}
+	var err error
 	ip := netip.MustParseAddr("127.0.0.1")
 	var response httpResult
 	if !shared {
@@ -196,6 +203,7 @@ func assertPolicyConnection(t *testing.T, c *apiClient, bed, session, address st
 		output, response = c.stream(t, "/session/"+url.PathEscape(session)+"/run", bed, request)
 	}
 	must2xx(t, "network probe", response)
+	t.Logf("Bed %s expected network-%s: stdout=%q stderr=%q", bed, mode, output.Stdout, output.Stderr)
 	assertCommandExit(t, output, 0)
 	if !strings.Contains(output.Stdout, "network-"+mode) {
 		t.Fatalf("%s network probe: stdout=%q stderr=%q", bed, output.Stdout, output.Stderr)

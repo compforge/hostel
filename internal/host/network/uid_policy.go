@@ -10,6 +10,6 @@ type PolicyLease interface {
 }
 
 type UIDPolicyProvider interface {
-	Acquire(context.Context, uint32) (PolicyLease, error)
+	Acquire(context.Context, string, uint32) (PolicyLease, error)
 	Close(context.Context) error
 }

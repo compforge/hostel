@@ -20,6 +20,7 @@ import (
 // uidPolicyBackend installs only socket-owner-scoped rules in the current netns.
 // Identity allocation and stopping its processes belong to the caller.
 type uidPolicyBackend struct {
+	store     *AllocationStore
 	mu        sync.Mutex
 	nft       string
 	ports     *PortManager
@@ -36,17 +37,21 @@ type uidPolicyLease struct {
 	dns      *dnsForwarder
 	policy   *policyControl
 	table    bool
+	record   *allocationRecord
 	released bool // protected by policy.mu, including incomplete acquisitions
 }
 
 // ProbeUIDPolicy validates the complete ruleset without changing routing or
 // sysctls. Actual installation also verifies netlink mutation permissions.
-func ProbeUIDPolicy(ctx context.Context, ports *PortManager) (UIDPolicyProvider, Probe) {
+func ProbeUIDPolicy(ctx context.Context, ports *PortManager, stores ...*AllocationStore) (UIDPolicyProvider, Probe) {
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	probe := Probe{Stage: "tools", Cause: hostel.CauseCarrier}
 	b := &uidPolicyBackend{ports: ports, leases: make(map[uint32]*uidPolicyLease)}
+	if len(stores) > 0 {
+		b.store = stores[0]
+	}
 	var err error
 	b.nft, err = exec.LookPath("nft")
 	if err == nil {
@@ -73,7 +78,7 @@ func ProbeUIDPolicy(ctx context.Context, ports *PortManager) (UIDPolicyProvider,
 	return b, probe
 }
 
-func (b *uidPolicyBackend) Acquire(ctx context.Context, uid uint32) (PolicyLease, error) {
+func (b *uidPolicyBackend) Acquire(ctx context.Context, key string, uid uint32) (PolicyLease, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
@@ -86,6 +91,11 @@ func (b *uidPolicyBackend) Acquire(ctx context.Context, uid uint32) (PolicyLease
 		return nil, fmt.Errorf("UID %d still owns a network policy allocation", uid)
 	}
 	e := &uidPolicyLease{owner: b, uid: uid, name: "hu_" + randx.Hex(8)}
+	var err error
+	e.record, err = b.store.Add(allocationRecord{Kind: "uid", Key: key, Name: e.name, UID: uid})
+	if err != nil {
+		return nil, err
+	}
 	e.policy = &policyControl{current: Policy{DefaultAction: "allow"}, apply: e.apply, learn: e.learn}
 	e.dns = newDNSForwarder("127.0.0.1", b.upstreams)
 	e.dns.address, e.dns.ports, e.dns.owner = "127.0.0.1:0", b.ports, e.name+"/dns"
@@ -141,6 +151,9 @@ func (e *uidPolicyLease) Close(ctx context.Context) error {
 	e.policy.mu.Unlock()
 	e.dns.Close()
 	e.policy.mu.Lock()
+	if err := e.owner.store.Remove(e.record); err != nil {
+		return err
+	}
 	e.released = true
 	e.owner.mu.Lock()
 	if e.owner.leases[e.uid] == e {

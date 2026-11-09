@@ -45,12 +45,14 @@ var ErrInvalidPolicy = hostnetwork.ErrInvalidPolicy
 func NormalizePolicy(p Policy) (Policy, error) { return hostnetwork.NormalizePolicy(p) }
 
 type Manager struct {
-	portMappings  *PortMappings
-	config        Config
-	ports         *hostnetwork.PortManager
-	dedicatedUIDs bool
-	uidPolicies   hostnetwork.UIDPolicyProvider
-	uidProbe      hostnetwork.Probe
+	stateDirectory   string
+	allocationsStore *hostnetwork.AllocationStore
+	portMappings     *PortMappings
+	config           Config
+	ports            *hostnetwork.PortManager
+	dedicatedUIDs    bool
+	uidPolicies      hostnetwork.UIDPolicyProvider
+	uidProbe         hostnetwork.Probe
 	bed.Noop
 	provider    Provider
 	pool        *hostnetwork.Pool
@@ -81,12 +83,24 @@ func NewConfigured(ctx context.Context, cfg Config) *Manager {
 	}
 	return m
 }
+func (m *Manager) SetStateDirectory(path string) { m.stateDirectory = path }
+
 func (m *Manager) Start(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
 	if err := m.config.Validate(); err != nil {
 		return fmt.Errorf("network: %w", err)
+	}
+	if m.stateDirectory != "" && m.allocationsStore == nil {
+		var err error
+		m.allocationsStore, err = hostnetwork.OpenAllocationStore(ctx, m.stateDirectory)
+		if err != nil {
+			return fmt.Errorf("network recovery: %w", err)
+		}
+		if m.pool != nil {
+			m.pool.SetAllocationStore(m.allocationsStore)
+		}
 	}
 	if m.config.NetNS.Effective() == tool.Off {
 		log.Printf("network: tool=netns policy=off reason=disabled_by_config")
@@ -103,7 +117,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		return err
 	}
 	if m.Status().Effective == Shared && m.dedicatedUIDs && m.config.UIDNFT.Effective() != tool.Off && m.uidPolicies == nil {
-		m.uidPolicies, m.uidProbe = hostnetwork.ProbeUIDPolicy(ctx, m.ports)
+		m.uidPolicies, m.uidProbe = hostnetwork.ProbeUIDPolicy(ctx, m.ports, m.allocationsStore)
 		log.Printf("network: tool=uid_nft available=%t stage=%s cause=%s reason=%q", m.uidPolicies != nil, m.uidProbe.Stage, m.uidProbe.Cause, m.uidProbe.Error)
 	}
 	return m.Status().Tools["uid_nft"].CheckRequired("network.uid_nft")
@@ -232,8 +246,14 @@ func (m *Manager) Close(ctx context.Context) error {
 			return err
 		}
 	}
+	var err error
 	if m.provider != nil {
-		return m.provider.Close(ctx)
+		err = m.provider.Close(ctx)
+	} else {
+		err = m.pool.Close(ctx)
 	}
-	return m.pool.Close(ctx)
+	if err != nil {
+		return err
+	}
+	return m.allocationsStore.Close()
 }
