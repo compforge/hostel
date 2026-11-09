@@ -26,9 +26,8 @@ Network 尽力选择 private，实例探测失败可选择 shared，并报告网
 失败时的 `cause` 表示归因，`probe.stage` 表示检测阶段，`reason`/`probe.error` 保存运维详情；
 `scope` 仍表示网络执行范围，不是错误归因。
 
-例如 carrier netns 的 `ip_forward=0` 得到 `cause=carrier, probe.stage=forwarding`。
-这会令当前独立网络路径不可用。Hostel 可继续准备 shared Bed；若已采用独立 UID 且 UID+nft 探测通过，仍可执行出站策略，否则标为 unenforced，保留所请求的规则和 cause；
-caller 决定是否使用该 Bed。Hostel 不修改 carrier sysctl。
+例如 Carrier netns 的 `ip_forward=0` 得到 `cause=carrier, probe.stage=forwarding`，
+当前独立网络路径不可用；共享网络是否能执行出站策略另行探测，详见下文 forwarding 关闭的 case。
 配置显式禁用独立网络却请求其策略时归 request；地址耗尽归 resource；机制验证未兑现归 bed。
 namespace 命令或连通性失败本身不能证明是 carrier 还是 Bed 实现的问题，证据不足则为 unknown。
 原始 probe 错误留在全局状态/日志，创建 API 保留固定安全消息。
@@ -160,6 +159,62 @@ Bed 的 `status.subsystems.network` 报告准备后实际 room/level、gateway�
 该能力完成前浏览器不宣称受 Bed 网络隔离约束；待办统一记录于 `backlog.md`。
 
 组合与回收验证见 [单机 E2E](../tests/e2e/README.md) 和 [isolation.md](isolation.md)。
+
+### Case：Carrier 关闭 IPv4 forwarding
+
+场景：Hostel 启动时，Carrier 所在 netns 的 `net.ipv4.ip_forward=0`，运行期间保持不变。
+这是一项宿主配置约束，Network 需要分别判断联网、端口发布、网络隔离和 egress 规则能落实到什么程度。
+
+`ip_forward` 控制当前 netns 是否允许内核转发 IPv4 包。本地进程发起的连接走 OUTPUT，
+发给本地服务的包走 INPUT；替其他网络路由包走 FORWARD，需要允许 forwarding。
+因此值为 0 不代表本地进程不能联网，也不直接阻止 netns 创建、veth 配置或 nft 规则安装；
+这些操作各自受内核能力和权限限制。相关定义见 [Linux IP sysctl](https://docs.kernel.org/networking/ip-sysctl.html)。
+
+Hostel 在 Pod 内读取 `/proc/sys/net/ipv4/ip_forward` 时，观察的是 Carrier netns，
+不能直接据此判断 Node 初始 netns 的值。netns 隔离路由、网络设备、端口空间及相关 sysctl，
+见 [network_namespaces(7)](https://man7.org/linux/man-pages/man7/network_namespaces.7.html)。
+当前独立网络 backend 的路径是：
+
+```text
+Bed netns：进程 → eth0
+                   │ veth
+                   ▼
+Carrier netns：收到 Bed 的包 → FORWARD / NAT → Carrier eth0 → 外部网络
+```
+
+Carrier 在这条路径中承担路由器职责。即使 netns、veth、默认路由和 NAT 都能创建，
+forwarding 关闭时仍不能兑现预期的外部连通。当前 backend 因此在启动的 forwarding
+探测阶段停止，报告 `cause=carrier`，不修改 sysctl。这里拒绝的是当前 netns 联网机制，
+不是声称 Linux 无法创建 netns；其他拓扑或用户态代理需另行实现，不属于当前 backend。
+`NetNS=auto` 可选择 shared，显式 `NetNS=required` 则启动失败。
+
+| 需求 | 选择 shared 后的影响与满足方式 |
+|---|---|
+| Bed/Pillow 执行与普通联网 | 可复用 Carrier 网络栈；实际连通仍受 Carrier 路由、CNI 和外部防火墙限制 |
+| 独立网络空间 | 多 Bed 共用 IP、loopback、端口空间与路由；无法承诺完整的网络栈隔离 |
+| Pillow 端口发布 | 仍由 Network 分配端口；多个 Bed 监听相同固定端口会冲突，需使用动态端口或不同端口 |
+| 出站策略 | 实际分配独立 Bed UID 且 UID/nft 探测成功时，在 OUTPUT 路径按 socket UID 执行规则 |
+| 策略作用域 | 同 Bed 的 Pillow、command 和 session 共用 UID/策略；共享 amenity 或 Carrier 代理代发的流量不自动归属该 Bed |
+| 资源回收 | 共享 netns 的规则和 DNS 资源需按 allocation 显式回收，并通过持久归属记录处理 daemon 崩溃遗留 |
+
+UID backend 将 Bed 的 socket 视为 Carrier netns 内的本地出站流量，不依赖 IP forwarding。
+其成立条件和规则边界见[共享网络下的 UID 策略](#共享网络下的-uid-策略)：需要实际独立 UID、
+`CAP_NET_ADMIN`、nft UID 匹配和 IPv4 OUTPUT NAT 等能力；共享网络仍不提供独立端口空间或完整 ingress 隔离。
+
+诊断时同时读取网络空间与策略执行事实：netns 探针可保留 `forwarding` 缺口，网络报告
+`level=shared` / `room=dorm`；UID 规则成功安装后仍可报告 `policy_backend=uid`、
+`policy_status=enforced`，策略 API 返回 `status=ok`、`enforcementMode=dns+nft`。
+UID 机制也不可用时才报告 `status=degraded`、`mode=unenforced`，caller 可据此拒绝使用；
+已选择机制后的具体规则安装失败则使 Bed 初始化失败，不能伪装成功。
+forwarding 配置由 Carrier 提供方决定，Hostel 不将其修改为 1，也不支持 live Bed 的跨机制热切换。
+
+已有验证场景：
+
+- [TestCarrierForwardingDisabled](../tests/e2e/network_forwarding_test.go)：auto 继续提供 shared Bed，required 拒绝启动，sysctl 保持不变。
+- [TestSharedUIDNetworkPolicyTraffic](../tests/e2e/network_uid_test.go)：`ip_forward=0` 下验证 local/supervisor 的初始策略和运行期更新。
+- [TestUIDPolicyTraffic](../internal/host/network/uid_policy_linux_test.go)：验证 UID 间规则隔离、DNS、连接撤销与 UID 复用。
+
+这些用例验证声明的 Linux profile；具体客户内核、capabilities 和 CNI 仍须按实际探测与流量结果核验。
 
 ## Bed 网络策略
 
