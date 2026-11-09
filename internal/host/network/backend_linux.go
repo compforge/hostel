@@ -95,7 +95,7 @@ func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
 		probe.Stage = "execution"
 		// Exercise the SAME namespace entry and capability drop as wrapped commands.
 		cmd := exec.CommandContext(ctx, "/bin/sh", "-c", "readlink /proc/self/ns/net; cat /proc/self/status")
-		err = hostprivilege.WrapCredentials(cmd, os.Geteuid(), os.Getegid())
+		err = hostprivilege.WrapCredentials(cmd, os.Geteuid(), os.Getegid(), hostprivilege.DefaultGroups())
 		var out []byte
 		if err == nil {
 			ep.Wrap(cmd)

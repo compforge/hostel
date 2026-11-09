@@ -20,19 +20,29 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 )
 
 func ProcessCredentialHelper() (string, error) {
 	return "", fmt.Errorf("privilege: credential switching is unsupported on this platform")
 }
 
-func WrapCredentials(_ *exec.Cmd, uid, gid int) error {
+func WrapCredentials(_ *exec.Cmd, uid, gid int, groups []int) error {
 	if uid != os.Geteuid() || gid != os.Getegid() {
 		return fmt.Errorf("privilege: switching user is unsupported on this platform")
+	}
+	actual := DefaultGroups()
+	slices.Sort(actual)
+	desired := slices.Clone(groups)
+	slices.Sort(desired)
+	if !slices.Equal(actual, desired) {
+		return fmt.Errorf("privilege: supplementary group switching is unsupported on this platform")
 	}
 	return nil
 }
 
-func WrapBedInit(_ *exec.Cmd, _ string, _, _ int) {}
+func WrapBedInit(_ *exec.Cmd, _ string, _, _ int, _ []int) {}
+
+func DefaultGroups() []int { groups, _ := os.Getgroups(); return groups }
 
 func ChownTree(string, int, int) error { return nil }

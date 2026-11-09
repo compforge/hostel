@@ -39,6 +39,7 @@ func (d *dnsForwarder) Start() error {
 	if err != nil {
 		return fmt.Errorf("network: DNS UDP: %w", err)
 	}
+	d.address = d.udp.LocalAddr().String()
 	if d.ports != nil {
 		d.allocation, d.tcp, err = d.ports.Listen(d.owner, d.address)
 	} else {

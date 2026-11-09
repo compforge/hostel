@@ -372,3 +372,31 @@ networking with an unenforced requested policy, an unchanged filesystem grade,
 working commands for local/supervisor, and startup rejection for required netns.
 Use a disposable Pod with its own network namespace; do not disable forwarding
 on a shared node to prepare this case.
+
+
+## 共享 netns 的 UID 出站策略
+
+`HOSTEL_E2E_REQUIRE_UID_POLICY=1` 启用 `TestSharedUIDNetworkPolicyTraffic`，要求 disposable
+Linux Carrier 内 `ip_forward=0`、nft 可用且能分配独立 UID；配置 `HOSTEL_BED_EXTRA_GIDS=1000` 可同时验证共享组不会改变 UID 网络归属。
+该用例通过公共 API 对 local/supervisor 执行后端验证初始 BedSpec、不同 UID 共享同一 netns、
+规则合并/删除、session 更新、非法更新不破坏旧策略及删除重建；策略状态必须为 ok/dns+nft。
+`TestCarrierForwardingDisabled` 保留显式固定 UID 的客户条件，验证 unenforced 与 required netns 拒绝。
+
+```sh
+HOSTEL_E2E_REQUIRE_UID_POLICY=1 HOSTEL_E2E_REQUIRE_FORWARDING_DISABLED=1 \
+  make e2e E2E_ARGS='-run "^(TestSharedUIDNetworkPolicyTraffic|TestCarrierForwardingDisabled|TestFeaturePoliciesOff)$" -timeout 5m'
+```
+
+Host 网络包的 `HOSTEL_UID_POLICY_TEST=enabled` / `TestUIDPolicyTraffic` 在同样的独占
+Linux 条件下验证真实 nft、UDP/TCP DNS 重定向、域名解析后的地址学习、跨 UID DNS
+listener 访问拒绝、TCP/UDP 出站、IPv6 阻断、既有连接撤销和同 UID 重新分配。
+未显式启用时跳过；普通单元测试成功不算已经验证内核执行。不得为准备测试关闭共享节点的 forwarding。
+
+### Bed supplementary groups
+
+`TestBedExtraGroups` validates distinct identity allocation, exact groups and capability removal
+through command/session execution for local and supervisor backends. `TestPrivateFilesWithSharedNetwork`
+checks the same group in a Pillow main process under the private file view.
+`TestSharedSoftwareAcrossBedUsers` (HOSTEL_E2E_USERLAND=1) uses a disposable prepared image with
+software GID 1000, setgid directories and default ACLs to exercise cross-UID pip/npm/uv install,
+load, replacement and uninstall. It mutates carrier-wide packages; never run it on a shared carrier.

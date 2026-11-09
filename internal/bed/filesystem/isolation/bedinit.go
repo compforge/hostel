@@ -11,7 +11,7 @@ import (
 // BindBedInit binds bedinit to the resident Bed's execution plan.
 // bedinit enters the environment, drops credentials and execs the workload. It
 // never probes, allocates or selects a backend; those belong to Bed Manager.
-func BindBedInit(files Isolator, fs *bedfs.FS, uid, gid int) func(*exec.Cmd, string) error {
+func BindBedInit(files Isolator, fs *bedfs.FS, uid, gid int, groups []int) func(*exec.Cmd, string) error {
 	helper := hostprocess.Executable()
 	if files.View(fs).Rootfs() == "/" {
 		helper = hostprocess.BedInitPath
@@ -21,7 +21,7 @@ func BindBedInit(files Isolator, fs *bedfs.FS, uid, gid int) func(*exec.Cmd, str
 		enter = func(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 			// Namespace entry pins this host executable before entering the Bed.
 			// Never execute a Bed-controlled pathname while still privileged.
-			hostprivilege.WrapBedInit(cmd, hostprocess.Executable(), uid, gid)
+			hostprivilege.WrapBedInit(cmd, hostprocess.Executable(), uid, gid, groups)
 			return files.Wrap(cmd, fs, cwd)
 		}
 	} else {
@@ -29,7 +29,7 @@ func BindBedInit(files Isolator, fs *bedfs.FS, uid, gid int) func(*exec.Cmd, str
 			if err := files.Wrap(cmd, fs, cwd); err != nil {
 				return err
 			}
-			hostprivilege.WrapBedInit(cmd, hostprocess.Executable(), uid, gid)
+			hostprivilege.WrapBedInit(cmd, hostprocess.Executable(), uid, gid, groups)
 			return nil
 		}
 	}

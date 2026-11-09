@@ -17,7 +17,7 @@ import (
 func TestPreferredIdentityRejectsUnsafeInheritedCredentials(t *testing.T) {
 	const child = "HOSTEL_TEST_UNSAFE_IDENTITY"
 	if os.Getenv(child) == "1" {
-		_, err := Resolve(t.Context(), hostfacts.Collect(), Config{UID: 1000, GID: 1000, Configured: true}, t.TempDir())
+		_, err := Resolve(t.Context(), hostfacts.Collect(), Config{}, t.TempDir())
 		if err == nil || !strings.Contains(err.Error(), "shared identity probe") {
 			t.Fatalf("inherited root identity retained capabilities without rejection: %v", err)
 		}
@@ -88,5 +88,76 @@ func TestFixedBedUserPreparesOwnership(t *testing.T) {
 	stat := info.Sys().(*syscall.Stat_t)
 	if int(stat.Uid) != user.UID() || int(stat.Gid) != user.GID() {
 		t.Fatalf("owner = %d:%d, want %d:%d", stat.Uid, stat.Gid, user.UID(), user.GID())
+	}
+}
+
+func TestBedGroupsGrantSharedAccessWithoutSharingPrivateIdentity(t *testing.T) {
+	if os.Geteuid() != 0 || len(MissingBedIdentityCapabilities(hostfacts.Collect().EffectiveCaps)) != 0 {
+		t.Skip("requires identity capabilities")
+	}
+	base, err := os.MkdirTemp("", "hostel-group-access-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	if err := os.Chmod(base, 0755); err != nil {
+		t.Fatal(err)
+	}
+	shared, private := filepath.Join(base, "shared"), filepath.Join(base, "private")
+	for _, path := range []string{shared, private} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chown(shared, 0, 1000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, os.ModeSetgid|0770); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(private, 200002, 200002); err != nil {
+		t.Fatal(err)
+	}
+	for _, groups := range [][]int{nil, {1000}} {
+		user, _ := NewBedUser(200001, 200001)
+		user = user.withGroups(groups)
+		command := "test ! -r " + private
+		if len(groups) == 0 {
+			command += " && test ! -w " + shared
+		} else {
+			command += " && touch " + shared + "/marker && awk '/^Groups:/ { if (NF != 2 || $2 != 1000) exit 1 }' /proc/self/status"
+		}
+		cmd := exec.Command("/bin/sh", "-c", command)
+		cmd.Dir = base
+		if err := user.Wrap(cmd); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("groups %v: %v: %s", groups, err, out)
+		}
+	}
+}
+
+func TestExplicitGroupsCannotBeSilentlyIgnored(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("root fixture")
+	}
+	const child = "HOSTEL_GROUPS_ROOTLESS_TEST"
+	if os.Getenv(child) == "1" {
+		_, err := Resolve(t.Context(), hostfacts.Collect(), Config{SupplementaryGIDs: []int{1001}}, t.TempDir())
+		if err == nil || !strings.Contains(err.Error(), "supplementary groups") {
+			t.Fatalf("missing explicit groups accepted: %v", err)
+		}
+		return
+	}
+	helper, err := exec.LookPath("setpriv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(helper, "--reuid=65534", "--regid=65534", "--groups=1000", "--no-new-privs", "--", os.Args[0], "-test.run=^TestExplicitGroupsCannotBeSilentlyIgnored$", "-test.v")
+	cmd.Env = append(os.Environ(), child+"=1")
+	cmd.Dir = "/tmp"
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("group requirement: %v: %s", err, out)
 	}
 }

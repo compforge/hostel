@@ -25,7 +25,7 @@ type Environment struct {
 
 func bindEnvironment(files isolation.Isolator, fs *bedfs.FS, net network.Attachment, user privilege.BedUser) *Environment {
 	return &Environment{files: files, fs: fs, network: net, user: user,
-		launch: isolation.BindBedInit(files, fs, user.UID(), user.GID())}
+		launch: isolation.BindBedInit(files, fs, user.UID(), user.GID(), user.SupplementaryGIDs())}
 }
 
 func (e *Environment) View() bedfs.ProcessView    { return e.files.View(e.fs) }

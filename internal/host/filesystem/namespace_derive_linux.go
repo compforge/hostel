@@ -118,7 +118,7 @@ func finishMountPreparation(socket int) error {
 		return err
 	}
 	defer view.Close()
-	if err := hostprivilege.DropCredentials(os.Getuid(), os.Getgid()); err != nil {
+	if err := hostprivilege.DropCredentials(os.Getuid(), os.Getgid(), hostprivilege.DefaultGroups()); err != nil {
 		return fmt.Errorf("finish mount preparation: %w", err)
 	}
 	return view.send(socket)

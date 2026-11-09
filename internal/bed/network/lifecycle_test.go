@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/hostel/internal/bed"
+	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
 )
 
 type orderedPolicies struct {
@@ -115,5 +116,84 @@ func TestSharedNetworkPreservesDesiredPolicyWithoutClaimingEnforcement(t *testin
 	}
 	if got := b.Status().Network.RequestedPolicy; len(got.Egress) != 0 {
 		t.Fatalf("delete not reflected: %+v", got)
+	}
+}
+
+type fakeUIDPolicies struct {
+	lease      *fakePolicyLease
+	uid        uint32
+	acquireErr error
+}
+
+func (p *fakeUIDPolicies) Acquire(_ context.Context, uid uint32) (hostnetwork.PolicyLease, error) {
+	p.uid = uid
+	return p.lease, p.acquireErr
+}
+func (*fakeUIDPolicies) Close(context.Context) error { return nil }
+
+type fakePolicyLease struct {
+	current  Policy
+	closeErr error
+	closed   bool
+}
+
+func (p *fakePolicyLease) Update(_ context.Context, change PolicyMutation) (PolicyStatus, error) {
+	next, err := hostnetwork.ApplyMutation(p.current, change)
+	if err != nil {
+		return PolicyStatus{}, err
+	}
+	p.current = next
+	return PolicyStatus{Status: "ok", Mode: "enforcing", EnforcementMode: "dns+nft", Policy: next}, nil
+}
+func (p *fakePolicyLease) Close(context.Context) error {
+	if p.closeErr != nil {
+		return p.closeErr
+	}
+	p.closed = true
+	return nil
+}
+
+func TestSharedNetworkEnforcesPolicyWithAllocatedUID(t *testing.T) {
+	owners := bed.NewOwners()
+	b := bed.New("tenant", "", bed.Spec{NetworkPolicy: &bed.NetworkPolicy{DefaultAction: "deny"}})
+	owners.Privilege.Set(b, bed.PrivilegeStatus{Assigned: true, UID: 200001, GID: 200001})
+	lease := &fakePolicyLease{}
+	backend := &fakeUIDPolicies{lease: lease}
+	m := WithProvider(unavailableProvider{}, owners.Network)
+	m.dedicatedUIDs, m.uidPolicies = true, backend
+	if err := m.Prepare(t.Context(), b); err != nil {
+		t.Fatal(err)
+	}
+	s := b.Status().Network
+	if backend.uid != 200001 || s.Level != "shared" || s.PolicyBackend != "uid" || s.PolicyStatus != "enforced" || s.Policy.DefaultAction != "deny" {
+		t.Fatalf("UID=%d status=%+v", backend.uid, s)
+	}
+	result, err := m.UpdatePolicy(t.Context(), b, PolicyMutation{Merge: []Rule{{Action: "allow", Target: "example.com"}}})
+	if err != nil || result.Status != "ok" || result.Scope != "bed_processes" || result.EnforcementMode != "dns+nft" {
+		t.Fatalf("%+v %v", result, err)
+	}
+	lease.closeErr = errors.New("cleanup failed")
+	if err := m.Release(t.Context(), b); err == nil || m.allocation(b) == nil {
+		t.Fatal("failed cleanup lost allocation")
+	}
+	lease.closeErr = nil
+	if err := m.Release(t.Context(), b); err != nil || !lease.closed || m.allocation(b) != nil {
+		t.Fatalf("release: %v", err)
+	}
+}
+
+func TestUIDPolicyFailedPreparationRetainsCleanupOwner(t *testing.T) {
+	owners := bed.NewOwners()
+	b := bed.New("tenant", "", bed.Spec{})
+	owners.Privilege.Set(b, bed.PrivilegeStatus{Assigned: true, UID: 200002})
+	lease := &fakePolicyLease{}
+	m := WithProvider(unavailableProvider{}, owners.Network)
+	m.dedicatedUIDs = true
+	m.uidPolicies = &fakeUIDPolicies{lease: lease, acquireErr: errors.New("nft failed")}
+	if err := m.Prepare(t.Context(), b); err == nil {
+		t.Fatal("failed installation admitted Bed")
+	}
+	if err := m.Release(t.Context(), b); err != nil || !lease.closed {
+		t.Fatalf("partial allocation not cleaned: %v", err)
 	}
 }

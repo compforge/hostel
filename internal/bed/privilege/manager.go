@@ -2,6 +2,7 @@ package privilege
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/qiankunli/hostel/internal/bed"
@@ -34,6 +35,8 @@ func NewManager(policy BedUserReport, fixed BedUser, effectiveCaps uint64, statu
 }
 func (m *Manager) Status() Status {
 	report := m.report
+	report.BedUser.SupplementaryGIDs = slices.Clone(report.BedUser.SupplementaryGIDs)
+	report.Selection.Policy.SupplementaryGIDs = slices.Clone(report.Selection.Policy.SupplementaryGIDs)
 	report.Selection.Supported = append([]Level(nil), report.Selection.Supported...)
 	report.Requirements.Capabilities = append([]string(nil), report.Requirements.Capabilities...)
 	report.Requirements.MissingCapabilities = append([]string(nil), report.Requirements.MissingCapabilities...)
@@ -70,10 +73,11 @@ func (m *Manager) Prepare(_ context.Context, b *bed.Bed) error {
 			m.mu.Unlock()
 			return err
 		}
+		user = user.withGroups(m.report.BedUser.SupplementaryGIDs)
 		m.users[b.ID] = user
 	}
 	m.mu.Unlock()
-	m.status.Set(b, bed.PrivilegeStatus{UID: uint32(user.UID()), GID: uint32(user.GID()), Assigned: true})
+	m.status.Set(b, bed.PrivilegeStatus{UID: uint32(user.UID()), GID: uint32(user.GID()), Assigned: true, SupplementaryGIDs: user.SupplementaryGIDs()})
 	if m.files != nil {
 		if fs := m.files(b); fs != nil {
 			return user.Prepare(fs)

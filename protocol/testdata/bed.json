@@ -13,7 +13,7 @@
     "isolation": {"effective": "dorm"},
     "subsystems": {
       "filesystem": {"prepared": true, "room": "suite"},
-      "privilege": {"uid": 1000, "gid": 1000, "assigned": true},
+      "privilege": {"supplementary_gids": [1000], "uid": 1000, "gid": 1000, "assigned": true},
       "network": {"room": "dorm", "level": "shared", "policy_status": "none", "gateway": "", "policy": null},
       "store": {"source": "noop", "restored": false, "snapshot_generation": 9007199254740992, "snapshot_bytes": 4096, "local_bytes": 8192},
       "executor": {"private_pid_namespace": false, "id": "executor-1", "backend": "local", "state": "ready"},

@@ -1,6 +1,9 @@
 package privilege
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestBedUserAllocatorAvoidsCollisionsAndReusesRelease(t *testing.T) {
 	allocator, err := NewPerBedUserAllocator(200000, 200001)
@@ -19,7 +22,7 @@ func TestBedUserAllocatorAvoidsCollisionsAndReusesRelease(t *testing.T) {
 		t.Fatalf("different beds share uid %d", a.UID())
 	}
 	again, err := allocator.Acquire("a")
-	if err != nil || again != a {
+	if err != nil || !reflect.DeepEqual(again, a) {
 		t.Fatalf("same bed allocation = %+v, %v; want %+v", again, err, a)
 	}
 	if _, err := allocator.Acquire("c"); err == nil {
@@ -43,7 +46,7 @@ func TestFixedBedUserAllocator(t *testing.T) {
 	allocator := NewFixedBedUserAllocator(want)
 	for _, id := range []string{"a", "b"} {
 		got, err := allocator.Acquire(id)
-		if err != nil || got != want {
+		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("Acquire(%q) = %+v, %v", id, got, err)
 		}
 	}

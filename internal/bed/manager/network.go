@@ -14,6 +14,7 @@ func (m *Manager) SetNetworkManager(manager *network.Manager) {
 	}
 	manager.SetStatusWriter(m.owners.Network)
 	manager.SetPortMappings(m.portMappings)
+	manager.SetDedicatedUIDs(m.privileges.Status().BedUser.Strategy == "per_bed")
 	m.network = manager
 }
 func (m *Manager) NetworkReport() network.Status { return m.network.Status() }

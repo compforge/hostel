@@ -103,7 +103,7 @@ SYS_PTRACE；两组都检查真实 ptrace handshake，而不由 capability 名�
 
 镜像内的进程配置也属于实验条件。drop-all 保留镜像建议的 Bed UID/GID；
 drop-all-inherit-user 保持同一 securityContext，在启动测试 runner 时移除镜像内的
-`HOSTEL_BED_UID/GID`，作为未配置建议值的对照。两者分别留证，历史失败仍保留。
+镜像遗留的固定身份设置，作为自动身份选择的对照。当前版本不提供固定 UID/GID 配置；历史失败仍保留。
 `TestPreferredBedUser` 在 local/supervisor 两种 Executor 下核对实际 UID/GID、降级原因、
 command/session 的 capability 与 no_new_privs，以及 File API 的读写归属；可加入 `--test-filter` 运行。
 

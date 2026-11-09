@@ -81,7 +81,7 @@ Store 管持久化与恢复，和这些能力协作，但不提供隔离屏障�
 - 子系统拥有自己的能力类型与支持集合，结合 Config 选择机制，并在类型化 Status 中报告实际结果。
 - 文件和网络各自映射房型，Bed 取两者较低值；caller 判断实际保证是否满足要求。
 - Tool 是子系统为兑现 Bed 能力而选择、组合的工具，既包括外部程序，也包括内核机制和身份技术，例如 Filesystem 的 Bwrap、Landlock、UID、PRoot、Pathshim，
-  Network 的 NetNS，以及 Resource 的 cgroup accounting。
+  Network 的 NetNS、UIDNFT，以及 Resource 的 cgroup accounting。
 - Requirements 是使用该 Tool 的环境前提，包含 Linux Capabilities、外部程序和系统条件。
   CAP_NET_ADMIN、CAP_SYS_ADMIN 保留 Linux Capability 的含义。
 
@@ -130,12 +130,32 @@ Hostel 不尝试获取缺失权限，也不把 UID 0 等同于具备某个 capab
 
 每个 resident Bed 在初始化时解析一个 `BedUser`，目录属主和 command/session 的最终身份共用同一个值：
 
-- **shared / fixed**：所有 Bed 共用身份。`HOSTEL_BED_UID/GID`、`--bed-uid/gid` 与 Go 配置提供建议值；可用时优先采用，
-  不可用时尝试经过完整权限与文件访问探测的 daemon 身份。未配置建议值时，root daemon 具备完整跨 UID 管理能力便优先使用 `1000:1000`。
-  降级原因与实际 UID/GID 通过 privilege 状态和启动日志披露；非法建议值、继承身份验证失败或探测清理失败仍终止启动。
-- **dedicated / per_bed**：room/suite 期望每个 Bed 独立的高位 UID/GID，不依赖采用的是 bwrap、Landlock 还是 UID/DAC。
-  支持性由 Privilege 独立探测；Filesystem 的 UID/DAC 只有在已选 dedicated 身份时才可采用。相同 Bed ID 从稳定槽位开始，冲突时
-  在预留范围内寻找空闲值，不能因散列碰撞让两个 Bed 共享身份。
+- **dedicated / per_bed**：优先为每个 Bed 分配独立 UID/主 GID，不依赖 bwrap、Landlock 或 netns。
+  Privilege 独立探测身份切换及文件访问，UID/主 GID 从预留的 200000–299999 范围分配；稳定槽位发生冲突时寻找空闲值，不能让两个 Bed 共用身份。
+- **shared / fixed**：宿主无法兑现独立身份时，使用经过实际降权与文件访问探测的共享身份，并披露原因。
+  root 且具备完整身份管理权限时探测非 root 基线 1000:1000，否则探测继承身份；无法安全启动或清理探测资源时返回错误。
+  这是运行条件不足的回退，不提供固定 UID/GID 配置入口。
+
+`HOSTEL_BED_EXTRA_GIDS` / `--bed-extra-gids` 是逗号分隔的附加组 ID；Go Options 使用
+`Privilege.SupplementaryGIDs`。它只授予共享资源访问，不改变独立 UID/主 GID 的选择。
+拒绝 root 组、非法 ID 和与私有 Bed GID 范围重叠的组，规范化排序并去重。
+command、Session 和 Pillow 主进程使用同一个 BedUser，最终附加组必须等于选定列表；
+不得合并 daemon 的其他组。显式要求的组无法设置时启动失败，不能静默丢弃。
+
+有 CAP_SETGID 且没有配置附加组时，清空继承组。无权调用 setgroups 的 rootless 运行，
+未声明附加组时只能使用并报告实际继承组；显式列表必须与实际组一致，显式空列表也遵守此约束。
+实例和 Bed 的 privilege 状态披露 Carrier 身份空间中的 `supplementary_gids`，配置的非空列表不能冒充实际执行结果。
+user namespace 内未映射的附加组可能显示为 overflow GID（例如 65534）；文件访问仍按内核保存的组身份判定，不能只凭内部 `id -G` 的显示值判断授权丢失。
+
+共享软件由 Carrier 镜像授权，例如 Bedbox 将 `/usr/local` 的组设为 1000、目录设为 setgid，
+配置组写权限和 default ACL，并给 Bed 附加组 1000。私有根和 managed Volume 继续按各 Bed
+UID/主 GID 管理，根目录以 0700 阻止其他 Bed 访问。共享组不自动授权所有路径；HostPath
+的权限由提供方准备，Hostel 不在创建 Bed 时递归修改共享软件目录。
+
+default ACL 只约束普通创建的初始权限，安装工具的显式 mode、chmod 或保留权限的移动仍可能收窄权限；
+镜像必须实测支持的软件安装、跨 UID 替换和卸载。共享软件修改会影响其他 Bed，属于共享信任域；
+UID 网络规则约束当前 socket 身份，不保证共享程序的来源隔离。daemon 的特权工具及依赖须放在
+Bed 不可写的位置并通过可信路径调用。
 
 per-Bed UID 是本地数据身份的一部分。Bed Manager 识别本地目录及 `.gc-*` 清理占位，
 通过绑定到本地身份的 Recover / Prepare / Forget 驱动 Privilege Manager；权限子系统不推测磁盘目录布局。
@@ -193,7 +213,7 @@ rootful 准备要求静态构建（`CGO_ENABLED=0`，正式镜像已使用）；
 所有 Linux Bed command/session/Pillow 主进程使用 `bedinit` 的身份初始化步骤，不再依赖外部
 `setpriv`。即使 BedUser 与 daemon 相同，也清空进程 capability 并设置 `no_new_privs`；有
 CAP_SETPCAP 时清空 bounding set，没有时仅允许非 root 身份保留 ceiling，或 root 的 ceiling
-已经为空。有 CAP_SETGID 时清除 supplementary groups。启动探测核对实际身份和 capability，
+已经为空。有 CAP_SETGID 时按选定列表替换 supplementary groups；无权限时验证现有列表一致。启动探测核对实际身份和 capability，
 不能仅凭 wrapper 参数声称降权成功。
 
 用户环境在整个 `bedinit` 链上作为不生效的载荷传递；最终执行步骤在边界及降权完成后
@@ -282,7 +302,7 @@ Carrier 环境继承与配置来源见 [pillow.md](pillow.md#配置来源)。环
 
 网络由 Network 按宿主能力和工具策略尽力选择 private，不从请求房型或文件 backend 推导。
 实例探测 netns 可用且实际选用时为 Bed 分配网络，命令、shell 和 Pillow 主进程共用，
-Executor 替换不改变该 resident Bed 的网络身份；能力不可用时共享 Carrier 网络。
+Executor 替换不改变该 resident Bed 的网络身份；能力不可用时共享 Carrier 网络；若实际采用独立 UID 且 nft 可用，仍可执行按 Bed 的出站策略。
 当前 netns 作用域是 Bed 进程，Chromium/MCP 的出站仍来自 Carrier。BrowserContext
 切分浏览器状态，不构成 OS 网络边界；机制、DNS、诊断与出站约束见 [network.md](network.md)。
 

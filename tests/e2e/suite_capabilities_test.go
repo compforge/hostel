@@ -23,8 +23,9 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 	for _, scenario := range []string{"network-off", "network-probe-failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			options := restrictedOptions()
+			options.Bed.Privilege.SupplementaryGIDs = value([]int{1000})
 			options.Bed.Filesystem.Bwrap = value(tool.Required)
-			options.Bed.Privilege.UID, options.Bed.Privilege.GID = value(1000), value(1000)
+			options.Bed.Network.UIDNFT = value(tool.Off)
 			options.Bed.Executor.PIDNS = value(tool.Off)
 			targetConfig := targetOptions{executor: "supervisor", config: &options}
 			if scenario == "network-probe-failure" {
@@ -44,7 +45,7 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 			const bed = "suite-shared"
 			response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{
 				"id":      bed,
-				"pillows": []map[string]any{{"name": "writer", "command": []string{"/bin/sh", "-c", "printf pillow > /workspace/pillow-marker; exec /bin/sleep 300"}, "required": true, "restart_policy": "never", "stop_seconds": 1}},
+				"pillows": []map[string]any{{"name": "writer", "command": []string{"/bin/sh", "-c", "awk '/^Groups:/ { if (NF != 2 || $2 != 1000) exit 1 }' /proc/self/status && printf pillow > /workspace/pillow-marker && exec /bin/sleep 300"}, "required": true, "restart_policy": "never", "stop_seconds": 1}},
 			}, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -102,7 +103,7 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 				t.Fatal(err)
 			}
 			must2xx(t, "suite subsystem facts", response)
-			if status.Subsystems.Filesystem.Effective != "private" || status.Subsystems.Privilege.Selection.Effective != "shared" || status.Subsystems.Network.Effective != "shared" || status.Subsystems.Executor.Tools["pidns"].Selected {
+			if status.Subsystems.Filesystem.Effective != "private" || status.Subsystems.Privilege.Selection.Effective != "dedicated" || status.Subsystems.Network.Effective != "shared" || status.Subsystems.Executor.Tools["pidns"].Selected {
 				t.Fatalf("unexpected subsystems: %+v", status)
 			}
 			if scenario == "network-probe-failure" && (status.Subsystems.Network.Tools["netns"].Probe != "unavailable" || status.Subsystems.Network.Reason == "") {
