@@ -118,7 +118,7 @@ func (o *FS) WriteTransferFile(ctx context.Context, destination string, body io.
 	defer o.root.Remove(temp)
 	written, copyErr := io.Copy(file, transferReader{ctx: ctx, reader: body})
 	mode := os.FileMode(0o644)
-	if o.software {
+	if o.common {
 		mode = 0660
 	}
 	if copyErr == nil && overwrite {

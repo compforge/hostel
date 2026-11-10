@@ -3,12 +3,13 @@ package bedfs
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // +case:id=common_view_preserves_source,desc=`Carrier software and dependencies enter a Bed view`,expect=`mapping reuses the source without changing existing modes, and read-only routes reject writes`
 func TestCommonFileViewPreservesSource(t *testing.T) {
-	for _, target := range []string{SoftwareRoot, "/opt/runtime"} {
+	for _, target := range []string{"/usr/local", "/opt/runtime", "/srv/shared-data"} {
 		t.Run(target, func(t *testing.T) {
 			home, source := t.TempDir(), t.TempDir()
 			existing := filepath.Join(source, "existing")
@@ -29,7 +30,7 @@ func TestCommonFileViewPreservesSource(t *testing.T) {
 				t.Fatal(err)
 			}
 			shared.paths.prefix = target
-			shared.software = target == SoftwareRoot
+			shared.common = true
 			view.shared = []*FS{shared}
 			if got, err := view.Read(target + "/existing"); err != nil || string(got) != "provided" {
 				t.Fatalf("provided file %q %v", got, err)
@@ -39,6 +40,27 @@ func TestCommonFileViewPreservesSource(t *testing.T) {
 			}
 			if got, err := os.ReadFile(filepath.Join(source, "tool")); err != nil || string(got) != "common" {
 				t.Fatalf("common file %q %v", got, err)
+			}
+			// Creation follows the public-source policy at any logical path.
+			if _, err := view.WriteTransferFile(t.Context(), target+"/download", strings.NewReader("shared"), false); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(filepath.Join(source, "download"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0660 {
+				t.Fatalf("public transfer mode=%o, want 660", info.Mode().Perm())
+			}
+			if _, err := view.WriteTransferFile(t.Context(), "/private", strings.NewReader("private"), false); err != nil {
+				t.Fatal(err)
+			}
+			info, err = os.Stat(filepath.Join(home, "private"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0644 {
+				t.Fatalf("private transfer inherited public mode: %o", info.Mode().Perm())
 			}
 			if _, err := os.Stat(filepath.Join(home, target, "tool")); !os.IsNotExist(err) {
 				t.Fatalf("duplicated common source: %v", err)

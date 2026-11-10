@@ -82,7 +82,7 @@ type FS struct {
 	systemFiles []hostfs.Mapping
 	mappings    []mappedRoot
 	readOnly    bool
-	software    bool
+	common      bool // Public source; creation follows the common-directory policy.
 	paths       paths
 	root        hostfs.Root
 	// uid/gid of the workspace dir when it differs from the daemon's euid
@@ -191,7 +191,7 @@ func (o *FS) mkdirAllOwned(dir string) error {
 		return err
 	}
 	mode := os.FileMode(0755)
-	if o.software {
+	if o.common {
 		mode = 0770
 	}
 	if err := o.root.MkdirAll(rel, mode); err != nil {
@@ -377,7 +377,7 @@ func (o *FS) Write(p string, data []byte, mode int) error {
 		return err
 	}
 	fm := os.FileMode(0o644)
-	if o.software {
+	if o.common {
 		fm = 0660
 	}
 	if mode != 0 {

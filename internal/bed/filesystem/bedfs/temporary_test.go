@@ -82,7 +82,7 @@ func TestPublicWorkingDirectoryDoesNotRebasePrivateTemporaryData(t *testing.T) {
 	if err := fs.PrepareTempdir(); err != nil {
 		t.Fatal(err)
 	}
-	fs.SetWorkdir(SoftwareRoot)
+	fs.SetWorkdir("/usr/local")
 	if got := RootedView(fs, MappingSupport{ReadWrite: true}).Rootfs(); got != "/" {
 		t.Fatalf("public workdir changed private root: %q", got)
 	}

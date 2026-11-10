@@ -81,12 +81,12 @@ func TestBuildBwrapArgsK8sReachable(t *testing.T) {
 	}
 }
 
-func TestBuildBwrapArgsSharesCarrierSoftware(t *testing.T) {
+func TestBuildBwrapArgsWritableCommonChildOverridesReadOnlyParent(t *testing.T) {
 	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", bedfs.DefaultWorkdir, nil, nil, "/usr")
 	roRoot := indexOfSeq(argv, "--ro-bind", "/usr", "/usr")
-	sharedSoftware := indexOfSeq(argv, "--bind", carrierSoftwareRoot, carrierSoftwareRoot)
-	if roRoot < 0 || sharedSoftware < 0 || roRoot >= sharedSoftware {
-		t.Fatalf("carrier software must be reopened rw after the ro root bind: roRoot=%d sharedSoftware=%d argv=%v", roRoot, sharedSoftware, argv)
+	writableChild := indexOfSeq(argv, "--bind", "/usr/local", "/usr/local")
+	if roRoot < 0 || writableChild < 0 || roRoot >= writableChild {
+		t.Fatalf("writable common child must be rebound after its read-only parent: roRoot=%d writableChild=%d argv=%v", roRoot, writableChild, argv)
 	}
 }
 
