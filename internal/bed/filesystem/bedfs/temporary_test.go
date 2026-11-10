@@ -73,3 +73,20 @@ func TestTemporaryDirectoryViews(t *testing.T) {
 		t.Fatalf("mapped temporary path=%q %v", got, err)
 	}
 }
+
+func TestPublicWorkingDirectoryDoesNotRebasePrivateTemporaryData(t *testing.T) {
+	fs := newTestFS(t, t.TempDir())
+	if err := fs.PrepareShared(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.PrepareTempdir(); err != nil {
+		t.Fatal(err)
+	}
+	fs.SetWorkdir(SoftwareRoot)
+	if got := RootedView(fs, MappingSupport{ReadWrite: true}).Rootfs(); got != "/" {
+		t.Fatalf("public workdir changed private root: %q", got)
+	}
+	if got, err := RedirectedView(fs, MappingSupport{ReadWrite: true}).Tempdir(); err != nil || got != TemporaryDir {
+		t.Fatalf("public workdir changed temporary path: %q %v", got, err)
+	}
+}

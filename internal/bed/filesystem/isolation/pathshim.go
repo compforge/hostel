@@ -48,13 +48,36 @@ func (p *pathshimView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err != nil {
 		return err
 	}
-	mappings := processMappings(fs, p.MappingSupport())
-	// No translation is needed when all usable paths already name Carrier paths.
+	mappings := pathshimMappings(fs, p.MappingSupport())
+	// Public-only views need no translation; pathshim requires at least one bind.
+	// The selected boundary still applies credentials and the carrier cwd.
 	if len(mappings) == 0 {
 		return nil
 	}
 	hostfs.Pathshim{Path: p.path}.Wrap(cmd, mappings, guestCwd)
 	return nil
+}
+
+// pathshimMappings preserves the carrier spelling used by RedirectedView for
+// private paths outside the workdir. A /tmp bind would otherwise redirect a
+// BedHome below carrier /tmp a second time, including a Session's later cwd.
+// +spec=`A guest mapping must not shadow the carrier BedHome used for unprojected private paths.`
+// +link=component://docs/volumes.md
+func pathshimMappings(fs *bedfs.FS, support bedfs.MappingSupport) []hostfs.Mapping {
+	mappings := processMappings(fs, support)
+	home := fs.Rootfs()
+	shadowed := false
+	for _, mapping := range mappings {
+		if mapping.Target == home {
+			// An explicit destination already owns this spelling.
+			return mappings
+		}
+		shadowed = shadowed || beneath(home, mapping.Target)
+	}
+	if shadowed {
+		mappings = append(mappings, hostfs.Mapping{Source: home, Target: home})
+	}
+	return mappings
 }
 
 // +spec=`A pathshim process view applies the workdir and process-supported Bed path mappings atomically without changing isolation level or mount capability.`
@@ -92,7 +115,7 @@ func probePathshim(base Boundary, bedsRoot, executable string) hostfacts.ProbeRe
 	}
 	defer fs.Close()
 	if err := fs.PrepareTempdir(); err != nil {
-		return hostfacts.ProbeReport{Error: "prepare temporary directory: " + err.Error()}
+		return hostfacts.ProbeReport{Error: "prepare probe temporary directory: " + err.Error()}
 	}
 	if err := base.Prepare(context.Background(), fs); err != nil {
 		return hostfacts.ProbeReport{Error: "prepare probe bed: " + err.Error()}
@@ -100,7 +123,7 @@ func probePathshim(base Boundary, bedsRoot, executable string) hostfacts.ProbeRe
 	defer base.Release(context.Background(), fs)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := (hostfs.Pathshim{Path: executable}).ProbeCommand(ctx, processMappings(fs, bedfs.MappingSupport{ReadWrite: base.AllowsMappings()}), fs.ClientWorkdir())
+	cmd := (hostfs.Pathshim{Path: executable}).ProbeCommand(ctx, pathshimMappings(fs, bedfs.MappingSupport{ReadWrite: base.AllowsMappings()}), fs.ClientWorkdir())
 	if err := base.Wrap(cmd, fs, probeWorkspace); err != nil {
 		return hostfacts.ProbeReport{Error: "wrap probe: " + err.Error()}
 	}

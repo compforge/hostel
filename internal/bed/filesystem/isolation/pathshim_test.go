@@ -67,11 +67,16 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 	}
 	wantPrefix := []string{
 		probe, "--quiet",
-		"--bind", filepath.Join(home, "tmp") + ":/tmp",
+		"--bind", filepath.Join(fs.Rootfs(), "tmp") + ":/tmp",
 		"--bind", workspace + ":/workspace",
 		"--bind", source + ":/mnt/memory",
-		"--cwd", "/workspace/sub", "--",
 	}
+	if beneath(fs.Rootfs(), "/tmp") {
+		wantPrefix = append(wantPrefix, "--bind", fs.Rootfs()+":"+fs.Rootfs())
+	}
+	wantPrefix = append(wantPrefix,
+		"--cwd", "/workspace/sub", "--",
+	)
 	if len(cmd.Args) < len(wantPrefix) || !slices.Equal(cmd.Args[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("pathshim argv = %v, want prefix %v", cmd.Args, wantPrefix)
 	}
@@ -187,3 +192,17 @@ func newTestFS(t *testing.T, root string) *bedfs.FS {
 }
 
 func (prefixRoom) AllowsMappings() bool { return true }
+
+// +case:id=pathshim_carrier_home_alias,desc=`A guest bind contains the physical BedHome`,expect=`unprojected private paths retain their carrier spelling through an identity bind`
+func TestPathshimPreservesUnprojectedPrivatePaths(t *testing.T) {
+	fs := newTestFS(t, t.TempDir())
+	parent := filepath.Dir(fs.Rootfs())
+	if err := fs.SetMounts([]bedfs.Mount{{Source: t.TempDir(), Target: parent}}); err != nil {
+		t.Fatal(err)
+	}
+	mappings := pathshimMappings(fs, bedfs.MappingSupport{ReadWrite: true})
+	last := mappings[len(mappings)-1]
+	if last.Source != fs.Rootfs() || last.Target != fs.Rootfs() {
+		t.Fatalf("unprojected private paths are shadowed: %+v", mappings)
+	}
+}

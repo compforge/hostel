@@ -70,7 +70,13 @@ func buildBwrapMounts(bedsRoot, bedHome string, maskPaths []string, mappings []b
 		{Kind: hostfs.Bind, Source: bedHome, Target: "/"},
 	}
 	for _, p := range runtimeRoots {
-		mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: p, Target: p})
+		kind := hostfs.ReadOnlyBind
+		for _, access := range bedfs.CommonDirectories() {
+			if access.Path == p && !access.ReadOnly {
+				kind = hostfs.Bind
+			}
+		}
+		mounts = append(mounts, hostfs.Mount{Kind: kind, Source: p, Target: p})
 	}
 	for _, access := range bedfs.CommonDirectories() {
 		if !access.ReadOnly && inRuntime(access.Path, runtimeRoots) {
@@ -93,9 +99,9 @@ func buildBwrapMounts(bedsRoot, bedHome string, maskPaths []string, mappings []b
 		kind := hostfs.Bind
 		if m.ReadOnly {
 			kind = hostfs.ReadOnlyBind
-			// /usr/local is otherwise rebound writable for shared software installs.
+			// Public sources remain writable at their Carrier spelling.
 			// Protect the carrier spelling too, or the process could bypass ReadOnly.
-			if model.PathsOverlap(m.Source, carrierSoftwareRoot) {
+			if sharedWritableSource(m.Source) {
 				mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: m.Source, Target: m.Source})
 			}
 		}
@@ -119,3 +125,12 @@ func systemFileArgs(fs *bedfs.FS) []string {
 // and platform-mounted credentials (e.g. K8s serviceaccount tokens). Secrets
 // belong to Hostel and explicitly configured workloads, never to arbitrary bed code.
 var defaultMaskCandidates = bedfs.ProtectedDirectories()
+
+func sharedWritableSource(source string) bool {
+	for _, access := range bedfs.CommonDirectories() {
+		if !access.ReadOnly && model.PathsOverlap(source, access.Path) {
+			return true
+		}
+	}
+	return false
+}

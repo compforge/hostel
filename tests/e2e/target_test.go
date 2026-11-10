@@ -74,10 +74,11 @@ func startTarget(t *testing.T, options targetOptions) *target {
 	baseURL := "http://" + addr
 	var bedsRoot string
 	var crash func()
+	var exited <-chan struct{}
 	if image != "" {
 		bedsRoot = startImageTarget(t, image, addr, options)
 	} else {
-		bedsRoot, crash = startBinaryTarget(t, binary, addr, options)
+		bedsRoot, crash, exited = startBinaryTarget(t, binary, addr, options)
 	}
 
 	c := newAPIClient(baseURL)
@@ -86,6 +87,11 @@ func startTarget(t *testing.T, options targetOptions) *target {
 	deadline := time.Now().Add(150 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
+		select {
+		case <-exited:
+			t.Fatalf("hostel exited before becoming ready at %s", baseURL)
+		default:
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		var health healthView
 		_, lastErr = c.json(ctx, "GET", "/healthz", "", nil, &health)
@@ -112,7 +118,30 @@ func reservePort(t *testing.T) int {
 	return port
 }
 
-func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions) (string, func()) {
+// newBedsRoot keeps ordinary runtime data outside guest /tmp and /workspace.
+// Tests for overlapping layouts pass an explicit bedsRoot instead.
+func newBedsRoot(t *testing.T) string {
+	t.Helper()
+	root := strings.TrimSpace(os.Getenv("HOSTEL_E2E_ROOT"))
+	if root == "" {
+		root = "/e2e"
+	}
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatalf("prepare E2E root %s (provision /e2e or set HOSTEL_E2E_ROOT): %v", root, err)
+	}
+	bedsRoot, err := os.MkdirTemp(root, "hostel-beds-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(bedsRoot) })
+	// Different Bed UIDs must traverse the fixture parent.
+	if err := os.Chmod(bedsRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	return bedsRoot
+}
+
+func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions) (string, func(), <-chan struct{}) {
 	t.Helper()
 	absolute, err := filepath.Abs(binary)
 	if err != nil {
@@ -129,16 +158,7 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 	}
 	bedsRoot := options.bedsRoot
 	if bedsRoot == "" {
-		// Bed UIDs must traverse the fixture root to use absolute workspace paths.
-		// testing.T.TempDir's private ancestors would hide an otherwise valid UID backend.
-		bedsRoot, err = os.MkdirTemp("", "hostel-e2e-beds-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(bedsRoot) })
-		if err := os.Chmod(bedsRoot, 0755); err != nil {
-			t.Fatal(err)
-		}
+		bedsRoot = newBedsRoot(t)
 	}
 	pathshim := options.pathshim
 	if options.pathshimHostPath != "" {
@@ -224,7 +244,7 @@ func startBinaryTarget(t *testing.T, binary, addr string, options targetOptions)
 		case <-time.After(5 * time.Second):
 			t.Fatal("crashed daemon did not exit")
 		}
-	}
+	}, done
 }
 
 func startImageTarget(t *testing.T, image, addr string, options targetOptions) string {
@@ -235,7 +255,7 @@ func startImageTarget(t *testing.T, image, addr string, options targetOptions) s
 	name := fmt.Sprintf("hostel-e2e-%d-%d", os.Getpid(), time.Now().UnixNano())
 	bedsRoot := options.bedsRoot
 	if bedsRoot == "" {
-		bedsRoot = "/tmp/" + name + "-beds"
+		bedsRoot = "/e2e/" + name + "-beds"
 	}
 	args := []string{
 		"run", "--detach", "--rm", "--name", name, "--network", "host",

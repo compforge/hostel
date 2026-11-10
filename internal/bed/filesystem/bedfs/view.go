@@ -56,6 +56,8 @@ func RedirectedView(fs *FS, support MappingSupport) ProcessView {
 }
 
 // Path maps a confined carrier path into this Executor view.
+// +spec=`Explicit mounts and private Bed paths take precedence over shared parents, even when BedHome is below /tmp.`
+// +link=component://docs/volumes.md
 func (v ProcessView) Path(host string) (string, error) {
 	for _, mapping := range v.fs.Mounts() {
 		if rel, ok := relativeTo(mapping.Source, host); ok {
@@ -72,18 +74,20 @@ func (v ProcessView) Path(host string) (string, error) {
 			return filepath.Clean(host), nil
 		}
 	}
-	for _, shared := range v.fs.shared {
-		if rel, ok := relativeTo(shared.Rootfs(), host); ok {
-			return joinProcessPath(shared.paths.prefix, rel), nil
-		}
-	}
 	homeRel, ok := relativeTo(v.fs.Rootfs(), host)
 	if !ok {
+		for _, shared := range v.fs.shared {
+			if rel, ok := relativeTo(shared.Rootfs(), host); ok {
+				return joinProcessPath(shared.paths.prefix, rel), nil
+			}
+		}
 		return "", fmt.Errorf("bedfs: carrier path %q is outside bed_home %q", host, v.fs.Rootfs())
 	}
-	if workspaceRel, inWorkspace := relativeTo(v.fs.Workdir(), host); inWorkspace {
-		if v.workdirMount != "" {
-			return joinProcessPath(v.workdirMount, workspaceRel), nil
+	if _, privateWorkspace := relativeTo(v.fs.Rootfs(), v.fs.Workdir()); privateWorkspace {
+		if workspaceRel, inWorkspace := relativeTo(v.fs.Workdir(), host); inWorkspace {
+			if v.workdirMount != "" {
+				return joinProcessPath(v.workdirMount, workspaceRel), nil
+			}
 		}
 	}
 	if v.workdirMount != "" {
@@ -110,7 +114,7 @@ func (v ProcessView) Workdir() string {
 }
 
 // Tempdir returns the selected process path, including explicit caller mappings.
-// Carrier views use a Bed-owned host path because they cannot redirect /tmp.
+// Carrier views use the private host path because they cannot redirect /tmp.
 func (v ProcessView) Tempdir() (string, error) {
 	host, err := v.fs.Resolve(TemporaryDir)
 	if err != nil {

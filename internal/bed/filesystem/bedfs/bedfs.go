@@ -228,9 +228,11 @@ func (o *FS) EnsureDir(dir string) error {
 			return m.fs.EnsureDir(dir)
 		}
 	}
-	for _, shared := range o.shared {
-		if _, ok := relativeTo(shared.Rootfs(), dir); ok {
-			return shared.EnsureDir(dir)
+	if _, private := relativeTo(o.Rootfs(), dir); !private {
+		for _, shared := range o.shared {
+			if _, ok := relativeTo(shared.Rootfs(), dir); ok {
+				return shared.EnsureDir(dir)
+			}
 		}
 	}
 	if o.readOnly {

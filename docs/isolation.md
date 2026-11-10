@@ -378,3 +378,13 @@ health / capabilities 还报告资源记账、准入与设施可用性。各投�
 
 未完成的能力统一记录在 [backlog.md](backlog.md)。理想目标用于约束演进方向，
 实际保证由实现、探测结果和已执行的验证共同支撑。
+
+### 临时数据归属与路径体验
+
+默认临时空间属于 BedHome：同一个 Bed 的 command、Session、Pillow 共用，Executor
+替换保留，Bed 回收清理。mount/PRoot/pathshim 尽量将其呈现为 `/tmp`；Carrier 模式
+通过私有宿主路径设置 TMPDIR，无法改变程序硬编码的 `/tmp`。路径兼容与私有保护
+分别报告，不能把使用 pathshim 当作安全隔离。
+
+公共软件按内部规则复用；需要共享临时数据时显式使用 Volume。不能为了让某个路径
+辅助工具工作而宽泛授权 `/tmp` 父目录，进而暴露位于该目录下的其他 Bed 数据。

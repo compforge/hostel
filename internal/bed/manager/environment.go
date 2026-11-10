@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
@@ -70,13 +72,29 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	}
 	// This is part of the selected composition probe: advertised process paths
 	// must reach BedFS through every process entry point, not just through uploads.
-	command += ` && printf temporary >> "$TMPDIR/.hostel-environment-probe"`
-	result, err := m.RunForeground(ctx, b, command, cwd, nil, 5*time.Second, nil)
+	temporary := "/tmp/.hostel-" + id
+	defer func() {
+		if err := b.BedFS().Remove([]string{temporary}); err != nil && !errors.Is(err, os.ErrNotExist) {
+			retErr = errors.Join(retErr, &ProbeCleanupError{Err: err})
+		}
+	}()
+	command += ` && printf temporary >> "$TMPDIR/.hostel-` + id + `"`
+	var stderr strings.Builder
+	result, err := m.RunForeground(ctx, b, command, cwd, nil, 5*time.Second, func(output ExecutionOutput) {
+		if output.Stream == StreamStderr && stderr.Len() < 4096 {
+			remaining := 4096 - stderr.Len()
+			text := output.Text
+			if len(text) > remaining {
+				text = text[:remaining]
+			}
+			stderr.WriteString(text)
+		}
+	})
 	if err != nil {
 		return err
 	}
 	if result.Process.Kind != executor.ProcessExited || result.Process.ExitCode != 0 {
-		return fmt.Errorf("isolation: combined command probe failed: %+v", result.Process)
+		return fmt.Errorf("isolation: combined command probe failed: %+v stderr=%q", result.Process, stderr.String())
 	}
 	if _, err := b.BedFS().Stat("/workspace/.hostel-environment-probe/marker"); err != nil {
 		return fmt.Errorf("isolation: command/file view probe: %w", err)
@@ -121,7 +139,7 @@ func (m *Manager) ProbeEnvironment(ctx context.Context) (retErr error) {
 	if _, err := b.BedFS().Stat("/workspace/.hostel-environment-probe/pillow-marker"); err != nil {
 		return fmt.Errorf("isolation: pillow/file view probe: %w", err)
 	}
-	data, err := b.BedFS().Read("/tmp/.hostel-environment-probe")
+	data, err := b.BedFS().Read(temporary)
 	if err != nil {
 		return fmt.Errorf("isolation: temporary directory/file view probe: %w", err)
 	}
