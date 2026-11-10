@@ -145,6 +145,27 @@ func TestSharedSoftwareRuntimePermissions(t *testing.T) {
 	if run("permissions-a", "id -u") == run("permissions-b", "id -u") {
 		t.Fatal("distinct UID prerequisites were not realized")
 	}
+	for _, name := range []string{"permissions-a", "permissions-b"} {
+		var detail protocol.BedDetail
+		response, err := c.json(t.Context(), "GET", "/v1/beds/"+name, "", nil, &detail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		must2xx(t, "Bed software realization", response)
+		actual := detail.Status.Subsystems.Filesystem.Realization
+		if actual == nil || actual.State != "prepared" {
+			t.Fatalf("missing realization: %+v", actual)
+		}
+		prepared := false
+		for _, software := range actual.Software {
+			if software.Path == "/usr/local" && software.Prepared && software.Authorized {
+				prepared = true
+			}
+		}
+		if !prepared {
+			t.Fatalf("software preparation/authorization missing: %+v", actual)
+		}
+	}
 	dir := fmt.Sprintf("/usr/local/hostel-permissions-%d", time.Now().UnixNano())
 	run("permissions-a", fmt.Sprintf("umask 022; mkdir -p %s/nested; printf first > %s/nested/package", dir, dir))
 	run("permissions-b", fmt.Sprintf("printf second >> %s/nested/package; mv %s/nested/package %s/nested/replaced; umask 022; printf replacement > %s/nested/package", dir, dir, dir, dir))

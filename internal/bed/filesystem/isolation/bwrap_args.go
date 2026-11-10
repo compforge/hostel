@@ -30,7 +30,7 @@ import (
 // are otherwise read-only under private files, so it is re-bound read-write for
 // installs made by one command to remain available to later commands and beds.
 // The carrier image owns its permissions and package-manager environment.
-const carrierSoftwareRoot = "/usr/local"
+const carrierSoftwareRoot = bedfs.SoftwareRoot
 
 // buildBwrapArgs assembles the bwrap argv (between the binary and the user
 // command). Segment order is a contract — bwrap applies mounts in argv order
@@ -72,8 +72,10 @@ func buildBwrapMounts(bedsRoot, bedHome string, maskPaths []string, mappings []b
 	for _, p := range runtimeRoots {
 		mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: p, Target: p})
 	}
-	if inRuntime(carrierSoftwareRoot, runtimeRoots) {
-		mounts = append(mounts, hostfs.Mount{Kind: hostfs.Bind, Source: carrierSoftwareRoot, Target: carrierSoftwareRoot})
+	for _, access := range bedfs.CommonDirectories() {
+		if !access.ReadOnly && inRuntime(access.Path, runtimeRoots) {
+			mounts = append(mounts, hostfs.Mount{Kind: hostfs.Bind, Source: access.Path, Target: access.Path})
+		}
 	}
 	mounts = append(mounts,
 		hostfs.Mount{Kind: hostfs.Dev, Target: "/dev"},
@@ -116,9 +118,4 @@ func systemFileArgs(fs *bedfs.FS) []string {
 // defaultMaskCandidates are host paths masked when they exist: host user data
 // and platform-mounted credentials (e.g. K8s serviceaccount tokens). Secrets
 // belong to Hostel and explicitly configured workloads, never to arbitrary bed code.
-var defaultMaskCandidates = []string{
-	"/root",
-	"/home",
-	"/run/secrets",
-	"/var/run/secrets",
-}
+var defaultMaskCandidates = bedfs.ProtectedDirectories()

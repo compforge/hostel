@@ -118,6 +118,31 @@ Filesystem 的 ceiling 表达已探测候选的最高可用档位；禁用候选
 房型变低不删除已探测出的支持等级；Tool off 仍不执行探测，所以 Supported 是已知支持集合，不是未经探测的能力推断。
 状态读取不触发探测或分配。
 
+## Filesystem 的实例选择与 Bed 落实
+
+实例 `subsystems.filesystem` 继续报告工具探测、选择、`process_view` 和 `shared_software`。
+这些是为后续 Bed 选择的能力，不代表某个 Bed 已经准备完成。等级和 room 保留为摘要，
+路径体验、Unix 身份授权与隔离保护分别解释；各 Subsystem 仍尽力采用可用的较强机制。
+
+Bed `status.subsystems.filesystem.realization` 是增量字段：
+
+- `state` 为 `pending / prepared / unknown / released`，表示最后确认的准备/清理结果。
+- `private_data` 为 `uid / bwrap / landlock / none`，表示私有数据使用的实际保护。即使可选路径
+  机制全部关闭，实际采用独立 Bed 身份时仍报告 `uid`；room 保持原来的机制摘要语义。
+- `core_access` 为 `path_rules / unix_permissions`。后者明确表示原生进程只受 Unix 权限保护，
+  不保证隐藏其他用户可读的管理文件；前者也仅覆盖定义的路径规则，不代表任意 HostPath 或内核接口的完整隔离。
+- `file_api=bed_identity` 表示所有 Pillow 的 API 根已绑定 Bed 身份。
+- `views` 分 Pillow 报告路径模式、rootfs 与读写/只读 Mount 支持；`reason` 解释路径缺口。
+- `software` 区分 Carrier 权限准备 `prepared` 与当前 Bed 软件组授权 `authorized`。二者为真也不
+  覆盖文件显式 mode、named ACL、chmod 或外部更改造成的拒绝。
+
+只有全部 Pillow 准备成功才发布 `prepared`。开始释放时先清除 `Prepared`、room 和具体
+保证；释放失败保留 `unknown` 与资源 owner，成功后发布 `released`。软件目录本身不会随
+Bed 释放而删除。快照读写均深拷贝；GET 不探测资源，不承诺连续检测外部修改或 worker 消失。
+
+Landlock 根据可用 ABI 选择当前支持的最强 preset；无 ABI 或实际限制失败会返回错误，
+不会用库的 BestEffort 无操作成功替代已选保护。旧 ABI 未覆盖的系统调用仍属于能力边界。
+
 ## 权限与执行身份
 
 ### Daemon 与 BedUser

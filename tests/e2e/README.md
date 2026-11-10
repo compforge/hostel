@@ -339,6 +339,11 @@ session、Pillow main process 与 file API 的一致性、跨 Bed 文件拒绝�
 该用例与 `TestPrivatePIDNamespaceRecovery` 共同覆盖静态组合和 Executor 替换后的房型保证。
 `TestFeatureRequiredStartupFailure/missing-network` 验证缺少网络子系统时 required 拒绝启动。
 
+`TestFilesystemPermissions` 同时核对 Bed 的 FS realization 与实例选中的路径机制，
+验证 `prepared`、File API 身份、Pillow rootfs 与 Mount 支持和实际访问行为一致。
+`TestSharedSoftwareRuntimePermissions` 核对软件目录准备与 Bed 软件组授权，再执行真实跨 UID 读写。
+准备失败、部分清理与重试、快照所有权由 filesystem 单元测试覆盖。
+
 ### Shared volumes and consumer views
 
 `TestBedVolumeConsumers` covers managed/host_path × bwrap × local/supervisor with two Beds. It verifies

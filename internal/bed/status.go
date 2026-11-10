@@ -54,7 +54,7 @@ type ResourceStatus = protocol.ResourceStatus
 func cloneStatus(s Status) Status {
 	s.Privilege.SupplementaryGIDs = slices.Clone(s.Privilege.SupplementaryGIDs)
 	s.Network = cloneNetworkStatus(s.Network)
-	s.Filesystem.Mounts = slices.Clone(s.Filesystem.Mounts)
+	s.Filesystem = cloneFilesystemStatus(s.Filesystem)
 	return s
 }
 
@@ -97,7 +97,7 @@ func NewOwners() Owners {
 		return s
 	}
 	filesystem := writer(func(s *Status) *FilesystemStatus { return &s.Filesystem })
-	filesystem.clone = func(s FilesystemStatus) FilesystemStatus { s.Mounts = slices.Clone(s.Mounts); return s }
+	filesystem.clone = cloneFilesystemStatus
 	network := writer(func(s *Status) *NetworkStatus { return &s.Network })
 	network.clone = cloneNetworkStatus
 	return Owners{
@@ -125,4 +125,16 @@ func cloneNetworkDiagnostic(d *protocol.NetworkDiagnostic) *protocol.NetworkDiag
 	}
 	copy := *d
 	return &copy
+}
+
+// Detach both writer callbacks and readers from mutable filesystem snapshots.
+func cloneFilesystemStatus(s FilesystemStatus) FilesystemStatus {
+	s.Mounts = slices.Clone(s.Mounts)
+	if s.Realization != nil {
+		realized := *s.Realization
+		realized.Views = slices.Clone(realized.Views)
+		realized.Software = slices.Clone(realized.Software)
+		s.Realization = &realized
+	}
+	return s
 }

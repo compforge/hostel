@@ -58,3 +58,26 @@ func TestBedDetailWireContract(t *testing.T) {
 		t.Fatalf("wire contract changed: %s", encoded)
 	}
 }
+
+func TestFilesystemRealizationWireContract(t *testing.T) {
+	original := protocol.FilesystemStatus{Prepared: true, Realization: &protocol.FilesystemRealization{
+		State: "prepared", PrivateData: "uid", CoreAccess: "unix_permissions", FileAPI: "bed_identity",
+		Views:    []protocol.FilesystemViewStatus{{Pillow: "main", Mode: "proot", Rootfs: true, ReadWriteMounts: true}},
+		Software: []protocol.SoftwareAccessStatus{{Path: "/usr/local", Prepared: true, Authorized: true}},
+	}}
+	raw, err := json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got protocol.FilesystemStatus
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, original) {
+		t.Fatalf("realization lost: %s", raw)
+	}
+	var old protocol.FilesystemStatus
+	if err := json.Unmarshal([]byte(`{"prepared":true}`), &old); err != nil || old.Realization != nil {
+		t.Fatal("old response invented realized guarantees", err)
+	}
+}

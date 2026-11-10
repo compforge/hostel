@@ -17,6 +17,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 type Manager struct {
@@ -26,6 +27,7 @@ type Manager struct {
 	sharedReports          []SharedSoftwareStatus
 	sharedStarted          bool
 	softwareGroupAvailable bool
+	dedicatedIdentity      bool
 	identities             map[*bed.Bed]hostfs.IdentityRoots
 	files                  map[*bed.Bed]*bedfs.FS
 	pillows                map[*bed.Bed]map[string]*bedfs.FS
@@ -72,16 +74,21 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 			log.Printf("filesystem: bed=%s path=%s mapping available through API; process mapping unavailable read_only=%t", b.ID.String(), mapping.Target, mapping.ReadOnly)
 		}
 	}
-	m.status.Set(b, bed.FilesystemStatus{Rootfs: fs.Rootfs(), Workdir: fs.Workdir()})
+	m.status.Set(b, bed.FilesystemStatus{FilesystemStatus: protocol.FilesystemStatus{Realization: &protocol.FilesystemRealization{State: "pending"}}, Rootfs: fs.Rootfs(), Workdir: fs.Workdir()})
 	return nil
 }
 
 // PrepareView runs after cooperating subsystems have prepared their files.
 // Bed Manager owns this ordering; the resulting view stays fixed until Release.
-func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Mapping) error {
+func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Mapping) (err error) {
 	if b.Status().Filesystem.Prepared {
 		return nil
 	}
+	defer func() {
+		if err != nil {
+			m.invalidateRealization(b, "pending", "filesystem preparation failed")
+		}
+	}()
 	if err := m.prepareVolumeOwners(b); err != nil {
 		return err
 	}
@@ -101,6 +108,7 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 		log.Printf("filesystem: bed=%s file API identity uid=%d gid=%d", b.ID, user.UID, user.GID)
 	}
 	views := m.PillowFiles(b)
+	realized := m.preparedRealization(b)
 	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Mounts = nil })
 	for _, consumer := range slices.Sorted(maps.Keys(views)) {
 		view := views[consumer]
@@ -124,8 +132,14 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 		if err := view.BindIdentity(identity); err != nil {
 			return fmt.Errorf("bind file identity consumer=%q: %w", consumer, err)
 		}
+		realized.Views = append(realized.Views, m.realizedView(consumer, view))
 	}
-	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Prepared = true; s.Room = m.isolator.Level().Room() })
+	m.status.Update(b, func(s *bed.FilesystemStatus) {
+		s.Prepared = true
+		s.Room = m.isolator.Level().Room()
+		s.Realization = realized
+	})
+	log.Printf("filesystem: bed=%s prepared private_data=%s core_access=%s file_api=%s views=%d", b.ID, realized.PrivateData, realized.CoreAccess, realized.FileAPI, len(realized.Views))
 	return nil
 }
 func (m *Manager) Files(b *bed.Bed) *bedfs.FS { m.mu.Lock(); defer m.mu.Unlock(); return m.files[b] }
@@ -134,6 +148,9 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 	if fs == nil {
 		return nil
 	}
+	// Cleanup can partially revoke a prepared view. Clear guarantees before
+	// the first release, while retaining resource owners for retry.
+	m.invalidateRealization(b, "unknown", "filesystem release in progress or incomplete")
 	for name, view := range m.PillowFiles(b) {
 		if view == fs {
 			continue
@@ -168,7 +185,7 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 	delete(m.pillows, b)
 	delete(m.volumes, b)
 	m.mu.Unlock()
-	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Prepared = false; s.Room = "" })
+	m.invalidateRealization(b, "released", "")
 	return nil
 }
 

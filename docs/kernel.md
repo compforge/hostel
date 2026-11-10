@@ -52,6 +52,22 @@ Carrier/Kubernetes 权限选择机制。UID/GID、ACL、namespace、Landlock 各
 bwrap 使用 namespace 等内核机制，PRoot/pathshim 改善路径体验，不能冒充安全屏障。
 现有机制的选择顺序与状态等级继续描述实际实现，不反过来定义 Bed 的业务需求。
 
+## Best effort 与状态归属
+
+BedSpec 的显式需求与 Hostel 的隐式需求，由各 Subsystem 结合 OS/kernel 能力、Node 配置、
+Carrier/Kubernetes 授权和实际执行探测尽力兑现。可用时充分利用 namespace 等机制；条件不足时
+由所属领域选择替代机制，保留能兑现的能力，不因 Network 较弱而降低 Filesystem 的保护。
+逼近普通容器的运行体验与可用保护，同时保留公共软件复用的产品取舍。
+
+`Subsystem[S]` 统一约定 `Status() S`、Carrier 生命周期与 Bed 生命周期。`Status()` 返回实例级
+探测和选择快照；每 Bed 的实际结果由该领域的 `StatusWriter` 发布。BedManager 汇总各领域
+`Status()`，协调身份、恢复、准备、执行和回收顺序，不替领域选工具。状态查询不执行探测、
+分配或修复，也不改变 caller 的使用决策。
+
+best effort 适用于能力选择，不能掩盖已选机制的执行失败。明确 required 或只读挂载契约无法
+满足时仍失败；准备/清理失败保留资源 owner。释放可能部分完成时先撤销无法确认的保证，再
+按原 owner 重试，完成资源与数据清理后才允许身份复用。
+
 ## 工作负载模型
 
 Bed 声明必须包含非空 Pillows；首项为默认 Pillow。创建入口拥有声明，数据访问只等待已声明 Bed 就绪。

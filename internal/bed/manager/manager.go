@@ -228,6 +228,7 @@ func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.I
 		m.privileges.SetSelection(*m.identitySelection)
 	}
 	m.files.SetSoftwareGroups(policy.SupplementaryGIDs)
+	m.files.SetDedicatedIdentity(policy.Strategy == "per_bed")
 	m.network.SetDedicatedUIDs(policy.Strategy == "per_bed")
 	return m, nil
 }

@@ -174,3 +174,87 @@ Explicit file modes/chmod can still revoke shared group access, and shared
 software remains a common trust domain. This run does not prove customer-kernel
 compatibility, concurrent package-manager safety, a complete Bedbox image release,
 or the sandctl/hictld/HiBot business chain.
+
+
+## FS realization and subsystem best effort, 2026-11-10
+
+This round validates the uncommitted `worktree-fs-realization` tree based on
+PR177 merge `c58143d7fc153a43c5233bf1cfb92e331ccd9142`, VERSION 0.2.16.
+The public path policy is shared by BedFS and process mechanisms. Per-Bed FS
+realization now distinguishes preparation, private-data protection, core access,
+process views and shared-software authorization. Existing Subsystem.Status()
+aggregation and domain-owned Bed status writers remain the owners.
+
+Native format, full lint and impacted race tests passed through
+`repocli validate --repo . --base HEAD --check format,lint,test --timeout 10m`.
+Linux amd64 and arm64 daemon builds passed; arm64 was build-only. Linux host
+filesystem and Bed filesystem package tests passed, including failed preparation,
+partial release/retry, snapshot detachment and the nonzero Landlock ABI floor.
+The common mount-policy and Landlock path-grant tests also passed. These Landlock
+checks do not establish actual kernel enforcement on this target.
+
+Live E2E used the project-owned compiled runner in sequential disposable amd64
+containers on devbox, cached `hostel-shared-runtime:validation`, Debian 12 and
+kernel `5.15.120.bsk.3-amd64`. Daemon and runner were mounted read-only under
+`/usr/lib/hostel-e2e`; `tests/e2e/environments/devbox/config.yaml` selected the
+colocated binary target with `HOSTEL_E2E_ON_TARGET=1` and
+`HOSTEL_E2E_DISPOSABLE=1`. No business environment or image tag was changed.
+
+| Profile and cases | Observed result |
+| --- | --- |
+| NET_ADMIN, network none, ip_forward=0: TestSharedSoftwareRuntimePermissions | Pass; software prepared and authorized for both UIDs, real cross-UID API/process writes; cold startup 34.683 seconds |
+| Same profile: TestBedIdentityCrashRecovery, TestBedUIDPillowEgress, TestSharedUIDNetworkPolicyTraffic | Pass; retained identity, Pillow main and live policy changes; local/supervisor where provided |
+| Same profile: TestCarrierForwardingDisabled, TestFeaturePoliciesOff, TestFilesystemPermissions | Pass; unmet policy disclosed, required rejected, forwarding unchanged; UID+PRoot and Carrier views match Bed realization |
+| Privileged, network none, ip_forward=1: TestFilesystemPermissions, TestRootfulPreparedMount | Pass; bwrap/mount rootfs, RW/RO contracts and command/Session/Pillow identity |
+| Same privileged profile: TestPrivateNetworkCrashRecovery | Pass; retained UID, new namespace and restored/updated policy; no remaining netns/nft tables after fixture cleanup |
+| Same privileged profile: TestPrivateFilesWithSharedNetwork | Initial network-probe-failure fixture failed; corrected fixture passed both subcases, with actual FS protection and honestly unenforced egress |
+
+The initial failing fixture returned failure for every nft call, including
+cleanup. Startup correctly refused to abandon pending resource ownership.
+The fixture now rejects table/rule installation while delegating cleanup to the
+real nft executable. Only that case was rerun after the fixture correction;
+production cleanup semantics and Network implementation were not weakened.
+The earlier failure and its logs remain in the evidence. No selected cases skipped.
+
+Runner selections (each uses `-test.v`; software/fallback timeout 4m, other groups 6m):
+
+```text
+^TestSharedSoftwareRuntimePermissions$
+^(TestFilesystemPermissions|TestSharedUIDNetworkPolicyTraffic|TestBedIdentityCrashRecovery|TestBedUIDPillowEgress|TestCarrierForwardingDisabled|TestFeaturePoliciesOff)$
+^(TestRootfulPreparedMount|TestFilesystemPermissions|TestPrivateFilesWithSharedNetwork|TestPrivateNetworkCrashRecovery)$
+^TestPrivateFilesWithSharedNetwork$
+```
+
+The UID group sets REQUIRE_UID_POLICY and REQUIRE_FORWARDING_DISABLED;
+software sets USERLAND; mount sets REQUIRE_ROOTFUL and REQUIRE_NETWORK;
+the corrected fallback run sets REQUIRE_ROOTFUL. All names have the
+`HOSTEL_E2E_` prefix. The NET_ADMIN profile retained seccomp mode 2; privileged
+runs used seccomp mode 0. API readiness and the test operations, rather than the
+cached image's unrelated Docker healthcheck, establish the test outcomes.
+
+Run verdicts:
+
+- Software: `20261110T020548.994147959Z`, pass.
+- UID/forwarding: `20261110T020629.005735654Z`, pass.
+- Mount/recovery/old fallback fixture: `20261110T021039.539138736Z`, fail as explained above.
+- Corrected fallback fixture: `20261110T021143.439864405Z`, pass.
+
+Raw logs, verdicts, observed environments and final local validation output are
+retained in ignored `runs/fs-realization-20261110/`; remote originals remain in
+`/data00/tmp/hostel-fs-realization-0.2.16/results/`. All task containers were removed.
+The first artifact copy could not read root-owned environment files; the read-only
+copy through sudo rsync completed without changing result permissions.
+
+Final mount/fallback daemon SHA256:
+`46393e030e8ba7d4b5fc9dd17bb97d2add0e862005c1a0f970e401a90445a75c`.
+The UID run preceded only a Landlock failure-message edit and an additional
+preparation-failure unit case. Initial E2E runner SHA256:
+`864b3a226cd390370676a4b1e26af614e2bad3ad0babfb07fc1d1280e647812f`;
+corrected fixture runner:
+`ef6685988c7234642dd20313d7868f99f8f3bad6af88bc9e2ca91abb678b06dc`.
+
+This round does not revalidate real pip/npm/uv package installation, customer
+kernels, native arm64, concurrent package-manager safety, or the sandctl/HiBot
+business chain. Status is the last confirmed preparation/cleanup observation,
+not continuous detection of external ACL changes or file-worker death. Cold
+startup measurements remain observations, not a performance acceptance result.

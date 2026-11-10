@@ -7,16 +7,6 @@ import (
 	"path/filepath"
 )
 
-// SoftwareRoot is the Carrier software installation area, reused by all Beds.
-// Its authorization is prepared by Filesystem before any Bed starts.
-const SoftwareRoot = "/usr/local"
-
-// SharedPaths are common execution dependencies, not private Bed data. The
-// returned paths are internal policy; they are not additional Volume grants.
-func SharedPaths() []string {
-	return []string{"/usr", "/bin", "/sbin", "/lib", "/lib64", "/lib32", "/etc", "/opt", "/sys"}
-}
-
 // PrepareShared binds public userland into the file API as it is in the process
 // view. Kernel credentials still decide access. Only the software installation
 // area is writable; other common OS paths remain controlled, read-only inputs.
@@ -30,8 +20,8 @@ func (o *FS) PrepareShared() error {
 	if err != nil {
 		return err
 	}
-	paths := append([]string{SoftwareRoot}, SharedPaths()...)
-	for _, target := range paths {
+	for _, access := range CommonDirectories() {
+		target := access.Path
 		source, err := filepath.EvalSymlinks(target)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -50,7 +40,7 @@ func (o *FS) PrepareShared() error {
 		}
 		child.paths.prefix = target
 		child.paths.workdir = o.paths.workdir
-		child.readOnly = target != SoftwareRoot
+		child.readOnly = access.ReadOnly
 		child.software = target == SoftwareRoot
 		child.uid, child.gid = -1, -1
 		o.shared = append(o.shared, child)
