@@ -38,7 +38,7 @@ func TestRealizationFollowsPreparationAndCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := b.Status().Filesystem.Realization
-	if got.State != "prepared" || got.PrivateData != "none" || got.CoreAccess != "unix_permissions" || got.FileAPI != "bed_identity" || len(got.Views) != 1 || got.Views[0].Mode != "carrier" {
+	if got.State != "prepared" || got.PrivateData != "none" || got.CoreAccess != "unix_permissions" || got.FileAPI != "bed_identity" || len(got.Software) != 0 || len(got.Views) != 1 || got.Views[0].Mode != "carrier" {
 		t.Fatalf("prepared: %+v", got)
 	}
 	// Both the writer and a caller must receive detached observations.
@@ -68,8 +68,7 @@ func TestRealizationFollowsPreparationAndCleanup(t *testing.T) {
 func TestIndependentIdentityProtectsDataWithoutPathMechanism(t *testing.T) {
 	m := NewManager(carrierOnly{}, bed.NewOwners().Filesystem)
 	m.SetDedicatedIdentity(true)
-	b := bed.New("identity", "", bed.Spec{})
-	got := m.preparedRealization(b)
+	got := m.preparedRealization()
 	if got.PrivateData != "uid" || got.CoreAccess != "unix_permissions" {
 		t.Fatalf("identity conflated with path view: %+v", got)
 	}

@@ -120,7 +120,7 @@ Filesystem 的 ceiling 表达已探测候选的最高可用档位；禁用候选
 
 ## Filesystem 的实例选择与 Bed 落实
 
-实例 `subsystems.filesystem` 继续报告工具探测、选择、`process_view` 和 `shared_software`。
+实例 `subsystems.filesystem` 报告工具探测、选择和 `process_view`。
 这些是为后续 Bed 选择的能力，不代表某个 Bed 已经准备完成。等级和 room 保留为摘要，
 路径体验、Unix 身份授权与隔离保护分别解释；各 Subsystem 仍尽力采用可用的较强机制。
 
@@ -133,8 +133,7 @@ Bed `status.subsystems.filesystem.realization` 是增量字段：
   不保证隐藏其他用户可读的管理文件；前者也仅覆盖定义的路径规则，不代表任意 HostPath 或内核接口的完整隔离。
 - `file_api=bed_identity` 表示所有 Pillow 的 API 根已绑定 Bed 身份。
 - `views` 分 Pillow 报告路径模式、rootfs 与读写/只读 Mount 支持；`reason` 解释路径缺口。
-- `software` 区分 Carrier 权限准备 `prepared` 与当前 Bed 软件组授权 `authorized`。二者为真也不
-  覆盖文件显式 mode、named ACL、chmod 或外部更改造成的拒绝。
+公共目录映射不代表来源权限已经准备；Filesystem 不发布软件树已自动授权的保证。
 
 只有全部 Pillow 准备成功才发布 `prepared`。开始释放时先清除 `Prepared`、room 和具体
 保证；释放失败保留 `unknown` 与资源 owner，成功后发布 `released`。软件目录本身不会随
@@ -161,7 +160,7 @@ Hostel 不尝试获取缺失权限，也不把 UID 0 等同于具备某个 capab
   root 且具备完整身份管理权限时探测非 root 基线 1000:1000，否则探测继承身份；无法安全启动或清理探测资源时返回错误。
   这是运行条件不足的回退，不提供固定 UID/GID 配置入口。
 
-共享软件权限由 Hostel 内部准备，不提供固定 Bed UID/GID、extra GIDs 或 shared directories
+公共软件的来源权限由镜像或目录提供方准备，不提供固定 Bed UID/GID、extra GIDs 或 shared directories
 配置入口。Linux 具备身份管理条件时，Privilege 自动选择内部软件组 **199999**，与私有
 UID/主 GID 的 200000–299999 区间分开；部署需预留这些数值，不要求创建对应 group 名。
 command、Session、Pillow 主进程和文件 API 使用同一实际身份及组集合。
@@ -171,35 +170,21 @@ command、Session、Pillow 主进程和文件 API 使用同一实际身份及组
 真实进程验证，不能把预期配置当作已执行事实。user namespace 内未映射组可能显示为
 65534；访问是否成功仍由内核保存的组身份决定。
 
-Filesystem 在 Carrier 级 Start 中准备内部公共软件目录 `/usr/local`，先于任何 Bed 执行；
-不要求用户显式使用 sudo。默认 pip/npm/uv 安装位置由 Hostel 提供，Carrier、Pillow 和调用
-环境仍可按既有优先级覆盖。共享软件准备采用 auto，失败如实报告 unavailable。
-普通 HostPath 由提供方准备，不因被引用就自动 chown/chgrp；不存在任意目录的提权入口。
+Filesystem 为 Bed 构造文件视图，并引入公共程序、库和运行依赖；两种设计路线及当前取舍见
+[文件需求与访问](volumes.md#两种文件视图思路)。启动和 Bed 准备均不递归修改公共目录权限，
+Bed 删除与实例关闭也不删除公共资源或回滚其权限。普通 HostPath 的权限与生命周期同样由
+提供方负责。软件安装位置继承 Carrier 环境，并允许 Pillow 和请求按既有优先级覆盖；
+Hostel 不通过默认安装路径或共享组成员身份推断目录可写。
 
-Filesystem 幂等补齐组读写、目录组执行/setgid 与 default ACL，保留原 UID，跳过 symlink，
-拒绝修改多硬链接普通文件或特权可执行文件，避免改变声明范围外共享 inode 或授予可写的特权程序。
-公共软件是内置复用区域，文件 API 与进程均可按 Bed 身份访问；显式 Volume/Mount 仍拥有自己的只读契约。
-所有修改在运行时按文件句柄完成，保留 default ACL 中已有的命名用户/组条目；ACL 还须读回并验证新建文件的组/权限继承；不依赖镜像导出保留 ACL。
-不为每次 Bed 创建重复递归修改共享树，Bed 删除和实例 Close 也不删除共享软件或回滚目录权限。
-准备有 2 分钟实例级预算；日志包含 path、GID、policy、处理数、耗时和失败原因。
-已存在扩展 access ACL 时，同时补齐 owning group 与 mask 的组权限，保留 named user/group 条目；这些显式 named ACL 和应用后续 chmod 仍可能限制特定身份。
+私有根和 managed Volume 继续按各 Bed UID/主 GID 管理，私有根以 Unix 权限阻止其他 Bed
+访问。软件附加组保留为身份的一部分，但只有来源已授予该组权限时才产生相应访问能力；
+它不自动授权其他路径，也不改变独立 UID/GID 或网络的 UID 匹配。
+文件 API 在 Linux 使用每 Bed 的降权 syscall worker；仅传入已经授权、固定的目录锚点，
+目录内的 open、chmod、rename 等由内核按 Bed 身份检查，不能借用 daemon 的 root 权限。
+Filesystem 拥有 worker 的准备与清理，销毁未完成前不释放身份。
 
-`/v1/status.subsystems.filesystem.shared_software` 报告每项 path/GID、Tool policy/probe/selected/reason 与处理数；
-只投影启动结果，状态读取不操作文件系统。多目录准备不是事务，失败前已完成的权限设置保留。
-
-Bedbox 负责安装软件及普通镜像权限；软件组、setgid 与 default ACL 归 Hostel 运行时准备。
-私有根和 managed Volume 继续按各 Bed UID/主 GID 管理，根目录以 0700 阻止其他 Bed 访问。
-共享组不自动授权其他路径，也不要求所有 Bed 改用相同 UID。私有数据根的 0700 保护与
-具体文件隔离工具无关。文件 API 在 Linux 使用每 Bed 的降权 syscall worker；仅传入已经
-授权、固定的目录锚点，目录内的 open、chmod、rename 等由内核按 Bed 身份检查，不能借用
-daemon 的 root 权限。Filesystem 拥有 worker 的准备与清理，销毁未完成前不释放身份。
-
-公共软件 API 默认新建目录/文件使用 0770/0660，结合 setgid 和 default ACL 保持软件组
-可访问，不给 other 写权限；显式 mode、chmod 和导入时保留的 mode 仍按请求处理。
-
-default ACL 只约束普通创建的初始权限，安装工具的显式 mode、chmod 或保留权限的移动仍可能收窄权限；
-镜像必须实测支持的软件安装、跨 UID 替换和卸载。共享软件修改会影响其他 Bed，属于共享信任域；
-UID 网络规则约束当前 socket 身份，不保证共享程序的来源隔离。daemon 的特权工具及依赖须放在
+共享软件修改会影响其他 Bed，属于共享信任域。目录提供方须验证所需的跨 UID 安装、替换
+和卸载行为，不能仅凭挂载为可写或组成员关系声称可用。daemon 的特权工具及依赖须放在
 Bed 不可写的位置并通过可信路径调用。
 
 per-Bed UID 是本地数据身份的一部分。Bed Manager 识别本地目录及 `.gc-*` 清理占位，

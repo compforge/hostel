@@ -50,7 +50,7 @@ func TestNPMInstallPersistsAcrossExecutions(t *testing.T) {
 	assertSoftwareResult(t, "npm next execution", loaded, "HOSTEL_NPM_PATH=/usr/local/")
 }
 
-// +case:id=shared_software_groups,desc=`Two Beds have distinct UIDs and the software supplementary group`,expect=`pip, npm and uv installs remain usable and replaceable by the neighboring Bed`
+// +case:id=shared_software_groups,desc=`A disposable Carrier provisions shared writable software for two distinct Bed UIDs`,expect=`pip, npm and uv installs remain usable and replaceable by the neighboring Bed`
 func TestSharedSoftwareAcrossBedUsers(t *testing.T) {
 	requireUserland(t)
 	target := startTarget(t, targetOptions{})
@@ -99,39 +99,13 @@ func TestSharedSoftwareAcrossBedUsers(t *testing.T) {
 	}
 }
 
-// +case:id=shared_software_runtime_acl,desc=`Final image boots without exported ACLs`,expect=`Filesystem.Start prepares shared software before Beds execute; distinct UIDs can update each other's files with umask 022`
-func TestSharedSoftwareRuntimePermissions(t *testing.T) {
+// +case:id=shared_software_provided_permissions,desc=`A disposable Carrier provides writable shared software before Hostel starts`,expect=`distinct Bed UIDs can update shared files without Hostel claiming permission preparation`
+func TestSharedSoftwareProvidedPermissions(t *testing.T) {
 	requireUserland(t)
 	started := time.Now()
 	target := startTarget(t, targetOptions{})
 	t.Logf("Carrier startup completed in %s", time.Since(started).Round(time.Millisecond))
 	c := target.client
-	var report struct {
-		Subsystems struct {
-			Filesystem struct {
-				SharedSoftware []struct {
-					Path string `json:"path"`
-					Tool struct {
-						Selected bool `json:"selected"`
-					} `json:"tool"`
-				} `json:"shared_software"`
-			} `json:"filesystem"`
-		} `json:"subsystems"`
-	}
-	response, err := c.json(t.Context(), "GET", "/v1/status", "", nil, &report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	must2xx(t, "shared software diagnostics", response)
-	prepared := false
-	for _, s := range report.Subsystems.Filesystem.SharedSoftware {
-		if s.Path == "/usr/local" && s.Tool.Selected {
-			prepared = true
-		}
-	}
-	if !prepared {
-		t.Fatalf("shared software was not prepared before admission: %+v", report)
-	}
 	for _, name := range []string{"permissions-a", "permissions-b"} {
 		must2xx(t, "declare Bed", c.createBed(t, name))
 	}
@@ -156,14 +130,8 @@ func TestSharedSoftwareRuntimePermissions(t *testing.T) {
 		if actual == nil || actual.State != "prepared" {
 			t.Fatalf("missing realization: %+v", actual)
 		}
-		prepared := false
-		for _, software := range actual.Software {
-			if software.Path == "/usr/local" && software.Prepared && software.Authorized {
-				prepared = true
-			}
-		}
-		if !prepared {
-			t.Fatalf("software preparation/authorization missing: %+v", actual)
+		if len(actual.Software) != 0 {
+			t.Fatalf("filesystem claimed Carrier permission preparation: %+v", actual.Software)
 		}
 	}
 	dir := fmt.Sprintf("/usr/local/hostel-permissions-%d", time.Now().UnixNano())

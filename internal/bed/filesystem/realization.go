@@ -1,8 +1,6 @@
 package filesystem
 
 import (
-	"slices"
-
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
@@ -13,7 +11,7 @@ import (
 // Identity protection remains useful even when optional path mechanisms are off.
 func (m *Manager) SetDedicatedIdentity(dedicated bool) { m.dedicatedIdentity = dedicated }
 
-func (m *Manager) preparedRealization(b *bed.Bed) *protocol.FilesystemRealization {
+func (m *Manager) preparedRealization() *protocol.FilesystemRealization {
 	result := &protocol.FilesystemRealization{
 		State: "prepared", PrivateData: "none", CoreAccess: "unix_permissions", FileAPI: "bed_identity",
 	}
@@ -26,19 +24,6 @@ func (m *Manager) preparedRealization(b *bed.Bed) *protocol.FilesystemRealizatio
 		result.CoreAccess = "path_rules"
 	case "uid":
 		result.PrivateData = "uid"
-	}
-	m.mu.Lock()
-	reports := slices.Clone(m.sharedReports)
-	m.mu.Unlock()
-	groups := b.Status().Privilege.SupplementaryGIDs
-	for _, report := range reports {
-		software := protocol.SoftwareAccessStatus{Path: report.Path, Prepared: report.Tool.Selected, Authorized: slices.Contains(groups, report.GID)}
-		if !software.Prepared {
-			software.Reason = "shared software permissions were not prepared"
-		} else if !software.Authorized {
-			software.Reason = "Bed identity does not include the software group"
-		}
-		result.Software = append(result.Software, software)
 	}
 	return result
 }

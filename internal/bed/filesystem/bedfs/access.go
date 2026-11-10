@@ -1,10 +1,11 @@
 package bedfs
 
-// SoftwareRoot is the shared software installation area. Filesystem prepares
-// authorization before Beds execute; no Bed owns its lifecycle.
+// SoftwareRoot is a Carrier software location exposed through the Bed view.
+// Its provider owns permissions and lifecycle; a writable mapping grants no
+// additional Unix authority to the Bed identity.
 const SoftwareRoot = "/usr/local"
 
-// DirectoryAccess describes an implicit Carrier grant. Explicit Volume mounts
+// DirectoryAccess describes a Carrier resource explicitly included in Bed views. Explicit Volume mounts
 // carry their own ownership and read-only contracts. Kernel permissions still
 // apply even when a directory is granted writable.
 type DirectoryAccess struct {
@@ -15,6 +16,7 @@ type DirectoryAccess struct {
 // CommonDirectories owns the shared userland policy used by file APIs and
 // process mechanisms. Most-specific paths precede their parents for routing.
 // +spec=`Private Bed data, shared userland and management resources have distinct ownership. Mechanisms consume the same grants, and report any protection they cannot realize.`
+// +rule=`Introducing a Carrier directory must not recursively rewrite its ownership, modes or ACLs. Mapping and Unix authorization are separate.`
 // +link:doc=docs/volumes.md
 func CommonDirectories() []DirectoryAccess {
 	return []DirectoryAccess{

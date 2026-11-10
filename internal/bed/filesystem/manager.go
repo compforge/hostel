@@ -22,18 +22,14 @@ import (
 
 type Manager struct {
 	bed.Noop
-	mu                     sync.Mutex
-	sharedSoftware         []sharedDirectory
-	sharedReports          []SharedSoftwareStatus
-	sharedStarted          bool
-	softwareGroupAvailable bool
-	dedicatedIdentity      bool
-	identities             map[*bed.Bed]hostfs.IdentityRoots
-	files                  map[*bed.Bed]*bedfs.FS
-	pillows                map[*bed.Bed]map[string]*bedfs.FS
-	volumes                map[*bed.Bed]string
-	isolator               isolation.Isolator
-	status                 bed.StatusWriter[bed.FilesystemStatus]
+	mu                sync.Mutex
+	dedicatedIdentity bool
+	identities        map[*bed.Bed]hostfs.IdentityRoots
+	files             map[*bed.Bed]*bedfs.FS
+	pillows           map[*bed.Bed]map[string]*bedfs.FS
+	volumes           map[*bed.Bed]string
+	isolator          isolation.Isolator
+	status            bed.StatusWriter[bed.FilesystemStatus]
 }
 
 func NewManager(iso isolation.Isolator, status bed.StatusWriter[bed.FilesystemStatus]) *Manager {
@@ -108,7 +104,7 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 		log.Printf("filesystem: bed=%s file API identity uid=%d gid=%d", b.ID, user.UID, user.GID)
 	}
 	views := m.PillowFiles(b)
-	realized := m.preparedRealization(b)
+	realized := m.preparedRealization()
 	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Mounts = nil })
 	for _, consumer := range slices.Sorted(maps.Keys(views)) {
 		view := views[consumer]
@@ -190,34 +186,24 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 }
 
 type Status struct {
-	SharedSoftware []SharedSoftwareStatus           `json:"shared_software,omitempty"`
-	Room           bed.RoomType                     `json:"room"`
-	Tools          map[string]tool.Status           `json:"tools"`
-	Requested      string                           `json:"requested"`
-	Effective      string                           `json:"effective"`
-	Ceiling        string                           `json:"ceiling"`
-	Supported      []string                         `json:"supported"`
-	Mechanism      string                           `json:"mechanism"`
-	ProcessView    isolation.ProcessViewReport      `json:"process_view"`
-	Probes         map[string]hostfacts.ProbeReport `json:"probes"`
+	Room        bed.RoomType                     `json:"room"`
+	Tools       map[string]tool.Status           `json:"tools"`
+	Requested   string                           `json:"requested"`
+	Effective   string                           `json:"effective"`
+	Ceiling     string                           `json:"ceiling"`
+	Supported   []string                         `json:"supported"`
+	Mechanism   string                           `json:"mechanism"`
+	ProcessView isolation.ProcessViewReport      `json:"process_view"`
+	Probes      map[string]hostfacts.ProbeReport `json:"probes"`
 }
 
 func (m *Manager) Status() Status {
-	m.mu.Lock()
-	reports := slices.Clone(m.sharedReports)
-	for i := range reports {
-		reports[i].Tool.Requirements.Capabilities = slices.Clone(reports[i].Tool.Requirements.Capabilities)
-		reports[i].Tool.Requirements.Tools = slices.Clone(reports[i].Tool.Requirements.Tools)
-		reports[i].Tool.Requirements.Conditions = slices.Clone(reports[i].Tool.Requirements.Conditions)
-	}
-	m.mu.Unlock()
 	view := Status{
-		SharedSoftware: reports,
-		Room:           m.isolator.Level().Room(),
-		Effective:      m.isolator.Level().String(),
-		Mechanism:      m.isolator.Name(),
-		ProcessView:    isolation.ProcessViewReport{Mode: "carrier", Available: true},
-		Probes:         map[string]hostfacts.ProbeReport{},
+		Room:        m.isolator.Level().Room(),
+		Effective:   m.isolator.Level().String(),
+		Mechanism:   m.isolator.Name(),
+		ProcessView: isolation.ProcessViewReport{Mode: "carrier", Available: true},
+		Probes:      map[string]hostfacts.ProbeReport{},
 	}
 	if m.isolator.MountsRoot() {
 		view.ProcessView.Mode = "mount"
