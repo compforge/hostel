@@ -131,13 +131,13 @@ Bed `status.subsystems.filesystem.realization` 是增量字段：
   机制全部关闭，实际采用独立 Bed 身份时仍报告 `uid`；room 保持原来的机制摘要语义。
 - `core_access` 为 `path_rules / unix_permissions`。后者明确表示原生进程只受 Unix 权限保护，
   不保证隐藏其他用户可读的管理文件；前者也仅覆盖定义的路径规则，不代表任意 HostPath 或内核接口的完整隔离。
-- `file_api=bed_identity` 表示所有 Pillow 的 API 根已绑定 Bed 身份。
+- `file_api=daemon_bedfs` 表示 daemon 通过 BedFS 管理授权数据；不承诺与 Bed 进程相同的 Unix 权限。
 - `views` 分 Pillow 报告路径模式、rootfs 与读写/只读 Mount 支持；`reason` 解释路径缺口。
 公共目录映射不代表来源权限已经准备；Filesystem 不发布软件树已自动授权的保证。
 
 只有全部 Pillow 准备成功才发布 `prepared`。开始释放时先清除 `Prepared`、room 和具体
 保证；释放失败保留 `unknown` 与资源 owner，成功后发布 `released`。软件目录本身不会随
-Bed 释放而删除。快照读写均深拷贝；GET 不探测资源，不承诺连续检测外部修改或 worker 消失。
+Bed 释放而删除。快照读写均深拷贝；GET 不探测资源，不承诺连续检测外部修改。
 
 Landlock 根据可用 ABI 选择当前支持的最强 preset；无 ABI 或实际限制失败会返回错误，
 不会用库的 BestEffort 无操作成功替代已选保护。旧 ABI 未覆盖的系统调用仍属于能力边界。
@@ -163,7 +163,7 @@ Hostel 不尝试获取缺失权限，也不把 UID 0 等同于具备某个 capab
 公共软件的来源权限由镜像或目录提供方准备，不提供固定 Bed UID/GID、extra GIDs 或 shared directories
 配置入口。Linux 具备身份管理条件时，Privilege 自动选择内部软件组 **199999**，与私有
 UID/主 GID 的 200000–299999 区间分开；部署需预留这些数值，不要求创建对应 group 名。
-command、Session、Pillow 主进程和文件 API 使用同一实际身份及组集合。
+command、Session 和 Pillow 主进程使用同一实际身份及组集合；文件 API 由 daemon 管理授权数据。
 没有跨身份权限的 rootless 运行沿用实际身份和继承组，并报告软件组不可用。
 
 实例和 Bed 的 privilege 状态披露 Carrier 身份空间中的 `supplementary_gids`，选择必须经过
@@ -179,9 +179,9 @@ Hostel 不通过默认安装路径或共享组成员身份推断目录可写。
 私有根和 managed Volume 继续按各 Bed UID/主 GID 管理，私有根以 Unix 权限阻止其他 Bed
 访问。软件附加组保留为身份的一部分，但只有来源已授予该组权限时才产生相应访问能力；
 它不自动授权其他路径，也不改变独立 UID/GID 或网络的 UID 匹配。
-文件 API 在 Linux 使用每 Bed 的降权 syscall worker；仅传入已经授权、固定的目录锚点，
-目录内的 open、chmod、rename 等由内核按 Bed 身份检查，不能借用 daemon 的 root 权限。
-Filesystem 拥有 worker 的准备与清理，销毁未完成前不释放身份。
+文件 API 由 daemon 通过 BedFS 的目录锚点直接执行，管理 Rootfs 与显式挂载的数据。
+它不隐式导出公共运行依赖，也不切换 Bed UID；Unix 权限等价不属于文件 API 契约。
+每次请求持有 Bed operation 防止回收，Filesystem 在请求结束并完成生命周期清理后关闭目录句柄。
 
 共享软件修改会影响其他 Bed，属于共享信任域。目录提供方须验证所需的跨 UID 安装、替换
 和卸载行为，不能仅凭挂载为可写或组成员关系声称可用。daemon 的特权工具及依赖须放在

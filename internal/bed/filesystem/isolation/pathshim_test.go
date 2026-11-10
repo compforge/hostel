@@ -85,17 +85,14 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 	}
 }
 
-// +case:id=pathshim_public_workdir,desc=`A public workdir and unsupported read-only temporary mount leave no paths to translate`,expect=`Skip the zero-bind helper while retaining the selected boundary and cwd`
+// +case:id=pathshim_public_workdir,desc=`An explicitly mounted public workdir is translated alongside an unsupported read-only temporary mount`,expect=`Retain the selected boundary, explicit bind and cwd`
 func TestPathshimPublicWorkdirRetainsBoundary(t *testing.T) {
 	fs := newTestFS(t, t.TempDir())
-	if err := fs.PrepareShared(); err != nil {
-		t.Fatal(err)
-	}
 	source, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.SetMounts([]bedfs.Mount{{Source: source, Target: "/tmp", ReadOnly: true}}); err != nil {
+	if err := fs.SetMounts([]bedfs.Mount{{Source: source, Target: "/tmp", ReadOnly: true}, {Source: "/usr/local", Target: "/usr/local"}}); err != nil {
 		t.Fatal(err)
 	}
 	fs.SetWorkdir("/usr/local")
@@ -104,7 +101,7 @@ func TestPathshimPublicWorkdirRetainsBoundary(t *testing.T) {
 	if err := runtime.Wrap(cmd, fs, fs.Workdir()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/usr/bin/room-helper", "--", "/bin/sh", "-c", "pwd"}
+	want := []string{"/usr/bin/room-helper", "--", "/usr/bin/pathshim", "--quiet", "--bind", "/usr/local:/usr/local", "--cwd", "/usr/local", "--", "/bin/sh", "-c", "pwd"}
 	if !slices.Equal(cmd.Args, want) || cmd.Dir != fs.Workdir() {
 		t.Fatalf("public view lost boundary or cwd: args=%v cwd=%q", cmd.Args, cmd.Dir)
 	}

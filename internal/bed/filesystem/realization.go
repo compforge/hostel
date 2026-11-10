@@ -13,7 +13,7 @@ func (m *Manager) SetDedicatedIdentity(dedicated bool) { m.dedicatedIdentity = d
 
 func (m *Manager) preparedRealization() *protocol.FilesystemRealization {
 	result := &protocol.FilesystemRealization{
-		State: "prepared", PrivateData: "none", CoreAccess: "unix_permissions", FileAPI: "bed_identity",
+		State: "prepared", PrivateData: "none", CoreAccess: "unix_permissions", FileAPI: "daemon_bedfs",
 	}
 	if m.dedicatedIdentity {
 		result.PrivateData = "uid"

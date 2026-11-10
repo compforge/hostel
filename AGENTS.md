@@ -39,8 +39,8 @@ daemon 组装 Web Server、Bed Manager、Amenity Manager，Bed Manager 组合各
 - **bed id**：Hostel 生成的本地身份；本地数据保留期间跨重启恢复，Forget 后同名创建换 ID。领域资源以 ID 归属，远端快照以 Name/快照引用定位。
 - **beds-root**：所有 bed 目录的**父目录**，**可配、不写死**（`--beds-root` / `HOSTEL_BEDS_ROOT`，默认 `/workspace`）；**daemon 启动时创建一次**。
 - **bed 目录**：`{beds-root}/{bed name}`，含 `meta.json`（可移植身份）、`rootfs/` 与 `volumes/`；由 `InitializeBed` 异步准备。只有 Store Stage-in/Restore 与 BedFS/isolation 准备全部完成后才发布 Ready，原生数据面通过 `Ensure` 等待已经显式声明的 Bed，缺失返回 not found，详见 `docs/bed.md`。
-- **BedFS**：Bed 持有的文件系统数据域；提供 Bed Rootfs、Volume 数据与各 Pillow 的 Workdir/Mounts 视图、三个路径空间及文件操作。Executor 替换不改变 BedFS 身份，详见 `docs/volumes.md`。
-- **bed_home（rootfs 目录）**：BedFS 的宿主根 `{bed 目录}/rootfs`——**Bed 自身数据根**；未命中外部映射和内置公共目录的客户端路径解析到它下面，回显保持 Bed 路径。它不参与自动持久化，也不表示进程已有独立的 `/`。
+- **BedFS**：Bed 持有的文件系统数据域；提供 Bed Rootfs、Volume 数据与各 Pillow 的 Workdir/Mounts 视图、三个路径空间及文件操作。文件 API 由 daemon 直接调用 BedFS，限定在 Bed 数据和显式授权来源，不模拟 Bed Unix 身份或隐式导出公共运行依赖。Executor 替换不改变 BedFS 身份，详见 `docs/volumes.md`。
+- **bed_home（rootfs 目录）**：BedFS 的宿主根 `{bed 目录}/rootfs`——**Bed 自身数据根**；未命中显式挂载的文件 API 路径解析到它下面，回显保持 Bed 路径。它不参与自动持久化，也不表示进程已有独立的 `/`。
 - **Workdir**：Pillow 默认工作目录，当前为 `/workspace`（`bedfs.DefaultWorkdir`），也是 API 相对路径的解析基准；具体进程的 cwd 可以覆盖。Rootfs、Workdir 与 Volumes/Mounts 的关系见 `docs/volumes.md`。
 - **Volume / Mount**：Bed 声明命名数据来源（managed / host_path）；每个 Pillow 声明自己的 mounts，所属 command、session、主进程和文件 API 共用该视图。共享数据与执行视图分别管理，见 [Volume 与文件视图](docs/volumes.md#来源与挂载)。
 - **房型（dorm / room / suite）**：fs/net 各自将实际能力映射为房型，Bed 取较低值；房型不参与准入或机制选择，能力选择始终尽力向上（见 `docs/isolation.md`）。
@@ -90,7 +90,7 @@ tini (pid1)                       pod 级收尸兜底
 **路径模型**（Rootfs、Volumes 归属 Bed，Workdir、Mounts 归属 Pillow；进程视图与 API 补偿分别兑现，详见 `docs/volumes.md`）：
 
 ```
-未命中当前 mounts / 公共目录的客户端数据路径：/tmp/x → rootfs/tmp/x；相对路径 = Workdir 相对
+未命中当前 mounts 的文件 API 数据路径：/tmp/x → rootfs/tmp/x；相对路径 = Workdir 相对
    │  BedFS.Resolve：单射 rebase（回显为其逆映射）
    ▼
 <beds-root>/                 宿主侧，所有 bed 父目录；可配 HOSTEL_BEDS_ROOT，默认 /workspace，daemon 启动建

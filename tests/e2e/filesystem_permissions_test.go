@@ -146,7 +146,7 @@ func checkFilesystemPermissions(t *testing.T, c *apiClient, source string, view 
 		}
 		must2xx(t, "realized filesystem", response)
 		actual := detail.Status.Subsystems.Filesystem.Realization
-		if actual == nil || actual.State != "prepared" || actual.FileAPI != "bed_identity" || len(actual.Views) != 1 {
+		if actual == nil || actual.State != "prepared" || actual.FileAPI != "daemon_bedfs" || len(actual.Views) != 1 {
 			t.Fatalf("missing realized view: %+v", actual)
 		}
 		realizedView := actual.Views[0]

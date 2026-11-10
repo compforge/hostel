@@ -170,7 +170,7 @@ func waitVolumeWriter(t *testing.T, c *apiClient, id, previous string) string {
 	}
 }
 
-// +case:id=hostpath_preserves_authority,desc=`Mount a caller-owned root-only directory into a non-root Bed`,expect=`file API and command cannot read or write it; creation and purge preserve source permissions and data`
+// +case:id=hostpath_preserves_authority,desc=`Mount a caller-owned root-only directory into a non-root Bed`,expect=`commands retain Unix restrictions while daemon file APIs access the explicitly mounted data; source ownership survives purge`
 func TestHostPathRequiresSourcePermission(t *testing.T) {
 	requireTestBinary(t)
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
@@ -207,11 +207,17 @@ func TestHostPathRequiresSourcePermission(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if response.Status < 400 {
-				t.Fatalf("API bypassed source permissions: %d", response.Status)
+			must2xx(t, "daemon reads authorized source", response)
+			if string(response.Body) != "external" {
+				t.Fatalf("source content: %q", response.Body)
 			}
-			if response := c.upload(t, "denied-source", "/external/new", []byte("bad")); response.Status < 400 {
-				t.Fatalf("API wrote restricted source: %d", response.Status)
+			must2xx(t, "daemon writes authorized source", c.upload(t, "denied-source", "/external/new", []byte("managed")))
+			info, err := os.Stat(filepath.Join(source, "new"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Sys().(*syscall.Stat_t).Uid != 0 {
+				t.Fatal("borrowed source ownership was reassigned")
 			}
 			response, err = c.json(ctx, "DELETE", "/v1/beds/denied-source?purge=true", "", nil, nil)
 			if err != nil {

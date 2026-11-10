@@ -3,17 +3,16 @@
 package bedfs
 
 import (
-	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 	"os"
 	"path/filepath"
 	"syscall"
 	"testing"
 )
 
-// +case:id=bedfs_identity_authority,desc=`Root daemon exposes private and borrowed data using one Bed identity`,expect=`new files belong to the Bed, shared group access works, and root-owned mutation and escaped symlinks fail`
-func TestFileAPIUsesBedIdentity(t *testing.T) {
+// +case:id=bedfs_daemon_authority,desc=`Root daemon manages private and explicitly borrowed Bed data`,expect=`managed files belong to the Bed, borrowed owners remain provider-owned, and escaped symlinks fail`
+func TestFileAPIUsesDaemonAuthority(t *testing.T) {
 	if os.Geteuid() != 0 {
-		t.Skip("requires Linux identity switching")
+		t.Skip("requires root to verify managed ownership")
 	}
 	base, err := os.MkdirTemp("/tmp", "hostel-bedfs-identity-")
 	if err != nil {
@@ -56,14 +55,6 @@ func TestFileAPIUsesBedIdentity(t *testing.T) {
 	if err := view.SetMounts([]Mount{{Source: source, Target: "/software"}}); err != nil {
 		t.Fatal(err)
 	}
-	worker, err := hostfs.NewIdentityRoots(200001, 200001, []int{199999})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer worker.Close()
-	if err := view.BindIdentity(worker); err != nil {
-		t.Fatal(err)
-	}
 	for _, file := range []string{"/workspace/mine", "/software/installed"} {
 		if err := view.Write(file, []byte("bed"), 0660); err != nil {
 			t.Fatal(err)
@@ -73,15 +64,19 @@ func TestFileAPIUsesBedIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Sys().(*syscall.Stat_t).Uid != 200001 {
-			t.Fatal("daemon owned API-created file")
+		wantUID := uint32(200001)
+		if file == "/software/installed" {
+			wantUID = 0
+		}
+		if info.Sys().(*syscall.Stat_t).Uid != wantUID {
+			t.Fatalf("file=%s uid=%d want=%d", file, info.Sys().(*syscall.Stat_t).Uid, wantUID)
 		}
 	}
-	if err := view.Chmod("/software/root-owned", Permission{Mode: 0777}); !os.IsPermission(err) {
-		t.Fatalf("root chmod authority leaked: %v", err)
+	if err := view.Chmod("/software/root-owned", Permission{Mode: 0777}); err != nil {
+		t.Fatalf("daemon chmod failed: %v", err)
 	}
-	if err := view.Write("/software/root-owned", []byte("changed"), 0644); !os.IsPermission(err) {
-		t.Fatalf("root write authority leaked: %v", err)
+	if err := view.Write("/software/root-owned", []byte("changed"), 0644); err != nil {
+		t.Fatalf("daemon write failed: %v", err)
 	}
 	if _, err := view.Read("/outside"); err == nil {
 		t.Fatal("escaped symlink was readable")
@@ -90,9 +85,6 @@ func TestFileAPIUsesBedIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := view.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := worker.Close(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -121,9 +113,6 @@ func TestCommonParentDoesNotExposeBedData(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer view.Close()
-	if err := view.PrepareShared(); err != nil {
-		t.Fatal(err)
-	}
 	// Both data trees are readable by this same identity. The common /opt route
 	// still must not expose the neighboring tree through its Carrier spelling.
 	if data, err := os.ReadFile(secret); err != nil || string(data) != "neighbor" {

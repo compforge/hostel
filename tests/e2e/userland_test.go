@@ -137,8 +137,11 @@ func TestSharedSoftwareProvidedPermissions(t *testing.T) {
 	dir := fmt.Sprintf("/usr/local/hostel-permissions-%d", time.Now().UnixNano())
 	run("permissions-a", fmt.Sprintf("umask 022; mkdir -p %s/nested; printf first > %s/nested/package", dir, dir))
 	run("permissions-b", fmt.Sprintf("printf second >> %s/nested/package; mv %s/nested/package %s/nested/replaced; umask 022; printf replacement > %s/nested/package", dir, dir, dir, dir))
-	must2xx(t, "shared software API upload", c.upload(t, "permissions-a", dir+"/api-package", []byte("api")))
-	run("permissions-b", fmt.Sprintf(`test "$(cat %s/api-package)" = api; printf other-bed >> %s/api-package`, dir, dir))
+	must2xx(t, "private API upload", c.upload(t, "permissions-a", dir+"/api-package", []byte("api")))
+	run("permissions-b", fmt.Sprintf(`test ! -e %s/api-package`, dir))
+	if got := c.download(t, "permissions-b", dir+"/api-package"); got.Status != http.StatusNotFound {
+		t.Fatalf("implicit shared API data: %d", got.Status)
+	}
 	run("permissions-a", fmt.Sprintf("printf third >> %s/nested/package; rm -r %s", dir, dir))
 }
 
