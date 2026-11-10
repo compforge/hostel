@@ -77,9 +77,13 @@ func (m *Manager) SetPortManager(ports *hostnetwork.PortManager) {
 func (m *Manager) SetDedicatedUIDs(enabled bool) { m.dedicatedUIDs = enabled }
 
 func NewConfigured(ctx context.Context, cfg Config) *Manager {
+	if cfg.MTU == 0 {
+		cfg.MTU = hostnetwork.DefaultMTU
+	}
 	m := &Manager{config: cfg}
 	if cfg.NetNS.Effective() != tool.Off {
 		m.pool = hostnetwork.New(ctx)
+		m.pool.SetMTU(cfg.MTU)
 	}
 	return m
 }

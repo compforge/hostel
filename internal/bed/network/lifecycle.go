@@ -32,7 +32,7 @@ type Provider interface {
 // WithProvider supplies the namespace implementation; useful for capability
 // fallbacks and deterministic lifecycle tests without host mutation.
 func WithProvider(p Provider, status bed.StatusWriter[bed.NetworkStatus]) *Manager {
-	return &Manager{provider: p, status: status}
+	return &Manager{config: Config{MTU: hostnetwork.DefaultMTU}, provider: p, status: status}
 }
 func (m *Manager) SetStatusWriter(status bed.StatusWriter[bed.NetworkStatus]) { m.status = status }
 

@@ -88,6 +88,7 @@ func (o Options) apply(c *Config) {
 	apply(&c.Bed.Filesystem.UID, o.Bed.Filesystem.UID)
 	apply(&c.Bed.Filesystem.PRoot, o.Bed.Filesystem.PRoot)
 	apply(&c.Bed.Filesystem.Pathshim, o.Bed.Filesystem.Pathshim)
+	apply(&c.Bed.Network.MTU, o.Bed.Network.MTU)
 	apply(&c.Bed.Network.NetNS, o.Bed.Network.NetNS)
 	apply(&c.Bed.Network.UIDNFT, o.Bed.Network.UIDNFT)
 	apply(&c.Bed.Resource.Cgroup, o.Bed.Resource.Cgroup)
