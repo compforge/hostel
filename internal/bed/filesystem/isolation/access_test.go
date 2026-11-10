@@ -11,9 +11,7 @@ import (
 func TestCommonDirectoryPolicyDrivesMountPermissions(t *testing.T) {
 	roots := []string{}
 	for _, access := range bedfs.CommonDirectories() {
-		if access.ReadOnly {
-			roots = append(roots, access.Path)
-		}
+		roots = append(roots, access.Path)
 	}
 	mounts := buildBwrapMounts("/beds", "/beds/a/rootfs", nil, nil, roots...)
 	for _, access := range bedfs.CommonDirectories() {

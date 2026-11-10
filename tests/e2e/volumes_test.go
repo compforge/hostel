@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 	"time"
 
@@ -37,6 +38,10 @@ func TestBedVolumeConsumers(t *testing.T) {
 				var hostSource string
 				if variant.source == "host_path" {
 					hostSource = t.TempDir()
+					// This fixture explicitly grants access to the dynamically allocated Bed UID.
+					if err := os.Chmod(hostSource, 0777); err != nil {
+						t.Fatal(err)
+					}
 					volume = map[string]any{"name": "shared", "host_path": map[string]any{"path": hostSource}}
 				}
 				t.Cleanup(func() {
@@ -162,5 +167,68 @@ func waitVolumeWriter(t *testing.T, c *apiClient, id, previous string) string {
 			t.Fatalf("writer restart timeout: %+v", detail)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// +case:id=hostpath_preserves_authority,desc=`Mount a caller-owned root-only directory into a non-root Bed`,expect=`file API and command cannot read or write it; creation and purge preserve source permissions and data`
+func TestHostPathRequiresSourcePermission(t *testing.T) {
+	requireTestBinary(t)
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		t.Skip("requires root Linux fixture and per-Bed UID")
+	}
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bwrap unavailable")
+	}
+	for _, backend := range []string{"local", "supervisor"} {
+		t.Run(backend, func(t *testing.T) {
+			source := t.TempDir()
+			if err := os.WriteFile(filepath.Join(source, "seed"), []byte("external"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			options := restrictedOptions()
+			options.Bed.Filesystem.Bwrap = value(tool.Required)
+			c := startTarget(t, targetOptions{executor: backend, config: &options}).client
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{"id": "denied-source", "volumes": []map[string]any{{"name": "external", "host_path": map[string]any{"path": source}}}, "pillows": []map[string]any{{"name": "main", "mounts": []map[string]any{{"volume": "external", "path": "/external"}}}}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			must2xx(t, "create restricted source", response)
+			c.waitBed(t, "denied-source", func(b bedView) bool { return b.Status.Readiness.Ready }, "restricted source ready")
+			result, response := c.command(t, "denied-source", map[string]any{"command": `test "$(id -u)" != 0 && ! cat /external/seed && ! touch /external/new`, "timeout": 5000})
+			must2xx(t, "source DAC", response)
+			assertCommandExit(t, result, 0)
+			response, err = c.request(ctx, "GET", "/v1/beds/denied-source/execd/files/download?path=/external/seed", "", nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.Status < 400 {
+				t.Fatalf("API bypassed source permissions: %d", response.Status)
+			}
+			if response := c.upload(t, "denied-source", "/external/new", []byte("bad")); response.Status < 400 {
+				t.Fatalf("API wrote restricted source: %d", response.Status)
+			}
+			response, err = c.json(ctx, "DELETE", "/v1/beds/denied-source?purge=true", "", nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			must2xx(t, "purge restricted source", response)
+			after, err := os.Stat(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, b := before.Sys().(*syscall.Stat_t), after.Sys().(*syscall.Stat_t)
+			if before.Mode() != after.Mode() || a.Uid != b.Uid || a.Gid != b.Gid {
+				t.Fatal("changed external source authority")
+			}
+			if data, err := os.ReadFile(filepath.Join(source, "seed")); err != nil || string(data) != "external" {
+				t.Fatalf("source data changed: %q %v", data, err)
+			}
+		})
 	}
 }

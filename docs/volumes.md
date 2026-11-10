@@ -153,6 +153,14 @@ rootful 视图模板归 Bed；要求私有 PID namespace 时，在每个 Executo
 它们与文件隔离等级分别判断。启动验证须让 command、Session 和主进程实际写文件，再由
 BedFS 读回，不能用程序存在或 `true` 成功代替。
 
+pathshim 0.1.7 要求 source 和 cwd 在启动前已经存在并且可遍历。Hostel 负责准备私有目录、
+managed Volume 和 workdir；HostPath 的访问权限由提供方准备。默认路径与显式 mounts 先按
+覆盖关系合并，再交给 helper，避免重复 destination。启动 helper probe 显式检查 guest cwd，
+真实 Bed 的组合执行探测继续在最终 Bed 身份下验证文件互通。参数或访问错误不会由 pathshim
+自动创建目录、改用 `/` 或静默 passthrough；实例 probe 失败保留原始诊断并按工具策略处理。
+若 Carrier BedHome 位于 `/tmp` 等 guest bind 下，pathshim 额外保留 BedHome 的同路径映射，
+使局部视图外的私有 cwd 不被再次重定向；Session 后续切换 cwd 也使用同一视图。
+
 ### 文件 API 的候选读取
 
 挂载在进程侧已兑现时，API 直接访问源目录。未兑现时，Reader 先读对应的 Rootfs 本地
@@ -165,10 +173,19 @@ BedFS 读回，不能用程序存在或 `true` 成功代替。
 
 ### 临时目录
 
+默认临时文件是 Bed 自己产生的数据，与公共软件和依赖的复用需求不同。准备
+`bedHome/tmp` 不要求独占 rootfs：数据归属与进程路径体验分别落实。Carrier 的公共
+`/tmp` 仍属于 Carrier，不因路径同名就成为 Bed 的默认临时来源。
+
 `/tmp` 默认属于 Bed Rootfs，由命令、Session 和主进程共享；Executor 替换保留内容，
 本地回收时删除，目录带 sticky bit。显式挂载可替换其数据来源，权限和持久性按卷契约处理。
 mount/PRoot 和 pathshim 的临时目录映射让进程与 API 指向同一数据；carrier 模式用宿主
 路径设置 `TMPDIR`，无法重定向程序硬编码的 `/tmp`。Pillow 与单次请求 env 可覆盖 TMPDIR。
+
+需要跨 Bed 共享临时文件时，可将同一 HostPath Volume 挂载到 `/tmp`；Hostel 不接管
+提供方的权限与清理。显式挂载优先于默认映射，每个目标只发出一次；无法兑现的只读
+声明不能被隐式可写默认项替代。缺少路径映射时，硬编码 `/tmp` 与遵守 TMPDIR 的
+程序可能访问不同来源，实际进程视图和隔离状态须如实披露。
 
 ## 自动持久化
 

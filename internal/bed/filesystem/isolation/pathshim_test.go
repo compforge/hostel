@@ -67,16 +67,46 @@ func TestPathshimViewWrapsWorkspaceWithoutChangingIsolation(t *testing.T) {
 	}
 	wantPrefix := []string{
 		probe, "--quiet",
-		"--bind", filepath.Join(home, "tmp") + ":/tmp",
+		"--bind", filepath.Join(fs.Rootfs(), "tmp") + ":/tmp",
 		"--bind", workspace + ":/workspace",
 		"--bind", source + ":/mnt/memory",
-		"--cwd", "/workspace/sub", "--",
 	}
+	if beneath(fs.Rootfs(), "/tmp") {
+		wantPrefix = append(wantPrefix, "--bind", fs.Rootfs()+":"+fs.Rootfs())
+	}
+	wantPrefix = append(wantPrefix,
+		"--cwd", "/workspace/sub", "--",
+	)
 	if len(cmd.Args) < len(wantPrefix) || !slices.Equal(cmd.Args[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("pathshim argv = %v, want prefix %v", cmd.Args, wantPrefix)
 	}
 	if cmd.Dir != filepath.Join(workspace, "sub") {
 		t.Fatalf("outer cwd = %q", cmd.Dir)
+	}
+}
+
+// +case:id=pathshim_public_workdir,desc=`A public workdir and unsupported read-only temporary mount leave no paths to translate`,expect=`Skip the zero-bind helper while retaining the selected boundary and cwd`
+func TestPathshimPublicWorkdirRetainsBoundary(t *testing.T) {
+	fs := newTestFS(t, t.TempDir())
+	if err := fs.PrepareShared(); err != nil {
+		t.Fatal(err)
+	}
+	source, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.SetMounts([]bedfs.Mount{{Source: source, Target: "/tmp", ReadOnly: true}}); err != nil {
+		t.Fatal(err)
+	}
+	fs.SetWorkdir(bedfs.SoftwareRoot)
+	runtime := &resolved{boundary: prefixRoom{}, process: &pathshimView{path: "/usr/bin/pathshim"}}
+	cmd := exec.Command("/bin/sh", "-c", "pwd")
+	if err := runtime.Wrap(cmd, fs, fs.Workdir()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/usr/bin/room-helper", "--", "/bin/sh", "-c", "pwd"}
+	if !slices.Equal(cmd.Args, want) || cmd.Dir != fs.Workdir() {
+		t.Fatalf("public view lost boundary or cwd: args=%v cwd=%q", cmd.Args, cmd.Dir)
 	}
 }
 
@@ -130,11 +160,14 @@ func fakePathshim(t *testing.T, output string, exitCode int) string {
 [ "$1" = probe ] || { echo 'expected probe subcommand' >&2; exit 64; }
 shift
 [ "$#" -ge 2 ] || exit 64
-while [ "$#" -gt 0 ]; do
-  [ "$1" = --bind ] && [ "$#" -ge 2 ] || exit 64
+while [ "$#" -gt 0 ] && [ "$1" = --bind ]; do
+  [ "$#" -ge 2 ] || exit 64
   case "$2" in /*:/*) ;; *) exit 64 ;; esac
+  source=${2%%:*}
+  [ -d "$source" ] && [ -x "$source" ] || { echo 'unprepared source' >&2; exit 2; }
   shift 2
 done
+[ "$#" -eq 2 ] && [ "$1" = --cwd ] && [ "$2" = /workspace ] || exit 64
 printf '%%s\n' %s
 exit %d
 `, output, exitCode)
@@ -159,3 +192,17 @@ func newTestFS(t *testing.T, root string) *bedfs.FS {
 }
 
 func (prefixRoom) AllowsMappings() bool { return true }
+
+// +case:id=pathshim_carrier_home_alias,desc=`A guest bind contains the physical BedHome`,expect=`unprojected private paths retain their carrier spelling through an identity bind`
+func TestPathshimPreservesUnprojectedPrivatePaths(t *testing.T) {
+	fs := newTestFS(t, t.TempDir())
+	parent := filepath.Dir(fs.Rootfs())
+	if err := fs.SetMounts([]bedfs.Mount{{Source: t.TempDir(), Target: parent}}); err != nil {
+		t.Fatal(err)
+	}
+	mappings := pathshimMappings(fs, bedfs.MappingSupport{ReadWrite: true})
+	last := mappings[len(mappings)-1]
+	if last.Source != fs.Rootfs() || last.Target != fs.Rootfs() {
+		t.Fatalf("unprojected private paths are shadowed: %+v", mappings)
+	}
+}

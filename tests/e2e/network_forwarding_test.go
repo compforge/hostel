@@ -133,7 +133,7 @@ func TestCarrierForwardingDisabled(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, binary, "--addr", fmt.Sprintf("127.0.0.1:%d", reservePort(t)), "--beds-root", filepath.Join(t.TempDir(), "beds"))
+		cmd := exec.CommandContext(ctx, binary, "--addr", fmt.Sprintf("127.0.0.1:%d", reservePort(t)), "--beds-root", newBedsRoot(t))
 		cmd.Env = append(os.Environ(), "HOSTEL_E2E_CONFIG="+file)
 		output, err := cmd.CombinedOutput()
 		if ctx.Err() != nil || err == nil || !strings.Contains(string(output), "network.netns required") || !strings.Contains(string(output), "forwarding") {

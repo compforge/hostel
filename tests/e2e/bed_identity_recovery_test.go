@@ -64,10 +64,7 @@ func TestBedIdentityCrashRecovery(t *testing.T) {
 	})
 	listener := policyListener(t)
 	address := net.JoinHostPort("127.0.0.1", fmt.Sprint(listener.Addr().(*net.TCPAddr).Port))
-	root, err := os.MkdirTemp("", "hostel-e2e-recovery-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := newBedsRoot(t)
 	t.Cleanup(func() {
 		if err := os.RemoveAll(root); err != nil {
 			t.Error(err)

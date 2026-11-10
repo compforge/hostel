@@ -21,7 +21,7 @@ func TestManagedVolumeRoundTrip(t *testing.T) {
 	for _, kind := range []string{"cas", "pack", "tar", "auto"} {
 		t.Run(kind, func(t *testing.T) {
 			objects := newS3Fixture(t)
-			root := filepath.Join(t.TempDir(), "source")
+			root := newBedsRoot(t)
 			source := startTarget(t, targetOptions{store: kind, maxBeds: 8, bedsRoot: root}).client
 			payloads := map[string][]byte{}
 			for _, id := range []string{"bed1", "bed2"} {

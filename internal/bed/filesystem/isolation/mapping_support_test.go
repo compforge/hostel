@@ -95,3 +95,60 @@ func TestExplicitTemporaryMappingReplacesDefault(t *testing.T) {
 		t.Fatalf("temporary mappings=%d", count)
 	}
 }
+
+func TestExplicitWorkspaceReplacesDefault(t *testing.T) {
+	testExplicitDefaultReplacesOnce(t, "/workspace")
+}
+
+func TestReadOnlyTemporaryMappingNeverBecomesWritableDefault(t *testing.T) {
+	testExplicitDefaultReplacesOnce(t, "/tmp")
+}
+
+func testExplicitDefaultReplacesOnce(t *testing.T, target string) {
+	t.Helper()
+	for _, readonly := range []bool{false, true} {
+		home := filepath.Join(t.TempDir(), "beds", "one", "data")
+		if err := os.MkdirAll(home, 0755); err != nil {
+			t.Fatal(err)
+		}
+		fs, err := bedfs.New(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer fs.Close()
+		source, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := fs.SetMounts([]bedfs.Mount{{Source: source, Target: target, ReadOnly: readonly}}); err != nil {
+			t.Fatal(err)
+		}
+		for _, support := range []bedfs.MappingSupport{{ReadWrite: true}, {ReadWrite: true, ReadOnly: true}} {
+			count := 0
+			for _, mapping := range processMappings(fs, support) {
+				if mapping.Target == target {
+					count++
+					if mapping.Source != source {
+						t.Fatal("default replaced explicit source")
+					}
+				}
+			}
+			want := 0
+			if support.Supports(readonly) {
+				want = 1
+			}
+			if count != want {
+				t.Fatalf("readonly=%t support=%+v count=%d want=%d", readonly, support, count, want)
+			}
+		}
+	}
+}
+
+func TestTemporaryWorkdirIsMappedOnce(t *testing.T) {
+	fs := newTestFS(t, t.TempDir())
+	fs.SetWorkdir("/tmp")
+	mappings := processMappings(fs, bedfs.MappingSupport{ReadWrite: true})
+	if len(mappings) != 1 || mappings[0].Target != "/tmp" || mappings[0].Source != filepath.Join(fs.Rootfs(), "tmp") {
+		t.Fatalf("temporary workdir mappings=%+v", mappings)
+	}
+}

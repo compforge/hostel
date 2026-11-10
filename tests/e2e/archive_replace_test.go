@@ -13,6 +13,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qiankunli/hostel/internal/bed/tool"
+	"github.com/qiankunli/hostel/internal/config"
 )
 
 func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
@@ -26,6 +29,8 @@ func TestConcurrentUnzipReplaceAcrossBeds(t *testing.T) {
 			}
 			if forcePathshim {
 				options.helperPath = pathshimOnlySearchPath(t)
+				options.config = &config.Options{}
+				options.config.Bed.Filesystem.Pathshim = value(tool.Required)
 			}
 			target := startTarget(t, options)
 			c := target.client

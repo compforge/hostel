@@ -7,22 +7,35 @@ import (
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 )
 
-// BedFS owns the meaning of workspace and Bed path mappings. Host
-// mechanisms receive only resolved source/target paths.
+// processMappings compiles defaults and explicit mounts before selecting what
+// the mechanism can realize. An unsupported explicit mount must not reappear as
+// an implicitly writable default.
+// +spec=`Explicit mounts replace default targets exactly once, retain read-only requirements, and preserve nested mappings.`
+// +link=component://docs/volumes.md
 func processMappings(fs *bedfs.FS, support bedfs.MappingSupport) []hostfs.Mapping {
-	mappings := []hostfs.Mapping{{Source: fs.Workdir(), Target: fs.ClientWorkdir()}}
-	// The built-in temporary path follows the same BedFS as file APIs. Explicit
-	// /tmp mappings replace this default; nested mappings retain their precedence.
-	temporary := hostfs.Mapping{Source: filepath.Join(fs.Rootfs(), "tmp"), Target: bedfs.TemporaryDir}
-	for _, m := range fs.Mounts() {
-		if !support.Supports(m.ReadOnly) {
-			continue
-		}
-		if m.Target == bedfs.TemporaryDir {
-			temporary.Source = m.Source
-			continue
-		}
-		mappings = append(mappings, hostfs.Mapping{Source: m.Source, Target: m.Target})
+	explicit := fs.Mounts()
+	defaults := []hostfs.Mapping{{Source: filepath.Join(fs.Rootfs(), "tmp"), Target: bedfs.TemporaryDir}}
+	// Public workdirs keep their Carrier spelling; /tmp already has a default.
+	if beneath(fs.Workdir(), fs.Rootfs()) && fs.ClientWorkdir() != bedfs.TemporaryDir {
+		defaults = append(defaults, hostfs.Mapping{Source: fs.Workdir(), Target: fs.ClientWorkdir()})
 	}
-	return append([]hostfs.Mapping{temporary}, mappings...)
+	var mappings []hostfs.Mapping
+	for _, mapping := range defaults {
+		overridden := false
+		for _, mount := range explicit {
+			if beneath(mapping.Target, mount.Target) {
+				overridden = true
+				break
+			}
+		}
+		if !overridden {
+			mappings = append(mappings, mapping)
+		}
+	}
+	for _, m := range explicit {
+		if support.Supports(m.ReadOnly) {
+			mappings = append(mappings, hostfs.Mapping{Source: m.Source, Target: m.Target})
+		}
+	}
+	return mappings
 }

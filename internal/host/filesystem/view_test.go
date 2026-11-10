@@ -40,8 +40,8 @@ func TestViewsPreserveArgumentsAndCallerPaths(t *testing.T) {
 	}
 }
 func TestPathshimProbeUsesNativeSubcommand(t *testing.T) {
-	cmd := (Pathshim{Path: "/pathshim"}).ProbeCommand(t.Context(), []Mapping{{Source: "/source", Target: "/target"}})
-	want := []string{"/pathshim", "probe", "--bind", "/source:/target"}
+	cmd := (Pathshim{Path: "/pathshim"}).ProbeCommand(t.Context(), []Mapping{{Source: "/source", Target: "/target"}}, "/target/sub")
+	want := []string{"/pathshim", "probe", "--bind", "/source:/target", "--cwd", "/target/sub"}
 	if !slices.Equal(cmd.Args, want) {
 		t.Fatalf("probe argv = %q", cmd.Args)
 	}

@@ -14,10 +14,6 @@ import (
 func existingRuntimePaths() []string {
 	var paths []string
 	for _, access := range bedfs.CommonDirectories() {
-		// Writable children are overlaid after their read-only parents.
-		if !access.ReadOnly {
-			continue
-		}
 		if _, err := os.Stat(access.Path); err == nil {
 			paths = append(paths, access.Path)
 		}

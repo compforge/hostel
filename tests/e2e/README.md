@@ -7,6 +7,18 @@ binary suite can run on a host or inside a Kubernetes Pod. Environment selection
 observations and runner setup are described in [E2E environments](e2e-environments.md).
 Control-plane placement and cross-carrier orchestration remain outside this boundary.
 
+## Runtime data root
+
+Ordinary Bed data uses a unique `/e2e/hostel-beds-*` directory per test instance,
+for binary and image targets. Cleanup removes only the instance directory.
+Provision a writable, traversable `/e2e` once on a Linux host (for example,
+`sudo install -d -m 1777 /e2e`). On hosts such as macOS that cannot create a
+root-level directory, set `HOSTEL_E2E_ROOT` to a writable path when running binary
+E2E, for example `HOSTEL_E2E_ROOT="$HOME/.cache/hostel/e2e" make e2e`.
+Logs and result artifacts keep their existing locations. Explicit path-layout
+regressions may override beds-root; `TestPathshimBedHomeUnderTemporaryDirectory`
+retains carrier `/tmp` overlap coverage for both execution backends.
+
 ## Run the core contract
 
 ```sh
@@ -42,7 +54,7 @@ HOSTEL_E2E_REQUIRE_ISOLATION=dorm,room,suite make e2e
 ```
 
 To exercise the best-effort dorm/room `/workspace` process view, provide a
-Linux pathshim v0.1.6 binary (the revision pinned by the image). The isolation suite then requires canonical cwd, file
+Linux pathshim v0.1.7 binary (the revision pinned by the image). The isolation suite then requires canonical cwd, file
 API interoperability, mapped executable startup, session descendants, and
 terminal signal behavior through pathshim:
 
@@ -58,7 +70,7 @@ HOSTEL_E2E_PROOT=/usr/local/bin/proot make e2e
 ```
 
 With `HOSTEL_E2E_PATHSHIM` in binary mode, the concurrent dorm unzip regression
-explicitly disables PRoot in the disposable daemon PATH and requires `mode=pathshim`.
+requires the Pathshim tool, excludes PRoot from the disposable daemon PATH, and asserts `mode=pathshim`.
 A successful higher-priority PRoot selection cannot count as pathshim verification.
 v0.1.3 does not implement the `probe --bind ...` subcommand and is unsupported.
 
@@ -458,3 +470,18 @@ and modifies the result from the other Bed. Select these through the normal `mak
 Do not run the package mutations against a shared workstation or production Carrier.
 Build and export/load the image before testing: an in-build or tmpfs-only ACL test does
 not verify that runtime startup repairs permissions missing from the exported layers.
+
+### Temporary data and HostPath permissions
+
+`TestBedTemporaryDirectory` verifies private temporary data across command, Session,
+Pillow and file API consumers in carrier/pathshim/proot/mount views, with both local
+and supervisor execution. One Pillow uses `/tmp` as its workdir. Identical names in
+different Beds must retain their own contents. Carrier mode uses a private host TMPDIR.
+
+`TestBedTemporaryVolume` checks explicit managed and shared HostPath replacements of
+`/tmp`: mappings apply once, private sources do not leak across Beds, explicitly shared
+sources are readable by both, and purge preserves provider and Carrier data.
+`TestHostPathRequiresSourcePermission` verifies a root-owned 0700 HostPath remains
+inaccessible to a Bed UID through both command and file APIs. Positive HostPath fixtures
+grant permissions explicitly. Binary readiness fails promptly when the daemon exits;
+startup composition failures include bounded stderr for diagnosis.

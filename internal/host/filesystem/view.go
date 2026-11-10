@@ -20,10 +20,11 @@ func (p Pathshim) Wrap(cmd *exec.Cmd, mappings []Mapping, cwd string) {
 	cmd.Path = p.Path
 }
 
-// ProbeCommand uses the pathshim v0.1.6 probe protocol pinned by the image.
+// ProbeCommand validates caller-prepared sources and guest cwd using pathshim v0.1.7.
 // The caller may wrap this command to probe its complete execution boundary.
-func (p Pathshim) ProbeCommand(ctx context.Context, mappings []Mapping) *exec.Cmd {
-	return exec.CommandContext(ctx, p.Path, appendPathshimBinds([]string{"probe"}, mappings)...)
+func (p Pathshim) ProbeCommand(ctx context.Context, mappings []Mapping, cwd string) *exec.Cmd {
+	args := appendPathshimBinds([]string{"probe"}, mappings)
+	return exec.CommandContext(ctx, p.Path, append(args, "--cwd", cwd)...)
 }
 func appendPathshimBinds(args []string, mappings []Mapping) []string {
 	for _, m := range mappings {
