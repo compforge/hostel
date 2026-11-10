@@ -42,9 +42,22 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.startErr = err
 		return err
 	}
-	if model.PathsOverlap(canonicalRoot, bedfs.SoftwareRoot) {
-		m.startErr = fmt.Errorf("beds-root overlaps shared software after resolving symlinks")
-		return m.startErr
+	for _, access := range bedfs.CommonDirectories() {
+		if access.ReadOnly {
+			continue
+		}
+		source, err := filepath.EvalSymlinks(access.Path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			m.startErr = fmt.Errorf("resolve common directory %q: %w", access.Path, err)
+			return m.startErr
+		}
+		if model.PathsOverlap(canonicalRoot, source) {
+			m.startErr = fmt.Errorf("beds-root %q overlaps writable common directory %q after resolving symlinks", canonicalRoot, access.Path)
+			return m.startErr
+		}
 	}
 	subsystems := []daemonSubsystem{
 		{"filesystem", m.files}, {"privilege", m.privileges}, {"resource", m.resourceManager},

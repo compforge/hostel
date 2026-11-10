@@ -26,12 +26,6 @@ import (
 // This file has no build tag: the argv builder is pure string assembly so its
 // tests run on every platform (the exec-ing side lives in bwrap_linux.go).
 
-// carrierSoftwareRoot is shared by every bed in the carrier. Runtime overlays
-// are otherwise read-only under private files, so it is re-bound read-write for
-// installs made by one command to remain available to later commands and beds.
-// The carrier image owns its permissions and package-manager environment.
-const carrierSoftwareRoot = bedfs.SoftwareRoot
-
 // buildBwrapArgs assembles the bwrap argv (between the binary and the user
 // command). Segment order is a contract — bwrap applies mounts in argv order
 // and later mounts cover earlier ones (the masking below depends on it):
@@ -49,8 +43,8 @@ const carrierSoftwareRoot = bedfs.SoftwareRoot
 //     bind the host /proc read-only instead. (uts/ipc unshares are cheap and
 //     don't touch mounts.)
 //  2. Bind bed_home to /: command, session and Pillow data share BedFS paths.
-//  3. Overlay existing carrier runtime directories read-only; /usr/local
-//     remains the carrier-wide writable software installation directory.
+//  3. Introduce existing public directories with their declared access modes;
+//     writable children are rebound after any read-only parent.
 //  4. Fresh /dev and existing read-only /proc (no procfs remount under K8s).
 //  5. Mask sensitive paths only if a runtime overlay re-exposed them.
 //  6. Bind workspace and explicit mappings after masks.

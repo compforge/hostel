@@ -98,7 +98,7 @@ func TestPathshimPublicWorkdirRetainsBoundary(t *testing.T) {
 	if err := fs.SetMounts([]bedfs.Mount{{Source: source, Target: "/tmp", ReadOnly: true}}); err != nil {
 		t.Fatal(err)
 	}
-	fs.SetWorkdir(bedfs.SoftwareRoot)
+	fs.SetWorkdir("/usr/local")
 	runtime := &resolved{boundary: prefixRoom{}, process: &pathshimView{path: "/usr/bin/pathshim"}}
 	cmd := exec.Command("/bin/sh", "-c", "pwd")
 	if err := runtime.Wrap(cmd, fs, fs.Workdir()); err != nil {

@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 )
 
-// PrepareShared binds public userland into the file API as it is in the process
-// view. Kernel credentials still decide access. Only the software installation
-// area is writable; other common OS paths remain controlled, read-only inputs.
+// PrepareShared introduces public resources into the file API using the same
+// directory policy as the process view. Kernel credentials still decide access;
+// writable and read-only sources keep their provider-owned permissions.
 func (o *FS) PrepareShared() error {
 	if len(o.shared) > 0 {
 		return nil
 	}
-	// Most specific route precedes /usr. Both descriptors remain separately
-	// anchored: a software symlink cannot redirect writes into the OS tree.
+	// More-specific routes precede their parents. Each descriptor remains
+	// anchored so a writable source cannot redirect writes into a read-only one.
 	carrierRoot, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(o.Rootfs())))
 	if err != nil {
 		return err
@@ -41,7 +41,7 @@ func (o *FS) PrepareShared() error {
 		child.paths.prefix = target
 		child.paths.workdir = o.paths.workdir
 		child.readOnly = access.ReadOnly
-		child.software = target == SoftwareRoot
+		child.common = true
 		child.uid, child.gid = -1, -1
 		o.shared = append(o.shared, child)
 		// Discovery placeholder belongs to private data, never modifies the Carrier.
