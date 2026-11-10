@@ -12,7 +12,7 @@ import (
 )
 
 // +case:id=pillow_execution_ownership,desc=`Run commands and a session in two Pillows, then restart the main process`,expect=`default order, env, cwd and file views agree; the session and volume survive main restart`
-// +link:doc=docs/kernel.md
+// +link:doc=docs/pillow.md
 func TestPillowExecutionOwnership(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())

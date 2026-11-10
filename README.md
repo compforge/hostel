@@ -11,7 +11,7 @@ decide whether those results meet their requirements.
 Each bed declares shared resources and named execution environments called **pillows**.
 A pillow holds environment variables, a working directory and volume mounts; commands,
 shell sessions and an optional supervised main process run in that environment.
-The first pillow is the default. See [the runtime model](docs/kernel.md) and [Pillow](docs/pillow.md).
+The first pillow is the default. See [Bed lifecycle](docs/bed.md) and [Pillow](docs/pillow.md).
 
 Beds share a machine or container, reducing the need to provision a separate
 runtime for every task. Hostel manages execution and local resources. In a cluster,

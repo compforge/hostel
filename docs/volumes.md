@@ -173,16 +173,17 @@ managed Volume 和 workdir；HostPath 的访问权限由提供方准备。默认
 
 ### 临时目录
 
-默认临时文件是 Bed 自己产生的数据，与公共软件和依赖的复用需求不同。准备
-`bedHome/tmp` 不要求独占 rootfs：数据归属与进程路径体验分别落实。Carrier 的公共
-`/tmp` 仍属于 Carrier，不因路径同名就成为 Bed 的默认临时来源。
+共享优先不等于所有路径都共享：软件和运行依赖有复用价值，临时文件通常是 Bed 的中间产物，
+默认随 BedHome 管理，不进入持久化。Filesystem 负责准备、保护与路径体验；准备 `bedHome/tmp`
+不要求独占 rootfs。Carrier 的公共 `/tmp` 仍属于 Carrier，不因路径同名就成为 Bed 的默认临时来源。
 
 `/tmp` 默认属于 Bed Rootfs，由命令、Session 和主进程共享；Executor 替换保留内容，
 本地回收时删除，目录带 sticky bit。显式挂载可替换其数据来源，权限和持久性按卷契约处理。
 mount/PRoot 和 pathshim 的临时目录映射让进程与 API 指向同一数据；carrier 模式用宿主
 路径设置 `TMPDIR`，无法重定向程序硬编码的 `/tmp`。Pillow 与单次请求 env 可覆盖 TMPDIR。
 
-需要跨 Bed 共享临时文件时，可将同一 HostPath Volume 挂载到 `/tmp`；Hostel 不接管
+需要跨 Bed 共享临时文件时，使用既有 Volume/Mount 声明，可将同一 HostPath Volume 挂载到 `/tmp`，
+不增加另一套临时目录配置；Hostel 不接管
 提供方的权限与清理。显式挂载优先于默认映射，每个目标只发出一次；无法兑现的只读
 声明不能被隐式可写默认项替代。缺少路径映射时，硬编码 `/tmp` 与遵守 TMPDIR 的
 程序可能访问不同来源，实际进程视图和隔离状态须如实披露。

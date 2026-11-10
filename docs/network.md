@@ -1,6 +1,6 @@
 # 网络管理
 
-`internal/host/network` 提供通用网络 allocation、DNS 与规则执行；Bed Network Manager 负责 Bed 绑定、可选启用策略与状态发布。分层边界见 [核心架构](kernel.md#领域与-host-机制)。
+`internal/host/network` 提供通用网络 allocation、DNS 与规则执行；Bed Network Manager 负责 Bed 绑定、可选启用策略与状态发布。分层边界见 [领域与 Host 机制](../AGENTS.md#领域与-host-机制)。
 
 ## 理念与边界
 
@@ -8,7 +8,7 @@ Network 首先满足连通性、端口归属与出站策略等需求。没有独
 共享 netns 本身不是错误；关键是准确识别 Bed 流量，使一 Bed 的 egress 规则不干扰另一 Bed。
 独立 netns 另提供地址、路由、loopback 与监听端口空间，不能与 egress 是否执行混为一谈。
 当前实现仍优先探测 private，再按实际条件选择 shared；需求与机制分层见
-[kernel.md](kernel.md)，组合约束见 [isolation.md](isolation.md)。
+[子系统契约](../AGENTS.md#所有权与子系统契约)，组合约束见 [isolation.md](isolation.md)。
 
 `network.Manager` 是实例级子系统，管理 resident Bed 的网络资源。网络与文件隔离档正交；
 Bed 的每次命令和常驻 shell 使用相同 netns，Executor 替换不改变该网络身份。
