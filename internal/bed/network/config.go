@@ -1,11 +1,24 @@
 package network
 
-import "github.com/qiankunli/hostel/internal/bed/tool"
+import (
+	"fmt"
 
-type Config struct{ NetNS, UIDNFT tool.Policy }
-type Options struct{ NetNS, UIDNFT *tool.Policy }
+	"github.com/qiankunli/hostel/internal/bed/tool"
+)
+
+type Config struct {
+	NetNS, UIDNFT tool.Policy
+	MTU           int
+}
+type Options struct {
+	NetNS, UIDNFT *tool.Policy
+	MTU           *int
+}
 
 func (c Config) Validate() error {
+	if c.MTU < 68 || c.MTU > 65535 {
+		return fmt.Errorf("network MTU must be between 68 and 65535 bytes, got %d", c.MTU)
+	}
 	if err := c.NetNS.Validate(); err != nil {
 		return err
 	}

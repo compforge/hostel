@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,7 @@ import (
 )
 
 type linuxBackend struct {
+	mtu             int
 	store           *AllocationStore
 	ports           *PortManager
 	mu              sync.Mutex
@@ -58,11 +60,11 @@ func run(ctx context.Context, input, command string, args ...string) ([]byte, er
 }
 
 func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
-	return probeBackendWithStore(ctx, nil, ports...)
+	return probeBackendWithStore(ctx, nil, DefaultMTU, ports...)
 }
-func probeBackendWithStore(ctx context.Context, store *AllocationStore, ports ...*PortManager) (backend, Probe) {
+func probeBackendWithStore(ctx context.Context, store *AllocationStore, mtu int, ports ...*PortManager) (backend, Probe) {
 	probe := Probe{Stage: "tools", Cause: hostel.CauseCarrier}
-	b := &linuxBackend{store: store, prefix: "hn" + randx.Hex(4), endpoints: make(map[string]*linuxEndpoint)}
+	b := &linuxBackend{mtu: mtu, store: store, prefix: "hn" + randx.Hex(4), endpoints: make(map[string]*linuxEndpoint)}
 	if len(ports) > 0 {
 		b.ports = ports[0]
 	}
@@ -199,6 +201,8 @@ func (b *linuxBackend) allocate(ctx context.Context) (netip.Addr, netip.Addr, er
 	return netip.Addr{}, netip.Addr{}, hostel.WrapError(hostel.ErrLimitExceeded, "network address allocation", hostel.CauseResource, errors.New("no unused /30 network in 198.18.0.0/15"))
 }
 
+// +spec=`Both veth ends use the configured MTU before either link is brought up.`
+// +link=component://docs/network.md
 func (e *linuxEndpoint) create(ctx context.Context) error {
 	b := e.owner
 	if _, err := run(ctx, "", b.ip, "netns", "add", e.name); err != nil {
@@ -224,6 +228,8 @@ func (e *linuxEndpoint) create(ctx context.Context) error {
 	}
 	e.device = true
 	for _, args := range [][]string{
+		{"link", "set", e.link, "mtu", strconv.Itoa(b.mtu)},
+		{"link", "set", e.peer, "mtu", strconv.Itoa(b.mtu)},
 		{"link", "set", e.peer, "netns", e.name},
 		{"addr", "add", e.gateway.String() + "/30", "dev", e.link},
 		{"link", "set", e.link, "up"},

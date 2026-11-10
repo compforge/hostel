@@ -5,10 +5,12 @@ package network
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,11 +19,18 @@ import (
 // Opt-in because this exercises real namespaces/firewall state. Run in a
 // disposable container, not in the developer host's network namespace.
 func TestLinuxNetwork(t *testing.T) {
+	for _, mtu := range []int{DefaultMTU, 1500} {
+		t.Run(strconv.Itoa(mtu), func(t *testing.T) { testLinuxNetwork(t, mtu) })
+	}
+}
+
+func testLinuxNetwork(t *testing.T, mtu int) {
 	mode := os.Getenv("HOSTEL_NETWORK_TEST")
 	if mode == "" {
 		t.Skip("requires disposable Linux container; set HOSTEL_NETWORK_TEST=enabled or disabled")
 	}
 	m := New(context.Background())
+	m.SetMTU(mtu)
 	if err := m.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +54,28 @@ func TestLinuxNetwork(t *testing.T) {
 	for _, id := range []string{"a", "b"} {
 		if _, err := m.Acquire(context.Background(), id); err != nil {
 			t.Fatal(err)
+		}
+	}
+	// Read kernel state on both sides; a successful link command alone is insufficient.
+	for _, id := range []string{"a", "b"} {
+		ep := m.allocations[id].endpoint.(*linuxEndpoint)
+		for _, args := range [][]string{
+			{"-j", "link", "show", "dev", ep.link},
+			{"-n", ep.name, "-j", "link", "show", "dev", ep.peer},
+		} {
+			out, err := run(t.Context(), "", ep.owner.ip, args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var links []struct {
+				MTU int `json:"mtu"`
+			}
+			if err := json.Unmarshal(out, &links); err != nil {
+				t.Fatal(err)
+			}
+			if len(links) != 1 || links[0].MTU != mtu {
+				t.Fatalf("allocation %s link %v: %s; want MTU %d", id, args, out, mtu)
+			}
 		}
 	}
 	var identities []string

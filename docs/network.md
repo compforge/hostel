@@ -17,6 +17,17 @@ Bed 的每次命令和常驻 shell 使用相同 netns，Executor 替换不改变
 Network 保留 shared/private 两级原生能力，分别映射 dorm/suite；不为了对应三种房型增加虚构的中间 backend。
 Network 尽力选择 private，实例探测失败可选择 shared，并报告网络空间的缺口；出站策略另行选择 netns 或 UID 执行机制。Hostel 不按房型拦截 Bed。探测成功后单个 Bed 的分配、策略安装失败仍使初始化失败，不静默撤销已选边界。
 
+## 私有网络 MTU
+
+`HOSTEL_NETWORK_MTU`（或 `--network-mtu`）设置私有网络 veth 两端的 MTU，默认 **1422** 字节，
+有效范围为 68–65535。配置优先级沿用显式 Options > CLI > env > 默认值；在 Hostel 启动时读取，
+用于启动探针和随后新建的网络 allocation。它不修改 Carrier 出口接口或共享网络的 MTU。
+
+默认值为出口 MTU 1422 的封装网络预留空间，避免内部 veth 沿用 1500 时出现 TCP 已建连、
+文件响应却因包过大而超时。部署时应按实际路径 MTU 配置；该值不是自动探测结果，
+路径更小时仍需下调，确认路径支持 1500 时可以显式设置 `HOSTEL_NETWORK_MTU=1500`。
+修改环境变量需重启 Hostel，并重新创建网络 allocation 后生效。
+
 ## 能力失败归因
 
 `cause` 归属于失败本身。探针和组合验证保留类型化错误，Subsystem 按从强到弱的顺序提供允许的候选实现；
