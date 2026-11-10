@@ -82,8 +82,8 @@ func startTarget(t *testing.T, options targetOptions) *target {
 	}
 
 	c := newAPIClient(baseURL)
-	// Carrier software preparation has a two-minute budget; allow the full
-	// runtime preparation plus process/network probes on a cold image layer.
+	// Allow image startup and actual process/network probes; public directory
+	// permission preparation is not part of Hostel startup.
 	deadline := time.Now().Add(150 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {

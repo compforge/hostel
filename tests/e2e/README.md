@@ -353,7 +353,8 @@ session、Pillow main process 与 file API 的一致性、跨 Bed 文件拒绝�
 
 `TestFilesystemPermissions` 同时核对 Bed 的 FS realization 与实例选中的路径机制，
 验证 `prepared`、File API 身份、Pillow rootfs 与 Mount 支持和实际访问行为一致。
-`TestSharedSoftwareRuntimePermissions` 核对软件目录准备与 Bed 软件组授权，再执行真实跨 UID 读写。
+`TestSharedSoftwareProvidedPermissions` 在提供方已准备可写软件目录的镜像中验证跨 UID 读写；
+它不要求或声明 Hostel 自动修改公共目录权限。
 准备失败、部分清理与重试、快照所有权由 filesystem 单元测试覆盖。
 
 ### Shared volumes and consumer views
@@ -414,8 +415,8 @@ listener 访问拒绝、TCP/UDP 出站、IPv6 阻断、既有连接撤销和同 
 `TestBedSoftwareGroup` validates distinct identity allocation, exact groups and capability removal
 through command/session execution for local and supervisor backends. `TestPrivateFilesWithSharedNetwork`
 checks the same group in a Pillow main process under the private file view.
-`TestSharedSoftwareAcrossBedUsers` (HOSTEL_E2E_USERLAND=1) uses a disposable image whose software permissions are prepared at runtime with
-the internal software GID 199999, setgid directories and default ACLs to exercise cross-UID pip/npm/uv install,
+`TestSharedSoftwareAcrossBedUsers` (HOSTEL_E2E_USERLAND=1) requires a disposable image or mounted software source whose provider has granted
+the internal software group the required access. It exercises cross-UID pip/npm/uv install,
 load, replacement and uninstall. It mutates carrier-wide packages; never run it on a shared carrier.
 
 ## Verify UID egress across process lifecycles
@@ -453,23 +454,20 @@ that deny-to-allow policy updates work after the daemon crash. It also asserts t
 after both daemon fixtures close, and preserves a separate unowned nft table.
 Remove the disposable carrier after the run.
 
-### Shared software runtime preparation
+### Provider-managed shared software
 
-`TestSharedSoftwareRuntimePermissions` checks that final-image startup prepares `/usr/local`
-before Bed execution, then exercises cross-UID writes and replacement with umask 022.
-A runner already inside the disposable image may instead set `HOSTEL_E2E_BINARY`
-and `HOSTEL_E2E_ON_TARGET=1`, plus the separate `HOSTEL_E2E_DISPOSABLE=1`
-acknowledgement, with the normal environment-aware binary suite. The disposable
-flag authorizes global package mutations; ordinary on-target runs do not.
-Run it with `TestSharedSoftwareAcrossBedUsers` for real pip/npm/uv installation, replacement
-and uninstall. Both require a disposable userland image with
-the internal software group and runtime directory preparation, with no numeric identity
-or shared-directory configuration. The permissions case also uploads through the file API
-and modifies the result from the other Bed. Select these through the normal `make e2e` entrypoint
-(`E2E_ARGS='-run TestSharedSoftware'`) or the image suite; retain final-image identity.
-Do not run the package mutations against a shared workstation or production Carrier.
-Build and export/load the image before testing: an in-build or tmpfs-only ACL test does
-not verify that runtime startup repairs permissions missing from the exported layers.
+`TestSharedSoftwareProvidedPermissions` checks cross-UID process/API writes and replacement
+against a disposable Carrier whose software source is already writable by the Bed identities.
+Hostel neither prepares that source's permissions nor claims that it has done so. Missing
+source permissions fail the test; they are not repaired by the runtime.
+
+Run it with `TestSharedSoftwareAcrossBedUsers` for pip/npm/uv installation, replacement and
+uninstall. These cases verify a provider's writable-software contract, not a guarantee for
+arbitrary Carrier directories. Validate the final exported image and its actual mounted sources.
+An on-target runner must use `HOSTEL_E2E_BINARY`, `HOSTEL_E2E_ON_TARGET=1` and
+`HOSTEL_E2E_DISPOSABLE=1`; ordinary on-target runs do not authorize global package mutations.
+Select them through `make e2e E2E_ARGS='-run TestSharedSoftware'` or the image suite.
+Do not run package mutations against a shared workstation or production Carrier.
 
 ### Temporary data and HostPath permissions
 

@@ -39,6 +39,7 @@ func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 	host := []string{
 		"PATH=/carrier/bin",
 		"LANG=C.UTF-8",
+		"NPM_CONFIG_PREFIX=/carrier/packages",
 		"HOSTEL_SYNC=cas",
 		"BED_FAKE=carrier-owned",
 		"PLAYWRIGHT_MCP_CDP_ENDPOINT=ws://carrier",
@@ -65,6 +66,7 @@ func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 		"BED_ID":                "alice",
 		"HOME":                  b.Workdir(),
 		"LANG":                  "C.UTF-8",
+		"NPM_CONFIG_PREFIX":     "/carrier/packages",
 		"PATH":                  "/request/bin",
 		"REQUEST_API_KEY":       "explicit-secret",
 		"AWS_SECRET_ACCESS_KEY": "carrier-secret",
@@ -77,6 +79,11 @@ func TestBedProcessEnvInheritsCarrierExceptReservedNamespaces(t *testing.T) {
 	for _, name := range []string{"HOSTEL_SYNC", "HOSTEL_BED_ID", "BED_FAKE", "PLAYWRIGHT_MCP_CDP_ENDPOINT"} {
 		if _, ok := env[name]; ok {
 			t.Errorf("daemon variable %s leaked into bed env", name)
+		}
+	}
+	for _, name := range []string{"PYTHONUSERBASE", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR"} {
+		if _, ok := env[name]; ok {
+			t.Errorf("software destination %s injected without Carrier or Pillow configuration", name)
 		}
 	}
 	if !slices.IsSorted(workloadEnv) {

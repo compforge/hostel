@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/qiankunli/hostel/internal/bed/configuration"
-	"github.com/qiankunli/hostel/internal/bed/filesystem"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 )
 
@@ -107,7 +106,7 @@ func (m *Manager) buildBedEnvWithView(b *managedBed, view bedfs.ProcessView, ove
 			return nil, err
 		}
 	}
-	env := filesystem.SoftwareEnvironment()
+	env := make(map[string]string, len(m.processEnv.carrier))
 	for name, value := range m.processEnv.carrier {
 		env[name] = value
 	}
