@@ -1,7 +1,7 @@
 # Bed：身份、声明与生命周期
 
 Bed 是 Hostel 的工作负载与资源归属单位。调用方声明期望状态，Bed Manager 协调数据准备、
-运行资源、请求准入和回收。完整对象关系见 [kernel.md](kernel.md)；本篇定义这些动作的
+运行资源、请求准入和回收。完整对象关系见 [工作负载关系](../AGENTS.md#工作负载关系)；本篇定义这些动作的
 先后顺序与失败后的责任，数据和进程细节分别见 [volumes.md](volumes.md)、[pillow.md](pillow.md)。
 
 ## 身份与声明
@@ -73,8 +73,13 @@ readiness：是否可服务，以及当前等待或失败原因
 
 ## 子系统参与生命周期
 
-每个 Bed hook 接收同一个 `*bed.Bed`，资源按具体 allocation 归属。子系统还提供类型化
-`Status() S`，由 Bed Manager 聚合，API handler 组合领域报告与设施状态，view 只定义响应结构及纯转换。报告契约见 [observability.md](observability.md)。
+`bed.Subsystem[S]` 将 daemon Start/Close、单 Bed hooks 和实例级状态关联到同一个领域 owner，
+后台循环由可选 `Runnable` 承担，不要求所有子系统都有后台任务。Start 同步完成准备，Run 管理
+周期、合并与退避，Close 取消并等待退出；实例驱动过程见下一节。
+
+每个 Bed hook 接收同一个 `*bed.Bed`，资源按具体 allocation 归属。子系统提供类型化 `Status() S`，
+Bed Manager 聚合，API handler 组合领域报告与设施状态，view 只定义响应结构及纯转换。
+共同所有权约束见 [子系统契约](../AGENTS.md#所有权与子系统契约)，报告契约见 [observability.md](observability.md)。
 
 | Hook | Bed Manager 驱动时机与完成条件 |
 |---|---|

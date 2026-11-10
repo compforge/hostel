@@ -2,7 +2,25 @@
 
 Pillow 是 Bed 内的命名执行环境，在具体进程之前声明 env、配置引用、workdir 和 mounts。
 命令、Session 和自动启动的主进程共用这个环境。它可以没有进程，也可以承载多个临时执行；
-进程结束不会删除 Pillow。整体对象关系见 [kernel.md](kernel.md)，Bed 生命周期见 [bed.md](bed.md)。
+进程结束不会删除 Pillow。整体对象关系见 [工作负载关系](../AGENTS.md#工作负载关系)，Bed 生命周期见 [bed.md](bed.md)。
+
+## 声明模型与职责边界
+
+Bed / Pillow 在配置模型上对应简化的 Pod / Container：Bed 拥有共同生命周期、网络和命名卷，
+Pillow 声明进程、环境、工作目录、挂载、端口和就绪条件。这个对应帮助调用方组织配置，
+不承诺 Kubernetes API 兼容、每 Pillow 独立镜像或完整容器隔离。
+
+| 需求 | 声明位置 | 执行与状态 owner |
+|---|---|---|
+| 共同数据来源 | Bed `volumes` | Filesystem / Store |
+| 命令、环境与挂载视图 | Pillow `command/args/env/env_from/workdir/mounts` | Configuration / Filesystem / Executor |
+| 监听端口与是否发布 | Pillow `ports` | Network 分配、发布、撤销和回收；状态保存实际端口 |
+| 就绪条件 | Pillow `readinessProbe` | Pillow 调度通用探针，决定工作准入 |
+| 业务 HTTP 协议与认证 | 业务程序和调用方配置 | 业务程序验证，调用方持有凭据 |
+
+声明归属与实现归属分开：Pillow 声明需要哪些端口，Network 负责分配；同一端口只声明一次，
+不额外引入 Bed `port_mappings` 或 `network.ports` 声明。`ports[].publish` 是 Hostel 的发布扩展，
+无需独立 Service 对象；它不提供路由、负载均衡或业务鉴权，也不是防火墙规则。
 
 ## 声明与消费
 
@@ -72,6 +90,11 @@ pillows:
 多个 Bed 都使用同一固定端口要求实际隔离的网络空间；不能把共享网络伪装成独立 Pod 网络。
 
 ## 配置来源
+
+`HOSTEL_*` 是 Carrier/daemon 基础设施配置，不自动转成业务变量。其余可继承的 Carrier 环境
+作为所有 Bed/Pillow 的默认值，包括部署方通过 Pod envFrom 提供的 Secret/ConfigMap。
+这种共享默认环境是 Hostel 的能力，不是 Kubernetes Pod 顶层 env；部署方决定哪些业务配置
+可被整个 Carrier 共享。各 Pillow 再选择自己的来源和显式值，不继承彼此的配置。
 
 `Configuration` 描述 Pillow 的环境变量需求；Configuration Manager
 负责读取宿主配置来源，在每次消费者启动时解析变量，并管理 Bed 的配置准备状态。Bed 不认识 Kubernetes
@@ -214,8 +237,9 @@ port 可以是当前 Pillow 的命名端口，也可以是已声明的固定 con
 没有探针时只以进程存活判定就绪，不宣称应用已能响应。进程退出、显式停止和确认的
 端口归属冲突仍按执行生命周期处理；调用方可通过 Bed 生命周期取消初始化。
 
-健康检查不验证或推导业务认证。Hostel 不读取某个特定 token 变量、不发送业务 Authorization，
-也不从 access 返回凭据。业务进程与调用方各自持有配置，认证由业务进程执行。
+`httpGet` 表达健康检查，不将 Pillow 定义为 HTTP 服务，也不验证或推导业务认证。Hostel 不生成、
+发现、旋转或返回业务 token，不读取特定 token 变量或发送业务 Authorization。业务进程与调用方
+各自持有并解释配置；需要认证的业务接口可与公开健康路径分开，或选择 TCP 就绪检查。
 
 ## 执行与恢复
 

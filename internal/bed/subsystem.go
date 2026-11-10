@@ -6,7 +6,7 @@ package bed
 // then releases them at their owning lifecycle boundary through exact handles.
 // Hostel coordinates dependencies to realize BedSpec; a requirement may span domains.
 // +spec=`Subsystems own resource acquisition, occupancy, recovery and cleanup, and distinguish reserved resources from realized mechanisms in their status. Hostel coordinates lifecycle order and Bed readiness; callers decide whether realized guarantees meet their needs.`
-// +link=component://docs/kernel.md
+// +link=component://AGENTS.md#所有权与子系统契约
 // +rule=`Failed preparation or cleanup retains allocation ownership until cleanup succeeds. Stop dependent users before release; cleanup must be retryable and scoped to the exact allocation, never a reusable Bed name.`
 type Subsystem[S any] interface {
 	DaemonLifecycle

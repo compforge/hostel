@@ -81,7 +81,7 @@ func TestPillowManagementRoutesAndDeclarationConflict(t *testing.T) {
 }
 
 // +case:id=pillow_default_http,desc=`Declare two environment-only Pillows in nonalphabetical order`,expect=`command and relative file APIs use the first Pillow; ambiguous and legacy declarations are rejected`
-// +link:doc=docs/kernel.md
+// +link:doc=docs/pillow.md
 func TestPillowDefaultHTTPContract(t *testing.T) {
 	s := newTestServerWithBed(t)
 	for _, body := range []string{

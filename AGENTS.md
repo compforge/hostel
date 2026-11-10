@@ -2,23 +2,38 @@
 
 ## 项目定位与边界
 
-**面向 AI agent 的 sandbox runtime**：在一台机器 / 一个容器内管理多个隔离执行单元（**bed**）。资源与文件 API 以 OpenSandbox 为设计基线，原生执行协议由 hostel 自己拥有；`/execd` 与 Bed 路径入口在 API 层适配 OpenSandbox，见 `docs/protocol.md`。形态上 daemon 组装 **Web Server、Bed Manager、Amenity Manager**；Bed Manager 以唯一 Bed 模型组合驱动各领域 Manager。可单机跑（laptop/VM/CI），也可作为多租户共享实例的 in-process runtime，由上层调度系统按 `sandbox_id → (实例, bed)` 路由驱动。
+**Hostel 是面向 AI agent 的多用户共享运行时**：在一个 Carrier（一台机器或一个容器）内管理多个
+Bed，通过 BedSpec 组织执行环境与共享资源，保护私有数据，内建工作数据同步，并根据宿主能力
+兑现运行与隔离需求。可单机运行，也可由上层调度通过 `sandbox_id → (实例, bed)` 路由驱动。
 
-**产品背景**：Hostel 以 Linux 多用户复用为基础理解 Bed：保护私有数据、复用公共程序与库、受控访问核心资源，程序无需显式 sudo。namespace 是实现手段。声明模型上 Hostel / Bed 可类比轻量、尽力实现的 kubelet / Pod：在受限的 Host/Pod 上，从 API 视角提供尽可能接近 Container 的使用体验。文件与执行等 API 优先完成用户任务，底层缺少某项机制（如 cgroup）不应自动使整个 Bed 不可用；领域可通过路径解析、候选读取等方式补齐体验，并分别报告功能可用性与实际隔离保证。产品取舍见 [核心架构](docs/kernel.md#定位与目标)，文件路径的具体语义见 [Volume 与文件视图](docs/volumes.md)。
+**共享优先、私有保护、按需隔离。** Bed 类似同一台 Linux 上的多个用户会话：各自拥有工作数据，
+复用公共程序、库和重型设施，按授权访问 Hostel 与 OS 资源，程序无需显式 sudo。Bed/Pillow 在
+声明模型上可类比简化的 Pod/Container，但不承诺 Kubernetes API 兼容、每 Pillow 独立镜像或完整
+容器隔离。Docker/containerd 可以承载 Carrier；namespace、cgroup 等是可利用的能力，不是所有
+Bed 的启动前提。具体声明与消费边界见 [Pillow](docs/pillow.md#声明模型与职责边界)。
 
-**尽力启动的边界**：Bed Spec 表达需求，Hostel 根据宿主能力落实；未要求的可选能力缺失不应阻止启动，房型只报告事实，由 caller 决定是否使用；共享网络规则允许尽力兑现并明确报告未执行，不能伪装成 enforcing；只读挂载等功能契约仍须兑现。未声明部分的机制选择与尽力程度随实现演进，不构成固定隔离承诺；状态披露实际能力与缺口。按需启用与失败语义见 [核心架构](docs/kernel.md#定位与目标)。
+**Hostel 协调各 Subsystem，尽力满足 BedSpec，并按 Subsystem 如实报告落实状态；caller 根据真实状态决定是否使用。**
+Hostel 的启动与持续运行独立于 caller 的使用决策，不增加验收或激活阶段；声明的 Pillow 主进程
+按 Bed 生命周期启动。各领域选择实现和有限回退，功能可用性与隔离保证分别报告：缺少 cgroup
+不应自动阻止命令执行，文件 API 可用也不代表进程已有完整私有根视图。房型汇总实际 fs/net 保证，
+不参与机制选择或准入；共享网络规则可尽力执行并明确报告缺口，不能伪装成 enforcing。
 
-- **做**：bed 生命周期、exec / file、共享多租服务（Chromium/Jupyter/MCP…）管理。
-- **不做**（留给上层调度系统）：实例调度、跨实例路由、计费配额。
-- 参考 OpenSandbox execd（Apache-2.0）净重写，非其 fork；归属见 `NOTICE`。设计见 `docs/kernel.md`，未交付项见 `docs/backlog.md`。
+best effort 适用于能力选择，不能掩盖已选机制的执行失败。明确 required 的工具、只读挂载等
+功能契约仍须兑现；实际准备、执行、清理失败按所属生命周期处理。未声明机制的选择与尽力程度
+可以演进，不构成固定隔离承诺。失败语义见 [隔离与能力选择](docs/isolation.md#启动失败与观测)。
+
+当前面向可信或半可信代码。Hostel 负责实例内 Bed 生命周期、exec/file、工作数据同步与共享
+设施；上层负责实例调度、跨实例路由、同名 Bed 的单写者归属、入口授权与计费配额。
+daemon 组装 Web Server、Bed Manager、Amenity Manager，Bed Manager 组合各领域子系统。
+资源与文件 API 以 OpenSandbox 为设计基线，原生执行协议由 Hostel 拥有；`/execd` 与 Bed 路径入口
+在 API 层适配 OpenSandbox。参考 execd（Apache-2.0）净重写，非其 fork；归属见 [NOTICE](NOTICE)，
+协议见 [protocol.md](docs/protocol.md)，未交付项见 [backlog.md](docs/backlog.md)。
 
 ## 概念与命名约定
 
-**主线：Hostel 协调各 Subsystem，尽力满足 BedSpec，并按 Subsystem 如实报告落实状态；caller 决定是否使用。**
-
 以下名词全仓（代码 / 注释 / 文档）统一使用，避免同物多名、一名多物：
 
-- **Subsystem（子系统）**：领域实现、资源生命周期与状态的 owner；一项 BedSpec 需求可跨子系统协作，Bed Manager 负责组合、顺序及 Ready。共享接口与契约见 `internal/bed/subsystem.go` 和 `docs/kernel.md`。
+- **Subsystem（子系统）**：领域实现、资源生命周期与状态的 owner；一项 BedSpec 需求可跨子系统协作，Bed Manager 负责组合、顺序及 Ready。共享接口见 `internal/bed/subsystem.go`，共同约束见下文[所有权与子系统契约](#所有权与子系统契约)。
 - **bed**：隔离执行单元，对外即一个 sandbox（独立文件空间 + 执行环境，状态跨命令保持）。
 - **bed name**：调用方给定的不透明路由标识，支持中文；HTTP 请求的 bed/id 参数及 `BED_ID` 都表达 Name；管理响应同时返回 `name` 与本地生命周期 `id`，必须显式选择 Bed。Hostel 不解释其上层业务语义。
 - **bed id**：Hostel 生成的本地身份；本地数据保留期间跨重启恢复，Forget 后同名创建换 ID。领域资源以 ID 归属，远端快照以 Name/快照引用定位。
@@ -32,10 +47,30 @@
 - **luggage**：非正常生命周期状态，只表达异常退出遗留的本地 Bed 目录。正常 evict 在任意 Store backend 下都删除本地目录。
 - **amenity**：bed 外由 hostel 统一管理、按 bed 分配状态的共享设施（Chromium / Jupyter / MCP 连接池）。
 - **pillow**：Bed 内的命名执行环境，拥有 env、workdir、mounts 与可选主进程，与用户命令共用 Bed Environment/Executor；创建者提交通用完整 `PillowSpec`，Carrier 镜像提供程序与依赖，Hostel 不依赖具体业务服务。端口通过 daemon 级 Port Manager 统一申请，见 `docs/pillow.md`。
-- **Pillow 端口与探针**：只在 `ports` 声明端口，由 Network 分配和回收；`readinessProbe` 是通用就绪检查。Hostel 不管理业务 HTTP 认证或 token。Bed/Pillow 与 Pod/Container 的模型对应和能力差异见 [核心架构](docs/kernel.md#pod--container-式声明与职责边界)。
+- **Pillow 端口与探针**：只在 `ports` 声明端口，由 Network 分配和回收；`readinessProbe` 是通用就绪检查。Hostel 不管理业务 HTTP 认证或 token。声明与实现 owner 的对应见 [Pillow](docs/pillow.md#声明模型与职责边界)。
 - **executor**：某个 bed 当前的、可替换的进程承载域。bed 持久存在，executor 丢失或关闭后可用新 id 重建；Linux 默认使用 supervisor backend，非 Linux / 显式 local 使用 daemon 直接派生。
 - **execution**：一次命令运行。每次有独立 id，且记录其所属 bed id、pillow name 与 executor id。
 - **bedinit**：每次进程启动前的可信初始化路径，按 Bed Manager 绑定的方案进入环境、降权并 exec 用户程序；不是 Bed 生命周期初始化或常驻进程，详见 `docs/pillow.md`。
+
+### 工作负载关系
+
+```text
+Hostel / Carrier
+├── Bed                         路由、资源归属与生命周期单位
+│   ├── Rootfs、Volumes         数据由 Bed 拥有，挂载视图由 Pillow 组合
+│   ├── 身份、网络、资源         各 Pillow 共用
+│   └── Pillows                 命名执行环境
+│       └── Command / Session / 可选主进程
+└── Amenities                   按 Bed 绑定 Tenant 状态
+```
+
+Bed 声明包含非空、有序 Pillows，首项为默认 Pillow，顺序不表达启动依赖。Pillow 名和 Volume 名
+在 Bed 内唯一；多个 Pillow 可把同一卷挂到不同路径，卷身份独立于路径。Pillow 共享 Bed 的
+身份、网络与资源，环境和挂载视图不同不构成独立容器的安全边界。
+
+BedFS 实现根数据、卷与路径视图；Executor 是可替换的进程承载域，替换它保留 Bed 资源与数据。
+Store 跨准备、运行和回收阶段承担恢复、同步与最终持久化；子系统按领域组织，不按生命周期
+阶段拆成两套实现。具体声明见 [Bed](docs/bed.md#身份与声明)和 [Pillow](docs/pillow.md#声明与消费)。
 
 **进程模型**（进程归属树；详见 `docs/pillow.md`〈命令、Session 与进程承载〉）：
 
@@ -127,6 +162,102 @@ internal/
 
 **数据流**：请求 →`api/apiv1/handler` 或 `api/execd/handler` 按 显式 Bed 标识（`X-Hostel-Bed` 等） 解析 bed → 调 `bed`/`bedfs` 核心 → 组装响应（命令走 SSE）。核心模型与领域子系统**不含任何 HTTP 类型或协议族编码**；两套 adapter 不互相依赖，复用能力进入 `internal/bed` 等 owner。换框架只动 `api/`。
 
+## 所有权与子系统契约
+
+### 领域与 Host 机制
+
+依赖方向为入口 → 领域模型与流程 → 通用宿主机制。`internal/host` 提供 namespace、挂载、进程、
+身份、cgroup 与事实采集能力，不依赖 Bed/Amenity，不解释房型或工作区。领域赋予资源身份、
+策略和生命周期，决定是否允许降级，并发布实际状态。API handler 负责寻址、准入与协议转换，
+不能拼接内部路径或直接操作资源句柄；原生与 Execd adapter 直接复用领域能力，彼此不依赖。
+
+BedSpec 的显式需求与工作负载语义的隐式需求按领域分治；Subsystem 拥有类型化配置、机制、
+资源和状态，少量跨领域需求通过显式接口协作，不引入统一需求字典或通用满足度接口。
+机制选择依据 OS/kernel、Node 配置、Carrier/Kubernetes 权限与实际操作验证；单个工具探测
+成功不代表完整执行组合可运行。领域自行选择和回退，Hostel 不枚举跨领域候选组合。
+
+### 生命周期与状态
+
+`bed.Subsystem[S]` 统一 daemon 生命周期、单 Bed hooks 与实例级 `Status() S`。Bed Manager
+拥有 Spec、Lifecycle 和跨领域协调，各领域唯一写入自己的资源与状态。一个本地生命周期只有
+一个共享 Bed；初始化重试、Executor 替换只替换所属资源，请求句柄不另造领域 Spec/Status。
+Amenity Manager 直属 daemon，通过 Bed 生命周期适配释放 Tenant。
+
+子系统有三个驱动面：同步 Start/Close、单 Bed 生命周期 hooks、可选 `Runnable.Run` 后台循环。
+Start 完成准备，Run 自行管理周期、合并与退避，Close 取消并等待退出。Stop 停止活动，Release
+释放运行资源，Forget 在进程、资源、本地数据清理完成后遗忘身份。Bed Manager 显式安排依赖
+顺序并统一发布 Ready，局部 Prepare 成功不代表整个 Bed 已准备完成；阶段与重试见
+[Bed 生命周期](docs/bed.md#子系统参与生命周期)。
+
+`Status()` 返回实例级探测/选择快照，Bed 级事实由领域 `StatusWriter` 发布。查询不执行探测、
+分配、修复或远端 I/O，也不通过共享 map/slice/指针暴露第二个写入口。声明、机制支持、实际采用
+与 Bed 落实结果分别表达；未准备或已释放的资源不报告为已落实，各领域状态不要求相同等级或结构。
+
+跨领域协作保留显式接口和顺序。例如 Network 拥有 resolver 与网络 allocation，Filesystem 将其
+纳入进程视图，Bed Manager 先准备网络再准备视图，释放时反序执行；不为统一 hook 隐藏依赖。
+整体验证失败如实报告并清理，准备/清理失败保留 owner；部分释放时先撤销无法确认的保证。
+
+### 资源分配与持有
+
+资源是被分配的对象；allocation 是某个 owner 在特定作用域内的一次具体分配，包含资源值与
+实际状态；lease/handle 是持有、使用和释放 allocation 的句柄。Allocator 选择资源、登记占用并
+判定冲突，持有句柄的领域负责使用、交接和最终清理。一次 Bed 活动可持有不同生命周期的 allocation。
+
+- **归属明确**：记录 owner、作用域和资源值，按原句柄清理；旧句柄不能释放同名或同值的新分配。
+- **状态真实**：逻辑预留与实际生效分开，例如 port 的 reserved 不等于 listening，也不代表消费者就绪。
+- **按依赖释放**：先停止使用者、撤销依赖，再释放 allocation；进程停止是否结束预留由所属领域决定。
+- **失败保留责任**：准备失败可能留下部分资源；清理失败保留占用，重试成功前不交给新使用者；重复释放同一 allocation 应安全。
+- **恢复由领域负责**：需跨重启保留的身份先记录再使用，按领域记录和宿主事实 reconcile；持久化格式与恢复由对应 owner 维护。
+
+| 资源 | 分配与持有责任 | 释放边界 |
+|---|---|---|
+| UID / 主 GID | Privilege 管理租约；Bed Manager 保存身份记录并协调 Forget | 运行资源、本地数据与身份记录清理完成后释放，见 [Bed 身份](docs/bed.md#身份与声明) |
+| TCP port | PortManager 分配；Network 或服务领域持有句柄，按网络作用域与监听地址判定冲突 | 监听器、进程、转发清理后结束占用，见 [端口归属](docs/network.md#发现归属与回收) |
+| netns、网络地址与规则 | Network 管理 allocation 与恢复记录 | 依赖进程、文件视图释放后回收，见 [网络恢复](docs/network.md#allocation-归属与崩溃恢复) |
+
+共同契约由各领域的类型化 allocator、句柄与状态兑现。Resource Subsystem 专门负责 CPU/内存、
+cgroup 记账与容量准入，不接管所有资源的分配，见 [资源治理](docs/resource.md)。
+
+## 跨领域主流程
+
+### 实例启动
+
+合并配置 → 构造子系统 → 恢复本地身份与清理责任 → 探测并验证执行组合 → 开放 API。
+配置入口按显式 Options > CLI > HOSTEL_* env > 默认值生成确定的 Config，区分未指定与显式零值；
+子系统只读自己的配置，完整配置不进入状态响应。启动失败逆序关闭已准备子系统，正常运行由各
+领域维护同步、采样与回收循环。工具策略见 [隔离](docs/isolation.md#能力选择与工具策略)，
+Pillow 的业务环境配置见 [配置来源](docs/pillow.md#配置来源)。
+
+### Bed 初始化与执行
+
+```text
+声明 Bed → 预占容量、合并同名初始化
+  → 恢复并验证卷数据 → 准备身份、网络、资源与文件视图
+  → 解析 Pillow 配置、启动必需主进程 → Ready
+  → operation / session 准入 → 领域操作 → 输出与终态
+```
+
+数据访问只等待已声明的 Bed；准备完成前不开放数据面，远端恢复错误不能当作空 Bed。
+执行使用所属 Pillow 环境，可信准备完成并降权后才运行用户程序。已接纳工作受生命周期保护，
+状态查询不保活。详细准入见 [Bed](docs/bed.md#bed-初始化与请求准入)，进程模型见 [Pillow](docs/pillow.md#命令session-与进程承载)。
+
+### 同步、回收与恢复
+
+```text
+本地读写 → Store 合并同步触发 → 发布持久卷快照
+Bed 回收 → 关闭准入 → 停止写入 → 最终同步
+  ├─ 失败：保留本地数据与清理责任
+  └─ 成功：释放资源 → 删除本地数据 → 释放本地身份
+再次创建 → 恢复持久卷、重建临时数据与运行环境
+```
+
+持久卷共同发布一个 generation；环境配置、进程和共享设施运行态不进入快照。同步不是实时共享
+文件系统，上层须保证同名 Bed 的单写者归属，数据契约见 [Volume](docs/volumes.md#自动持久化)。
+Purge 显式销毁本地及远端数据；daemon 正常关闭保留本地数据供恢复。
+
+实例关闭先撤销准入，取消并等待后台与初始化任务，再清理 Bed 运行资源、逆序关闭子系统和设施。
+上层根据实例事实决定释放 Carrier，Hostel 不因空闲自行退出；保留期限与失败重试见 [Bed](docs/bed.md#关闭与实例释放)。
+
 ## 关键约定
 
 - 全局错误契约由 `internal/error.go` 拥有，领域按 `errors.Is/As` 传递分类和 cause；协议映射留在各 API，详见 [错误契约](docs/protocol.md)。
@@ -163,7 +294,8 @@ internal/
 
 ## References
 
-- 系统总览与 domain 阅读入口：[kernel.md](docs/kernel.md)
+全局模型、职责和主流程由本文件维护；领域细节在以下文档维护，避免重复定义同一契约。
+
 - Bed 身份、声明、准入、保活与回收：[bed.md](docs/bed.md)
 - Pillow 配置、命令、Session、主进程与 Executor：[pillow.md](docs/pillow.md)
 - Volume、文件视图、持久化与显式传输：[volumes.md](docs/volumes.md)

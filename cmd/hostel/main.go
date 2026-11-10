@@ -14,7 +14,7 @@
 
 // Command hostel is a generic sandbox data-plane manager: it runs one or many
 // isolated "beds" and serves an OpenSandbox-compatible HTTP API over them.
-// Standalone-capable, but primarily meant to run inside a pod. See docs/kernel.md.
+// Standalone-capable, but primarily meant to run inside a pod. See AGENTS.md for the runtime model and subsystem boundaries.
 package main
 
 import (

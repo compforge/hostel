@@ -7,7 +7,7 @@
 Hostel 协调各 **Subsystem（子系统）**，在宿主能力范围内尽力满足 BedSpec，并按子系统如实报告落实状态；调用方决定是否使用。
 Bed 声明共享资源；其下的 **pillow** 是命名执行环境，持有环境变量、工作目录和卷挂载，
 可运行临时命令、shell 会话及可选的托管主进程。首个 pillow 为默认环境。
-详见[核心架构](docs/kernel.md)与 [Pillow](docs/pillow.md)。
+详见 [Bed 生命周期](docs/bed.md)与 [Pillow](docs/pillow.md)。
 
 多张 bed 共享机器或容器，减少为每个任务单独创建运行环境的需要。Hostel 负责执行和本地资源管理；
 集群环境下，实例调度、跨实例路由和 API 访问授权由上层控制面负责。
