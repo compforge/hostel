@@ -13,19 +13,18 @@ import (
 )
 
 // +case:id=s3_upload_boundary,desc=`SDK selects PUT below the threshold and multipart at or above it`,expect=`one committed object with identical bytes and metadata`
-func TestPutObjectPartBoundary(t *testing.T) {
+func TestPutObjectDefaultUploadModes(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		size      int
-		part      int64
 		wantParts int
 	}{
-		{"empty", 0, 8 << 20, 0},
-		{"below", (8 << 20) - 1, 8 << 20, 0},
-		{"equal", 8 << 20, 8 << 20, 1},
-		{"above", (8 << 20) + 1, 8 << 20, 2},
-		{"pack", 32 << 20, 8 << 20, 4},
-		{"custom", 12 << 20, 5 << 20, 3},
+		{"empty", 0, 0},
+		{"small", 8 << 20, 0},
+		{"below", (16 << 20) - 1, 0},
+		{"equal", 16 << 20, 2},
+		{"above", (16 << 20) + 1, 3},
+		{"pack", 32 << 20, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			data := make([]byte, tc.size)
@@ -53,8 +52,8 @@ func TestPutObjectPartBoundary(t *testing.T) {
 					if err != nil {
 						t.Error(err)
 					}
-					if int64(len(part)) > tc.part {
-						t.Errorf("part bytes=%d limit=%d", len(part), tc.part)
+					if int64(len(part)) > 8<<20 {
+						t.Errorf("part bytes=%d limit=%d", len(part), 8<<20)
 					}
 					parts[n] = part
 					w.Header().Set("ETag", fmt.Sprintf(`"part-%d"`, n))
@@ -84,7 +83,7 @@ func TestPutObjectPartBoundary(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			obj, err := NewS3(t.Context(), Config{Bucket: "bucket", Region: "us-east-1", AccessKeyID: "test", SecretAccessKey: "test", Endpoint: server.URL, PathStyle: true, PartSizeBytes: tc.part})
+			obj, err := NewS3(t.Context(), Config{Bucket: "bucket", Region: "us-east-1", AccessKeyID: "test", SecretAccessKey: "test", Endpoint: server.URL, PathStyle: true})
 			if err != nil {
 				t.Fatal(err)
 			}

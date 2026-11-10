@@ -30,7 +30,6 @@ var ErrConflict = storesync.ErrConflict
 
 const (
 	DefaultPackTargetBytes = storesync.DefaultPackTargetBytes
-	DefaultS3PartSizeBytes = backend.DefaultPartSizeBytes
 	SyncNoop               = storesync.KindNoop
 	SyncAuto               = storesync.KindAuto
 	SyncCAS                = storesync.KindCAS
@@ -54,7 +53,6 @@ type Config struct {
 	SecretAccessKey string
 	SessionToken    string
 	PackTargetBytes int
-	S3PartSizeBytes int64
 	// AutoPackFileThreshold switches an auto-routed CAS bed to pack when the
 	// persisted tree contains more than this many non-directory entries.
 	// Zero disables the automatic transition.
@@ -64,5 +62,5 @@ type Config struct {
 func (c Config) remoteConfig() backend.Config {
 	return backend.Config{Bucket: c.Bucket, Prefix: c.Prefix, Endpoint: c.Endpoint,
 		PathStyle: c.PathStyle, Region: c.Region, AccessKeyID: c.AccessKeyID,
-		SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken, PartSizeBytes: c.S3PartSizeBytes}
+		SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken}
 }

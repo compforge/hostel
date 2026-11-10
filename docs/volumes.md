@@ -335,17 +335,15 @@ Restic 保留普通权限、mtime、空目录与未逃逸的相对 symlink，拒
 ### Pack Object 大小与 S3 上传分片
 
 `HOSTEL_PACK_TARGET_BYTES` / `--pack-target-bytes` 默认 `33554432`（32 MiB），
-控制 pack 聚合后的 Object 目标大小；`HOSTEL_S3_PART_SIZE_BYTES` /
-`--s3-part-size-bytes` 默认 `8388608`（8 MiB），独立控制上传 part 大小。
-两者均支持显式 Store Options 覆盖，优先级为 Options > CLI > env > 默认值。
-所有对象统一交给 AWS `transfermanager.UploadObject`。配置的 part 大小同时作为上传切换阈值：
-低于阈值时库使用普通 PUT，达到阈值时使用 multipart；最后一片可更小，完成后仍是一个 Object。
-pack 持久化和文件上传共用该入口，已有快照布局和读取方式不变。
+控制 pack 聚合后的 Object 目标大小，优先级为 Store Options > CLI > env > 默认值。
+这是持久化布局参数，与 S3 传输分片独立。
 
-part 大小须在 5 MiB 至 5 GiB 之间；对限制 aws-chunked chunk 为 16 MiB 的 MinIO，
-保持默认 8 MiB（或不超过 16 MiB）。每个上传最多并发 2 个 part，保留 checksum 校验，
-失败或取消后使用独立的 30 秒上下文清理未完成上传。
-分片数量上限和大对象的 part 调整交给 SDK；配置大小是初始值，不再是硬上限。
+所有对象统一交给 AWS `transfermanager.UploadObject`。Hostel 不暴露 S3 分片大小或 multipart
+切换阈值，直接采用库默认策略；当前依赖在低于 16 MiB 时使用普通 PUT，达到该阈值时使用
+multipart，初始分片大小为 8 MiB。分片数量与大对象的分片调整也由 SDK 决定。
+pack 持久化和文件上传共用该入口，已有快照布局和读取方式不变。
+每个上传的资源预算保持最多 2 个并发 part，失败或取消后的清理预算为 30 秒。
+
 S3 上传以源数据在传输期间保持稳定为前提。最终回收同步先关闭准入并停止受管写入者；
 自动持久化交给 S3 的是已完成的 pack/chunk buffer 或临时归档，上传完成前不再修改或复用。
 因此，这些路径不会一边上传同一个产物、一边继续改写它。后台同步期间业务文件仍可能变化，

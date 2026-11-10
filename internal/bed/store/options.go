@@ -15,5 +15,4 @@ type Options struct {
 	SessionToken          *string
 	AutoPackFileThreshold *int
 	PackTargetBytes       *int
-	S3PartSizeBytes       *int64
 }

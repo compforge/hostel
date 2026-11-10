@@ -1,11 +1,14 @@
 # S3 upload SDK comparison — 2026-11-10
 
-Status: stable-source upload scenarios passed on both SDK versions.
+Status: the initial SDK comparison below used an explicit 8 MiB threshold.
+The final implementation removes that override and uses SDK defaults; its
+validation is recorded in the final section. Stable-source upload scenarios
+passed on both SDK versions in the initial comparison.
 The concurrent-truncation experiment below is outside the supported source
 stability contract and is not a release gate. The final focused validation passed with the current dependencies.
 This is S3 backend integration evidence, not daemon/business E2E or a deployment.
 
-## Baseline and implementation
+## Initial SDK comparison (before removing sizing overrides)
 
 - Hostel base: `cef44690`, worktree `s3-managed-upload`.
 - All uploads delegated to AWS transfermanager, original seekable source retained,
@@ -92,3 +95,35 @@ Local raw evidence:
 `/tmp/hostel-s3-minio-v023.log`, `/tmp/hostel-s3-minio-v056.log`,
 `/tmp/hostel-s3-v056-resolve.log`,
 `/tmp/hostel-s3-stable-source-validation.log`.
+
+## Final SDK-default configuration
+
+The final change removes Hostel's S3 part-size flag, environment setting,
+Store/Options fields, backend sizing field and validation. Upload selection and
+part sizing use transfermanager v0.2.3 defaults: a 16 MiB multipart threshold and
+8 MiB initial parts. Pack target size remains a persistence-layout setting.
+Concurrency (2) and failed-upload cleanup timeout (30 s) retain their resource
+budgets. Dependencies were not upgraded.
+
+`repocli validate --repo . --base HEAD --check format,lint,test --timeout 10m`
+passed full format/lint and focused race tests, including protocol checks.
+The final Linux backend test binary passed all nine MinIO subtests:
+
+| Object size / scenario | Observed result |
+| --- | --- |
+| 0, 8 MiB, 16 MiB minus 1 byte | ordinary PUT, matching SHA-256 and metadata |
+| 16 MiB | multipart, 2 parts |
+| 16 MiB plus 1 byte | multipart, 3 parts |
+| 32 MiB pack | multipart, 4 parts |
+| 4 MiB / 17 MiB no-overwrite | conflict, original object preserved |
+| cancellation | failed upload, no object committed, multipart cleaned |
+
+The ordinary PUT below threshold used a 16 MiB minus 1 byte aws-chunked chunk;
+multipart used 8 MiB chunks. This passed on the same MinIO release and TLS bridge
+as the initial comparison. Cleanup verified zero objects and zero unfinished
+uploads, then removed the temporary bucket and container. Independent readback
+SHA-256 passed; the SDK still reported skipping multipart response-checksum
+validation. TOS remains untested.
+
+Raw evidence: `/tmp/hostel-s3-sdk-defaults-validation.log` and
+`/tmp/hostel-s3-minio-sdk-defaults.log`.

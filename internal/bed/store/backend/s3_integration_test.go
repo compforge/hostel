@@ -45,7 +45,7 @@ func TestS3MultipartCompatibility(t *testing.T) {
 	if endpoint == "" {
 		t.Skip("HOSTEL_TEST_S3_ENDPOINT is unset")
 	}
-	cfg := Config{Endpoint: endpoint, PathStyle: true, Bucket: os.Getenv("HOSTEL_TEST_S3_BUCKET"), Region: os.Getenv("HOSTEL_TEST_S3_REGION"), AccessKeyID: os.Getenv("HOSTEL_TEST_S3_ACCESS_KEY"), SecretAccessKey: os.Getenv("HOSTEL_TEST_S3_SECRET_KEY"), PartSizeBytes: 8 << 20}
+	cfg := Config{Endpoint: endpoint, PathStyle: true, Bucket: os.Getenv("HOSTEL_TEST_S3_BUCKET"), Region: os.Getenv("HOSTEL_TEST_S3_REGION"), AccessKeyID: os.Getenv("HOSTEL_TEST_S3_ACCESS_KEY"), SecretAccessKey: os.Getenv("HOSTEL_TEST_S3_SECRET_KEY")}
 	var id [8]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestS3MultipartCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefix := "diagnostics/hostel-multipart/" + hex.EncodeToString(id[:]) + "/"
-	t.Logf("S3 compatibility prefix=%s part_bytes=%d", prefix, cfg.PartSizeBytes)
+	t.Logf("S3 compatibility prefix=%s upload_sizing=SDK-defaults", prefix)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -139,7 +139,7 @@ func TestS3MultipartCompatibility(t *testing.T) {
 		size  int
 		parts int32
 	}{
-		{"empty", 0, 0}, {"below", (8 << 20) - 1, 0}, {"equal", 8 << 20, 1}, {"above", (8 << 20) + 1, 2}, {"pack", 32 << 20, 4},
+		{"empty", 0, 0}, {"small", 8 << 20, 0}, {"below", (16 << 20) - 1, 0}, {"equal", 16 << 20, 2}, {"above", (16 << 20) + 1, 3}, {"pack", 32 << 20, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var parts atomic.Int32
@@ -164,8 +164,8 @@ func TestS3MultipartCompatibility(t *testing.T) {
 							}
 						}
 						size, err := strconv.ParseInt(strings.TrimSpace(string(first)), 16, 64)
-						if err != nil || size > cfg.PartSizeBytes {
-							t.Errorf("chunk header %q exceeds configured part or is invalid: %v", first, err)
+						if err != nil {
+							t.Errorf("invalid chunk header %q: %v", first, err)
 						}
 						t.Logf("wire: aws-chunked chunk_bytes=%d multipart=%v", size, r.URL.Query().Has("partNumber"))
 						r.Body = struct {

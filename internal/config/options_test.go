@@ -56,32 +56,30 @@ func TestStartupRejectsFeatureConflictsAndUnknownFlags(t *testing.T) {
 	}
 }
 
-func TestObjectSizeConfigPrecedence(t *testing.T) {
+func TestPackTargetConfigPrecedence(t *testing.T) {
 	t.Setenv("HOSTEL_PACK_TARGET_BYTES", "")
-	t.Setenv("HOSTEL_S3_PART_SIZE_BYTES", "")
 	c := mustLoad(t, nil)
-	if c.Bed.Store.PackTargetBytes != 32<<20 || c.Bed.Store.S3PartSizeBytes != 8<<20 {
+	if c.Bed.Store.PackTargetBytes != 32<<20 {
 		t.Fatal("incorrect defaults")
 	}
 	t.Setenv("HOSTEL_PACK_TARGET_BYTES", "67108864")
-	t.Setenv("HOSTEL_S3_PART_SIZE_BYTES", "5242880")
 	c = mustLoad(t, nil)
-	if c.Bed.Store.PackTargetBytes != 64<<20 || c.Bed.Store.S3PartSizeBytes != 5<<20 {
+	if c.Bed.Store.PackTargetBytes != 64<<20 {
 		t.Fatal("env sizes lost")
 	}
-	args := []string{"--pack-target-bytes", "16777216", "--s3-part-size-bytes", "8388608"}
+	args := []string{"--pack-target-bytes", "16777216"}
 	c = mustLoad(t, args)
-	if c.Bed.Store.PackTargetBytes != 16<<20 || c.Bed.Store.S3PartSizeBytes != 8<<20 {
+	if c.Bed.Store.PackTargetBytes != 16<<20 {
 		t.Fatal("CLI sizes lost")
 	}
-	c, err := Load(args, Options{Bed: BedOptions{Store: store.Options{PackTargetBytes: ptr(32 << 20), S3PartSizeBytes: ptr(int64(6 << 20))}}})
+	c, err := Load(args, Options{Bed: BedOptions{Store: store.Options{PackTargetBytes: ptr(32 << 20)}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Bed.Store.PackTargetBytes != 32<<20 || c.Bed.Store.S3PartSizeBytes != 6<<20 {
+	if c.Bed.Store.PackTargetBytes != 32<<20 {
 		t.Fatal("explicit sizes lost")
 	}
-	for _, args := range [][]string{{"--pack-target-bytes", "0"}, {"--s3-part-size-bytes", "4194304"}, {"--s3-part-size-bytes", "5368709121"}} {
+	for _, args := range [][]string{{"--pack-target-bytes", "0"}} {
 		if _, err := Load(args, Options{}); err == nil {
 			t.Fatalf("accepted invalid size: %v", args)
 		}
