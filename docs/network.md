@@ -19,14 +19,37 @@ Network 尽力选择 private，实例探测失败可选择 shared，并报告网
 
 ## 私有网络 MTU
 
-`HOSTEL_NETWORK_MTU`（或 `--network-mtu`）设置私有网络 veth 两端的 MTU，默认 **1422** 字节，
-有效范围为 68–65535。配置优先级沿用显式 Options > CLI > env > 默认值；在 Hostel 启动时读取，
-用于启动探针和随后新建的网络 allocation。它不修改 Carrier 出口接口或共享网络的 MTU。
+Hostel 启动时在自身所在的 Carrier netns 中读取默认 IPv4 路由及对应接口 MTU，
+多出口取可用接口的最小值。查询覆盖所有路由表和内联 multipath nexthop；忽略 down、
+loopback、dead/linkdown 接口或路由。无可用出口、查询失败或无法解析出口接口时，
+使用 `HOSTEL_NETWORK_MTU` 的值作为 fallback（未设置时为 **1422** 字节），并记录原因。查询最多等待 2 秒，不发送网络探测包，
+不因 MTU 探测失败阻止启动；netns 工具关闭或不可用时仍报告这项观测。
 
-默认值为出口 MTU 1422 的封装网络预留空间，避免内部 veth 沿用 1500 时出现 TCP 已建连、
-文件响应却因包过大而超时。部署时应按实际路径 MTU 配置；该值不是自动探测结果，
-路径更小时仍需下调，确认路径支持 1500 时可以显式设置 `HOSTEL_NETWORK_MTU=1500`。
-修改环境变量需重启 Hostel，并重新创建网络 allocation 后生效。
+新建私有网络的 veth 两端在启用前应用这个启动快照，包含启动时的连通性探针。
+MTU 属于接口，新建 netns 或移动 veth 不会继承 Carrier 出口 MTU；此前没有显式设置时，
+veth 使用 Linux 的以太网默认值 1500。1422 是针对已知 Carrier 环境保留的 fallback，
+不是操作系统默认值，也不保证适合所有网络。
+
+`GET /v1/status` 的 `subsystems.network.mtu` 报告：
+
+```json
+{
+  "value": 1422,
+  "source": "detected",
+  "interfaces": [{"name": "eth0", "mtu": 1422}]
+}
+```
+
+`source` 为 `detected` 或 `fallback`，fallback 附 `reason`；启动前为 `not_probed`，
+`value` 为 0。状态查询只读取快照，不重新探测。该值是新私有 veth 的选择值，
+不表示共享网络接口已被修改，也不表示私有网络一定可用（见 `isolation`）。
+
+该机制读取出口接口 MTU，不执行端到端 Path MTU Discovery，不模拟按目的地址、源地址、
+mark 等条件选择的完整策略路由；更具体的路由或远端链路仍可能有更小 MTU。
+Hostel 不修改 Carrier 接口，不持续监听路由变化；出口变更后重启并重建网络 allocation 才生效。
+`HOSTEL_NETWORK_MTU`、`--network-mtu` 及对应 Options 保留，语义改为探测失败时的回退值；
+探测成功时不覆盖探测值，也不作为上限。回退配置仍按 Options > CLI > env > 1422 解析，
+有效范围为 68–65535；在启动时读取，变更后需重启。
 
 ## 能力失败归因
 

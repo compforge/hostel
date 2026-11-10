@@ -86,7 +86,7 @@ func TestPackTargetConfigPrecedence(t *testing.T) {
 	}
 }
 
-func TestNetworkMTUConfig(t *testing.T) {
+func TestNetworkMTUFallbackConfig(t *testing.T) {
 	t.Setenv("HOSTEL_NETWORK_MTU", "")
 	if got := mustLoad(t, nil).Bed.Network.MTU; got != 1422 {
 		t.Fatalf("default MTU = %d, want 1422", got)

@@ -96,7 +96,7 @@ type Config struct {
 func Load(args []string, explicit Options) (*Config, error) {
 	fs := flag.NewFlagSet("hostel", flag.ContinueOnError)
 	c := &Config{}
-	fs.IntVar(&c.Bed.Network.MTU, "network-mtu", osx.EnvInt("HOSTEL_NETWORK_MTU", hostnetwork.DefaultMTU), "MTU in bytes for both ends of private-network veth pairs")
+	fs.IntVar(&c.Bed.Network.MTU, "network-mtu", osx.EnvInt("HOSTEL_NETWORK_MTU", hostnetwork.FallbackMTU), "fallback MTU in bytes when egress MTU discovery fails")
 	var configurationSources string
 	fs.StringVar(&configurationSources, "configuration-sources", osx.EnvStr("HOSTEL_CONFIGURATION_SOURCES", "{}"), "JSON object of named configuration directories")
 	fs.StringVar(&c.Addr, "addr", osx.EnvStr("HOSTEL_ADDR", DefaultAddr), "HTTP listen address")

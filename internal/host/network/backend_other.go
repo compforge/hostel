@@ -9,7 +9,7 @@ import (
 )
 
 func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
-	return probeBackendWithStore(ctx, nil, DefaultMTU, ports...)
+	return probeBackendWithStore(ctx, nil, DetectMTU(ctx, FallbackMTU).Value, ports...)
 }
 func probeBackendWithStore(context.Context, *AllocationStore, int, ...*PortManager) (backend, Probe) {
 	err := hostel.WrapError(hostel.ErrUnavailable, "per-allocation network namespaces require Linux", hostel.CauseCarrier, nil)

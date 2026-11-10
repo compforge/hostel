@@ -7,6 +7,20 @@ type PrivilegeStatus struct {
 	Assigned          bool   `json:"assigned"`
 }
 
+// NetworkMTUStatus is the startup choice for new private veth pairs, not path MTU.
+// Source is not_probed before startup, detected after reading egress interfaces, or fallback.
+type NetworkMTUStatus struct {
+	Value      int                   `json:"value"`
+	Source     string                `json:"source"`
+	Interfaces []NetworkMTUInterface `json:"interfaces,omitempty"`
+	Reason     string                `json:"reason,omitempty"`
+}
+
+type NetworkMTUInterface struct {
+	Name string `json:"name"`
+	MTU  int    `json:"mtu"`
+}
+
 // NetworkDiagnostic attributes a gap or failed operation to its own dimension.
 type NetworkDiagnostic struct {
 	Code    string `json:"code"`

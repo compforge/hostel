@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,21 +18,15 @@ import (
 // Opt-in because this exercises real namespaces/firewall state. Run in a
 // disposable container, not in the developer host's network namespace.
 func TestLinuxNetwork(t *testing.T) {
-	for _, mtu := range []int{DefaultMTU, 1500} {
-		t.Run(strconv.Itoa(mtu), func(t *testing.T) { testLinuxNetwork(t, mtu) })
-	}
-}
-
-func testLinuxNetwork(t *testing.T, mtu int) {
 	mode := os.Getenv("HOSTEL_NETWORK_TEST")
 	if mode == "" {
 		t.Skip("requires disposable Linux container; set HOSTEL_NETWORK_TEST=enabled or disabled")
 	}
 	m := New(context.Background())
-	m.SetMTU(mtu)
 	if err := m.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	mtu := m.mtu
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

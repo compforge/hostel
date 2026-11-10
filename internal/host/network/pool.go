@@ -13,11 +13,6 @@ import (
 	hostel "github.com/qiankunli/hostel/internal"
 )
 
-// DefaultMTU leaves room for carrier network encapsulation.
-// +why=`A 1500-byte private veth can stall TCP transfers behind a 1422-byte carrier path when PMTUD cannot recover.`
-// +link=component://docs/network.md
-const DefaultMTU = 1422
-
 // Status is a cached startup verdict. Reading it never modifies networking.
 type Status struct {
 	Available bool              `json:"available"`
@@ -75,17 +70,17 @@ type Pool struct {
 // New constructs a pool. Start probes the backend with a disposable namespace;
 // callers decide whether an unavailable backend permits their workload to run.
 func New(_ context.Context) *Pool {
-	return &Pool{mtu: DefaultMTU, needsProbe: true, report: Status{Backend: "shared", Reason: "not started"}, allocations: make(map[string]*attachment), pending: make(map[string]*acquisition)}
+	return &Pool{needsProbe: true, report: Status{Backend: "shared", Reason: "not started"}, allocations: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 
-// SetMTU configures both veth ends before Start probes or creates networks.
+// SetMTU supplies the startup observation before Start probes or creates networks.
 func (m *Pool) SetMTU(mtu int) { m.mtu = mtu }
 
 // SetPortManager is startup-only configuration supplied by the daemon.
 func (m *Pool) SetPortManager(ports *PortManager) { m.ports = ports }
 
 func probePool(ctx context.Context, ports ...*PortManager) *Pool {
-	return probePoolWithStore(ctx, nil, DefaultMTU, ports...)
+	return probePoolWithStore(ctx, nil, DetectMTU(ctx, FallbackMTU).Value, ports...)
 }
 func probePoolWithStore(ctx context.Context, store *AllocationStore, mtu int, ports ...*PortManager) *Pool {
 	started := time.Now()
@@ -331,6 +326,9 @@ func (m *Pool) Start(ctx context.Context) error {
 	}
 	if !m.needsProbe {
 		return m.startErr
+	}
+	if m.mtu == 0 {
+		m.mtu = DetectMTU(ctx, FallbackMTU).Value
 	}
 	p := probePoolWithStore(ctx, m.store, m.mtu, m.ports)
 	m.backend, m.report, m.needsProbe = p.backend, p.report, false

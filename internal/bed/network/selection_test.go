@@ -33,7 +33,7 @@ func TestSelectedNetworkPreservesFailure(t *testing.T) {
 		{"unclassified probe failure", hostnetwork.Status{Probe: hostnetwork.Probe{Err: unknown}}, unknown, hostel.CauseUnknown},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := &Manager{config: Config{NetNS: tool.Auto, MTU: hostnetwork.DefaultMTU}, provider: reportedNetwork{report: tc.probe}}
+			m := &Manager{config: Config{NetNS: tool.Auto, MTU: hostnetwork.FallbackMTU}, provider: reportedNetwork{report: tc.probe}}
 			if err := m.Start(t.Context()); err != nil {
 				t.Fatalf("optional capability rejected startup: %v", err)
 			}
@@ -50,7 +50,7 @@ func TestSelectedNetworkPreservesFailure(t *testing.T) {
 
 func TestRequiredNetworkPreservesProbeError(t *testing.T) {
 	original := hostel.WrapError(hostel.ErrUnavailable, "IPv4 forwarding", hostel.CauseCarrier, errors.New("forwarding disabled"))
-	m := &Manager{config: Config{NetNS: tool.Required, MTU: hostnetwork.DefaultMTU}, provider: reportedNetwork{report: hostnetwork.Status{Probe: hostnetwork.Probe{Err: original}}}}
+	m := &Manager{config: Config{NetNS: tool.Required, MTU: hostnetwork.FallbackMTU}, provider: reportedNetwork{report: hostnetwork.Status{Probe: hostnetwork.Probe{Err: original}}}}
 	err := m.Start(t.Context())
 	if !errors.Is(err, original) || hostel.CauseOf(err) != hostel.CauseCarrier {
 		t.Fatalf("required capability lost error: %v", err)
@@ -58,7 +58,7 @@ func TestRequiredNetworkPreservesProbeError(t *testing.T) {
 }
 
 func TestPrivateNetworkReportsRealizedCapability(t *testing.T) {
-	m := &Manager{config: Config{MTU: hostnetwork.DefaultMTU}, provider: reportedNetwork{report: hostnetwork.Status{Available: true}}}
+	m := &Manager{config: Config{MTU: hostnetwork.FallbackMTU}, provider: reportedNetwork{report: hostnetwork.Status{Available: true}}}
 	if got := m.Status(); got.Isolation.Probe.Err != nil || got.Isolation.Diagnostic != nil {
 		t.Fatalf("successful capability retained failure: %+v", got)
 	}
