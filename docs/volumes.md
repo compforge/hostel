@@ -153,6 +153,12 @@ rootful 视图模板归 Bed；要求私有 PID namespace 时，在每个 Executo
 它们与文件隔离等级分别判断。启动验证须让 command、Session 和主进程实际写文件，再由
 BedFS 读回，不能用程序存在或 `true` 成功代替。
 
+pathshim 0.1.7 要求 source 和 cwd 在启动前已经存在并且可遍历。Hostel 负责准备私有目录、
+managed Volume 和 workdir；HostPath 的访问权限由提供方准备。默认路径与显式 mounts 先按
+覆盖关系合并，再交给 helper，避免重复 destination。启动 helper probe 显式检查 guest cwd，
+真实 Bed 的组合执行探测继续在最终 Bed 身份下验证文件互通。参数或访问错误不会由 pathshim
+自动创建目录、改用 `/` 或静默 passthrough；实例 probe 失败保留原始诊断并按工具策略处理。
+
 ### 文件 API 的候选读取
 
 挂载在进程侧已兑现时，API 直接访问源目录。未兑现时，Reader 先读对应的 Rootfs 本地

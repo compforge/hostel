@@ -48,7 +48,12 @@ func (p *pathshimView) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 	if err != nil {
 		return err
 	}
-	hostfs.Pathshim{Path: p.path}.Wrap(cmd, processMappings(fs, p.MappingSupport()), guestCwd)
+	mappings := processMappings(fs, p.MappingSupport())
+	// No translation is needed when all usable paths already name Carrier paths.
+	if len(mappings) == 0 {
+		return nil
+	}
+	hostfs.Pathshim{Path: p.path}.Wrap(cmd, mappings, guestCwd)
 	return nil
 }
 
@@ -95,7 +100,7 @@ func probePathshim(base Boundary, bedsRoot, executable string) hostfacts.ProbeRe
 	defer base.Release(context.Background(), fs)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := (hostfs.Pathshim{Path: executable}).ProbeCommand(ctx, processMappings(fs, bedfs.MappingSupport{ReadWrite: base.AllowsMappings()}))
+	cmd := (hostfs.Pathshim{Path: executable}).ProbeCommand(ctx, processMappings(fs, bedfs.MappingSupport{ReadWrite: base.AllowsMappings()}), fs.ClientWorkdir())
 	if err := base.Wrap(cmd, fs, probeWorkspace); err != nil {
 		return hostfacts.ProbeReport{Error: "wrap probe: " + err.Error()}
 	}
