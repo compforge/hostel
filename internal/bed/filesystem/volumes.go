@@ -90,6 +90,9 @@ func (m *Manager) prepareVolumes(b *bed.Bed, ordinary *bedfs.FS) error {
 		m.mu.Lock()
 		m.pillows[b][pillow.Name] = view
 		m.mu.Unlock()
+		if err := view.PrepareShared(); err != nil {
+			return err
+		}
 		if err := mount(view, pillow); err != nil {
 			return err
 		}

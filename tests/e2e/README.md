@@ -377,7 +377,7 @@ on a shared node to prepare this case.
 ## 共享 netns 的 UID 出站策略
 
 `HOSTEL_E2E_REQUIRE_UID_POLICY=1` 启用 `TestSharedUIDNetworkPolicyTraffic`，要求 disposable
-Linux Carrier 内 `ip_forward=0`、nft 可用且能分配独立 UID；配置 `HOSTEL_BED_EXTRA_GIDS=1000` 可同时验证共享组不会改变 UID 网络归属。
+Linux Carrier 内 `ip_forward=0`、nft 可用且能分配独立 UID；自动软件组同时验证共享组不会改变 UID 网络归属。
 该用例通过公共 API 对 local/supervisor 执行后端验证初始 BedSpec、不同 UID 共享同一 netns、
 规则合并/删除、session 更新、非法更新不破坏旧策略及删除重建；策略状态必须为 ok/dns+nft。
 `TestCarrierForwardingDisabled` 保留显式固定 UID 的客户条件，验证 unenforced 与 required netns 拒绝。
@@ -392,13 +392,13 @@ Linux 条件下验证真实 nft、UDP/TCP DNS 重定向、域名解析后的地�
 listener 访问拒绝、TCP/UDP 出站、IPv6 阻断、既有连接撤销和同 UID 重新分配。
 未显式启用时跳过；普通单元测试成功不算已经验证内核执行。不得为准备测试关闭共享节点的 forwarding。
 
-### Bed supplementary groups
+### Bed software group
 
-`TestBedExtraGroups` validates distinct identity allocation, exact groups and capability removal
+`TestBedSoftwareGroup` validates distinct identity allocation, exact groups and capability removal
 through command/session execution for local and supervisor backends. `TestPrivateFilesWithSharedNetwork`
 checks the same group in a Pillow main process under the private file view.
-`TestSharedSoftwareAcrossBedUsers` (HOSTEL_E2E_USERLAND=1) uses a disposable prepared image with
-software GID 1000, setgid directories and default ACLs to exercise cross-UID pip/npm/uv install,
+`TestSharedSoftwareAcrossBedUsers` (HOSTEL_E2E_USERLAND=1) uses a disposable image whose software permissions are prepared at runtime with
+the internal software GID 199999, setgid directories and default ACLs to exercise cross-UID pip/npm/uv install,
 load, replacement and uninstall. It mutates carrier-wide packages; never run it on a shared carrier.
 
 ## Verify UID egress across process lifecycles
@@ -406,12 +406,12 @@ load, replacement and uninstall. It mutates carrier-wide packages; never run it 
 The disposable Linux UID policy profile also owns these cases:
 
 - `TestBedUIDPillowEgress`: local/supervisor Pillow main processes use the Bed UID
-  and exactly the approved extra group; allow/deny apply at startup and after
+  and exactly the internal software group; allow/deny apply at startup and after
   policy reversal plus an asynchronous Pillow restart.
 - `TestBedIdentityCrashRecovery`: kill only the fixture-owned daemon, start a new
   daemon over its retained beds-root, and admit a newcomer before redeclaring the
   old Bed. Verify UID reservation, Bed identity, private file ownership/access,
-  extra groups, egress updates, and eventual purge/recreation.
+  software group membership, egress updates, and eventual purge/recreation.
 
 Use a disposable carrier netns with root, CAP_NET_ADMIN, nft and ip_forward=0;
 leave the host firewall and host sysctl untouched. The crash case deliberately
@@ -446,8 +446,9 @@ acknowledgement, with the normal environment-aware binary suite. The disposable
 flag authorizes global package mutations; ordinary on-target runs do not.
 Run it with `TestSharedSoftwareAcrossBedUsers` for real pip/npm/uv installation, replacement
 and uninstall. Both require a disposable userland image with
-`HOSTEL_SHARED_SOFTWARE='[{"path":"/usr/local","gid":1000,"policy":"required"}]'`
-and `HOSTEL_BED_EXTRA_GIDS=1000`. Select these through the normal `make e2e` entrypoint
+the internal software group and runtime directory preparation, with no numeric identity
+or shared-directory configuration. The permissions case also uploads through the file API
+and modifies the result from the other Bed. Select these through the normal `make e2e` entrypoint
 (`E2E_ARGS='-run TestSharedSoftware'`) or the image suite; retain final-image identity.
 Do not run the package mutations against a shared workstation or production Carrier.
 Build and export/load the image before testing: an in-build or tmpfs-only ACL test does

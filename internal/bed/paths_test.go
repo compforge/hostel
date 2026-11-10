@@ -6,7 +6,7 @@ import (
 )
 
 func TestPathDeclarationValidationAndCloning(t *testing.T) {
-	for _, mounts := range [][]VolumeMount{{{Volume: "v", Path: "/proc/x"}}, {{Volume: "v", Path: "relative"}}, {{Volume: "a", Path: "/project"}, {Volume: "b", Path: "/project/sub"}}} {
+	for _, mounts := range [][]VolumeMount{{{Volume: "v", Path: "/proc/x"}}, {{Volume: "v", Path: "relative"}}, {{Volume: "a", Path: "/project"}, {Volume: "b", Path: "/project"}}} {
 		if _, err := NormalizeMounts(mounts); !errors.Is(err, ErrInvalidPaths) {
 			t.Fatalf("accepted mounts %v: %v", mounts, err)
 		}

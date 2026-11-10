@@ -4,6 +4,8 @@ package e2e_test
 
 import (
 	"context"
+	"fmt"
+	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,7 +27,6 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 	for _, scenario := range []string{"network-off", "network-probe-failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			options := restrictedOptions()
-			options.Bed.Privilege.SupplementaryGIDs = value([]int{1000})
 			options.Bed.Filesystem.Bwrap = value(tool.Required)
 			options.Bed.Network.UIDNFT = value(tool.Off)
 			options.Bed.Executor.PIDNS = value(tool.Off)
@@ -47,7 +48,7 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 			const bed = "suite-shared"
 			response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{
 				"id":      bed,
-				"pillows": []map[string]any{{"name": "writer", "command": []string{"/bin/sh", "-c", "awk '/^Groups:/ { if (NF != 2 || $2 != 1000) exit 1 }' /proc/self/status && printf pillow > /workspace/pillow-marker && exec /bin/sleep 300"}, "required": true, "restart_policy": "never", "stop_seconds": 1}},
+				"pillows": []map[string]any{{"name": "writer", "command": []string{"/bin/sh", "-c", fmt.Sprintf("awk '/^Groups:/ { if (NF != 2 || $2 != %d) exit 1 }' /proc/self/status && printf pillow > /workspace/pillow-marker && exec /bin/sleep 300", privilege.SoftwareGID)}, "required": true, "restart_policy": "never", "stop_seconds": 1}},
 			}, nil)
 			if err != nil {
 				t.Fatal(err)

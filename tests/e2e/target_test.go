@@ -81,7 +81,9 @@ func startTarget(t *testing.T, options targetOptions) *target {
 	}
 
 	c := newAPIClient(baseURL)
-	deadline := time.Now().Add(45 * time.Second)
+	// Carrier software preparation has a two-minute budget; allow the full
+	// runtime preparation plus process/network probes on a cold image layer.
+	deadline := time.Now().Add(150 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)

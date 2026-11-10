@@ -34,7 +34,6 @@ func uidPolicyOptions(t *testing.T) config.Options {
 	options := restrictedOptions()
 	options.Bed.Network.UIDNFT = value(tool.Required)
 	options.Bed.Filesystem.UID = value(tool.Required)
-	options.Bed.Privilege.SupplementaryGIDs = value([]int{1000})
 	return options
 }
 

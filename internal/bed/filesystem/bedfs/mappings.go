@@ -5,6 +5,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	model "github.com/qiankunli/hostel/internal/bed"
 )
@@ -24,6 +26,8 @@ type Mount struct {
 
 // SetMounts binds prepared Volume sources to one Pillow view before publication.
 func (o *FS) SetMounts(mounts []Mount) error {
+	mounts = slices.Clone(mounts)
+	slices.SortFunc(mounts, func(a, b Mount) int { return strings.Compare(a.Target, b.Target) })
 	for _, m := range mounts {
 		source, err := filepath.EvalSymlinks(m.Source)
 		if err != nil {
@@ -43,7 +47,7 @@ func (o *FS) SetMounts(mounts []Mount) error {
 			return fmt.Errorf("bedfs: external mount overlaps Hostel workspace root")
 		}
 		for _, prior := range o.mappings {
-			if model.PathsOverlap(m.Target, prior.mapping.Target) || model.PathsOverlap(source, prior.mapping.Source) {
+			if m.Target == prior.mapping.Target || model.PathsOverlap(source, prior.mapping.Source) {
 				return fmt.Errorf("bedfs: mounts overlap")
 			}
 		}
@@ -57,6 +61,23 @@ func (o *FS) SetMounts(mounts []Mount) error {
 		child.paths.prefix, child.paths.workdir, child.readOnly = m.Target, o.paths.workdir, m.ReadOnly
 		m.Source = source
 		o.mappings = append(o.mappings, mappedRoot{mapping: m, fs: child, owned: m.Owned})
+		var parent *mappedRoot
+		for i := range o.mappings[:len(o.mappings)-1] {
+			candidate := &o.mappings[i]
+			if _, nested := relativeTo(candidate.mapping.Target, m.Target); nested && (parent == nil || len(candidate.mapping.Target) > len(parent.mapping.Target)) {
+				parent = candidate
+			}
+		}
+		if parent != nil {
+			rel, _ := relativeTo(parent.mapping.Target, m.Target)
+			if parent.owned {
+				if err := parent.fs.root.MkdirAll(rel, 0755); err != nil {
+					return err
+				}
+			} else if info, err := parent.fs.root.Stat(rel); err != nil || !info.IsDir() {
+				return fmt.Errorf("bedfs: nested mount target must exist in borrowed parent")
+			}
+		}
 		target, err := o.paths.FromClient(m.Target)
 		if err != nil {
 			return err
@@ -81,19 +102,35 @@ func (o *FS) clientPath(p string) string {
 	}
 	return path.Clean(p)
 }
-func (o *FS) mapped(p string) *FS {
+func (o *FS) volumeMapped(p string) *FS {
 	p = o.clientPath(p)
+	var selected *FS
+	longest := 0
 	for _, m := range o.mappings {
-		if _, ok := relativeTo(m.mapping.Target, p); ok {
-			return m.fs
+		if _, ok := relativeTo(m.mapping.Target, p); ok && len(m.mapping.Target) > longest {
+			selected = m.fs
+			longest = len(m.mapping.Target)
 		}
 	}
-	return nil
+	return selected
+}
+func (o *FS) mapped(p string) *FS {
+	if mapped := o.volumeMapped(p); mapped != nil {
+		return mapped
+	}
+	return o.sharedPath(p)
 }
 func (o *FS) route(p string, write bool) (*FS, error) {
 	target := o
 	if mapped := o.mapped(p); mapped != nil {
 		target = mapped
+	}
+	if write && o.sharedPath(p) == target && !target.readOnly {
+		for _, mapping := range o.mappings {
+			if mapping.mapping.ReadOnly && model.PathsOverlap(mapping.mapping.Source, target.Rootfs()) {
+				return nil, &os.PathError{Op: "write shared alias of read-only volume", Path: p, Err: os.ErrPermission}
+			}
+		}
 	}
 	if write && target.readOnly {
 		return nil, &os.PathError{Op: "write read-only mapping", Path: p, Err: os.ErrPermission}
@@ -112,6 +149,11 @@ func (o *FS) guardMappingRoot(p string) error {
 			return fmt.Errorf("bedfs: operation crosses mapping root %s", m.mapping.Target)
 		}
 	}
+	for _, shared := range o.shared {
+		if _, ok := relativeTo(p, shared.paths.prefix); ok {
+			return fmt.Errorf("bedfs: operation crosses common root %s", shared.paths.prefix)
+		}
+	}
 	return nil
 }
 func (o *FS) transferRoute(p string, write bool) (*FS, error) {
@@ -121,11 +163,9 @@ func (o *FS) transferRoute(p string, write bool) (*FS, error) {
 	}
 	// Transfer archives have a single rooted filesystem. Require the caller to
 	// select a mapped tree explicitly, avoiding partial exports/imports at parents.
-	if target == o {
-		for _, m := range o.mappings {
-			if _, ok := relativeTo(o.clientPath(p), m.mapping.Target); ok {
-				return nil, fmt.Errorf("bedfs: transfer must select mapping %s explicitly", m.mapping.Target)
-			}
+	for _, m := range o.mappings {
+		if _, ok := relativeTo(o.clientPath(p), m.mapping.Target); ok && m.fs != target {
+			return nil, fmt.Errorf("bedfs: transfer must select mapping %s explicitly", m.mapping.Target)
 		}
 	}
 	return target, nil

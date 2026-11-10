@@ -181,6 +181,9 @@ func (u BedUser) Prepare(fs *bedfs.FS) error {
 			return fmt.Errorf("prepare bed user %d:%d: %w", u.uid, u.gid, err)
 		}
 	}
+	if err := os.Chmod(fs.Rootfs(), 0700); err != nil {
+		return fmt.Errorf("protect Bed private data: %w", err)
+	}
 	return fs.RefreshOwner()
 }
 

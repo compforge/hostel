@@ -23,7 +23,6 @@ func TestSharedUIDNetworkPolicyTraffic(t *testing.T) {
 	for _, executor := range []string{"local", "supervisor"} {
 		t.Run(executor, func(t *testing.T) {
 			options := config.Options{}
-			options.Bed.Privilege.SupplementaryGIDs = value([]int{1000})
 			options.Bed.Network.NetNS = value(tool.Auto)
 			testNetworkPolicyTraffic(t, targetOptions{executor: executor, config: &options}, true)
 		})

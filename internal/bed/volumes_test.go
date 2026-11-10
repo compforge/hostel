@@ -17,7 +17,7 @@ func TestVolumeDeclarationValidation(t *testing.T) {
 	for _, mounts := range [][]VolumeMount{
 		{{Volume: "v", Path: "/proc/private"}},
 		{{Volume: "v", Path: "/a"}, {Volume: "v", Path: "/b"}},
-		{{Volume: "v", Path: "/a"}, {Volume: "w", Path: "/a/child"}},
+		{{Volume: "v", Path: "/a"}, {Volume: "w", Path: "/a"}},
 	} {
 		if _, err := NormalizeMounts(mounts); err == nil {
 			t.Fatalf("invalid mounts accepted: %+v", mounts)
@@ -69,5 +69,12 @@ func TestManagedPersistencePolicies(t *testing.T) {
 	out[0].Managed.Persistence = "none"
 	if in[0].Managed.Persistence != "sync" {
 		t.Fatal("normalization aliases caller policy")
+	}
+}
+
+func TestNestedVolumeTargets(t *testing.T) {
+	got, err := NormalizeMounts([]VolumeMount{{Volume: "shared", Path: "/workspace/shared"}, {Volume: "home", Path: "/workspace"}})
+	if err != nil || len(got) != 2 || got[0].Volume != "home" {
+		t.Fatalf("nested mount ordering: %+v %v", got, err)
 	}
 }

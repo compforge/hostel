@@ -26,7 +26,6 @@ func TestPrivateNetworkCrashRecovery(t *testing.T) {
 	options := restrictedOptions()
 	options.Bed.Network.NetNS = value(tool.Required)
 	options.Bed.Filesystem.UID = value(tool.Required)
-	options.Bed.Privilege.SupplementaryGIDs = value([]int{1000})
 	listener := policyListener(t)
 	root, err := os.MkdirTemp("", "hostel-e2e-netns-recovery-")
 	if err != nil {

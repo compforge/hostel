@@ -13,9 +13,7 @@ import (
 // runtimePaths are shared execution dependencies, not Bed data. In particular,
 // /mnt, /tmp, /home and /run are not inherited from the carrier. Data paths
 // outside these overlays belong to the Bed even when first created by a process.
-var runtimePaths = []string{
-	"/usr", "/bin", "/sbin", "/lib", "/lib64", "/lib32", "/etc", "/opt", "/sys",
-}
+var runtimePaths = bedfs.SharedPaths()
 
 func existingRuntimePaths() []string {
 	var paths []string

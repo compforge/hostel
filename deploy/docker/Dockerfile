@@ -187,8 +187,8 @@ ENV PYTHONUSERBASE=/usr/local \
 EXPOSE 8872
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
-    CMD ["hostel", "--health"]
+    CMD ["/usr/bin/hostel", "--health"]
 
 # tini as PID 1: hostel spawns shells and (via the amenity) chromium, both of
 # which fork children — a real init reaps zombies and forwards signals.
-ENTRYPOINT ["/usr/bin/tini", "--", "hostel"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/bin/hostel"]

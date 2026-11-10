@@ -17,6 +17,7 @@ package bedfs
 import (
 	"context"
 	"errors"
+	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 	"io"
 	"io/fs"
 	"os"
@@ -50,7 +51,7 @@ func (o *FS) ExportTransferTree(ctx context.Context, source, directory string, e
 		return err
 	}
 	defer src.Close()
-	dst, err := os.OpenRoot(directory)
+	dst, err := hostfs.OpenRoot(directory)
 	if err != nil {
 		return err
 	}
@@ -83,7 +84,7 @@ func (o *FS) ImportTransferTree(ctx context.Context, directory, destination stri
 		return err
 	}
 	defer dst.Close()
-	src, err := os.OpenRoot(directory)
+	src, err := hostfs.OpenRoot(directory)
 	if err != nil {
 		return err
 	}
@@ -92,7 +93,7 @@ func (o *FS) ImportTransferTree(ctx context.Context, directory, destination stri
 	return copyTransferTree(ctx, src, dst, overwrite, nil, owned, completed)
 }
 
-func copyTransferTree(ctx context.Context, src, dst *os.Root, overwrite bool, excluded func(string) bool, owned func(string), completed func(int64)) error {
+func copyTransferTree(ctx context.Context, src, dst hostfs.Root, overwrite bool, excluded func(string) bool, owned func(string), completed func(int64)) error {
 	type directory struct {
 		name string
 		info os.FileInfo
@@ -167,7 +168,7 @@ func copyTransferTree(ctx context.Context, src, dst *os.Root, overwrite bool, ex
 			}
 			size, err = io.Copy(output, transferReader{ctx: ctx, reader: input})
 			if err == nil {
-				err = output.Chmod(info.Mode().Perm())
+				err = dst.Chmod(temp, info.Mode().Perm())
 			}
 			err = errors.Join(err, output.Close())
 			if err != nil {

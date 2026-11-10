@@ -17,7 +17,8 @@ func TestSharedSoftwareIsPreparedOnceAndRetainedOnClose(t *testing.T) {
 	}
 	root := t.TempDir()
 	m := NewManager(carrierOnly{}, bed.NewOwners().Filesystem)
-	m.SetSharedSoftware([]SharedSoftwareDirectory{{Path: root, GID: 1000, Policy: tool.Required}})
+	m.softwareGroupAvailable = true
+	m.sharedSoftware = []sharedDirectory{{Path: root, GID: 1000, Policy: tool.Required}}
 	if err := m.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}

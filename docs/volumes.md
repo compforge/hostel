@@ -7,6 +7,15 @@ Bed 拥有命名 Volume，Pillow 通过 Mount 选择路径和读写权限。Volu
 Filesystem 准备本地数据、目录句柄及 Pillow 视图；Store 负责远端同步、恢复和显式传输。
 Bed Manager 安排先恢复后运行、先停止写入后回收的顺序，见 [bed.md](bed.md)。
 
+## 文件需求与访问
+
+BedFS 表达 Bed 私有数据、公共内容复用及 Hostel/OS 资源受控访问。程序仍以普通 rootfs
+路径工作；mount namespace 只是组织和保护视图的一种机制。Carrier 的 `/usr`、`/bin`、
+`/lib` 等运行依赖复用，文件 API 以只读来源接入；`/usr/local` 是内部公共软件区域，按内部
+软件组授权读写。它们不是各 Bed 的软件副本，也不随 Bed 回收。目录授权准备见
+[isolation.md](isolation.md#daemon-与-beduser)。其余 Bed 本地数据继续按下文 Rootfs/Volume
+路径规则保存，不把任意 Carrier 路径自动变成可写公共数据。
+
 ## 来源与挂载
 
 每个 Volume 只能选择一种来源：
@@ -39,8 +48,10 @@ pillows:
 ```
 
 示例的只读要求须由文件 API 和进程视图同时兑现；无法兑现时初始化失败。
-挂载路径必须绝对、非根，不能与同一 Pillow 的其他挂载或运行时保留路径重叠；同一视图对
-同一卷只声明一次挂载。Pillow 之间不继承挂载，文件 API 与执行共用所选 Pillow 的视图。
+挂载路径必须绝对、非根，不能重复或覆盖运行时保留路径；同一视图对同一卷只声明一次挂载。
+允许在私有工作区内嵌套共享卷：最长目标路径优先，进程先挂父、后挂子，List/Search 每次
+下降重新选择逻辑来源。managed 父卷可准备挂载占位；借用父目录中的占位必须已存在，
+Hostel 不为此修改外部目录。Pillow 之间不继承挂载，文件 API 与执行共用所选 Pillow 的视图。
 
 全新 Bed 省略卷声明时展开默认 workspace 卷，其 persistence 由 daemon 默认同步配置解析并固定。
 Pillow 列表必须显式声明，Hostel 不推断任何挂载；每个 Pillow
@@ -78,7 +89,9 @@ private 视图遮蔽 Bed 父目录，再挂回自己的根与卷。其他机制�
 ## 路径与文件视图
 
 BedFS 为每个 Pillow 持有视图和目录句柄，共享 Bed 根数据与卷来源。路径先在客户端空间
-规范化，命中 Mount 则解析到卷来源，否则解析到 Rootfs。返回路径使用对应逆转换。
+规范化，命中最具体的 Mount 则解析到卷来源；公共软件和系统依赖解析到 Carrier 来源，
+其余路径解析到 Rootfs。返回路径使用对应逆转换。Volume 因此既可接入外部数据，也可在
+私有目录中接入一块公共目录；路径改变不改变其归属和回收责任。
 
 | 路径空间 | 作用 |
 |---|---|
@@ -91,6 +104,8 @@ BedFS 为每个 Pillow 持有视图和目录句柄，共享 Bed 根数据与卷�
 workdir 可以位于 Rootfs 或任意已声明挂载内，不必叫 `/workspace`。
 
 文件 API 通过每个来源的 `os.Root` 进行 descriptor-relative 操作，拒绝 symlink 逃出来源。
+Linux 由 Bed 身份的 worker 执行路径操作；文件流使用 worker 按该身份打开的 FD，metadata
+修改也留在 worker 中。可信的目录准备与 Store staging 仍使用管理权限，两者不混用。
 禁止删除或重命名挂载根及其父目录；跨挂载 rename 不支持，跨多个挂载的父目录导入导出也拒绝。
 进程 cwd 属于结构化字段，先由 BedFS 解析再投影；命令文本保持原样，绝对路径字面量由
 实际进程视图解释。Session 使用创建时绑定的视图，通过独立 shell 控制步骤更新 cwd。
@@ -113,7 +128,7 @@ bwrap 优先使用 daemon 已有权限准备文件视图，否则尝试无特权
 rootful 视图模板归 Bed；要求私有 PID namespace 时，在每个 Executor 中为各 Pillow 派生
 匹配 procfs 的最终视图，Executor 替换重建派生视图并保留数据与模板。准备失败保留清理责任。
 
-私有根只接入需要的共享系统程序和工具链，系统依赖通常只读，`/usr/local` 保留 Carrier
+这个根视图用于保护私有数据并接入共享系统程序和工具链；系统依赖通常只读，`/usr/local` 保留 Carrier
 级可写软件环境。若覆盖重新暴露 Bed 父目录，必须再次遮蔽。非运行依赖目录内的程序通过
 显式卷接入或放入 BedFS；不能自动挂回任意程序的宿主父目录。该视图不提供可任意修改系统
 目录的完整镜像或 CoW rootfs。机制与降权顺序见 [isolation.md](isolation.md)。
@@ -126,7 +141,7 @@ BedFS 读回，不能用程序存在或 `true` 成功代替。
 
 挂载在进程侧已兑现时，API 直接访问源目录。未兑现时，Reader 先读对应的 Rootfs 本地
 候选，失败再读卷来源；两者均受各自目录句柄约束，不合并目录树。写入和 Transfer 始终
-使用声明来源，API 始终检查只读要求。这样受限视图仍可读取进程产物，同时报告能力缺口。
+使用声明来源，API 始终检查只读要求。只读卷的来源若与公共软件树重叠，该 Pillow 的隐式软件写入口保守关闭，防止源路径别名绕过。这样受限视图仍可读取进程产物，同时报告能力缺口。
 
 独占 Carrier 可显式启用 `--dorm-read-fallback-root`：shared 文件视图下，未命中卷的
 绝对路径在 BedFS 不存在时，允许只读 API 尝试所配置进程根。相对路径不回退，mutation

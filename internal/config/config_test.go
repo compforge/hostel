@@ -1,62 +1,13 @@
 package config
 
 import (
-	"github.com/qiankunli/hostel/internal/bed/privilege"
-	"reflect"
 	"testing"
 
 	"github.com/qiankunli/hostel/internal/bed/tool"
 )
 
-func TestBedExtraGIDsConfig(t *testing.T) {
-	if c := mustLoad(t, nil); len(c.Bed.Privilege.SupplementaryGIDs) != 0 {
-		t.Fatal(c.Bed.Privilege)
-	}
-	t.Setenv("HOSTEL_BED_EXTRA_GIDS", "1300, 1200,1300")
-	if c := mustLoad(t, nil); !reflect.DeepEqual(c.Bed.Privilege.SupplementaryGIDs, []int{1200, 1300}) {
-		t.Fatal(c.Bed.Privilege)
-	}
-	if c := mustLoad(t, []string{"--bed-extra-gids", "1400"}); !reflect.DeepEqual(c.Bed.Privilege.SupplementaryGIDs, []int{1400}) {
-		t.Fatal(c.Bed.Privilege)
-	}
-	for _, invalid := range []string{"0", "-1", "root", "1000,", "200000", "299999", "4294967295", "4294967296"} {
-		if _, err := Load([]string{"--bed-extra-gids", invalid}, Options{}); err == nil {
-			t.Fatalf("accepted %q", invalid)
-		}
-	}
-	groups := []int{1600, 1500}
-	c, err := Load([]string{"--bed-extra-gids", "invalid"}, Options{Bed: BedOptions{Privilege: privilege.Options{SupplementaryGIDs: &groups}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	groups[0] = 0
-	if !reflect.DeepEqual(c.Bed.Privilege.SupplementaryGIDs, []int{1500, 1600}) {
-		t.Fatal(c.Bed.Privilege)
-	}
-	empty := []int{}
-	c, err = Load(nil, Options{Bed: BedOptions{Privilege: privilege.Options{SupplementaryGIDs: &empty}}})
-	if err != nil || len(c.Bed.Privilege.SupplementaryGIDs) != 0 {
-		t.Fatalf("empty override: %+v %v", c, err)
-	}
-}
-
-func TestEmptyExtraGroupsAreExplicit(t *testing.T) {
-	t.Setenv("HOSTEL_BED_EXTRA_GIDS", "")
-	c := mustLoad(t, nil)
-	if c.Bed.Privilege.SupplementaryGIDs == nil {
-		t.Fatal("explicit empty env became unspecified")
-	}
-	t.Setenv("HOSTEL_BED_EXTRA_GIDS", "1000")
-	c = mustLoad(t, []string{"--bed-extra-gids", ""})
-	if c.Bed.Privilege.SupplementaryGIDs == nil || len(c.Bed.Privilege.SupplementaryGIDs) != 0 {
-		t.Fatal(c.Bed.Privilege)
-	}
-	var groups []int
-	c, err := Load(nil, Options{Bed: BedOptions{Privilege: privilege.Options{SupplementaryGIDs: &groups}}})
-	if err != nil || c.Bed.Privilege.SupplementaryGIDs == nil || len(c.Bed.Privilege.SupplementaryGIDs) != 0 {
-		t.Fatalf("nil explicit slice: %+v %v", c, err)
-	}
-	for _, name := range []string{"--bed-uid", "--bed-gid"} {
+func TestBedIdentityHasNoPublicNumericOverrides(t *testing.T) {
+	for _, name := range []string{"--bed-uid", "--bed-gid", "--bed-extra-gids"} {
 		if _, err := Load([]string{name, "1000"}, Options{}); err == nil {
 			t.Fatalf("unsupported flag accepted: %s", name)
 		}

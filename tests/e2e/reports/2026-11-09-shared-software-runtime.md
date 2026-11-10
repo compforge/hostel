@@ -120,3 +120,57 @@ runtime revision, and remains separate evidence. Its initial smoke used the
 unsupported `hostel version` subcommand, then a wrong hictld PATH assumption;
 the corrected version/path smoke and public API suite passed. Subsequent full
 Bedbox builds must pin the access-ACL follow-up before release.
+
+
+## Multiuser filesystem follow-up after PR176
+
+This follow-up tests the uncommitted `feat/fs-multiuser` tree based on main
+`aefcefe390ad5b4fb51f4eac1d24c6d6b4ae2990`, with VERSION 0.2.15. It supersedes the
+configurable group/directory setup described in the earlier rounds above:
+Privilege selects internal software GID 199999 automatically, and Filesystem
+prepares the internal software area. No Bed extra-GID or shared-directory env
+configuration is needed. File API operations now execute under the Bed identity.
+
+The amd64 devbox ran the existing compiled E2E suite in disposable containers
+using cached image `hostel-shared-runtime:validation`, with the changed binary
+mounted at `/usr/lib/hostel-e2e`. The image itself was not rebuilt or published.
+Observed platform: Debian 12, Linux 5.15.120.bsk.3-amd64. The NET_ADMIN profile
+retained seccomp mode 2; the privileged mount profile reported seccomp mode 0.
+
+| Verification | Result |
+| --- | --- |
+| Native format/lint and impacted race tests through repocli | Passed; root lint ran in full |
+| Linux amd64 and arm64 daemon builds | Passed; arm64 was build-only |
+| Linux file worker and BedFS identity/confinement tests | Passed, including root-owned mutation denial and accessible out-of-root symlink rejection |
+| Full Linux BedFS tests | Passed, including nested mount traversal and common-parent exclusion |
+| Fresh image shared software preparation and API/process cross-UID writes | Passed; measured Carrier startup 65.208 seconds |
+| Automatic software group, UID/PRoot and Carrier file API matrix | Passed for local and supervisor |
+| UID+nft egress with ip_forward=0 | Passed for local and supervisor, including live policy changes and unchanged forwarding value |
+| Privileged prepared mount view | Passed for command, Session and Pillow main; private identity and capability assertions passed |
+| pip/npm/uv cross-UID install/use/replace/uninstall | Passed; package subcases 3.03/4.30/1.08 seconds; suite including cold startup 121.41 seconds |
+
+Final suite verdicts, all pass:
+`20261109T153925.997294786Z`, `20261109T153950.722588928Z`,
+`20261109T154145.540956125Z`, `20261109T154238.145578175Z`.
+Raw logs, verdicts and observed environments are retained in ignored
+`runs/fs-multiuser-20261109/`; remote originals are under
+`/data00/tmp/hostel-fs-multiuser-0.2.15/`. Test containers were removed.
+
+Artifact SHA256:
+
+- Daemon: `abf06ea239d047c82a11d35633c94ddee9c1103e7de5641b99d4ddbb700bcb4a`
+- E2E runner: `4dc5596d668065e54db3e28a63119ae58f89de11480eba2975a667b339d32ade`
+
+Earlier failures remain in the evidence: default Docker capabilities exposed an
+existing nft probe-cleanup failure without NET_ADMIN; a cold image exceeded the
+old 45-second fixture wait; a network probe executable under `/e2e` was outside
+the PRoot view. The final runs provide NET_ADMIN, allow 150 seconds for the
+existing two-minute preparation budget plus startup probes, and place the runner
+in the read-only runtime tree. Production preparation timeout was not increased.
+
+Cold preparation of an old image has material copy-up cost; these passes do not
+establish an acceptable startup budget for every image or storage backend.
+Explicit file modes/chmod can still revoke shared group access, and shared
+software remains a common trust domain. This run does not prove customer-kernel
+compatibility, concurrent package-manager safety, a complete Bedbox image release,
+or the sandctl/hictld/HiBot business chain.

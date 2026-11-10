@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,7 +45,6 @@ import (
 
 // Manager owns the set of beds and their lifecycle. Safe for concurrent use.
 type Manager struct {
-	sharedSoftware      []filesystem.SharedSoftwareDirectory
 	portMappings        *network.PortMappings
 	configurations      *configuration.Manager
 	configurationConfig configuration.Config
@@ -138,10 +138,6 @@ var ErrBedUnavailable = errors.New("bed: no longer resident")
 // resident Bed can observe the Manager.
 type ManagerOption func(*Manager)
 
-func WithSharedSoftware(dirs []filesystem.SharedSoftwareDirectory) ManagerOption {
-	return func(m *Manager) { m.sharedSoftware = append([]filesystem.SharedSoftwareDirectory(nil), dirs...) }
-}
-
 // WithBedUser selects the fixed user inherited by ordinary Bed environments.
 // uid isolation resolves a dedicated user from the same policy per Bed.
 func WithBedUser(user privilege.BedUser) ManagerOption {
@@ -160,6 +156,9 @@ func WithIdentitySelection(identity privilege.Selection) ManagerOption {
 // Start prepares the workspace root and recovers local identities.
 // amenities and st may be nil; maxBeds 0 = unlimited.
 func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.Isolator, amenities *amenity.Manager, maxBeds int, st *store.Manager, opts ...ManagerOption) (*Manager, error) {
+	if model.PathsOverlap(filepath.Clean(root), "/usr/local") {
+		return nil, fmt.Errorf("beds-root overlaps shared software")
+	}
 	processEnv, _ := newProcessEnv(os.Environ())
 	shellPath = resolveShellPath(shellPath)
 	if st == nil {
@@ -211,7 +210,6 @@ func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.I
 	}
 	m.pillows.SetConfigurationManager(configurations)
 	m.files = filesystem.NewManager(iso, m.owners.Filesystem)
-	m.files.SetSharedSoftware(m.sharedSoftware)
 	m.executorManager = executor.NewManager(m.executorFactory, m.owners.Executor)
 	m.resourceManager = resource.NewManager(m.resources, m.owners.Resource)
 	m.network.SetStatusWriter(m.owners.Network)
@@ -229,9 +227,7 @@ func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.I
 	if m.identitySelection != nil {
 		m.privileges.SetSelection(*m.identitySelection)
 	}
-	if err := (filesystem.Config{SharedSoftware: m.sharedSoftware}).ValidateSharedGroups(policy.SupplementaryGIDs); err != nil {
-		return nil, err
-	}
+	m.files.SetSoftwareGroups(policy.SupplementaryGIDs)
 	m.network.SetDedicatedUIDs(policy.Strategy == "per_bed")
 	return m, nil
 }

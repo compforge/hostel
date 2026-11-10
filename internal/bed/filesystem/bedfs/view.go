@@ -72,6 +72,11 @@ func (v ProcessView) Path(host string) (string, error) {
 			return filepath.Clean(host), nil
 		}
 	}
+	for _, shared := range v.fs.shared {
+		if rel, ok := relativeTo(shared.Rootfs(), host); ok {
+			return joinProcessPath(shared.paths.prefix, rel), nil
+		}
+	}
 	homeRel, ok := relativeTo(v.fs.Rootfs(), host)
 	if !ok {
 		return "", fmt.Errorf("bedfs: carrier path %q is outside bed_home %q", host, v.fs.Rootfs())

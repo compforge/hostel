@@ -3,32 +3,11 @@ package privilege
 import (
 	"fmt"
 	"slices"
-	"strconv"
-	"strings"
 )
 
 // Config grants access to carrier resources independently of Bed identity allocation.
 type Config struct{ SupplementaryGIDs []int }
-type Options struct{ SupplementaryGIDs *[]int }
-
-func ParseExtraGIDs(value string) ([]int, error) {
-	groups := []int{}
-	if strings.TrimSpace(value) == "" {
-		return groups, nil
-	}
-	for _, part := range strings.Split(value, ",") {
-		gid, err := strconv.ParseUint(strings.TrimSpace(part), 10, 32)
-		if err != nil || gid == 0 || gid >= 1<<32-1 {
-			return nil, fmt.Errorf("invalid extra gid %q: expected a non-root numeric group", part)
-		}
-		groups = append(groups, int(gid))
-	}
-	c := Config{SupplementaryGIDs: groups}
-	if err := c.Validate(); err != nil {
-		return nil, err
-	}
-	return c.SupplementaryGIDs, nil
-}
+type Options struct{}
 
 // +spec=`Shared resource groups cannot overlap the private Bed identity range.`
 // +link=component://docs/isolation.md

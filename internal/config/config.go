@@ -19,11 +19,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/qiankunli/go-stdx/osx"
-	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	"github.com/qiankunli/hostel/internal/bed/store/backend"
 	"github.com/qiankunli/hostel/internal/bed/tool"
@@ -99,9 +97,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs := flag.NewFlagSet("hostel", flag.ContinueOnError)
 	c := &Config{}
 	var configurationSources string
-	sharedSoftware := fs.String("shared-software", osx.EnvStr("HOSTEL_SHARED_SOFTWARE", "[]"), "JSON array of Carrier shared software directories (path, gid, policy)")
 	fs.StringVar(&configurationSources, "configuration-sources", osx.EnvStr("HOSTEL_CONFIGURATION_SOURCES", "{}"), "JSON object of named configuration directories")
-	extraGIDs := fs.String("bed-extra-gids", osx.EnvStr("HOSTEL_BED_EXTRA_GIDS", ""), "comma-separated supplementary group IDs for Bed processes")
 	fs.StringVar(&c.Addr, "addr", osx.EnvStr("HOSTEL_ADDR", DefaultAddr), "HTTP listen address")
 	fs.IntVar(&c.PortRangeStart, "port-range-start", osx.EnvInt("HOSTEL_PORT_RANGE_START", 20000), "first dynamic TCP service port")
 	fs.IntVar(&c.PortRangeEnd, "port-range-end", osx.EnvInt("HOSTEL_PORT_RANGE_END", 29999), "last dynamic TCP service port")
@@ -160,29 +156,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 			return nil, fmt.Errorf("configuration sources must be a JSON object of directory paths")
 		}
 	}
-	_, groupsConfigured := os.LookupEnv("HOSTEL_BED_EXTRA_GIDS")
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "bed-extra-gids" {
-			groupsConfigured = true
-		}
-	})
-	if explicit.Bed.Privilege.SupplementaryGIDs == nil && groupsConfigured {
-		var err error
-		c.Bed.Privilege.SupplementaryGIDs, err = privilege.ParseExtraGIDs(*extraGIDs)
-		if err != nil {
-			return nil, fmt.Errorf("bed extra gids: %w", err)
-		}
-	}
-	if explicit.Bed.Filesystem.SharedSoftware == nil {
-		if err := json.Unmarshal([]byte(*sharedSoftware), &c.Bed.Filesystem.SharedSoftware); err != nil {
-			return nil, fmt.Errorf("shared software must be a JSON array of directory declarations: %w", err)
-		}
-	}
 	explicit.apply(c)
-	// Presence distinguishes an exact empty list from an unspecified rootless baseline.
-	if explicit.Bed.Privilege.SupplementaryGIDs != nil && c.Bed.Privilege.SupplementaryGIDs == nil {
-		c.Bed.Privilege.SupplementaryGIDs = []int{}
-	}
 	if err := c.Bed.Privilege.Validate(); err != nil {
 		return nil, err
 	}
@@ -202,9 +176,6 @@ func Load(args []string, explicit Options) (*Config, error) {
 		return nil, err
 	}
 	if err := c.Bed.Filesystem.Validate(); err != nil {
-		return nil, err
-	}
-	if err := c.Bed.Filesystem.ValidateSharedGroups(c.Bed.Privilege.SupplementaryGIDs); err != nil {
 		return nil, err
 	}
 	if err := c.Bed.Network.Validate(); err != nil {
