@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -44,13 +45,40 @@ func TestS3MultipartCompatibility(t *testing.T) {
 	if endpoint == "" {
 		t.Skip("HOSTEL_TEST_S3_ENDPOINT is unset")
 	}
-	cfg := Config{Endpoint: endpoint, PathStyle: true, Bucket: os.Getenv("HOSTEL_TEST_S3_BUCKET"), Region: os.Getenv("HOSTEL_TEST_S3_REGION"), AccessKeyID: os.Getenv("HOSTEL_TEST_S3_ACCESS_KEY"), SecretAccessKey: os.Getenv("HOSTEL_TEST_S3_SECRET_KEY"), PartSizeBytes: 8 << 20}
+	cfg := Config{Endpoint: endpoint, PathStyle: true, Bucket: os.Getenv("HOSTEL_TEST_S3_BUCKET"), Region: os.Getenv("HOSTEL_TEST_S3_REGION"), AccessKeyID: os.Getenv("HOSTEL_TEST_S3_ACCESS_KEY"), SecretAccessKey: os.Getenv("HOSTEL_TEST_S3_SECRET_KEY")}
+	var id [8]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatal(err)
+	}
+	ownedBucket := cfg.Bucket == "" && os.Getenv("HOSTEL_TEST_S3_CREATE_BUCKET") == "1"
+	if ownedBucket {
+		cfg.Bucket = "hostel-upload-" + hex.EncodeToString(id[:])
+	}
 	if cfg.Bucket == "" {
-		t.Fatal("HOSTEL_TEST_S3_BUCKET is required")
+		t.Fatal("HOSTEL_TEST_S3_BUCKET or HOSTEL_TEST_S3_CREATE_BUCKET=1 is required")
+	}
+	if value := os.Getenv("HOSTEL_TEST_S3_PATH_STYLE"); value != "" {
+		var err error
+		cfg.PathStyle, err = strconv.ParseBool(value)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	plain, err := NewS3(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if ownedBucket {
+		if _, err := plain.client.CreateBucket(t.Context(), &s3.CreateBucketInput{Bucket: &cfg.Bucket}); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if _, err := plain.client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: &cfg.Bucket}); err != nil {
+				t.Error(err)
+			}
+		}()
 	}
 	target, err := url.Parse(endpoint)
 	if err != nil {
@@ -67,12 +95,8 @@ func TestS3MultipartCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var id [8]byte
-	if _, err := rand.Read(id[:]); err != nil {
-		t.Fatal(err)
-	}
 	prefix := "diagnostics/hostel-multipart/" + hex.EncodeToString(id[:]) + "/"
-	t.Logf("S3 compatibility prefix=%s part_bytes=%d", prefix, cfg.PartSizeBytes)
+	t.Logf("S3 compatibility prefix=%s upload_sizing=SDK-defaults", prefix)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -115,7 +139,7 @@ func TestS3MultipartCompatibility(t *testing.T) {
 		size  int
 		parts int32
 	}{
-		{"equal", 8 << 20, 0}, {"above", (8 << 20) + 1, 2}, {"pack", 32 << 20, 4},
+		{"empty", 0, 0}, {"small", 8 << 20, 0}, {"below", (16 << 20) - 1, 0}, {"equal", 16 << 20, 2}, {"above", (16 << 20) + 1, 3}, {"pack", 32 << 20, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var parts atomic.Int32
@@ -140,8 +164,8 @@ func TestS3MultipartCompatibility(t *testing.T) {
 							}
 						}
 						size, err := strconv.ParseInt(strings.TrimSpace(string(first)), 16, 64)
-						if err != nil || size > cfg.PartSizeBytes {
-							t.Errorf("chunk header %q exceeds configured part or is invalid: %v", first, err)
+						if err != nil {
+							t.Errorf("invalid chunk header %q: %v", first, err)
 						}
 						t.Logf("wire: aws-chunked chunk_bytes=%d multipart=%v", size, r.URL.Query().Has("partNumber"))
 						r.Body = struct {
@@ -174,6 +198,40 @@ func TestS3MultipartCompatibility(t *testing.T) {
 				t.Fatal("readback differs", err)
 			}
 			t.Logf("verified object_bytes=%d parts=%d metadata=ok sha256=match", size, parts.Load())
+		})
+	}
+	for _, size := range []int{4 << 20, 17 << 20} {
+		t.Run("no-overwrite/"+strconv.Itoa(size), func(t *testing.T) {
+			obj.client = s3.New(obj.client.Options(), func(o *s3.Options) {
+				o.HTTPClient = &http.Client{Timeout: 90 * time.Second, Transport: transport}
+			})
+			key := prefix + "protected-" + strconv.Itoa(size)
+			if err := obj.Put(t.Context(), key, bytes.NewReader(data[:size]), int64(size), nil); err != nil {
+				t.Fatal(err)
+			}
+			file, err := os.CreateTemp(t.TempDir(), "replacement")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			if err := file.Truncate(int64(size)); err != nil {
+				t.Fatal(err)
+			}
+			if err := obj.Upload(t.Context(), key, file, int64(size), false); !errors.Is(err, ErrConflict) {
+				t.Fatalf("conditional upload: %v", err)
+			}
+			body, err := plain.Get(t.Context(), key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer body.Close()
+			h := sha256.New()
+			n, err := io.Copy(h, body)
+			want := sha256.Sum256(data[:size])
+			if err != nil || n != int64(size) || !bytes.Equal(h.Sum(nil), want[:]) {
+				t.Fatal("conditional upload changed existing object", err)
+			}
+			t.Log("conditional write rejected; original object preserved")
 		})
 	}
 	t.Run("cancel", func(t *testing.T) {

@@ -57,6 +57,7 @@ func transferWriteError(err error) error {
 }
 
 // Upload preserves overwrite=false at the S3 commit point for both upload modes.
+// The caller must keep file contents and size stable until Upload returns.
 func (o *S3) Upload(ctx context.Context, key string, file *os.File, size int64, overwrite bool) error {
 	var ifAbsent *string
 	if !overwrite {

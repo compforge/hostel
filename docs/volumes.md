@@ -312,6 +312,8 @@ copy 只支持普通文件和目录，拒绝 symlink 与特殊文件；不携带
 本地下载先写临时文件再原子发布，不覆盖模式原子创建，覆盖模式替换同名文件；S3 不覆盖
 写入使用条件提交，不支持时失败。两种模式都保留目标端多余文件。
 目录整体按文件逐一提交，失败可能留下部分结果；不自动回滚，也不冻结源端写入。
+调用方须保证传输期间源文件稳定；边上传边截短或改写不在数据保证范围内，Hostel 不负责检测
+或修复这种并发修改。
 Transfer 只能选择单一数据来源，不能把多个挂载拼成一个导入导出目录。
 
 Restic 通过 BedFS 导出到私有临时目录后上传，下载先恢复到私有目录再导入，避免外部进程
@@ -333,16 +335,23 @@ Restic 保留普通权限、mtime、空目录与未逃逸的相对 symlink，拒
 ### Pack Object 大小与 S3 上传分片
 
 `HOSTEL_PACK_TARGET_BYTES` / `--pack-target-bytes` 默认 `33554432`（32 MiB），
-控制 pack 聚合后的 Object 目标大小；`HOSTEL_S3_PART_SIZE_BYTES` /
-`--s3-part-size-bytes` 默认 `8388608`（8 MiB），独立控制上传 part 大小。
-两者均支持显式 Store Options 覆盖，优先级为 Options > CLI > env > 默认值。
-Object 不超过一个 part 时直接 PUT，大于一个 part 时 multipart；最后一片可更小，
-完成后仍是一个 Object。pack 持久化和文件上传共用该规则，已有快照布局和读取方式不变。
+控制 pack 聚合后的 Object 目标大小，优先级为 Store Options > CLI > env > 默认值。
+这是持久化布局参数，与 S3 传输分片独立。
 
-part 大小须在 5 MiB 至 5 GiB 之间；对限制 aws-chunked chunk 为 16 MiB 的 MinIO，
-保持默认 8 MiB（或不超过 16 MiB）。每个上传最多并发 2 个 part，保留 checksum 校验，
-失败或取消后使用独立的 30 秒上下文清理未完成上传。
-超过 10,000 个 part 的对象会在上传前报错，不会自动增大 part 而突破配置大小。
+所有对象统一交给 AWS `transfermanager.UploadObject`。Hostel 不暴露 S3 分片大小或 multipart
+切换阈值，直接采用库默认策略；当前依赖在低于 16 MiB 时使用普通 PUT，达到该阈值时使用
+multipart，初始分片大小为 8 MiB。分片数量与大对象的分片调整也由 SDK 决定。
+pack 持久化和文件上传共用该入口，已有快照布局和读取方式不变。
+每个上传的资源预算保持最多 2 个并发 part，失败或取消后的清理预算为 30 秒。
+
+S3 上传以源数据在传输期间保持稳定为前提。最终回收同步先关闭准入并停止受管写入者；
+自动持久化交给 S3 的是已完成的 pack/chunk buffer 或临时归档，上传完成前不再修改或复用。
+因此，这些路径不会一边上传同一个产物、一边继续改写它。后台同步期间业务文件仍可能变化，
+其快照一致性边界见[自动持久化](#自动持久化)，不等于上传产物本身仍在变化。
+
+上传保留输入的 seek 能力，并将长度传给 SDK。Hostel 不为源被并发改写增加自定义长度校验、
+冻结或快照机制，也不承诺这种情况下必然失败；普通上传、multipart、重试及失败清理由库负责。
+显式 Transfer 直接读取源文件时，由调用方满足同一稳定性前提。
 
 S3 兼容性回归位于 `internal/bed/store/backend/s3_integration_test.go`。
 设置 `HOSTEL_TEST_S3_ENDPOINT`、`HOSTEL_TEST_S3_BUCKET`、`HOSTEL_TEST_S3_REGION`，
@@ -351,3 +360,7 @@ S3 兼容性回归位于 `internal/bed/store/backend/s3_integration_test.go`。
 它只写随机 `diagnostics/hostel-multipart/` 前缀，校验分片边界、metadata、读回 SHA-256
 和取消清理，并逐个删除测试对象。HTTP endpoint 会经本地可信 TLS bridge，确保覆盖
 SDK 的 HTTPS aws-chunked 路径；这属于 S3 backend 集成验证，不代表 Bedbox 部署或业务 E2E。
+
+测试也支持 `HOSTEL_TEST_S3_CREATE_BUCKET=1`：未指定 bucket 时创建并清理专属临时 bucket。
+`HOSTEL_TEST_S3_PATH_STYLE=false` 可选择 virtual-hosted 访问。测试覆盖稳定源的普通上传与 multipart、
+取消清理和不覆盖写入；不把并发改写源文件的行为作为上传契约验收条件。

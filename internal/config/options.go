@@ -109,7 +109,6 @@ func (o Options) apply(c *Config) {
 	apply(&c.Bed.Store.SessionToken, o.Bed.Store.SessionToken)
 	apply(&c.Bed.Store.AutoPackFileThreshold, o.Bed.Store.AutoPackFileThreshold)
 	apply(&c.Bed.Store.PackTargetBytes, o.Bed.Store.PackTargetBytes)
-	apply(&c.Bed.Store.S3PartSizeBytes, o.Bed.Store.S3PartSizeBytes)
 	apply(&c.Bed.Resource.Admission.CPUThresholdPercent, o.Bed.Resource.CPUThresholdPercent)
 	apply(&c.Bed.Resource.Admission.MemoryThresholdPercent, o.Bed.Resource.MemoryThresholdPercent)
 }
