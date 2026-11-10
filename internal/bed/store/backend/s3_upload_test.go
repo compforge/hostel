@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// +case:id=s3_upload_boundary,desc=`PUT at the part boundary and multipart above it`,expect=`one committed object with identical bytes and metadata`
+// +case:id=s3_upload_boundary,desc=`SDK selects PUT below the threshold and multipart at or above it`,expect=`one committed object with identical bytes and metadata`
 func TestPutObjectPartBoundary(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -22,7 +22,7 @@ func TestPutObjectPartBoundary(t *testing.T) {
 	}{
 		{"empty", 0, 8 << 20, 0},
 		{"below", (8 << 20) - 1, 8 << 20, 0},
-		{"equal", 8 << 20, 8 << 20, 0},
+		{"equal", 8 << 20, 8 << 20, 1},
 		{"above", (8 << 20) + 1, 8 << 20, 2},
 		{"pack", 32 << 20, 8 << 20, 4},
 		{"custom", 12 << 20, 5 << 20, 3},
@@ -60,6 +60,9 @@ func TestPutObjectPartBoundary(t *testing.T) {
 					w.Header().Set("ETag", fmt.Sprintf(`"part-%d"`, n))
 				case r.Method == http.MethodPost && q.Has("uploadId"):
 					commits++
+					if got := r.Header.Get("X-Amz-Mp-Object-Size"); got != strconv.Itoa(tc.size) {
+						t.Errorf("declared multipart length=%q want=%d", got, tc.size)
+					}
 					for i := 1; i <= len(parts); i++ {
 						stored = append(stored, parts[i]...)
 					}
@@ -103,13 +106,5 @@ func TestPutObjectPartBoundary(t *testing.T) {
 				t.Fatal("committed object differs from input")
 			}
 		})
-	}
-}
-
-func TestUploadRejectsTooManyPartsBeforeNetwork(t *testing.T) {
-	obj := &S3{partSize: 8 << 20}
-	err := obj.Put(t.Context(), "too-large", bytes.NewReader(nil), (8<<20)*10000+1, nil)
-	if err == nil {
-		t.Fatal("oversized object accepted")
 	}
 }

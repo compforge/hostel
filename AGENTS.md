@@ -290,6 +290,7 @@ Purge 显式销毁本地及远端数据；daemon 正常关闭保留本地数据�
 - **E2E owner 边界**：Hostel 的单机 suite 直接验证真实 daemon/image 的 bed runtime、隔离与 carrier userland；上层控制面只保留 placement、跨 carrier 持久化和 lifecycle 编排，不在 K8s E2E 重复证明 Hostel 内部契约。运行说明见 `tests/e2e/README.md`。
 - Go 项目常规：改完 `go build ./...` + `go test ./...` + `go vet ./...` 三件套过再提交（见 `Makefile`）。仓库在 `github.com/qiankunli/hostel`，保护分支 main 走 PR。
 - 根目录 `VERSION` 是二进制和镜像的唯一版本源；改变运行时行为时递增版本号，默认递增 patch。仅修改测试用例、测试 fixture、测试报告或文档时不递增。
+- **S3 上传源稳定性**：最终回收同步先停止受管写入者；自动持久化上传已完成且传输期间不再修改的 pack/chunk 或临时归档。显式 Transfer 由调用方保证源文件稳定。Hostel 不处理边上传边改写源文件，不为此实现通用 S3 传输保护；详见 [Volume](docs/volumes.md#pack-object-大小与-s3-上传分片)。
 - 通用小工具优先用 [go-stdx](https://github.com/qiankunli/go-stdx)（env 解析、随机 id、shell quote、原子写文件、目录字节数等），不要在仓内再手写它已有的操作；沉淀出的新通用件也应迁去 go-stdx 而非留在 internal。
 
 ## References
