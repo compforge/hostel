@@ -38,7 +38,7 @@ pathshim 或 Carrier 视图，并分别报告路径体验与访问保护的缺�
 与来源权限决定。镜像或目录提供方负责公共资源的权限，Hostel 不承诺任意系统目录可写，
 也不自动修复已有文件的权限或跨 UID 安装、替换和卸载行为。
 
-公共目录的路径与只读/可写属性由 `bedfs.CommonDirectories` 统一声明，File API、mount
+公共目录的路径与只读/可写属性由 `bedfs.CommonDirectories` 统一声明，mount
 和 Landlock 消费同一份规则。不存在唯一的软件根路径；公共目录可以有多个，也不限于
 软件安装用途。这些目录不随 Bed 回收，新增路径不应在各机制中增加按路径特判的分支。
 `ProcessDirectories` 额外列出进程设施，它们不作为普通文件 API 数据导出。
@@ -48,7 +48,7 @@ pathshim 或 Carrier 视图，并分别报告路径体验与访问保护的缺�
 |---|---|---|
 | Bed 私有数据 | 本 Bed 操作，其他 Bed 不得读写 | 独立身份及私有目录权限；可用时叠加路径隔离 |
 | 公共可写 | 在提供方授权范围内共同使用软件 | 可写映射与实际 Unix 权限共同决定；不进行全树权限准备 |
-| 公共只读 | 读取/执行运行依赖，不修改 | API 拒绝修改；mount/Landlock 限制进程，UID-only 依赖实际 Unix 权限 |
+| 公共只读 | 读取/执行运行依赖，不修改 | 文件 API 不隐式暴露；mount/Landlock 限制进程，UID-only 依赖实际 Unix 权限 |
 | 管理私有 | 不隐式授权管理数据和凭据 | 配置的 beds-root 及受保护目录；能遮蔽/排除时使用对应机制，UID-only 不能隐藏 world-readable 凭据 |
 | 外部来源 | 遵守 Mount 与提供方授权 | 不修改源权限，不改变来源 owner |
 
@@ -129,8 +129,7 @@ private 视图遮蔽 Bed 父目录，再挂回自己的根与卷。其他机制�
 ## 路径与文件视图
 
 BedFS 为每个 Pillow 持有视图和目录句柄，共享 Bed 根数据与卷来源。路径先在客户端空间
-规范化，命中最具体的 Mount 则解析到卷来源；公共软件和系统依赖解析到 Carrier 来源，
-其余路径解析到 Rootfs。返回路径使用对应逆转换。Volume 因此既可接入外部数据，也可在
+规范化，命中最具体的 Mount 则解析到卷来源；其余路径解析到 Rootfs。公共软件和系统依赖只进入进程视图，不隐式进入文件 API。返回路径使用对应逆转换。Volume 因此既可接入外部数据，也可在
 私有目录中接入一块公共目录；路径改变不改变其归属和回收责任。
 
 | 路径空间 | 作用 |
@@ -144,8 +143,12 @@ BedFS 为每个 Pillow 持有视图和目录句柄，共享 Bed 根数据与卷�
 workdir 可以位于 Rootfs 或任意已声明挂载内，不必叫 `/workspace`。
 
 文件 API 通过每个来源的 `os.Root` 进行 descriptor-relative 操作，拒绝 symlink 逃出来源。
-Linux 由 Bed 身份的 worker 执行路径操作；文件流使用 worker 按该身份打开的 FD，metadata
-修改也留在 worker 中。可信的目录准备与 Store staging 仍使用管理权限，两者不混用。
+文件 API 是 Bed 数据管理接口，由 daemon 在进程内调用 BedFS，不启动文件 worker，也不模拟 Bed 的 Unix 身份。
+Handler 解析 Bed，获取覆盖整个请求的 operation，再使用默认 Pillow 的 BedFS；请求不创建或恢复缺失 Bed。
+BedFS 只路由 Rootfs 与显式 Mount，独占 Carrier 的显式只读 fallback 是下面说明的授权例外。
+API 遵守 Mount 只读约束，但 daemon 可能访问 Bed 进程因 Unix 权限无法访问的数据。
+HostPath 声明同时授权 daemon 的文件 API 访问来源；不得把 Bed UID 的 DAC 限制当作该 API 的限制。
+Hostel 管理的数据写入后维护 Bed owner；HostPath 保持提供方权限，不自动 chown 来源。
 禁止删除或重命名挂载根及其父目录；跨挂载 rename 不支持，跨多个挂载的父目录导入导出也拒绝。
 进程 cwd 属于结构化字段，先由 BedFS 解析再投影；命令文本保持原样，绝对路径字面量由
 实际进程视图解释。Session 使用创建时绑定的视图，通过独立 shell 控制步骤更新 cwd。

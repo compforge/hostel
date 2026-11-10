@@ -76,9 +76,6 @@ func TestTemporaryDirectoryViews(t *testing.T) {
 
 func TestPublicWorkingDirectoryDoesNotRebasePrivateTemporaryData(t *testing.T) {
 	fs := newTestFS(t, t.TempDir())
-	if err := fs.PrepareShared(); err != nil {
-		t.Fatal(err)
-	}
 	if err := fs.PrepareTempdir(); err != nil {
 		t.Fatal(err)
 	}

@@ -115,22 +115,12 @@ func (o *FS) volumeMapped(p string) *FS {
 	return selected
 }
 func (o *FS) mapped(p string) *FS {
-	if mapped := o.volumeMapped(p); mapped != nil {
-		return mapped
-	}
-	return o.sharedPath(p)
+	return o.volumeMapped(p)
 }
 func (o *FS) route(p string, write bool) (*FS, error) {
 	target := o
 	if mapped := o.mapped(p); mapped != nil {
 		target = mapped
-	}
-	if write && o.sharedPath(p) == target && !target.readOnly {
-		for _, mapping := range o.mappings {
-			if mapping.mapping.ReadOnly && model.PathsOverlap(mapping.mapping.Source, target.Rootfs()) {
-				return nil, &os.PathError{Op: "write shared alias of read-only volume", Path: p, Err: os.ErrPermission}
-			}
-		}
 	}
 	if write && target.readOnly {
 		return nil, &os.PathError{Op: "write read-only mapping", Path: p, Err: os.ErrPermission}
@@ -147,11 +137,6 @@ func (o *FS) guardMappingRoot(p string) error {
 	for _, m := range o.mappings {
 		if _, ok := relativeTo(p, m.mapping.Target); ok {
 			return fmt.Errorf("bedfs: operation crosses mapping root %s", m.mapping.Target)
-		}
-	}
-	for _, shared := range o.shared {
-		if _, ok := relativeTo(p, shared.paths.prefix); ok {
-			return fmt.Errorf("bedfs: operation crosses common root %s", shared.paths.prefix)
 		}
 	}
 	return nil

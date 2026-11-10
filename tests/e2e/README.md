@@ -77,6 +77,16 @@ v0.1.3 does not implement the `probe --bind ...` subcommand and is unsupported.
 These variables are test-harness inputs: the launcher prepends their parent
 directories to the target `PATH`. Hostel itself has no per-helper path setting.
 
+## Daemon file API data boundaries
+
+`TestDaemonFileAPIScope` covers native and Execd reads across two Beds, escaping symlinks, private system-looking paths and exclusion of implicit Carrier dependencies. `TestFileAPIUploadHoldsBed` holds a real upload open, checks eviction rejection, then verifies completion releases the operation and eviction removes the data.
+
+`TestHostPathRequiresSourcePermission` distinguishes process DAC from daemon-authority access to an explicitly authorized source. `TestBedVolumeConsumers` retains read-only mount and Pillow view coverage.
+
+```sh
+make e2e E2E_ARGS='-run "Test(DaemonFileAPI|FileAPIUpload|FilesystemAPIContract|FilesystemPermissions|HostPathRequiresSourcePermission|BedVolumeConsumers)" -timeout 5m'
+```
+
 ## Compare filesystem behavior under permissions
 
 `TestFilesystemPermissions` checks two Beds' root data, read-write/read-only

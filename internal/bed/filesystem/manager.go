@@ -24,7 +24,6 @@ type Manager struct {
 	bed.Noop
 	mu                sync.Mutex
 	dedicatedIdentity bool
-	identities        map[*bed.Bed]hostfs.IdentityRoots
 	files             map[*bed.Bed]*bedfs.FS
 	pillows           map[*bed.Bed]map[string]*bedfs.FS
 	volumes           map[*bed.Bed]string
@@ -33,7 +32,7 @@ type Manager struct {
 }
 
 func NewManager(iso isolation.Isolator, status bed.StatusWriter[bed.FilesystemStatus]) *Manager {
-	return &Manager{identities: make(map[*bed.Bed]hostfs.IdentityRoots), pillows: make(map[*bed.Bed]map[string]*bedfs.FS), volumes: make(map[*bed.Bed]string), files: make(map[*bed.Bed]*bedfs.FS), isolator: iso, status: status}
+	return &Manager{pillows: make(map[*bed.Bed]map[string]*bedfs.FS), volumes: make(map[*bed.Bed]string), files: make(map[*bed.Bed]*bedfs.FS), isolator: iso, status: status}
 }
 func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	if m.Files(b) != nil {
@@ -51,9 +50,6 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	m.mu.Lock()
 	m.files[b] = fs
 	m.mu.Unlock()
-	if err := fs.PrepareShared(); err != nil {
-		return err
-	}
 	if err := m.prepareVolumes(b, fs); err != nil {
 		return err
 	}
@@ -88,21 +84,6 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 	if err := m.prepareVolumeOwners(b); err != nil {
 		return err
 	}
-	m.mu.Lock()
-	identity := m.identities[b]
-	m.mu.Unlock()
-	if identity == nil {
-		user := b.Status().Privilege
-		var err error
-		identity, err = hostfs.NewIdentityRoots(int(user.UID), int(user.GID), user.SupplementaryGIDs)
-		if err != nil {
-			return fmt.Errorf("bed %s file identity: %w", b.ID, err)
-		}
-		m.mu.Lock()
-		m.identities[b] = identity
-		m.mu.Unlock()
-		log.Printf("filesystem: bed=%s file API identity uid=%d gid=%d", b.ID, user.UID, user.GID)
-	}
 	views := m.PillowFiles(b)
 	realized := m.preparedRealization()
 	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Mounts = nil })
@@ -124,9 +105,6 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 		}
 		if err := m.isolator.Prepare(ctx, view); err != nil {
 			return fmt.Errorf("prepare file view consumer=%q: %w", consumer, err)
-		}
-		if err := view.BindIdentity(identity); err != nil {
-			return fmt.Errorf("bind file identity consumer=%q: %w", consumer, err)
 		}
 		realized.Views = append(realized.Views, m.realizedView(consumer, view))
 	}
@@ -168,15 +146,6 @@ func (m *Manager) Release(ctx context.Context, b *bed.Bed) error {
 		return err
 	}
 	m.mu.Lock()
-	identity := m.identities[b]
-	m.mu.Unlock()
-	if identity != nil {
-		if err := identity.Close(); err != nil {
-			return err
-		}
-	}
-	m.mu.Lock()
-	delete(m.identities, b)
 	delete(m.files, b)
 	delete(m.pillows, b)
 	delete(m.volumes, b)

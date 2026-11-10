@@ -7,11 +7,14 @@ import (
 	"testing"
 )
 
-// +case:id=common_view_preserves_source,desc=`Carrier software and dependencies enter a Bed view`,expect=`mapping reuses the source without changing existing modes, and read-only routes reject writes`
-func TestCommonFileViewPreservesSource(t *testing.T) {
+// +case:id=declared_view_preserves_source,desc=`Explicit data mounts enter a Bed view`,expect=`mapping reuses the source without changing existing modes, and read-only routes reject writes`
+func TestDeclaredFileViewPreservesSource(t *testing.T) {
 	for _, target := range []string{"/usr/local", "/opt/runtime", "/srv/shared-data"} {
 		t.Run(target, func(t *testing.T) {
-			home, source := t.TempDir(), t.TempDir()
+			home, source := filepath.Join(t.TempDir(), "beds", "one", "rootfs"), t.TempDir()
+			if err := os.MkdirAll(home, 0755); err != nil {
+				t.Fatal(err)
+			}
 			existing := filepath.Join(source, "existing")
 			if err := os.WriteFile(existing, []byte("provided"), 0640); err != nil {
 				t.Fatal(err)
@@ -25,13 +28,9 @@ func TestCommonFileViewPreservesSource(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer view.Close()
-			shared, err := New(source)
-			if err != nil {
+			if err := view.SetMounts([]Mount{{Source: source, Target: target}}); err != nil {
 				t.Fatal(err)
 			}
-			shared.paths.prefix = target
-			shared.common = true
-			view.shared = []*FS{shared}
 			if got, err := view.Read(target + "/existing"); err != nil || string(got) != "provided" {
 				t.Fatalf("provided file %q %v", got, err)
 			}
@@ -41,7 +40,7 @@ func TestCommonFileViewPreservesSource(t *testing.T) {
 			if got, err := os.ReadFile(filepath.Join(source, "tool")); err != nil || string(got) != "common" {
 				t.Fatalf("common file %q %v", got, err)
 			}
-			// Creation follows the public-source policy at any logical path.
+			// Borrowed sources retain normal creation modes and provider ownership.
 			if _, err := view.WriteTransferFile(t.Context(), target+"/download", strings.NewReader("shared"), false); err != nil {
 				t.Fatal(err)
 			}
@@ -49,8 +48,8 @@ func TestCommonFileViewPreservesSource(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if info.Mode().Perm() != 0660 {
-				t.Fatalf("public transfer mode=%o, want 660", info.Mode().Perm())
+			if info.Mode().Perm() != 0644 {
+				t.Fatalf("public transfer mode=%o, want 644", info.Mode().Perm())
 			}
 			if _, err := view.WriteTransferFile(t.Context(), "/private", strings.NewReader("private"), false); err != nil {
 				t.Fatal(err)
@@ -65,13 +64,13 @@ func TestCommonFileViewPreservesSource(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(home, target, "tool")); !os.IsNotExist(err) {
 				t.Fatalf("duplicated common source: %v", err)
 			}
-			if got, err := RootedView(view, MappingSupport{ReadWrite: true}).Path(filepath.Join(source, "tool")); err != nil || got != target+"/tool" {
+			if got, err := RootedView(view, MappingSupport{ReadWrite: true}).Path(filepath.Join(view.Mounts()[0].Source, "tool")); err != nil || got != target+"/tool" {
 				t.Fatalf("process projection %q %v", got, err)
 			}
 			if err := view.RemoveDir(target); err == nil {
 				t.Fatal("removed common root")
 			}
-			shared.readOnly = true
+			view.mappings[0].fs.readOnly = true
 			if err := view.Write(target+"/existing", []byte("changed"), 0); !os.IsPermission(err) {
 				t.Fatalf("controlled path allowed write: %v", err)
 			}

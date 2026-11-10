@@ -74,15 +74,12 @@ type Permission struct {
 // FS is one bed's filesystem. It is created with the Bed and survives
 // Executor replacement; all daemon file operations are confined to it.
 //
-// +spec=`File and directory APIs preserve client path spelling while each operation stays within private data, a declared mapping source, or an internally shared source.`
+// +spec=`File and directory APIs preserve client path spelling while each operation stays within private Bed data or an explicitly declared mapping source, using daemon authority rather than impersonating the Bed user.`
 // +case:id=filesystem_api_contract,desc=`Create, inspect, replace, chmod, move, search, slice-read, and delete a workspace tree`,expect=`all operations round-trip through the public client path without escaping the BedFS`
 type FS struct {
-	identity    hostfs.IdentityRoots
-	shared      []*FS
 	systemFiles []hostfs.Mapping
 	mappings    []mappedRoot
 	readOnly    bool
-	common      bool // Public source; creation follows the common-directory policy.
 	paths       paths
 	root        hostfs.Root
 	// uid/gid of the workspace dir when it differs from the daemon's euid
@@ -136,9 +133,6 @@ func (o *FS) RefreshOwner() error {
 // file operations outside bed_home.
 func (o *FS) Close() error {
 	err := o.root.Close()
-	for _, shared := range o.shared {
-		err = errors.Join(err, shared.Close())
-	}
 	for _, m := range o.mappings {
 		err = errors.Join(err, m.fs.Close())
 	}
@@ -191,9 +185,6 @@ func (o *FS) mkdirAllOwned(dir string) error {
 		return err
 	}
 	mode := os.FileMode(0755)
-	if o.common {
-		mode = 0770
-	}
 	if err := o.root.MkdirAll(rel, mode); err != nil {
 		return err
 	}
@@ -228,13 +219,6 @@ func (o *FS) EnsureDir(dir string) error {
 			return m.fs.EnsureDir(dir)
 		}
 	}
-	if _, private := relativeTo(o.Rootfs(), dir); !private {
-		for _, shared := range o.shared {
-			if _, ok := relativeTo(shared.Rootfs(), dir); ok {
-				return shared.EnsureDir(dir)
-			}
-		}
-	}
 	if o.readOnly {
 		rel, err := o.relative(dir)
 		if err != nil {
@@ -257,9 +241,6 @@ func (o *FS) EnsureDir(dir string) error {
 func (o *FS) Resolve(p string) (string, error) {
 	if mapped := o.mapped(p); mapped != nil {
 		return mapped.paths.FromClient(p)
-	}
-	if shared := o.sharedPath(p); shared != nil {
-		return shared.paths.FromClient(p)
 	}
 	return o.paths.FromClient(p)
 }
@@ -377,9 +358,6 @@ func (o *FS) Write(p string, data []byte, mode int) error {
 		return err
 	}
 	fm := os.FileMode(0o644)
-	if o.common {
-		fm = 0660
-	}
 	if mode != 0 {
 		fm = os.FileMode(mode) & os.ModePerm
 	}
@@ -474,7 +452,7 @@ func (o *FS) Rename(src, dest string) error {
 	return o.root.Rename(sRel, dRel)
 }
 
-// Chmod applies permissions without crossing the Bed's assigned identity.
+// Chmod applies declared permissions within the authorized Bed data view.
 func (o *FS) Chmod(p string, perm Permission) error {
 	if err := o.ValidatePermission(p, perm); err != nil {
 		return err
@@ -629,7 +607,7 @@ func (o *FS) List(p string, depth int) ([]FileInfo, error) {
 	return out, nil
 }
 
-// Every descent re-enters the logical view: nested mounts and common software
+// Every descent re-enters the logical view: nested mounts
 // cannot be bypassed by listing their parent's backing directory.
 func (o *FS) listDirectory(p string) ([]FileInfo, error) {
 	target, err := o.route(p, false)
@@ -669,11 +647,6 @@ func (o *FS) listDirectory(p string) ([]FileInfo, error) {
 			names[path.Base(mapping.mapping.Target)] = true
 		}
 	}
-	for _, shared := range o.shared {
-		if path.Dir(shared.paths.prefix) == client {
-			names[path.Base(shared.paths.prefix)] = true
-		}
-	}
 	var out []FileInfo
 	for name := range names {
 		item, err := o.Stat(path.Join(client, name))
@@ -689,7 +662,7 @@ func (o *FS) listDirectory(p string) ([]FileInfo, error) {
 	return out, nil
 }
 
-// searchLimit bounds results for large shared software trees as well as workspaces.
+// searchLimit bounds results for large mounted trees and workspaces.
 const searchLimit = 1000
 
 func (o *FS) Search(p, pattern string) ([]FileInfo, error) {
@@ -735,8 +708,5 @@ func (o *FS) SetWorkdir(p string) {
 	o.paths.workdir = p
 	for _, m := range o.mappings {
 		m.fs.paths.workdir = p
-	}
-	for _, shared := range o.shared {
-		shared.paths.workdir = p
 	}
 }

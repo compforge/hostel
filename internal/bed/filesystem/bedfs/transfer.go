@@ -118,9 +118,6 @@ func (o *FS) WriteTransferFile(ctx context.Context, destination string, body io.
 	defer o.root.Remove(temp)
 	written, copyErr := io.Copy(file, transferReader{ctx: ctx, reader: body})
 	mode := os.FileMode(0o644)
-	if o.common {
-		mode = 0660
-	}
 	if copyErr == nil && overwrite {
 		// Preserve the existing regular file's access mode when replacing its
 		// contents; Lstat avoids inheriting permissions from a symlink target.

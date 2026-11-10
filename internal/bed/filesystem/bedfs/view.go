@@ -76,11 +76,6 @@ func (v ProcessView) Path(host string) (string, error) {
 	}
 	homeRel, ok := relativeTo(v.fs.Rootfs(), host)
 	if !ok {
-		for _, shared := range v.fs.shared {
-			if rel, ok := relativeTo(shared.Rootfs(), host); ok {
-				return joinProcessPath(shared.paths.prefix, rel), nil
-			}
-		}
 		return "", fmt.Errorf("bedfs: carrier path %q is outside bed_home %q", host, v.fs.Rootfs())
 	}
 	if _, privateWorkspace := relativeTo(v.fs.Rootfs(), v.fs.Workdir()); privateWorkspace {

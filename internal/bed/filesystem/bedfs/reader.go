@@ -73,12 +73,6 @@ func readWithFallback[T any](r *Reader, clientPath string, read func(*FS) (T, er
 		return zero, fmt.Errorf("bedfs: open absolute read fallback %q: %w", r.fallbackRoot, openErr)
 	}
 	defer fallback.Close()
-	if r.primary.identity != nil {
-		if err := fallback.BindIdentity(r.primary.identity); err != nil {
-			var zero T
-			return zero, err
-		}
-	}
 	return read(fallback)
 }
 

@@ -8,9 +8,9 @@ type DirectoryAccess struct {
 	ReadOnly bool
 }
 
-// CommonDirectories declares public resources reused by Beds. File APIs and
-// process mechanisms consume the same paths and access modes; no path is a
-// special software root. Most-specific paths precede their parents for routing.
+// CommonDirectories declares public resources reused by Bed processes.
+// File APIs expose only Bed data and explicit mounts, not these implicit grants.
+// No path is a special software root. Most-specific paths precede their parents.
 // +spec=`Private Bed data, shared userland and management resources have distinct ownership. Mechanisms consume the same grants, and report any protection they cannot realize.`
 // +rule=`Introducing a Carrier directory must not recursively rewrite its ownership, modes or ACLs. Mapping and Unix authorization are separate.`
 // +link:doc=docs/volumes.md
