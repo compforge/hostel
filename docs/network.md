@@ -4,8 +4,11 @@
 
 ## 理念与边界
 
-网络隔离沿 Bed 的独立执行空间目标按环境能力尽量兑现，统一模型与组合约束见
-[isolation.md](isolation.md)。
+Network 首先满足连通性、端口归属与出站策略等需求。没有独立网络空间需求时，
+共享 netns 本身不是错误；关键是准确识别 Bed 流量，使一 Bed 的 egress 规则不干扰另一 Bed。
+独立 netns 另提供地址、路由、loopback 与监听端口空间，不能与 egress 是否执行混为一谈。
+当前实现仍优先探测 private，再按实际条件选择 shared；需求与机制分层见
+[kernel.md](kernel.md)，组合约束见 [isolation.md](isolation.md)。
 
 `network.Manager` 是实例级子系统，管理 resident Bed 的网络资源。网络与文件隔离档正交；
 Bed 的每次命令和常驻 shell 使用相同 netns，Executor 替换不改变该网络身份。
@@ -313,7 +316,7 @@ Network 将网络空间与策略执行分别报告：`isolation.level=shared`、
 仅 supported 包含 dedicated、实际仍配置固定 UID/GID，不满足前提。嵌入方的
 `Bed.Network.UIDNFT` 使用 auto/off/required，默认 auto；`NetNS=off` 只关闭 namespace
 机制，关闭全部网络机制需同时指定 `UIDNFT=off`。required 未被选用时启动失败。
-当前 CLI 不额外暴露这些工具配置；`HOSTEL_BED_EXTRA_GIDS` 不改变独立身份选择，也不参与 nft 的 UID 匹配。
+当前 CLI 不额外暴露这些工具配置；内部共享软件组不改变独立身份选择，也不参与 nft 的 UID 匹配。
 镜像或部署若默认注入这两个变量，启用 per-Bed UID 前须真正移除它们；设为空字符串
 仍被视为显式配置。升级 Hostel 二进制本身不会覆盖现有固定身份选择。
 

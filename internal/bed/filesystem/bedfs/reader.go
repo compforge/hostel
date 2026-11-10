@@ -46,7 +46,7 @@ func NewReader(view ProcessView, fallbackRoot string) *Reader {
 }
 
 func readWithFallback[T any](r *Reader, clientPath string, read func(*FS) (T, error)) (T, error) {
-	if mapped := r.primary.mapped(clientPath); mapped != nil && !r.view.MappingSupport().Supports(mapped.readOnly) {
+	if mapped := r.primary.volumeMapped(clientPath); mapped != nil && !r.view.MappingSupport().Supports(mapped.readOnly) {
 		// A borrowed read-only view skips the mapping router, so the first
 		// candidate belongs to this Bed's data root, never daemon-global /.
 		local := &FS{root: r.primary.root, paths: r.primary.paths, uid: -1, gid: -1}
@@ -63,7 +63,7 @@ func readWithFallback[T any](r *Reader, clientPath string, read func(*FS) (T, er
 		return read(mapped)
 	}
 	value, err := read(r.primary)
-	if r.primary.mapped(clientPath) != nil || err == nil || r.fallbackRoot == "" || !path.IsAbs(clientPath) || !os.IsNotExist(err) {
+	if r.primary.volumeMapped(clientPath) != nil || err == nil || r.fallbackRoot == "" || !path.IsAbs(clientPath) || !os.IsNotExist(err) {
 		return value, err
 	}
 
@@ -73,6 +73,12 @@ func readWithFallback[T any](r *Reader, clientPath string, read func(*FS) (T, er
 		return zero, fmt.Errorf("bedfs: open absolute read fallback %q: %w", r.fallbackRoot, openErr)
 	}
 	defer fallback.Close()
+	if r.primary.identity != nil {
+		if err := fallback.BindIdentity(r.primary.identity); err != nil {
+			var zero T
+			return zero, err
+		}
+	}
 	return read(fallback)
 }
 

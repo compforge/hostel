@@ -143,3 +143,60 @@ func TestReadOnlyMappingAndTransfer(t *testing.T) {
 		t.Fatalf("mapping fell back: %v", err)
 	}
 }
+
+// +case:id=nested_volume_in_private_data,desc=`A shared read-only source is mounted inside a private managed workspace`,expect=`direct reads, List and Search select the child source; mutations and parent transfers cannot bypass it`
+func TestNestedMountRoutingAndTraversal(t *testing.T) {
+	base := t.TempDir()
+	home := filepath.Join(base, "beds", "one", "rootfs")
+	workspace := filepath.Join(base, "beds", "one", "volumes", "workspace")
+	shared := filepath.Join(base, "shared")
+	for _, dir := range []string{home, filepath.Join(workspace, "shared"), shared} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "shared", "hidden"), []byte("private backing"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shared, "visible"), []byte("shared"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	view, err := New(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer view.Close()
+	if err := view.SetMounts([]Mount{{Source: shared, Target: "/workspace/shared", ReadOnly: true}, {Source: workspace, Target: "/workspace", Owned: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := view.Read("/workspace/shared/visible"); err != nil || string(got) != "shared" {
+		t.Fatalf("read %q %v", got, err)
+	}
+	entries, err := view.List("/workspace", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visible := false
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Path, "/hidden") {
+			t.Fatal("listed obscured backing")
+		}
+		visible = visible || strings.HasSuffix(entry.Path, "/visible")
+	}
+	if !visible {
+		t.Fatalf("missing shared child: %+v", entries)
+	}
+	matches, err := view.Search("/workspace", "visible")
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("search %+v %v", matches, err)
+	}
+	if err := view.Write("/workspace/shared/visible", []byte("changed"), 0); !os.IsPermission(err) {
+		t.Fatalf("read-only bypass: %v", err)
+	}
+	if err := view.ExportTransferTree(t.Context(), "/workspace", t.TempDir(), nil); err == nil {
+		t.Fatal("export crossed nested mount")
+	}
+	if err := view.RemoveDir("/workspace"); err == nil {
+		t.Fatal("removed nested mount ancestor")
+	}
+}

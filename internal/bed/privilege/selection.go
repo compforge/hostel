@@ -21,6 +21,9 @@ const (
 	Dedicated Level = "dedicated"
 	UIDMin          = 200000
 	UIDMax          = 299999
+	// SoftwareGID is a Carrier role, outside the private Bed identity range.
+	// It is a reserved implementation identity, never caller configuration.
+	SoftwareGID = 199999
 )
 
 type Selection struct {
@@ -39,6 +42,11 @@ func Resolve(ctx context.Context, facts hostfacts.Snapshot, cfg Config, root str
 	s := Selection{Expected: Dedicated, Effective: Shared}
 	if err := cfg.Validate(); err != nil {
 		return s, err
+	}
+	// The software role is granted automatically when group switching is available.
+	// Rootless execution keeps its actual inherited groups and reports that fact.
+	if cfg.SupplementaryGIDs == nil && runtime.GOOS == "linux" && len(MissingBedIdentityCapabilities(facts.EffectiveCaps)) == 0 {
+		cfg.SupplementaryGIDs = []int{SoftwareGID}
 	}
 	inherited := CurrentBedUser()
 	if cfg.SupplementaryGIDs != nil {

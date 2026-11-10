@@ -3,6 +3,8 @@ package filesystem
 import (
 	"context"
 	"fmt"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
+	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"log"
 	"slices"
 	"time"
@@ -18,17 +20,28 @@ type SharedSoftwareStatus struct {
 	Entries int         `json:"entries"`
 }
 
-func (m *Manager) SetSharedSoftware(dirs []SharedSoftwareDirectory) {
-	m.sharedSoftware = slices.Clone(dirs)
+const softwareRoot = bedfs.SoftwareRoot
+
+type sharedDirectory struct {
+	Path   string
+	GID    int
+	Policy tool.Policy
+}
+
+// SetSoftwareGroups binds actual selected credentials, not a caller's request.
+func (m *Manager) SetSoftwareGroups(groups []int) {
+	m.sharedSoftware = []sharedDirectory{{Path: softwareRoot, GID: privilege.SoftwareGID, Policy: tool.Auto}}
+	m.softwareGroupAvailable = slices.Contains(groups, privilege.SoftwareGID)
+}
+
+func SoftwareEnvironment() map[string]string {
+	return map[string]string{"PYTHONUSERBASE": softwareRoot, "NPM_CONFIG_PREFIX": softwareRoot, "UV_TOOL_DIR": softwareRoot + "/share/uv/tools", "UV_TOOL_BIN_DIR": softwareRoot + "/bin"}
 }
 
 // Start prepares Carrier-wide software once, before any Bed may execute. Close
 // does not undo permissions or delete externally supplied Carrier software.
 // +spec=`Only declared shared software trees are prepared; auto reports failures, required rejects startup. No Bed owns or recursively reinitializes the shared tree.`
 func (m *Manager) Start(ctx context.Context) error {
-	if err := ValidateSharedSoftware(m.sharedSoftware); err != nil {
-		return err
-	}
 	m.mu.Lock()
 	if m.sharedStarted {
 		m.mu.Unlock()
@@ -44,7 +57,13 @@ func (m *Manager) Start(ctx context.Context) error {
 		requirements := tool.Requirements{Conditions: []string{"Linux POSIX default ACL", "directory metadata authority", "shared supplementary GID"}}
 		report := SharedSoftwareStatus{Path: d.Path, GID: d.GID, Tool: tool.Describe(d.Policy, requirements, false, false, false, "")}
 		if d.Policy.Effective() != tool.Off {
-			count, err := hostfs.PrepareSharedSoftware(ctx, d.Path, d.GID)
+			count := 0
+			var err error
+			if !m.softwareGroupAvailable {
+				err = fmt.Errorf("selected Bed identity cannot use the internal software group")
+			} else {
+				count, err = hostfs.PrepareSharedSoftware(ctx, d.Path, d.GID)
+			}
 			reason := ""
 			if err != nil {
 				reason = err.Error()

@@ -38,6 +38,7 @@ func TestAPIMappingPreparesWithoutProcessMappingAndPreservesSource(t *testing.T)
 	if err != nil {
 		t.Fatalf("prepare=%v", err)
 	}
+	setFileTestIdentity(b)
 	if err := manager.PrepareView(t.Context(), b, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +90,7 @@ func TestPartialViewKeepsCleanupOwnerUntilReleaseSucceeds(t *testing.T) {
 	if err := m.Prepare(t.Context(), b); err != nil {
 		t.Fatal(err)
 	}
+	setFileTestIdentity(b)
 	if err := m.PrepareView(t.Context(), b, nil); err == nil {
 		t.Fatal("partial preparation accepted")
 	}
@@ -111,4 +113,9 @@ func TestPartialViewKeepsCleanupOwnerUntilReleaseSucceeds(t *testing.T) {
 	if m.Files(b) != nil || mechanism.prepares != 1 || mechanism.releases != 2 {
 		t.Fatal("lifecycle replayed or leaked")
 	}
+}
+
+func setFileTestIdentity(b *bed.Bed) {
+	groups, _ := os.Getgroups()
+	bed.NewOwners().Privilege.Set(b, bed.PrivilegeStatus{UID: uint32(os.Geteuid()), GID: uint32(os.Getegid()), SupplementaryGIDs: groups, Assigned: true})
 }

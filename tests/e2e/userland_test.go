@@ -5,6 +5,7 @@ package e2e_test
 import (
 	"context"
 	"fmt"
+	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/protocol"
 	"net/http"
 	"net/http/httptest"
@@ -76,7 +77,7 @@ func TestSharedSoftwareAcrossBedUsers(t *testing.T) {
 		}
 		must2xx(t, "shared software identity", response)
 		u := detail.Status.Subsystems.Privilege
-		if !u.Assigned || !slices.Equal(u.SupplementaryGIDs, []int{1000}) {
+		if !u.Assigned || !slices.Equal(u.SupplementaryGIDs, []int{privilege.SoftwareGID}) {
 			t.Fatalf("unexpected Carrier-space identity: %+v", u)
 		}
 	}
@@ -101,7 +102,9 @@ func TestSharedSoftwareAcrossBedUsers(t *testing.T) {
 // +case:id=shared_software_runtime_acl,desc=`Final image boots without exported ACLs`,expect=`Filesystem.Start prepares shared software before Beds execute; distinct UIDs can update each other's files with umask 022`
 func TestSharedSoftwareRuntimePermissions(t *testing.T) {
 	requireUserland(t)
+	started := time.Now()
 	target := startTarget(t, targetOptions{})
+	t.Logf("Carrier startup completed in %s", time.Since(started).Round(time.Millisecond))
 	c := target.client
 	var report struct {
 		Subsystems struct {
@@ -145,6 +148,8 @@ func TestSharedSoftwareRuntimePermissions(t *testing.T) {
 	dir := fmt.Sprintf("/usr/local/hostel-permissions-%d", time.Now().UnixNano())
 	run("permissions-a", fmt.Sprintf("umask 022; mkdir -p %s/nested; printf first > %s/nested/package", dir, dir))
 	run("permissions-b", fmt.Sprintf("printf second >> %s/nested/package; mv %s/nested/package %s/nested/replaced; umask 022; printf replacement > %s/nested/package", dir, dir, dir, dir))
+	must2xx(t, "shared software API upload", c.upload(t, "permissions-a", dir+"/api-package", []byte("api")))
+	run("permissions-b", fmt.Sprintf(`test "$(cat %s/api-package)" = api; printf other-bed >> %s/api-package`, dir, dir))
 	run("permissions-a", fmt.Sprintf("printf third >> %s/nested/package; rm -r %s", dir, dir))
 }
 

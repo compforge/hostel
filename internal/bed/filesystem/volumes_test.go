@@ -38,6 +38,7 @@ func TestVolumeConsumerViews(t *testing.T) {
 			t.Error(err)
 		}
 	})
+	setFileTestIdentity(b)
 	if err := m.PrepareView(t.Context(), b, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +105,7 @@ func TestReadOnlyVolumeCannotSilentlyDegrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Release(t.Context(), b)
+	setFileTestIdentity(b)
 	if err := m.PrepareView(t.Context(), b, nil); err == nil || !strings.Contains(err.Error(), "read-only process mounts unavailable") {
 		t.Fatalf("admission=%v", err)
 	}
@@ -138,6 +140,7 @@ func TestPartialPillowViewReleasesEveryPreparedAllocation(t *testing.T) {
 	if err := m.Prepare(t.Context(), b); err != nil {
 		t.Fatal(err)
 	}
+	setFileTestIdentity(b)
 	if err := m.PrepareView(t.Context(), b, nil); err == nil {
 		t.Fatal("expected preparation failure")
 	}
@@ -165,6 +168,7 @@ func TestHostVolumeViewsAndSourceOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer m.Release(t.Context(), b)
+	setFileTestIdentity(b)
 	if err := m.PrepareView(t.Context(), b, nil); err != nil {
 		t.Fatal(err)
 	}

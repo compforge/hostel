@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -34,6 +36,15 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err := os.MkdirAll(m.root, 0755); err != nil {
 		m.startErr = err
 		return err
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(m.root)
+	if err != nil {
+		m.startErr = err
+		return err
+	}
+	if model.PathsOverlap(canonicalRoot, bedfs.SoftwareRoot) {
+		m.startErr = fmt.Errorf("beds-root overlaps shared software after resolving symlinks")
+		return m.startErr
 	}
 	subsystems := []daemonSubsystem{
 		{"filesystem", m.files}, {"privilege", m.privileges}, {"resource", m.resourceManager},

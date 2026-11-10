@@ -16,7 +16,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/privilege"
 )
 
-func TestBedExtraGroups(t *testing.T) {
+func TestBedSoftwareGroup(t *testing.T) {
 	requireTestBinary(t)
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		t.Skip("Linux process credential contract")
@@ -24,7 +24,6 @@ func TestBedExtraGroups(t *testing.T) {
 	for _, backend := range []string{"local", "supervisor"} {
 		t.Run(backend, func(t *testing.T) {
 			options := restrictedOptions()
-			options.Bed.Privilege = privilege.Options{SupplementaryGIDs: value([]int{1000})}
 			c := startTarget(t, targetOptions{executor: backend, config: &options}).client
 			var status struct {
 				Subsystems struct{ Privilege privilege.Status }
@@ -52,12 +51,13 @@ func TestBedExtraGroups(t *testing.T) {
 			}
 			must2xx(t, "Bed identity", response)
 			identity := detail.Status.Subsystems.Privilege
-			if identity.UID != identity.GID || identity.UID < privilege.UIDMin || len(identity.SupplementaryGIDs) != 1 || identity.SupplementaryGIDs[0] != 1000 {
+			if identity.UID != identity.GID || identity.UID < privilege.UIDMin || len(identity.SupplementaryGIDs) != 1 || identity.SupplementaryGIDs[0] != privilege.SoftwareGID {
 				t.Fatalf("identity: %+v", identity)
 			}
 
 			must2xx(t, "upload as selected user", c.upload(t, bed, "/workspace/seed.txt", []byte("seed")))
-			command := "test \"$(cat seed.txt)\" = seed && /usr/bin/awk '/^Groups:/ { if (NF != 2 || $2 != 1000) exit 1 }' /proc/self/status && printf identity-ok > identity.txt && id -u && id -g && grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status"
+			command := "test \"$(cat seed.txt)\" = seed && /usr/bin/awk '/^Groups:/ { if (NF != 2 || $2 != SOFTWARE_GID) exit 1 }' /proc/self/status && printf identity-ok > identity.txt && id -u && id -g && grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status"
+			command = strings.ReplaceAll(command, "SOFTWARE_GID", fmt.Sprint(privilege.SoftwareGID))
 			check := func(result commandResult) {
 				t.Helper()
 				assertCommandExit(t, result, 0)

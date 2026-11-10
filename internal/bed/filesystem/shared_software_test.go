@@ -12,7 +12,8 @@ func TestSharedSoftwareFailurePoliciesAndStatusSnapshot(t *testing.T) {
 		t.Run(string(policy), func(t *testing.T) {
 			m := NewManager(carrierOnly{}, bed.NewOwners().Filesystem)
 			path := filepath.Join(t.TempDir(), "missing")
-			m.SetSharedSoftware([]SharedSoftwareDirectory{{Path: path, GID: 1000, Policy: policy}})
+			m.softwareGroupAvailable = true
+			m.sharedSoftware = []sharedDirectory{{Path: path, GID: 1000, Policy: policy}}
 			err := m.Start(t.Context())
 			if (err != nil) != (policy == tool.Required) {
 				t.Fatalf("policy %s: %v", policy, err)

@@ -74,14 +74,17 @@ type Permission struct {
 // FS is one bed's filesystem. It is created with the Bed and survives
 // Executor replacement; all daemon file operations are confined to it.
 //
-// +spec=`File and directory APIs preserve client path spelling while each operation stays within the Bed data root or a declared mapping source.`
+// +spec=`File and directory APIs preserve client path spelling while each operation stays within private data, a declared mapping source, or an internally shared source.`
 // +case:id=filesystem_api_contract,desc=`Create, inspect, replace, chmod, move, search, slice-read, and delete a workspace tree`,expect=`all operations round-trip through the public client path without escaping the BedFS`
 type FS struct {
+	identity    hostfs.IdentityRoots
+	shared      []*FS
 	systemFiles []hostfs.Mapping
 	mappings    []mappedRoot
 	readOnly    bool
+	software    bool
 	paths       paths
-	root        *os.Root
+	root        hostfs.Root
 	// uid/gid of the workspace dir when it differs from the daemon's euid
 	// (uid-isolated beds), else -1. Mechanism-independent invariant: whatever
 	// lands in a bed's workspace belongs to the bed — BedFS runs as the
@@ -94,7 +97,7 @@ type FS struct {
 // File ops never need the mount view, so the embedded Paths carries no mount
 // point; exec-side callers use the bed's own Paths for that.
 func New(root string) (*FS, error) {
-	confined, err := os.OpenRoot(root)
+	confined, err := hostfs.OpenRoot(root)
 	if err != nil {
 		return nil, fmt.Errorf("bedfs: open root %q: %w", root, err)
 	}
@@ -133,6 +136,9 @@ func (o *FS) RefreshOwner() error {
 // file operations outside bed_home.
 func (o *FS) Close() error {
 	err := o.root.Close()
+	for _, shared := range o.shared {
+		err = errors.Join(err, shared.Close())
+	}
 	for _, m := range o.mappings {
 		err = errors.Join(err, m.fs.Close())
 	}
@@ -184,7 +190,11 @@ func (o *FS) mkdirAllOwned(dir string) error {
 	if err != nil {
 		return err
 	}
-	if err := o.root.MkdirAll(rel, 0o755); err != nil {
+	mode := os.FileMode(0755)
+	if o.software {
+		mode = 0770
+	}
+	if err := o.root.MkdirAll(rel, mode); err != nil {
 		return err
 	}
 	if o.uid < 0 {
@@ -218,6 +228,11 @@ func (o *FS) EnsureDir(dir string) error {
 			return m.fs.EnsureDir(dir)
 		}
 	}
+	for _, shared := range o.shared {
+		if _, ok := relativeTo(shared.Rootfs(), dir); ok {
+			return shared.EnsureDir(dir)
+		}
+	}
 	if o.readOnly {
 		rel, err := o.relative(dir)
 		if err != nil {
@@ -240,6 +255,9 @@ func (o *FS) EnsureDir(dir string) error {
 func (o *FS) Resolve(p string) (string, error) {
 	if mapped := o.mapped(p); mapped != nil {
 		return mapped.paths.FromClient(p)
+	}
+	if shared := o.sharedPath(p); shared != nil {
+		return shared.paths.FromClient(p)
 	}
 	return o.paths.FromClient(p)
 }
@@ -357,6 +375,9 @@ func (o *FS) Write(p string, data []byte, mode int) error {
 		return err
 	}
 	fm := os.FileMode(0o644)
+	if o.software {
+		fm = 0660
+	}
 	if mode != 0 {
 		fm = os.FileMode(mode) & os.ModePerm
 	}
@@ -494,7 +515,7 @@ func (o *FS) Chmod(p string, perm Permission) error {
 			return fmt.Errorf("bedfs: changing file ownership is not supported")
 		}
 	}
-	return f.Chmod(os.FileMode(perm.Mode) & os.ModePerm)
+	return o.root.Chmod(rel, os.FileMode(perm.Mode)&os.ModePerm)
 }
 
 // Replace substitutes all occurrences of old with new in one file.
@@ -579,157 +600,129 @@ func (o *FS) RemoveDir(p string) error {
 
 // List returns entries of a directory down to depth levels (1 = immediate).
 func (o *FS) List(p string, depth int) ([]FileInfo, error) {
-	o, routeErr := o.route(p, false)
-	if routeErr != nil {
-		return nil, routeErr
-	}
-	full, err := o.Resolve(p)
-	if err != nil {
-		return nil, err
-	}
-	rel, err := o.relative(full)
-	if err != nil {
-		return nil, err
-	}
-	li, err := o.root.Lstat(rel)
-	if err != nil {
-		return nil, err
-	}
-	if li.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("bedfs: %q is a symlink, refusing to traverse", p)
-	}
-	if !li.IsDir() {
-		return nil, fmt.Errorf("bedfs: %q is not a directory", p)
-	}
 	if depth < 1 {
 		depth = 1
 	}
 	var out []FileInfo
-	var walk func(dir, rel string, d int) error
-	walk = func(dir, rel string, d int) error {
-		if mapped := o.mapped(o.virtual(dir)); mapped != nil {
-			entries, err := mapped.List(o.virtual(dir), d)
-			out = append(out, entries...)
-			return err
-		}
-		opened, err := o.root.Open(rel)
+	var walk func(string, int) error
+	walk = func(dir string, remaining int) error {
+		entries, err := o.listDirectory(dir)
 		if err != nil {
 			return err
 		}
-		entries, err := opened.ReadDir(-1)
-		closeErr := opened.Close()
-		if err != nil {
-			return err
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		for _, e := range entries {
-			fi, err := e.Info()
-			if err != nil {
-				continue
-			}
-			entry := o.info(filepath.Join(dir, e.Name()), fi)
-			if o.mapped(entry.Path) != nil {
-				entry, err = o.Stat(entry.Path)
-				if err != nil {
-					return err
-				}
-			}
+		for _, entry := range entries {
 			out = append(out, entry)
-			if e.IsDir() && d > 1 {
-				if err := walk(filepath.Join(dir, e.Name()), filepath.Join(rel, e.Name()), d-1); err != nil {
+			if entry.Type == "directory" && remaining > 1 {
+				if err := walk(entry.Path, remaining-1); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	if err := walk(full, rel, depth); err != nil {
+	if err := walk(p, depth); err != nil {
 		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
 }
 
-// searchLimit bounds Search results so a huge workspace can't OOM the daemon.
-const searchLimit = 1000
-
-// Search walks under p and returns files whose base name matches pattern
-// (glob when pattern contains meta characters, substring otherwise).
-func (o *FS) Search(p, pattern string) ([]FileInfo, error) {
-	o, routeErr := o.route(p, false)
-	if routeErr != nil {
-		return nil, routeErr
-	}
-	full, err := o.Resolve(p)
+// Every descent re-enters the logical view: nested mounts and common software
+// cannot be bypassed by listing their parent's backing directory.
+func (o *FS) listDirectory(p string) ([]FileInfo, error) {
+	target, err := o.route(p, false)
 	if err != nil {
 		return nil, err
 	}
-	match := func(name string) bool { return true }
-	if pattern != "" {
-		if strings.ContainsAny(pattern, "*?[") {
-			match = func(name string) bool {
-				ok, _ := path.Match(pattern, name)
-				return ok
-			}
-		} else {
-			match = func(name string) bool { return strings.Contains(name, pattern) }
+	full, err := target.Resolve(p)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := target.relative(full)
+	if err != nil {
+		return nil, err
+	}
+	info, err := target.root.Lstat(rel)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("bedfs: %q is not a directory", p)
+	}
+	dir, err := target.root.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	entries, readErr := dir.ReadDir(-1)
+	if err := errors.Join(readErr, dir.Close()); err != nil {
+		return nil, err
+	}
+	names := map[string]bool{}
+	for _, entry := range entries {
+		names[entry.Name()] = true
+	}
+	client := o.clientPath(p)
+	for _, mapping := range o.mappings {
+		if path.Dir(mapping.mapping.Target) == client {
+			names[path.Base(mapping.mapping.Target)] = true
 		}
 	}
-	rel, err := o.relative(full)
-	if err != nil {
-		return nil, err
+	for _, shared := range o.shared {
+		if path.Dir(shared.paths.prefix) == client {
+			names[path.Base(shared.paths.prefix)] = true
+		}
 	}
 	var out []FileInfo
-	var walk func(dir, rel string) error
-	walk = func(dir, rel string) error {
-		if mapped := o.mapped(o.virtual(dir)); mapped != nil {
-			entries, err := mapped.Search(o.virtual(dir), pattern)
-			remaining := searchLimit - len(out)
-			if len(entries) > remaining {
-				entries = entries[:remaining]
-			}
-			out = append(out, entries...)
-			return err
+	for name := range names {
+		item, err := o.Stat(path.Join(client, name))
+		if os.IsNotExist(err) {
+			continue
 		}
-		opened, err := o.root.Open(rel)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, nil
+}
+
+// searchLimit bounds results for large shared software trees as well as workspaces.
+const searchLimit = 1000
+
+func (o *FS) Search(p, pattern string) ([]FileInfo, error) {
+	var out []FileInfo
+	var walk func(string) error
+	walk = func(dir string) error {
+		entries, err := o.listDirectory(dir)
 		if err != nil {
 			return err
-		}
-		entries, err := opened.ReadDir(-1)
-		closeErr := opened.Close()
-		if err != nil {
-			return err
-		}
-		if closeErr != nil {
-			return closeErr
 		}
 		for _, entry := range entries {
 			if len(out) >= searchLimit {
 				return nil
 			}
-			entryPath := filepath.Join(dir, entry.Name())
-			entryRel := filepath.Join(rel, entry.Name())
-			if entry.IsDir() {
-				if err := walk(entryPath, entryRel); err != nil {
+			if entry.Type == "directory" {
+				if err := walk(entry.Path); err != nil {
 					return err
 				}
 				continue
 			}
-			if !match(entry.Name()) {
-				continue
+			name := path.Base(entry.Path)
+			matches := strings.Contains(name, pattern)
+			if strings.ContainsAny(pattern, "*?[") {
+				matches, _ = path.Match(pattern, name)
 			}
-			fi, err := entry.Info()
-			if err == nil {
-				out = append(out, o.info(entryPath, fi))
+			if matches {
+				out = append(out, entry)
 			}
 		}
 		return nil
 	}
-	if err := walk(full, rel); err != nil {
+	if err := walk(p); err != nil {
 		return nil, err
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
 }
 
@@ -740,5 +733,8 @@ func (o *FS) SetWorkdir(p string) {
 	o.paths.workdir = p
 	for _, m := range o.mappings {
 		m.fs.paths.workdir = p
+	}
+	for _, shared := range o.shared {
+		shared.paths.workdir = p
 	}
 }

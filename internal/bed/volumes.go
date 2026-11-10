@@ -80,8 +80,8 @@ func NormalizeMounts(in []VolumeMount) ([]VolumeMount, error) {
 			return nil, err
 		}
 		for _, other := range out[:i] {
-			if PathsOverlap(m.Path, other.Path) {
-				return nil, fmt.Errorf("%w: mount paths overlap", ErrInvalidPaths)
+			if m.Path == other.Path {
+				return nil, fmt.Errorf("%w: duplicate mount path", ErrInvalidPaths)
 			}
 		}
 	}

@@ -158,7 +158,6 @@ func main() {
 		bed.WithIdentitySelection(identity),
 		bed.WithPillows(ports),
 		bed.WithConfiguration(cfg.Bed.Configuration),
-		bed.WithSharedSoftware(cfg.Bed.Filesystem.SharedSoftware),
 	)
 	if err != nil {
 		log.Fatalf("hostel: init bed manager: %v", err)
