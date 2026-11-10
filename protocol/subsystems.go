@@ -79,10 +79,45 @@ type VolumeMountStatus struct {
 	Reason        string `json:"reason,omitempty"`
 }
 
+// FilesystemRealization records the last confirmed Bed preparation/cleanup.
+// It is not a new host probe or a promise that external mutations are detected.
+// +spec=`Only prepared realization reports active guarantees. Partial cleanup clears those claims and retains an unknown state until release succeeds.`
+// +link:doc=docs/isolation.md
+type FilesystemRealization struct {
+	State  string `json:"state"` // pending, prepared, unknown, released
+	Reason string `json:"reason,omitempty"`
+	// PrivateData names the actual protection: uid, bwrap, landlock, or none.
+	PrivateData string `json:"private_data,omitempty"`
+	// CoreAccess distinguishes path rules from Unix-permission-only protection.
+	CoreAccess string                 `json:"core_access,omitempty"`
+	FileAPI    string                 `json:"file_api,omitempty"`
+	Views      []FilesystemViewStatus `json:"views,omitempty"`
+	Software   []SoftwareAccessStatus `json:"software,omitempty"`
+}
+
+type FilesystemViewStatus struct {
+	Pillow          string `json:"pillow"`
+	Mode            string `json:"mode"`
+	Rootfs          bool   `json:"rootfs"`
+	ReadWriteMounts bool   `json:"read_write_mounts"`
+	ReadOnlyMounts  bool   `json:"read_only_mounts"`
+	Reason          string `json:"reason,omitempty"`
+}
+
+// Software access describes runtime preparation and identity authorization;
+// explicit file modes, named ACLs and application chmod can still deny an operation.
+type SoftwareAccessStatus struct {
+	Path       string `json:"path"`
+	Prepared   bool   `json:"prepared"`
+	Authorized bool   `json:"authorized"`
+	Reason     string `json:"reason,omitempty"`
+}
+
 type FilesystemStatus struct {
-	Room     RoomType            `json:"room,omitempty"`
-	Mounts   []VolumeMountStatus `json:"mounts,omitempty"`
-	Prepared bool                `json:"prepared"`
+	Realization *FilesystemRealization `json:"realization,omitempty"`
+	Room        RoomType               `json:"room,omitempty"`
+	Mounts      []VolumeMountStatus    `json:"mounts,omitempty"`
+	Prepared    bool                   `json:"prepared"`
 }
 
 type NetworkRule struct {

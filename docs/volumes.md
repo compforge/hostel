@@ -16,6 +16,22 @@ BedFS 表达 Bed 私有数据、公共内容复用及 Hostel/OS 资源受控访�
 [isolation.md](isolation.md#daemon-与-beduser)。其余 Bed 本地数据继续按下文 Rootfs/Volume
 路径规则保存，不把任意 Carrier 路径自动变成可写公共数据。
 
+公共目录授权由 `bedfs.CommonDirectories` 统一定义，File API、mount 和 Landlock 使用同一
+份只读/可写规则。`ProcessDirectories` 额外列出 `/proc`、`/dev` 等进程设施；它们不作为普通
+文件 API 数据导出。私有根及 Volume 的来源、归属、只读要求继续由 BedFS/Mount 表达。
+
+| 内容 | 授权目标 | 当前机制与边界 |
+|---|---|---|
+| Bed 私有数据 | 本 Bed 操作，其他 Bed 不得读写 | 独立身份及私有目录权限；可用时叠加路径隔离 |
+| 公共可写 | 共同使用和维护软件 | 内部软件组、setgid/default ACL；显式 mode/chmod 仍可收窄权限 |
+| 公共只读 | 读取/执行运行依赖，不修改 | API 拒绝修改；mount/Landlock 限制进程，UID-only 依赖实际 Unix 权限 |
+| 管理私有 | 不隐式授权管理数据和凭据 | 配置的 beds-root 及受保护目录；能遮蔽/排除时使用对应机制，UID-only 不能隐藏 world-readable 凭据 |
+| 外部来源 | 遵守 Mount 与提供方授权 | 不修改源权限，不改变来源 owner |
+
+Landlock 不再宽泛授权 Carrier 的 `/run`、`/tmp`、`/var/tmp`：父目录授权会同时开放其下的
+凭据或相邻 Bed 数据。临时数据属于 Bed 数据根；若路径辅助程序无法在这个授权范围工作，
+实际组合探测应报告路径体验缺口，不重新扩大共享父目录来掩盖问题。
+
 ## 来源与挂载
 
 每个 Volume 只能选择一种来源：

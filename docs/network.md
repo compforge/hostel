@@ -313,12 +313,11 @@ Network 将网络空间与策略执行分别报告：`isolation.level=shared`、
 
 前提是 Privilege **实际采用** `per_bed` 独立 UID，用户进程以该身份创建 socket，
 并已清除 capabilities、设置 no_new_privs；所有 Pillow、命令和 session 共用该 Bed 身份。
-仅 supported 包含 dedicated、实际仍配置固定 UID/GID，不满足前提。嵌入方的
+仅 supported 包含 dedicated、实际仍采用共享身份，不满足前提。嵌入方的
 `Bed.Network.UIDNFT` 使用 auto/off/required，默认 auto；`NetNS=off` 只关闭 namespace
 机制，关闭全部网络机制需同时指定 `UIDNFT=off`。required 未被选用时启动失败。
 当前 CLI 不额外暴露这些工具配置；内部共享软件组不改变独立身份选择，也不参与 nft 的 UID 匹配。
-镜像或部署若默认注入这两个变量，启用 per-Bed UID 前须真正移除它们；设为空字符串
-仍被视为显式配置。升级 Hostel 二进制本身不会覆盖现有固定身份选择。
+固定 UID/GID 和 extra GIDs 配置入口已移除；以 Privilege 实际报告的身份策略为准。
 
 此 backend 在 Carrier OUTPUT 路径按 `meta skuid` 分流，每个 allocation 独占 nft 表、
 DNS listener 与 DNS 地址集合。UDP/TCP 53 按 UID DNAT 到本 Bed 的 DNS listener，

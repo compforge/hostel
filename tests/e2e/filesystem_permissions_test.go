@@ -15,6 +15,7 @@ import (
 
 	"github.com/qiankunli/hostel/internal/bed/filesystem"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 // Run the same API assertions under real carrier permissions. Feature-off is a
@@ -138,6 +139,20 @@ func checkFilesystemPermissions(t *testing.T, c *apiClient, source string, view 
 		}
 		must2xx(t, "create mapped Bed", response)
 		c.waitBed(t, bed, func(b bedView) bool { return b.Status.Readiness.Ready }, "mapped Bed ready")
+		var detail protocol.BedDetail
+		response, err = c.json(t.Context(), "GET", "/v1/beds/"+bed, "", nil, &detail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		must2xx(t, "realized filesystem", response)
+		actual := detail.Status.Subsystems.Filesystem.Realization
+		if actual == nil || actual.State != "prepared" || actual.FileAPI != "bed_identity" || len(actual.Views) != 1 {
+			t.Fatalf("missing realized view: %+v", actual)
+		}
+		realizedView := actual.Views[0]
+		if realizedView.Mode != view.Mode || realizedView.Rootfs != view.Rootfs || realizedView.ReadOnlyMounts != view.PathMappings.ReadOnly || realizedView.ReadWriteMounts != view.PathMappings.ReadWrite {
+			t.Fatalf("selected/realized mismatch: %+v / %+v", view, actual)
+		}
 		must2xx(t, "write Bed root seed", c.upload(t, bed, native+"/seed", []byte(bed)))
 	}
 	run := func(bed, command, cwd string) commandResult {

@@ -5,16 +5,18 @@ package e2e_test
 import (
 	"context"
 	"fmt"
-	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/qiankunli/go-stdx/shellx"
 	"github.com/qiankunli/hostel/internal/bed/network"
+	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/tool"
 	"github.com/qiankunli/hostel/protocol"
 )
@@ -34,9 +36,16 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 			if scenario == "network-probe-failure" {
 				options.Bed.Network.NetNS = value(tool.Auto)
 				helpers := t.TempDir()
-				// A run-owned failing tool exercises the real network probe and fallback;
-				// no host firewall state or installed tool is modified.
-				if err := os.WriteFile(filepath.Join(helpers, "nft"), []byte("#!/bin/sh\necho 'fixture: nft unavailable' >&2\nexit 1\n"), 0755); err != nil {
+				// Fail rule installation but preserve real cleanup. Failing every nft
+				// call exercises retained cleanup ownership, not best-effort fallback.
+				nft, err := exec.LookPath("nft")
+				if err != nil {
+					t.Fatal(err)
+				}
+				script := "#!/bin/sh\nset -eu\nif [ \"${1:-}\" = -f ] && [ \"${2:-}\" = - ]; then\n" +
+					"rules=$(cat)\ncase \"$rules\" in *'{'*) echo 'fixture: nft rule installation unavailable' >&2; exit 1;; esac\n" +
+					"printf '%s\\n' \"$rules\" | " + shellx.Quote(nft) + " \"$@\"\nelse\nexec " + shellx.Quote(nft) + " \"$@\"\nfi\n"
+				if err := os.WriteFile(filepath.Join(helpers, "nft"), []byte(script), 0755); err != nil {
 					t.Fatal(err)
 				}
 				targetConfig.helperPath = helpers + ":" + os.Getenv("PATH")

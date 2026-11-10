@@ -39,8 +39,8 @@ const ConfineArg = "__confine"
 
 // landlock is the room mechanism: kernel-enforced filesystem access control
 // (Landlock LSM, Linux 5.13+), no capability required. A bed can't ACCESS
-// other beds' data (EACCES), but siblings stay visible and host paths (/tmp,
-// /usr) are shared — the "private room, shared toilet" tier.
+// other beds' data (EACCES), but siblings may remain visible. Shared userland
+// follows the same grants as BedFS; Carrier scratch is not broadly granted.
 type landlock struct {
 	Stateless
 	self string // hostel binary path, re-execed as the confiner
@@ -80,10 +80,8 @@ func newLandlock(facts hostfacts.Snapshot, bedsRoot string) (Isolator, hostfacts
 // production form: `hostel __confine <own> -- /bin/sh -c <check>` with a fake
 // sibling bed next to the confined dir. The check must find its own dir
 // writable and the sibling's file unreadable. This catches what the ABI probe
-// can't: ApplyConfine is BestEffort (can silently no-op into zero isolation),
-// and a workspace root placed inside a shared-RW allowance (e.g. under /tmp)
-// leaves sibling beds reachable — in both cases room's guarantee would be a
-// lie, so we honestly report it unavailable.
+// can't: overlapping path allowances can leave sibling data reachable even
+// when Landlock is active. Such a mechanism is unavailable for private data.
 // The full runtime additionally enters the trusted workload helper. Only its
 // executable inode is allowed, never the surrounding carrier directory.
 func landlockSmoke(self, bedsRoot string) hostfacts.ProbeReport {
@@ -115,7 +113,7 @@ func landlockSmoke(self, bedsRoot string) hostfacts.ProbeReport {
 	case 10:
 		report.Error = "smoke test: own data dir not writable under confinement"
 	case 11:
-		report.Error = "smoke test: sibling data still readable — restriction not enforced (BestEffort no-op, or workspace root inside a shared-RW path like /tmp)"
+		report.Error = "smoke test: sibling data still readable; workspace may overlap a shared path grant"
 	default:
 		report.Error = "smoke test: " + report.Error
 	}
@@ -146,32 +144,32 @@ func (l *landlock) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 
 // ApplyConfine locks the CURRENT process to dataDir (rw) + the system paths a
 // shell needs (ro), then it's safe to exec the user command. Best-effort: on
-// an old kernel / missing landlock it degrades to a no-op (honest — the boot
-// probe already decided room was achievable; if it wasn't, we wouldn't be
-// here). Called by main's __confine subcommand.
+// the boot probe must prove the chosen allowance actually protects sibling
+// data. Called by main's __confine subcommand. The selected runtime cannot
+// silently replace a failed restriction with unrestricted execution.
 func ApplyConfine(dataDir string) error {
 	return applyLandlock(dataDir)
 }
 
-// landlockRODirs are the system paths a shell + interpreters need to read/exec;
-// missing ones are skipped by BestEffort. Borrowed from greywall's set.
-var landlockRODirs = []string{
-	"/usr", "/lib", "/lib64", "/lib32", "/bin", "/sbin",
-	"/etc", "/proc", "/sys", "/run", "/opt",
+// Landlock consumes the same implicit grants as the mount/API views. Carrier
+// /run, /tmp and /var/tmp are not public grants: allowing a parent also exposes
+// management credentials or neighboring Bed data beneath it. Bed scratch lives
+// in its data root. An unusable composition is rejected by the normal probe.
+func landlockPaths(dataDir string) (readOnly, readWrite []string) {
+	readWrite = append(readWrite, dataDir)
+	for _, access := range bedfs.ProcessDirectories() {
+		if access.ReadOnly {
+			readOnly = append(readOnly, access.Path)
+		} else {
+			readWrite = append(readWrite, access.Path)
+		}
+	}
+	return
 }
 
-// landlockRWDirs: the bed's own data (private), plus carrier-wide shared
-// software and scratch. /usr/local is intentionally shared across beds; its
-// ownership and package-manager environment belong to the carrier image.
-func landlockRWDirs(dataDir string) []string {
-	return []string{dataDir, carrierSoftwareRoot, "/tmp", "/dev", "/var/tmp"}
-}
-
-// applyLandlock restricts the current process to the bed data dir (rw) + system
-// paths (ro). BestEffort degrades on older ABIs; missing paths are dropped so a
-// distro without e.g. /lib32 doesn't fail the whole restriction.
 func applyLandlock(dataDir string) error {
-	return hostfs.RestrictPaths(landlockRODirs, landlockRWDirs(dataDir), []string{hostprocess.Executable()})
+	readOnly, readWrite := landlockPaths(dataDir)
+	return hostfs.RestrictPaths(readOnly, readWrite, []string{hostprocess.Executable()})
 }
 
 func (l *landlock) AllowsMappings() bool { return false }

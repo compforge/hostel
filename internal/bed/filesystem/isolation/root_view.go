@@ -10,16 +10,16 @@ import (
 	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 )
 
-// runtimePaths are shared execution dependencies, not Bed data. In particular,
-// /mnt, /tmp, /home and /run are not inherited from the carrier. Data paths
-// outside these overlays belong to the Bed even when first created by a process.
-var runtimePaths = bedfs.SharedPaths()
-
+// Runtime overlays and API routes consume the same BedFS directory policy.
 func existingRuntimePaths() []string {
 	var paths []string
-	for _, p := range runtimePaths {
-		if _, err := os.Stat(p); err == nil {
-			paths = append(paths, p)
+	for _, access := range bedfs.CommonDirectories() {
+		// Writable children are overlaid after their read-only parents.
+		if !access.ReadOnly {
+			continue
+		}
+		if _, err := os.Stat(access.Path); err == nil {
+			paths = append(paths, access.Path)
 		}
 	}
 	return paths
@@ -42,8 +42,10 @@ func inRuntime(p string, roots []string) bool {
 // absolute paths. PRoot provides path compatibility, not read-only enforcement.
 func rootProcessMappings(fs *bedfs.FS, support bedfs.MappingSupport) []hostfs.Mapping {
 	var mappings []hostfs.Mapping
-	for _, p := range append(existingRuntimePaths(), "/dev", "/proc") {
-		mappings = append(mappings, hostfs.Mapping{Source: p, Target: p})
+	for _, access := range bedfs.ProcessDirectories() {
+		if _, err := os.Stat(access.Path); err == nil {
+			mappings = append(mappings, hostfs.Mapping{Source: access.Path, Target: access.Path})
+		}
 	}
 	mappings = append(mappings, processMappings(fs, support)...)
 	return append(mappings, hostfs.Mapping{Source: hostprocess.Executable(), Target: hostprocess.BedInitPath})
