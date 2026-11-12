@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,9 +17,17 @@ import (
 
 // Opt-in because this exercises real namespaces/firewall state. Run in a
 // disposable container, not in the developer host's network namespace.
+// +case:id=veth_startup_mtu,desc=`Start pools with detected and explicitly supplied MTUs`,expect=`Real ip route discovery succeeds, both kernel veth ends use the selected MTU, and Start preserves supplied values`
 func TestLinuxNetwork(t *testing.T) {
-	for _, mtu := range []int{DefaultMTU, 1500} {
-		t.Run(strconv.Itoa(mtu), func(t *testing.T) { testLinuxNetwork(t, mtu) })
+	for _, tc := range []struct {
+		name string
+		mtu  int
+	}{
+		{"detected", 0},
+		{"supplied-1300", 1300},
+		{"supplied-1500", 1500},
+	} {
+		t.Run(tc.name, func(t *testing.T) { testLinuxNetwork(t, tc.mtu) })
 	}
 }
 
@@ -30,7 +37,9 @@ func testLinuxNetwork(t *testing.T, mtu int) {
 		t.Skip("requires disposable Linux container; set HOSTEL_NETWORK_TEST=enabled or disabled")
 	}
 	m := New(context.Background())
-	m.SetMTU(mtu)
+	if mtu != 0 {
+		m.SetMTU(mtu)
+	}
 	if err := m.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -50,6 +59,13 @@ func testLinuxNetwork(t *testing.T, mtu int) {
 	}
 	if !m.Status().Available {
 		t.Fatalf("network unavailable: %+v", m.Status())
+	}
+	if mtu == 0 {
+		detected := DetectMTU(t.Context(), FallbackMTU)
+		if detected.Source != "detected" {
+			t.Fatalf("real ip route discovery must succeed: %+v", detected)
+		}
+		mtu = detected.Value
 	}
 	for _, id := range []string{"a", "b"} {
 		if _, err := m.Acquire(context.Background(), id); err != nil {

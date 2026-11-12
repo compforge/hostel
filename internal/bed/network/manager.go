@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
+	"sync/atomic"
 
 	hostel "github.com/qiankunli/hostel/internal"
 	"github.com/qiankunli/hostel/internal/bed"
@@ -27,9 +29,10 @@ type EgressCapability struct {
 
 // Status reports independent isolation and egress mechanism choices for new Beds.
 type Status struct {
-	Isolation IsolationStatus        `json:"isolation"`
-	Egress    EgressCapability       `json:"egress"`
-	Tools     map[string]tool.Status `json:"tools"`
+	MTU       protocol.NetworkMTUStatus `json:"mtu"`
+	Isolation IsolationStatus           `json:"isolation"`
+	Egress    EgressCapability          `json:"egress"`
+	Tools     map[string]tool.Status    `json:"tools"`
 }
 
 // These protocol types are shared with the network mechanism; Bed model
@@ -45,6 +48,8 @@ var ErrInvalidPolicy = hostnetwork.ErrInvalidPolicy
 func NormalizePolicy(p Policy) (Policy, error) { return hostnetwork.NormalizePolicy(p) }
 
 type Manager struct {
+	mtuOnce          sync.Once
+	mtu              atomic.Pointer[protocol.NetworkMTUStatus]
 	stateDirectory   string
 	allocationsStore *hostnetwork.AllocationStore
 	portMappings     *PortMappings
@@ -78,12 +83,11 @@ func (m *Manager) SetDedicatedUIDs(enabled bool) { m.dedicatedUIDs = enabled }
 
 func NewConfigured(ctx context.Context, cfg Config) *Manager {
 	if cfg.MTU == 0 {
-		cfg.MTU = hostnetwork.DefaultMTU
+		cfg.MTU = hostnetwork.FallbackMTU
 	}
 	m := &Manager{config: cfg}
 	if cfg.NetNS.Effective() != tool.Off {
 		m.pool = hostnetwork.New(ctx)
-		m.pool.SetMTU(cfg.MTU)
 	}
 	return m
 }
@@ -106,6 +110,13 @@ func (m *Manager) Start(ctx context.Context) error {
 			m.pool.SetAllocationStore(m.allocationsStore)
 		}
 	}
+	m.mtuOnce.Do(func() {
+		report := hostnetwork.DetectMTU(ctx, m.config.MTU)
+		m.mtu.Store(&report)
+		if m.pool != nil {
+			m.pool.SetMTU(report.Value)
+		}
+	})
 	if m.config.NetNS.Effective() == tool.Off {
 		log.Printf("network: tool=netns policy=off reason=disabled_by_config")
 	} else if starter, ok := m.provider.(interface{ Start(context.Context) error }); ok {
@@ -153,6 +164,13 @@ func (m *Manager) describe(report hostnetwork.Status) Status {
 	}
 	selected := report.Available && netnsPolicy != tool.Off
 	s := Status{Isolation: IsolationStatus{NetworkIsolationStatus: protocol.NetworkIsolationStatus{Level: string(Shared), Room: bed.Dorm}, Supported: []Level{Shared}, Probe: report.Probe}, Egress: EgressCapability{Backend: "none", Probe: uidProbe}}
+	s.MTU.Source = "not_probed"
+	if m != nil {
+		if mtu := m.mtu.Load(); mtu != nil {
+			s.MTU = *mtu
+			s.MTU.Interfaces = slices.Clone(mtu.Interfaces)
+		}
+	}
 	if selected {
 		s.Isolation.Level, s.Isolation.Room = string(Private), bed.Suite
 		s.Isolation.Supported = append(s.Isolation.Supported, Private)

@@ -44,7 +44,7 @@ func (unavailableProvider) Status() hostnetwork.Status {
 }
 func (unavailableProvider) Close(context.Context) error { return nil }
 func TestRequiredNetworkFailsStartup(t *testing.T) {
-	m := &Manager{config: Config{NetNS: tool.Required, MTU: hostnetwork.DefaultMTU}, provider: unavailableProvider{}}
+	m := &Manager{config: Config{NetNS: tool.Required, MTU: hostnetwork.FallbackMTU}, provider: unavailableProvider{}}
 	if err := m.Start(t.Context()); err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("%v", err)
 	}

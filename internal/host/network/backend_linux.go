@@ -60,7 +60,7 @@ func run(ctx context.Context, input, command string, args ...string) ([]byte, er
 }
 
 func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
-	return probeBackendWithStore(ctx, nil, DefaultMTU, ports...)
+	return probeBackendWithStore(ctx, nil, DetectMTU(ctx, FallbackMTU).Value, ports...)
 }
 func probeBackendWithStore(ctx context.Context, store *AllocationStore, mtu int, ports ...*PortManager) (backend, Probe) {
 	probe := Probe{Stage: "tools", Cause: hostel.CauseCarrier}
@@ -201,7 +201,7 @@ func (b *linuxBackend) allocate(ctx context.Context) (netip.Addr, netip.Addr, er
 	return netip.Addr{}, netip.Addr{}, hostel.WrapError(hostel.ErrLimitExceeded, "network address allocation", hostel.CauseResource, errors.New("no unused /30 network in 198.18.0.0/15"))
 }
 
-// +spec=`Both veth ends use the configured MTU before either link is brought up.`
+// +spec=`Both veth ends use the startup MTU before either link is brought up.`
 // +link=component://docs/network.md
 func (e *linuxEndpoint) create(ctx context.Context) error {
 	b := e.owner

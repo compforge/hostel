@@ -156,7 +156,7 @@ func TestStatus(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode diagnostics: %v", err)
 	}
-	if body["schema_version"] != float64(13) {
+	if body["schema_version"] != float64(14) {
 		t.Fatalf("diagnostics schema_version = %v", body["schema_version"])
 	}
 	if _, exists := body["beds"]; exists {
@@ -170,6 +170,14 @@ func TestStatus(t *testing.T) {
 		t.Fatalf("isolation must report only attained room: %v", room)
 	}
 	subsystems, _ := body["subsystems"].(map[string]any)
+	networkFacts, _ := subsystems["network"].(map[string]any)
+	mtu, _ := networkFacts["mtu"].(map[string]any)
+	if mtu["source"] != "detected" && mtu["source"] != "fallback" {
+		t.Fatalf("network startup MTU is missing: %v", mtu)
+	}
+	if value, ok := mtu["value"].(float64); !ok || value <= 0 {
+		t.Fatalf("network startup MTU has no value: %v", mtu)
+	}
 	isolationFacts, _ := subsystems["filesystem"].(map[string]any)
 	if view, ok := isolationFacts["process_view"].(map[string]any); !ok || view["mode"] == "" {
 		t.Fatalf("filesystem process_view = %v", isolationFacts)
