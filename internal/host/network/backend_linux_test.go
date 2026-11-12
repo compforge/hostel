@@ -17,7 +17,7 @@ import (
 
 // Opt-in because this exercises real namespaces/firewall state. Run in a
 // disposable container, not in the developer host's network namespace.
-// +case:id=veth_startup_mtu,desc=`Start pools with detected and explicitly supplied MTUs`,expect=`Both kernel veth ends use the selected MTU and Start preserves supplied values`
+// +case:id=veth_startup_mtu,desc=`Start pools with detected and explicitly supplied MTUs`,expect=`Real ip route discovery succeeds, both kernel veth ends use the selected MTU, and Start preserves supplied values`
 func TestLinuxNetwork(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -43,9 +43,6 @@ func testLinuxNetwork(t *testing.T, mtu int) {
 	if err := m.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if mtu == 0 {
-		mtu = m.mtu
-	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -62,6 +59,13 @@ func testLinuxNetwork(t *testing.T, mtu int) {
 	}
 	if !m.Status().Available {
 		t.Fatalf("network unavailable: %+v", m.Status())
+	}
+	if mtu == 0 {
+		detected := DetectMTU(t.Context(), FallbackMTU)
+		if detected.Source != "detected" {
+			t.Fatalf("real ip route discovery must succeed: %+v", detected)
+		}
+		mtu = detected.Value
 	}
 	for _, id := range []string{"a", "b"} {
 		if _, err := m.Acquire(context.Background(), id); err != nil {
