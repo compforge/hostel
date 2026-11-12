@@ -17,16 +17,35 @@ import (
 
 // Opt-in because this exercises real namespaces/firewall state. Run in a
 // disposable container, not in the developer host's network namespace.
+// +case:id=veth_startup_mtu,desc=`Start pools with detected and explicitly supplied MTUs`,expect=`Both kernel veth ends use the selected MTU and Start preserves supplied values`
 func TestLinuxNetwork(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mtu  int
+	}{
+		{"detected", 0},
+		{"supplied-1300", 1300},
+		{"supplied-1500", 1500},
+	} {
+		t.Run(tc.name, func(t *testing.T) { testLinuxNetwork(t, tc.mtu) })
+	}
+}
+
+func testLinuxNetwork(t *testing.T, mtu int) {
 	mode := os.Getenv("HOSTEL_NETWORK_TEST")
 	if mode == "" {
 		t.Skip("requires disposable Linux container; set HOSTEL_NETWORK_TEST=enabled or disabled")
 	}
 	m := New(context.Background())
+	if mtu != 0 {
+		m.SetMTU(mtu)
+	}
 	if err := m.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	mtu := m.mtu
+	if mtu == 0 {
+		mtu = m.mtu
+	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

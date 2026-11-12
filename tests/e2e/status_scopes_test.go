@@ -9,10 +9,14 @@ import (
 	"net/url"
 	"testing"
 	"time"
+
+	"github.com/qiankunli/hostel/protocol"
 )
 
 // Status reads expose global domain facts and only the tenants bound to the
 // selected Bed. Polling must neither allocate a tenant nor renew Bed activity.
+//
+// +case:id=status_mtu_contract,desc=`Read status from a real daemon`,expect=`Schema 14 exposes the startup MTU value and its detected or fallback attribution`
 func TestStatusScopesAndTenantIdentity(t *testing.T) {
 	assertSubsystems := func(scope string, got map[string]json.RawMessage, want ...string) {
 		t.Helper()
@@ -115,11 +119,33 @@ func TestStatusScopesAndTenantIdentity(t *testing.T) {
 	if global.Combinations != nil {
 		t.Fatal("status must report final subsystems, not startup attempt history")
 	}
-	if global.Schema != 13 || global.Amenities["mcp"].Tenants != 1 {
+	if global.Schema != 14 || global.Amenities["mcp"].Tenants != 1 {
 		t.Fatalf("global status: %+v", global)
 	}
 	assertSubsystems("instance", global.Subsystems,
 		"configuration", "filesystem", "privilege", "network", "executor", "store", "resource")
+	var network struct {
+		MTU protocol.NetworkMTUStatus `json:"mtu"`
+	}
+	if err := json.Unmarshal(global.Subsystems["network"], &network); err != nil {
+		t.Fatal(err)
+	}
+	mtu := network.MTU
+	if mtu.Value < 68 || mtu.Value > 65535 {
+		t.Fatalf("invalid startup MTU: %+v", mtu)
+	}
+	switch mtu.Source {
+	case "detected":
+		if len(mtu.Interfaces) == 0 || mtu.Reason != "" {
+			t.Fatalf("detected MTU must identify its interfaces: %+v", mtu)
+		}
+	case "fallback":
+		if mtu.Reason == "" || len(mtu.Interfaces) != 0 {
+			t.Fatalf("fallback MTU must explain discovery failure: %+v", mtu)
+		}
+	default:
+		t.Fatalf("missing startup MTU attribution: %+v", mtu)
+	}
 	for _, b := range global.Beds {
 		if b.Status["amenities"] != nil || b.Status["subsystems"] != nil {
 			t.Fatal("inventory expanded unit details")
