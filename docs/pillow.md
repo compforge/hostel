@@ -357,7 +357,10 @@ Linux supervisor backend 初始化时，daemon 从临时 Unix seqpacket socket �
 `SO_SNDBUF`。启动请求的内联 JSON 上限取缓冲区扣除 32 字节内核开销和 4 字节帧头后的大小，
 最高 128 KiB。完整请求超过该值时，daemon 通过 sealed memfd 传递 argv、工作目录和环境变量。
 探测失败时使用 `HOSTEL_SUPERVISOR_INLINE_LIMIT_BYTES`（或 `--supervisor-inline-limit-bytes`），
-范围 1–131072 字节，默认 131072。启动日志记录本次选用的阈值和来源。
+范围 1–131072 字节，默认 131072。启动日志与 `GET /v1/status` 的 `subsystems.executor.supervisor_inline_limit_bytes`
+读取同一份快照。
+`value` 是客户端使用的字节数；`source=detected` 时附 `sndbuf_bytes`，
+`source=fallback` 时附 `reason`。local executor 省略此字段。
 
 ### Executor 进程命名空间
 

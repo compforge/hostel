@@ -16,6 +16,15 @@ type NetworkMTUStatus struct {
 	Reason     string                `json:"reason,omitempty"`
 }
 
+// SupervisorInlineLimitStatus records the daemon's startup choice for inline start JSON.
+// Value and SendBufferBytes are measured in bytes; Reason explains a fallback.
+type SupervisorInlineLimitStatus struct {
+	Value           int    `json:"value"`
+	Source          string `json:"source"`
+	SendBufferBytes int    `json:"sndbuf_bytes,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+}
+
 type NetworkMTUInterface struct {
 	Name string `json:"name"`
 	MTU  int    `json:"mtu"`

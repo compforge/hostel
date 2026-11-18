@@ -127,14 +127,14 @@ func openFDCount(t *testing.T) int {
 func TestStartUsesDetectedInlineLimit(t *testing.T) {
 	const fallback = 4096
 	limit := resolveInlineLimit(65536, nil, fallback)
-	if limit != 65500 {
-		t.Fatalf("64 KiB socket: got %d", limit)
+	if limit.Value != 65500 || limit.Source != "detected" || limit.SendBufferBytes != 65536 {
+		t.Fatalf("64 KiB socket: got %+v", limit)
 	}
-	if got := resolveInlineLimit(1<<20, nil, fallback); got != maxMessageSize {
-		t.Fatalf("protocol cap: got %d", got)
+	if got := resolveInlineLimit(1<<20, nil, fallback); got.Value != MaxMessageSize {
+		t.Fatalf("protocol cap: got %+v", got)
 	}
-	if got := resolveInlineLimit(0, syscall.EPERM, fallback); got != fallback {
-		t.Fatalf("probe failure: got %d", got)
+	if got := resolveInlineLimit(0, syscall.EPERM, fallback); got.Value != fallback || got.Source != "fallback" || got.Reason != syscall.EPERM.Error() {
+		t.Fatalf("probe failure: got %+v", got)
 	}
 
 	for _, tc := range []struct {
@@ -182,7 +182,7 @@ func TestStartUsesDetectedInlineLimit(t *testing.T) {
 				}
 				server <- err
 			}()
-			client := NewClient(socket, testExecutorID, limit)
+			client := NewClient(socket, testExecutorID, limit.Value)
 			_, err = client.Start("start", []string{"/bin/true"}, "", env, os.Stdin, os.Stdout, os.Stderr)
 			if err != nil {
 				t.Fatal(err)

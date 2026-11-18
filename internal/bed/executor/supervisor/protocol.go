@@ -44,10 +44,11 @@ import (
 const Arg = "__supervisor"
 
 const (
-	socketNetwork  = "unixpacket"
-	maxMessageSize = 128 << 10
-	// DefaultInlineLimit is the fallback JSON size for inline start requests.
-	DefaultInlineLimit = maxMessageSize
+	socketNetwork = "unixpacket"
+	// MaxMessageSize bounds the JSON payload of any supervisor frame.
+	MaxMessageSize = 128 << 10
+	// FallbackInlineLimit is the fallback JSON size for inline start requests.
+	FallbackInlineLimit = MaxMessageSize
 	// Start specifications larger than one IPC frame travel in a sealed memfd.
 	// Bound the out-of-band data independently of the control frame.
 	maxStartSpecSize = 4 << 20
@@ -152,8 +153,8 @@ func writeMsg(conn *net.UnixConn, v any, fds []int) error {
 	if err != nil {
 		return err
 	}
-	if len(payload) > maxMessageSize {
-		return &MessageTooLargeError{Size: len(payload), Limit: maxMessageSize}
+	if len(payload) > MaxMessageSize {
+		return &MessageTooLargeError{Size: len(payload), Limit: MaxMessageSize}
 	}
 	buf := make([]byte, 4+len(payload))
 	binary.BigEndian.PutUint32(buf, uint32(len(payload)))
@@ -179,7 +180,7 @@ func writeMsg(conn *net.UnixConn, v any, fds []int) error {
 // attached to it. Message boundaries are part of the protocol: accepting
 // trailing bytes would hide a sender that accidentally combined two replies.
 func readMsg(conn *net.UnixConn, v any) ([]int, error) {
-	buf := make([]byte, 4+maxMessageSize)
+	buf := make([]byte, 4+MaxMessageSize)
 	oob := make([]byte, syscall.CmsgSpace(16*4))
 	n, oobn, flags, _, err := conn.ReadMsgUnix(buf, oob)
 	fds, rightsErr := parseRights(oob[:oobn])

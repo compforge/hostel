@@ -42,6 +42,24 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func TestSupervisorInlineLimitStatus(t *testing.T) {
+	factory, err := NewSupervisorFactory(os.Args[0], nil, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer factory.Close()
+	report := factory.Status().SupervisorInlineLimitBytes
+	if report == nil || *report != factory.inlineLimit {
+		t.Fatalf("unexpected startup snapshot: %+v", report)
+	}
+	if report.Source == "detected" && (report.SendBufferBytes <= 0 || report.Reason != "") {
+		t.Fatalf("missing socket evidence: %+v", report)
+	}
+	if got := NewLocalFactory(nil).Status().SupervisorInlineLimitBytes; got != nil {
+		t.Fatalf("local backend reported supervisor limit: %+v", got)
+	}
+}
+
 func TestSupervisorStartIsIdempotentAndTerminalStatusReconnects(t *testing.T) {
 	factory, err := NewSupervisorFactory(os.Args[0], resource.Noop("test"), 0)
 	if err != nil {
@@ -94,7 +112,7 @@ func TestSupervisorStartIsIdempotentAndTerminalStatusReconnects(t *testing.T) {
 	closeCommandOutput(t, different)
 
 	concrete := bedExecutor.(*supervisedExecutor)
-	if err := supervisor.NewClient(concrete.socket, "executor-stale", supervisor.DefaultInlineLimit).Describe(); err == nil || !strings.Contains(err.Error(), "executor mismatch") {
+	if err := supervisor.NewClient(concrete.socket, "executor-stale", supervisor.FallbackInlineLimit).Describe(); err == nil || !strings.Contains(err.Error(), "executor mismatch") {
 		t.Fatalf("stale executor fencing error = %v", err)
 	}
 }
