@@ -95,6 +95,7 @@ func (o Options) apply(c *Config) {
 	apply(&c.Bed.Resource.Admission.CPUPressureThresholdPercent, o.Bed.Resource.CPUPressureThresholdPercent)
 	apply(&c.Bed.Resource.Admission.MemoryPressureThresholdPercent, o.Bed.Resource.MemoryPressureThresholdPercent)
 	apply(&c.Bed.Executor.Backend, o.Bed.Executor.Backend)
+	apply(&c.Bed.Executor.SupervisorInlineLimitBytes, o.Bed.Executor.SupervisorInlineLimitBytes)
 	apply(&c.Bed.Executor.PIDNS, o.Bed.Executor.PIDNS)
 	apply(&c.Bed.Store.Sync, o.Bed.Store.Sync)
 	apply(&c.Bed.Store.ResticBinary, o.Bed.Store.ResticBinary)

@@ -63,7 +63,7 @@ func startSupervisor(t *testing.T) (socket string, proc *os.Process, client *Cli
 		_, _ = cmd.Process.Wait()
 	})
 	for i := 0; i < 100; i++ {
-		client = NewClient(socket, testExecutorID)
+		client = NewClient(socket, testExecutorID, FallbackInlineLimit)
 		if err := client.Describe(); err == nil {
 			return socket, cmd.Process, client
 		}
@@ -143,8 +143,8 @@ func TestLargeStartSpecificationUsesFD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(inline) <= maxMessageSize {
-		t.Fatalf("test start frame = %d bytes, want more than %d", len(inline), maxMessageSize)
+	if len(inline) <= MaxMessageSize {
+		t.Fatalf("test start frame = %d bytes, want more than %d", len(inline), MaxMessageSize)
 	}
 	pid, err := client.Start("process-large-spec", argv, "", env, stdin, devnull, devnull)
 	if err != nil {

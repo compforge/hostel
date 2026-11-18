@@ -9,12 +9,14 @@ import (
 
 	"github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/tool"
+	"github.com/qiankunli/hostel/protocol"
 	"golang.org/x/sync/semaphore"
 )
 
 type Status struct {
-	Backend string                 `json:"backend"`
-	Tools   map[string]tool.Status `json:"tools"`
+	SupervisorInlineLimitBytes *protocol.SupervisorInlineLimitStatus `json:"supervisor_inline_limit_bytes,omitempty"`
+	Backend                    string                                `json:"backend"`
+	Tools                      map[string]tool.Status                `json:"tools"`
 }
 
 func Describe(factory Factory) Status {

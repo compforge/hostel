@@ -50,6 +50,18 @@ hostel 需要从三个层面回答同一组问题：
 resident bed 只保留最近一次 initialization 和 persist。它们是有界诊断摘要，不是历史库；
 evict 完成后 bed 已离开内存，因此 evict 只写日志。长期历史由日志与 Trace 承担。
 
+### 启动时探测的参数
+
+子系统在创建受影响的资源前完成探测，保存本次启动的选择。执行路径读取快照的
+`value`，实例状态和启动日志从同一快照报告来源。探测成功记为 `source=detected`，
+同时保留做出选择所用的观测，例如出口接口 MTU 或 socket 发送缓冲区字节数。
+探测失败记为 `source=fallback`，记录 `reason`，并使用启动配置中解析好的回退值。
+查询状态时读取已有快照。
+
+[私有网络 MTU](network.md#私有网络-mtu) 属于 network，
+[启动请求内联阈值](pillow.md#supervisor-启动请求大小) 属于 executor。
+各子系统定义自己的观测字段、有效范围和适用条件。
+
 ### 生命周期接口投影
 
 生命周期模型和准入、回收契约由 [bed.md](bed.md) 统一定义，HTTP 只投影事实。

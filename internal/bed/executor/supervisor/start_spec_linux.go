@@ -17,10 +17,34 @@ package supervisor
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 
+	"github.com/qiankunli/hostel/protocol"
 	"golang.org/x/sys/unix"
 )
+
+// DetectInlineLimit samples a fresh socket in the daemon sender's network namespace.
+func DetectInlineLimit(fallback int) protocol.SupervisorInlineLimitStatus {
+	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_SEQPACKET|unix.SOCK_CLOEXEC, 0)
+	var sndbuf int
+	if err == nil {
+		defer unix.Close(fd)
+		sndbuf, err = unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUF)
+	}
+	report := resolveInlineLimit(sndbuf, err, fallback)
+	log.Printf("supervisor: inline_limit_bytes=%d source=%s sndbuf_bytes=%d reason=%q", report.Value, report.Source, report.SendBufferBytes, report.Reason)
+	return report
+}
+
+func resolveInlineLimit(sndbuf int, err error, fallback int) protocol.SupervisorInlineLimitStatus {
+	if err != nil {
+		return protocol.SupervisorInlineLimitStatus{Value: fallback, Source: "fallback", Reason: err.Error()}
+	}
+	// +why=`Linux AF_UNIX seqpacket reserves 32 bytes from sk_sndbuf; writeMsg adds a 4-byte length prefix.`
+	limit := min(MaxMessageSize, max(0, sndbuf-32-4))
+	return protocol.SupervisorInlineLimitStatus{Value: limit, Source: "detected", SendBufferBytes: sndbuf}
+}
 
 func newStartSpecFile(payload []byte) (_ *os.File, err error) {
 	fd, err := unix.MemfdCreate("hostel-start-spec", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)

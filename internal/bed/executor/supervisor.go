@@ -30,9 +30,11 @@ import (
 	"github.com/qiankunli/go-stdx/randx"
 	"github.com/qiankunli/hostel/internal/bed/executor/supervisor"
 	"github.com/qiankunli/hostel/internal/bed/resource"
+	"github.com/qiankunli/hostel/protocol"
 )
 
 type SupervisorFactory struct {
+	inlineLimit         protocol.SupervisorInlineLimitStatus
 	pidns               tool.Status
 	privatePIDNamespace bool
 	exe                 string
@@ -40,7 +42,7 @@ type SupervisorFactory struct {
 	resources           resource.Tracker
 }
 
-func NewSupervisorFactory(exe string, resources resource.Tracker) (*SupervisorFactory, error) {
+func NewSupervisorFactory(exe string, resources resource.Tracker, fallbackInlineLimit int) (*SupervisorFactory, error) {
 	dir, err := os.MkdirTemp("", "hostel-executor-*")
 	if err != nil {
 		return nil, err
@@ -48,12 +50,16 @@ func NewSupervisorFactory(exe string, resources resource.Tracker) (*SupervisorFa
 	if resources == nil {
 		resources = resource.Noop("resource tracker not configured")
 	}
-	return &SupervisorFactory{exe: exe, socketDir: dir, resources: resources, pidns: pidnsStatus(tool.Off, false, false, "")}, nil
+	if fallbackInlineLimit == 0 {
+		fallbackInlineLimit = supervisor.FallbackInlineLimit
+	}
+	return &SupervisorFactory{inlineLimit: supervisor.DetectInlineLimit(fallbackInlineLimit), exe: exe, socketDir: dir, resources: resources, pidns: pidnsStatus(tool.Off, false, false, "")}, nil
 }
 
 func (*SupervisorFactory) Backend() string { return "supervisor" }
 func (f *SupervisorFactory) Status() Status {
-	return Status{Backend: f.Backend(), Tools: map[string]tool.Status{"pidns": f.pidns}}
+	snapshot := f.inlineLimit
+	return Status{SupervisorInlineLimitBytes: &snapshot, Backend: f.Backend(), Tools: map[string]tool.Status{"pidns": f.pidns}}
 }
 
 func (f *SupervisorFactory) Close() error {
@@ -108,7 +114,7 @@ func (f *SupervisorFactory) Create(ctx context.Context, bedID string) (_ Executo
 		socket: socket,
 		cmd:    cmd,
 		proc:   cmd.Process,
-		client: supervisor.NewClient(socket, executorID),
+		client: supervisor.NewClient(socket, executorID, f.inlineLimit.Value),
 		group:  group,
 		state:  StateStarting,
 		done:   make(chan struct{}),

@@ -29,8 +29,9 @@ import (
 // Client addresses one executor instance. Every operation uses a fresh socket;
 // process state lives in the supervisor, never in a connection.
 type Client struct {
-	socket     string
-	executorID string
+	inlineLimit int
+	socket      string
+	executorID  string
 }
 
 // RemoteError is a semantic rejection returned by a live Executor. Callers
@@ -57,8 +58,8 @@ func (e *RequestError) Error() string {
 
 func (e *RequestError) Unwrap() error { return e.Err }
 
-func NewClient(socket, executorID string) *Client {
-	return &Client{socket: socket, executorID: executorID}
+func NewClient(socket, executorID string, inlineLimit int) *Client {
+	return &Client{socket: socket, executorID: executorID, inlineLimit: inlineLimit}
 }
 
 func (c *Client) Describe() error {
@@ -108,7 +109,7 @@ func (c *Client) start(processID string, argv []string, dir string, env []string
 	if err != nil {
 		return 0, &RequestError{Operation: string(opStart), Err: err}
 	}
-	if len(inline) > maxMessageSize {
+	if len(inline) > c.inlineLimit {
 		payload, err := json.Marshal(spec)
 		if err != nil {
 			return 0, &RequestError{Operation: string(opStart), Err: err}

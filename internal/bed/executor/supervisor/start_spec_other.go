@@ -19,7 +19,13 @@ package supervisor
 import (
 	"errors"
 	"os"
+
+	"github.com/qiankunli/hostel/protocol"
 )
+
+func DetectInlineLimit(fallback int) protocol.SupervisorInlineLimitStatus {
+	return protocol.SupervisorInlineLimitStatus{Value: fallback, Source: "fallback", Reason: "supervisor socket probe requires Linux"}
+}
 
 func newStartSpecFile([]byte) (*os.File, error) {
 	return nil, errors.New("large supervisor start specifications require Linux")
