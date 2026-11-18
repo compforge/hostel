@@ -43,7 +43,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestSupervisorStartIsIdempotentAndTerminalStatusReconnects(t *testing.T) {
-	factory, err := NewSupervisorFactory(os.Args[0], resource.Noop("test"))
+	factory, err := NewSupervisorFactory(os.Args[0], resource.Noop("test"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,13 +94,13 @@ func TestSupervisorStartIsIdempotentAndTerminalStatusReconnects(t *testing.T) {
 	closeCommandOutput(t, different)
 
 	concrete := bedExecutor.(*supervisedExecutor)
-	if err := supervisor.NewClient(concrete.socket, "executor-stale").Describe(); err == nil || !strings.Contains(err.Error(), "executor mismatch") {
+	if err := supervisor.NewClient(concrete.socket, "executor-stale", supervisor.DefaultInlineLimit).Describe(); err == nil || !strings.Contains(err.Error(), "executor mismatch") {
 		t.Fatalf("stale executor fencing error = %v", err)
 	}
 }
 
 func TestRejectedLargeStartsKeepPillowAndExecutor(t *testing.T) {
-	factory, err := NewSupervisorFactory(os.Args[0], resource.Noop("test"))
+	factory, err := NewSupervisorFactory(os.Args[0], resource.Noop("test"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestRejectedLargeStartsKeepPillowAndExecutor(t *testing.T) {
 }
 
 func TestSupervisorLossIsStructuredAndReplacementGetsNewIdentity(t *testing.T) {
-	factory, err := NewSupervisorFactory(os.Args[0], resource.Noop("test"))
+	factory, err := NewSupervisorFactory(os.Args[0], resource.Noop("test"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func closeCommandOutput(t *testing.T, cmd *exec.Cmd) {
 }
 
 func TestSupervisorExtraFilesReachChildAndRejectChangedRetry(t *testing.T) {
-	factory, err := NewSupervisorFactory(os.Args[0], nil)
+	factory, err := NewSupervisorFactory(os.Args[0], nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func TestPrivatePIDNamespaceSupervisor(t *testing.T) {
 	if os.Getenv("HOSTEL_TEST_PID_NAMESPACE") != "1" {
 		t.Skip("set HOSTEL_TEST_PID_NAMESPACE=1 on a Linux runner with namespace privileges")
 	}
-	factory, err := NewSupervisorFactory(os.Args[0], nil)
+	factory, err := NewSupervisorFactory(os.Args[0], nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

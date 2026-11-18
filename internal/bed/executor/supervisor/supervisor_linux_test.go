@@ -63,7 +63,7 @@ func startSupervisor(t *testing.T) (socket string, proc *os.Process, client *Cli
 		_, _ = cmd.Process.Wait()
 	})
 	for i := 0; i < 100; i++ {
-		client = NewClient(socket, testExecutorID)
+		client = NewClient(socket, testExecutorID, DefaultInlineLimit)
 		if err := client.Describe(); err == nil {
 			return socket, cmd.Process, client
 		}

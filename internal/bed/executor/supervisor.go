@@ -33,6 +33,7 @@ import (
 )
 
 type SupervisorFactory struct {
+	inlineLimit         int
 	pidns               tool.Status
 	privatePIDNamespace bool
 	exe                 string
@@ -40,7 +41,7 @@ type SupervisorFactory struct {
 	resources           resource.Tracker
 }
 
-func NewSupervisorFactory(exe string, resources resource.Tracker) (*SupervisorFactory, error) {
+func NewSupervisorFactory(exe string, resources resource.Tracker, fallbackInlineLimit int) (*SupervisorFactory, error) {
 	dir, err := os.MkdirTemp("", "hostel-executor-*")
 	if err != nil {
 		return nil, err
@@ -48,7 +49,10 @@ func NewSupervisorFactory(exe string, resources resource.Tracker) (*SupervisorFa
 	if resources == nil {
 		resources = resource.Noop("resource tracker not configured")
 	}
-	return &SupervisorFactory{exe: exe, socketDir: dir, resources: resources, pidns: pidnsStatus(tool.Off, false, false, "")}, nil
+	if fallbackInlineLimit == 0 {
+		fallbackInlineLimit = supervisor.DefaultInlineLimit
+	}
+	return &SupervisorFactory{inlineLimit: supervisor.DetectInlineLimit(fallbackInlineLimit), exe: exe, socketDir: dir, resources: resources, pidns: pidnsStatus(tool.Off, false, false, "")}, nil
 }
 
 func (*SupervisorFactory) Backend() string { return "supervisor" }
@@ -108,7 +112,7 @@ func (f *SupervisorFactory) Create(ctx context.Context, bedID string) (_ Executo
 		socket: socket,
 		cmd:    cmd,
 		proc:   cmd.Process,
-		client: supervisor.NewClient(socket, executorID),
+		client: supervisor.NewClient(socket, executorID, f.inlineLimit),
 		group:  group,
 		state:  StateStarting,
 		done:   make(chan struct{}),

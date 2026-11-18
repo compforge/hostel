@@ -17,10 +17,33 @@ package supervisor
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 
 	"golang.org/x/sys/unix"
 )
+
+// DetectInlineLimit samples a fresh socket in the daemon sender's network namespace.
+func DetectInlineLimit(fallback int) int {
+	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_SEQPACKET|unix.SOCK_CLOEXEC, 0)
+	var sndbuf int
+	if err == nil {
+		defer unix.Close(fd)
+		sndbuf, err = unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUF)
+	}
+	return resolveInlineLimit(sndbuf, err, fallback)
+}
+
+func resolveInlineLimit(sndbuf int, err error, fallback int) int {
+	if err != nil {
+		log.Printf("supervisor: inline_limit_bytes=%d source=fallback cause=%q", fallback, err)
+		return fallback
+	}
+	// +why=`Linux AF_UNIX seqpacket reserves 32 bytes from sk_sndbuf; writeMsg adds a 4-byte length prefix.`
+	limit := min(maxMessageSize, max(0, sndbuf-32-4))
+	log.Printf("supervisor: inline_limit_bytes=%d source=socket sndbuf_bytes=%d", limit, sndbuf)
+	return limit
+}
 
 func newStartSpecFile(payload []byte) (_ *os.File, err error) {
 	fd, err := unix.MemfdCreate("hostel-start-spec", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)

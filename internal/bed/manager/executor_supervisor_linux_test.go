@@ -40,7 +40,7 @@ func TestMain(m *testing.M) {
 func newSupervisorManager(t *testing.T) *Manager {
 	t.Helper()
 	m := newTestManager(t)
-	factory, err := executor.NewSupervisorFactory(os.Args[0], m.resources)
+	factory, err := executor.NewSupervisorFactory(os.Args[0], m.resources, 0)
 	if err != nil {
 		t.Fatalf("NewSupervisorFactory: %v", err)
 	}

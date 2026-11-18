@@ -351,6 +351,14 @@ Bed 身份终结时清理，daemon 重启不恢复执行历史。运行中日志
 策略清理；磁盘日志和内存片段缓存的保留独立。写入失败终止运行并报告 output_failure，
 读取失败明确返回错误。输出协议见 [protocol.md](protocol.md)。
 
+### Supervisor 启动请求大小
+
+Linux supervisor backend 初始化时，daemon 从临时 Unix seqpacket socket 读取有效
+`SO_SNDBUF`。启动请求的内联 JSON 上限取缓冲区扣除 32 字节内核开销和 4 字节帧头后的大小，
+最高 128 KiB。完整请求超过该值时，daemon 通过 sealed memfd 传递 argv、工作目录和环境变量。
+探测失败时使用 `HOSTEL_SUPERVISOR_INLINE_LIMIT_BYTES`（或 `--supervisor-inline-limit-bytes`），
+范围 1–131072 字节，默认 131072。启动日志记录本次选用的阈值和来源。
+
 ### Executor 进程命名空间
 
 `--executor-pid-namespace=off|auto|required` / `HOSTEL_EXECUTOR_PID_NAMESPACE`

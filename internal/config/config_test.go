@@ -201,3 +201,21 @@ func TestPIDNamespacePolicyConfig(t *testing.T) {
 		t.Fatal("invalid policy accepted")
 	}
 }
+
+func TestSupervisorInlineLimitFallback(t *testing.T) {
+	const key = "HOSTEL_SUPERVISOR_INLINE_LIMIT_BYTES"
+	t.Setenv(key, "")
+	if got := mustLoad(t, nil).Bed.Executor.SupervisorInlineLimitBytes; got != 131072 {
+		t.Fatalf("default = %d", got)
+	}
+	t.Setenv(key, "8192")
+	if got := mustLoad(t, nil).Bed.Executor.SupervisorInlineLimitBytes; got != 8192 {
+		t.Fatalf("fallback = %d", got)
+	}
+	for _, value := range []string{"0", "131073"} {
+		t.Setenv(key, value)
+		if _, err := Load(nil, Options{}); err == nil {
+			t.Fatalf("accepted fallback %s", value)
+		}
+	}
+}

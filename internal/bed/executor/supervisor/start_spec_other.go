@@ -21,6 +21,8 @@ import (
 	"os"
 )
 
+func DetectInlineLimit(fallback int) int { return fallback }
+
 func newStartSpecFile([]byte) (*os.File, error) {
 	return nil, errors.New("large supervisor start specifications require Linux")
 }

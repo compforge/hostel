@@ -46,7 +46,7 @@ func ResolveFactory(ctx context.Context, cfg Config, resources resource.Tracker)
 	if err != nil {
 		return nil, err
 	}
-	factory, err := NewSupervisorFactory(exe, resources)
+	factory, err := NewSupervisorFactory(exe, resources, cfg.SupervisorInlineLimitBytes)
 	if err != nil {
 		return nil, err
 	}

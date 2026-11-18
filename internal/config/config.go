@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/osx"
+	"github.com/qiankunli/hostel/internal/bed/executor/supervisor"
 	"github.com/qiankunli/hostel/internal/bed/store"
 	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostnetwork "github.com/qiankunli/hostel/internal/host/network"
@@ -121,6 +122,7 @@ func Load(args []string, explicit Options) (*Config, error) {
 	fs.IntVar(&c.Bed.Resource.Admission.CPUThresholdPercent, "admission-cpu-threshold", osx.EnvInt("HOSTEL_ADMISSION_CPU_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier CPU usage percent, 0=disabled")
 	fs.IntVar(&c.Bed.Resource.Admission.MemoryThresholdPercent, "admission-memory-threshold", osx.EnvInt("HOSTEL_ADMISSION_MEMORY_THRESHOLD", defaultAdmissionThresholdPercent), "reject new active beds at this carrier memory usage percent, 0=disabled")
 	fs.StringVar((*string)(&c.Bed.Executor.PIDNS), "executor-pid-namespace", osx.EnvStr("HOSTEL_EXECUTOR_PID_NAMESPACE", "off"), "Executor PID namespace policy: auto | off | required")
+	fs.IntVar(&c.Bed.Executor.SupervisorInlineLimitBytes, "supervisor-inline-limit-bytes", osx.EnvInt("HOSTEL_SUPERVISOR_INLINE_LIMIT_BYTES", supervisor.DefaultInlineLimit), "fallback inline start request size in bytes when Unix socket probing fails")
 	fs.StringVar(&c.Bed.Executor.Backend, "executor", osx.EnvStr("HOSTEL_EXECUTOR", "auto"), "executor backend: auto | supervisor | local")
 	fs.StringVar(&c.Bed.Store.Sync, "sync", osx.EnvStr("HOSTEL_SYNC", "auto"), "Bed data synchronization policy: auto (per-bed detection) | noop | cas | pack | tar | restic")
 	fs.StringVar(&c.Bed.Store.ResticBinary, "restic-binary", osx.EnvStr("HOSTEL_RESTIC_BINARY", "restic"), "restic binary (requires 0.19.1)")
@@ -168,6 +170,9 @@ func Load(args []string, explicit Options) (*Config, error) {
 	// above high would make GC loop uselessly, so clamp it.
 	if c.LuggageHighBytes > 0 && (c.LuggageLowBytes <= 0 || c.LuggageLowBytes > c.LuggageHighBytes) {
 		c.LuggageLowBytes = c.LuggageHighBytes * 8 / 10
+	}
+	if n := c.Bed.Executor.SupervisorInlineLimitBytes; n < 1 || n > supervisor.DefaultInlineLimit {
+		return nil, fmt.Errorf("supervisor inline limit must be between 1 and %d bytes, got %d", supervisor.DefaultInlineLimit, n)
 	}
 	if err := c.Bed.Executor.PIDNS.Validate(); err != nil {
 		return nil, err

@@ -46,6 +46,8 @@ const Arg = "__supervisor"
 const (
 	socketNetwork  = "unixpacket"
 	maxMessageSize = 128 << 10
+	// DefaultInlineLimit is the fallback JSON size for inline start requests.
+	DefaultInlineLimit = maxMessageSize
 	// Start specifications larger than one IPC frame travel in a sealed memfd.
 	// Bound the out-of-band data independently of the control frame.
 	maxStartSpecSize = 4 << 20
