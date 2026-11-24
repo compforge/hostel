@@ -4,13 +4,19 @@ Bed 是 Hostel 对外提供的工作空间，也是命令执行、文件操作�
 调用方通过 `BedSpec` 声明需要的执行环境、数据卷、网络和安全约束。创建后，调用方按 Bed 名称发起请求，
 由所选 Pillow 提供执行环境和挂载视图。省略 Pillow 时使用声明中的第一个 Pillow。
 
-同一份声明在不同宿主上可以由不同机制实现。最简单的 Linux Bed 可以依靠专属 UID 和工作目录运行。
-当内核、节点配置和 Hostel 进程权限允许时，Hostel 还可以为 Bed 配置独立的挂载或网络 namespace，
-并通过 cgroup 管理资源。各子系统报告实际提供的能力。对于显式要求的只读进程根等约束，
-若当前环境无法兑现，Bed 初始化失败。各机制提供的保证见 [Bed 隔离](isolation.md)。
-
 Bed Manager 协调 Bed 的数据准备、运行资源、请求准入和回收。完整对象关系见 [工作负载关系](../AGENTS.md#工作负载关系)，
 数据与进程的具体契约分别见 [Volume](volumes.md) 和 [Pillow](pillow.md)。
+
+## Bed 胖瘦有别
+
+Host 指 Hostel 所在的运行环境，例如 Pod、虚拟机或物理机。Bed 的“胖瘦”取决于这个环境能提供哪些隔离和资源管理机制。
+在权限有限的 Linux Pod 中，Hostel 可以用专属 UID 和工作目录管理每个 Bed，多个 Bed 仍复用 Pod 的工具链。
+当内核、节点配置和进程权限允许时，Hostel 还可以用 mount namespace 提供独立的挂载视图，用 network namespace 隔离网络，
+用 cgroup 管理资源。这些能力可以分别具备。当它们都可用时，在 Bed 中执行命令和操作文件的体验就更接近独立容器。
+
+调用方用同一个 `BedSpec` 模型描述需求。Hostel 在 Host 的实际条件下选择可用机制，尽力满足声明，并报告各项能力的实际保证。
+例如，缺少 cgroup 时，Bed 仍可提供命令执行和文件操作；若调用方显式要求只读进程根，而 Host 无法强制只读，Bed 初始化失败。
+具体保证见 [Bed 隔离](isolation.md)。
 
 ## 身份与声明
 
