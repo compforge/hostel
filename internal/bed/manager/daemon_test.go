@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,5 +117,26 @@ func TestFailedSubsystemStartRetainsCleanupOwner(t *testing.T) {
 	}
 	if p.closes != 2 || len(m.subsystems) != 0 {
 		t.Fatal("failed subsystem cleanup not retried")
+	}
+}
+
+// +case:id=bed_root_outside_common_writes,desc=`A beds-root reaches shared software through a symlinked parent`,expect=`Start rejects the overlap before starting any subsystem`
+func TestStartRejectsSharedSoftwareAlias(t *testing.T) {
+	if _, err := os.Stat(sharedSoftwareRoot); errors.Is(err, os.ErrNotExist) {
+		t.Skip("shared software directory is absent")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(t.TempDir(), "software-parent")
+	if err := os.Symlink(filepath.Dir(sharedSoftwareRoot), parent); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestManager(t)
+	m.root = filepath.Join(parent, filepath.Base(sharedSoftwareRoot))
+	if err := m.Start(t.Context()); err == nil || !strings.Contains(err.Error(), "overlaps shared software") {
+		t.Fatalf("expected shared software overlap, got %v", err)
+	}
+	if len(m.subsystems) != 0 || m.started {
+		t.Fatal("started subsystems before rejecting shared software overlap")
 	}
 }

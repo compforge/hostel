@@ -152,11 +152,13 @@ func WithIdentitySelection(identity privilege.Selection) ManagerOption {
 	}
 }
 
+const sharedSoftwareRoot = "/usr/local"
+
 // NewManager assembles domain managers from the daemon host snapshot.
 // Start prepares the workspace root and recovers local identities.
 // amenities and st may be nil; maxBeds 0 = unlimited.
 func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.Isolator, amenities *amenity.Manager, maxBeds int, st *store.Manager, opts ...ManagerOption) (*Manager, error) {
-	if model.PathsOverlap(filepath.Clean(root), "/usr/local") {
+	if model.PathsOverlap(filepath.Clean(root), sharedSoftwareRoot) {
 		return nil, fmt.Errorf("beds-root overlaps shared software")
 	}
 	processEnv, _ := newProcessEnv(os.Environ())
