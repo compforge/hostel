@@ -160,18 +160,6 @@ Hostel 不尝试获取缺失权限，也不把 UID 0 等同于具备某个 capab
   root 且具备完整身份管理权限时探测非 root 基线 1000:1000，否则探测继承身份；无法安全启动或清理探测资源时返回错误。
   这是运行条件不足的回退，不提供固定 UID/GID 配置入口。
 
-Carrier 通过 `HOSTEL_PUBLIC_GID` 约定公共资源的 Unix 组，默认 **199999**。部署方应预留独立的 GID，
-避开已有特权组和 Bed 私有身份范围 200000–299999。镜像构建和 daemon 启动使用同一个值。
-镜像或外部目录提供方准备静态路径的权限，各 Subsystem 在创建自己的公共资源时授权。
-例如 Network 让该组可以列出和遍历 `/etc/netns` 及其创建的 resolver 子目录。启动时无需递归处理 `/etc`。
-
-Linux 具备身份管理能力时，Privilege 将该组附加到 Bed。command、Session 和 Pillow 主进程使用同一实际身份及组集合；
-rootless 运行沿用实际身份和继承组。Bed 私有数据仍由 Bed 专属身份保护。
-
-实例和 Bed 的 privilege 状态披露 Carrier 身份空间中的 `supplementary_gids`，选择必须经过
-真实进程验证，不能把预期配置当作已执行事实。user namespace 内未映射组可能显示为
-65534；访问是否成功仍由内核保存的组身份决定。
-
 Filesystem 为 Bed 构造文件视图，并引入公共程序、库和运行依赖；两种设计路线及当前取舍见
 [文件需求与访问](volumes.md#两种文件视图思路)。启动和 Bed 准备均不递归修改公共目录权限，
 Bed 删除与实例关闭也不删除公共资源或回滚其权限。普通 HostPath 的权限与生命周期同样由
@@ -179,8 +167,7 @@ Bed 删除与实例关闭也不删除公共资源或回滚其权限。普通 Hos
 Hostel 不通过默认安装路径或共享组成员身份推断目录可写。
 
 私有根和 managed Volume 继续按各 Bed UID/主 GID 管理，私有根以 Unix 权限阻止其他 Bed
-访问。软件附加组保留为身份的一部分，但只有来源已授予该组权限时才产生相应访问能力；
-它不自动授权其他路径，也不改变独立 UID/GID 或网络的 UID 匹配。
+访问。Network 仍按 Bed 的 UID 匹配网络规则。
 文件 API 由 daemon 通过 BedFS 的目录锚点直接执行，管理 Rootfs 与显式挂载的数据。
 它不隐式导出公共运行依赖，也不切换 Bed UID；Unix 权限等价不属于文件 API 契约。
 每次请求持有 Bed operation 防止回收，Filesystem 在请求结束并完成生命周期清理后关闭目录句柄。
@@ -200,6 +187,18 @@ UID 范围须由部署侧预留，避免与宿主账号或 user namespace 映射
 Bed 数据交接给新属主时跳过多硬链接的普通文件，防止改变 Bed 外共享 inode 的 owner；Linux 部署应
 保持 `fs.protected_hardlinks=1`。BedFS 在 daemon 通过 file API 新建文件后继续把 owner 交还给同一
 `BedUser`。
+
+### HOSTEL_PUBLIC_GID 公共资源组
+
+`HOSTEL_PUBLIC_GID` 是 Hostel 与部署方、资源提供方约定的 Unix 附加组，默认 GID 为 `199999`。
+部署方为 Carrier 预留这个 GID，避开已有特权组和 Bed 私有身份范围 `200000–299999`。
+镜像构建、外部挂载源和 Hostel daemon 使用同一个数值。
+
+- **资源提供方决定每项资源的权限。** 镜像维护者或挂载源的所有者可以用 Unix 组权限或 ACL 给该 GID 授权。例如，系统配置目录可以授予 `r-x` 以便列出和遍历，需要多个 Bed 写入的共享目录可以授予 `rwx`。文件内容能否读取取决于文件自身的权限，写入还要求 Bed 视图中的挂载可写。
+- **Privilege 将组附加到 Bed 进程。** Linux 具备身份管理能力时，command、Session 和 Pillow 主进程都获得这个 supplementary GID，各自所属 Bed 的 UID 和主 GID 保持原值。rootless 运行缺少组切换能力时沿用实际继承组，可在实例和 Bed 的 Privilege 状态中查看 `supplementary_gids`。
+- **各 Subsystem 为自己创建的公共资源授权。** Network 在准备 resolver 时，让该组能列出和遍历 `/etc/netns` 及本次创建的子目录。其他临时资源也由创建它的 Subsystem 按 Bed 所需操作授权。Bed 私有目录继续按各自的 UID 和主 GID 保护。
+
+`supplementary_gids` 使用 Carrier 身份空间中的数值。在 user namespace 内，未映射的组可能显示为 `65534`，内核仍按实际组身份判断访问权限。
 
 ### 特权操作顺序
 
