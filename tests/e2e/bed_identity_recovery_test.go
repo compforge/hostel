@@ -27,6 +27,7 @@ func uidPolicyOptions(t *testing.T) config.Options {
 		t.Skip("requires disposable Linux carrier with UID+nft prerequisites")
 	}
 	requireTestBinary(t)
+	t.Setenv("HOSTEL_PUBLIC_GID", fmt.Sprint(customPublicGID))
 	raw, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
 	if err != nil || strings.TrimSpace(string(raw)) != "0" {
 		t.Fatalf("requires ip_forward=0: %q %v", raw, err)
@@ -46,7 +47,7 @@ func uidBedDetail(t *testing.T, c *apiClient, name string) protocol.BedDetail {
 	}
 	must2xx(t, "Bed identity and policy", response)
 	u, n := detail.Status.Subsystems.Privilege, detail.Status.Subsystems.Network
-	if !u.Assigned || u.UID < privilege.UIDMin || u.UID > privilege.UIDMax || u.GID != u.UID || !slices.Equal(u.SupplementaryGIDs, []int{privilege.DefaultPublicGID}) || n.Isolation.Level != "shared" || n.Egress.Backend != "uid_nft" {
+	if !u.Assigned || u.UID < privilege.UIDMin || u.UID > privilege.UIDMax || u.GID != u.UID || !slices.Equal(u.SupplementaryGIDs, []int{customPublicGID}) || n.Isolation.Level != "shared" || n.Egress.Backend != "uid_nft" {
 		t.Fatalf("unexpected identity/network realization: %+v", detail.Status.Subsystems)
 	}
 	return detail
@@ -112,7 +113,7 @@ func TestBedIdentityCrashRecovery(t *testing.T) {
 		}
 		assertPersistedIdentity(t, root, name, after)
 		uid := after.Status.Subsystems.Privilege.UID
-		command := fmt.Sprintf(`set -eu; test "$(cat marker)" = retained-data; test "$(id -u):$(id -g)" = %d:%d; test "$(stat -c '%%u:%%g' marker)" = %d:%d; awk '/^Groups:/ { if (NF != 2 || $2 != %d) exit 1 }' /proc/self/status; printf resumed >> marker`, uid, uid, uid, uid, privilege.DefaultPublicGID)
+		command := fmt.Sprintf(`set -eu; test "$(cat marker)" = retained-data; test "$(id -u):$(id -g)" = %d:%d; test "$(stat -c '%%u:%%g' marker)" = %d:%d; awk '/^Groups:/ { if (NF != 2 || $2 != %d) exit 1 }' /proc/self/status; printf resumed >> marker`, uid, uid, uid, uid, customPublicGID)
 		result, response := c.command(t, name, map[string]any{"command": command, "timeout": 5000})
 		must2xx(t, "resumed process and private file", response)
 		assertCommandExit(t, result, 0)
@@ -144,7 +145,7 @@ func TestBedIdentityCrashRecovery(t *testing.T) {
 	})
 }
 
-// +case:id=bed_uid_pillow_egress,desc=`Pillow main processes share the internal software group while using independent UID egress`,expect=`Deny and allow apply before initial launch and after policy update plus Pillow restart`
+// +case:id=bed_uid_pillow_egress,desc=`Pillow main processes share the configured public group while using independent UID egress`,expect=`Deny and allow apply before initial launch and after policy update plus Pillow restart`
 // +link:doc=docs/network.md
 func TestBedUIDPillowEgress(t *testing.T) {
 	options := uidPolicyOptions(t)
@@ -157,7 +158,7 @@ func TestBedUIDPillowEgress(t *testing.T) {
 			listener := policyListener(t)
 			address := net.JoinHostPort("127.0.0.1", fmt.Sprint(listener.Addr().(*net.TCPAddr).Port))
 			c := startTarget(t, targetOptions{executor: backend, config: &options}).client
-			command := fmt.Sprintf(`set -eu; awk '/^Groups:/ { if (NF != 2 || $2 != %d) exit 1 }' /proc/self/status; `, privilege.DefaultPublicGID) + `if test -f expected; then E2E_NETWORK_PROBE=$(cat expected); fi; export E2E_NETWORK_PROBE; ` + shellx.Quote(binary) + ` -test.run=^TestNetworkTrafficProbe$; id -u > uid; printf '%s' "$E2E_NETWORK_PROBE" > result; exec sleep 300`
+			command := fmt.Sprintf(`set -eu; awk '/^Groups:/ { if (NF != 2 || $2 != %d) exit 1 }' /proc/self/status; `, customPublicGID) + `if test -f expected; then E2E_NETWORK_PROBE=$(cat expected); fi; export E2E_NETWORK_PROBE; ` + shellx.Quote(binary) + ` -test.run=^TestNetworkTrafficProbe$; id -u > uid; printf '%s' "$E2E_NETWORK_PROBE" > result; exec sleep 300`
 			var previousUID uint32
 			for _, name := range []string{"pillow-allow", "pillow-deny"} {
 				mode, action := "allowed", "allow"

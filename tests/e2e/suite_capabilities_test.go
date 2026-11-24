@@ -16,7 +16,6 @@ import (
 
 	"github.com/qiankunli/go-stdx/shellx"
 	"github.com/qiankunli/hostel/internal/bed/network"
-	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/internal/bed/tool"
 	"github.com/qiankunli/hostel/protocol"
 )
@@ -26,6 +25,7 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 		t.Skip("requires rootful Linux file isolation")
 	}
 	requireTestBinary(t)
+	t.Setenv("HOSTEL_PUBLIC_GID", fmt.Sprint(customPublicGID))
 	for _, scenario := range []string{"network-off", "network-probe-failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			options := restrictedOptions()
@@ -57,7 +57,7 @@ func TestPrivateFilesWithSharedNetwork(t *testing.T) {
 			const bed = "suite-shared"
 			response, err := c.json(ctx, "POST", "/v1/beds", "", map[string]any{
 				"id":      bed,
-				"pillows": []map[string]any{{"name": "writer", "command": []string{"/bin/sh", "-c", fmt.Sprintf("awk '/^Groups:/ { if (NF != 2 || $2 != %d) exit 1 }' /proc/self/status && printf pillow > /workspace/pillow-marker && exec /bin/sleep 300", privilege.DefaultPublicGID)}, "required": true, "restart_policy": "never", "stop_seconds": 1}},
+				"pillows": []map[string]any{{"name": "writer", "command": []string{"/bin/sh", "-c", fmt.Sprintf("awk '/^Groups:/ { if (NF != 2 || $2 != %d) exit 1 }' /proc/self/status && printf pillow > /workspace/pillow-marker && exec /bin/sleep 300", customPublicGID)}, "required": true, "restart_policy": "never", "stop_seconds": 1}},
 			}, nil)
 			if err != nil {
 				t.Fatal(err)
