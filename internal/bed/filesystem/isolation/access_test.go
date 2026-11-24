@@ -9,27 +9,12 @@ import (
 )
 
 func TestCommonDirectoryPolicyDrivesMountPermissions(t *testing.T) {
-	roots := []string{}
-	for _, access := range bedfs.CommonDirectories() {
-		roots = append(roots, access.Path)
-	}
-	mounts := buildBwrapMounts("/beds", "/beds/a/rootfs", nil, nil, roots...)
-	for _, access := range bedfs.CommonDirectories() {
-		found := false
-		for _, mount := range mounts {
-			if mount.Source == access.Path && mount.Target == access.Path {
-				want := filesystem.Bind
-				if access.ReadOnly {
-					want = filesystem.ReadOnlyBind
-				}
-				if mount.Kind != want {
-					t.Fatalf("path %s: %v != %v", access.Path, mount.Kind, want)
-				}
-				found = true
-			}
-		}
-		if !found {
-			t.Fatalf("missing common path %s", access.Path)
+	roots := bedfs.SystemPaths()
+	mounts := buildBwrapMounts("/beds", "/beds/a/rootfs", nil, nil, false, roots...)
+	for _, p := range roots {
+		want := filesystem.Mount{Kind: filesystem.ReadOnlyBind, Source: p, Target: p}
+		if !slices.Contains(mounts, want) {
+			t.Fatalf("missing read-only system mount %s", p)
 		}
 	}
 	if !slices.Equal(defaultMaskCandidates, bedfs.ProtectedDirectories()) {

@@ -49,10 +49,11 @@ type Usage struct {
 
 // bedMeta is hostel's durable per-bed bookkeeping (docs/volumes.md#本地数据与生命周期).
 type bedMeta struct {
-	Volumes []model.VolumeSpec `json:"volumes"`
-	Sync    store.SyncKind     `json:"sync,omitempty"`
-	Version int                `json:"version"`
-	BedID   string             `json:"bed_id"`
+	SecurityContext model.SecurityContext `json:"securityContext,omitzero"`
+	Volumes         []model.VolumeSpec    `json:"volumes"`
+	Sync            store.SyncKind        `json:"sync,omitempty"`
+	Version         int                   `json:"version"`
+	BedID           string                `json:"bed_id"`
 	// CreatedAt is when the bed identity was first created — it survives
 	// evict/resume cycles via the snapshot.
 	CreatedAt time.Time `json:"created_at"`

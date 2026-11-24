@@ -157,13 +157,8 @@ func ApplyConfine(dataDir string) error {
 // in its data root. An unusable composition is rejected by the normal probe.
 func landlockPaths(dataDir string) (readOnly, readWrite []string) {
 	readWrite = append(readWrite, dataDir)
-	for _, access := range bedfs.ProcessDirectories() {
-		if access.ReadOnly {
-			readOnly = append(readOnly, access.Path)
-		} else {
-			readWrite = append(readWrite, access.Path)
-		}
-	}
+	readOnly = append(bedfs.SystemPaths(), "/sys", "/proc")
+	readWrite = append(readWrite, "/dev")
 	return
 }
 

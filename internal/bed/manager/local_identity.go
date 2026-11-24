@@ -88,7 +88,7 @@ func (m *Manager) recoverLocalIdentities() error {
 		if err != nil {
 			return fmt.Errorf("recover bed %s volumes: %w", name, err)
 		}
-		local := &localIdentity{bed: model.New(name, id, model.Spec{Dir: filepath.Join(m.root, name), Pillows: record.Pillows, Volumes: volumes})}
+		local := &localIdentity{bed: model.New(name, id, model.Spec{Dir: filepath.Join(m.root, name), SecurityContext: record.SecurityContext, Pillows: record.Pillows, Volumes: volumes})}
 		if err := m.privileges.Restore(local.bed, record.UID, record.GID); err != nil {
 			return fmt.Errorf("recover bed %s privilege: %w", name, err)
 		}
@@ -161,7 +161,7 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 		return err
 	}
 	spec := local.bed.Spec()
-	data, err := json.Marshal(localIdentityRecord{Volumes: spec.Volumes, ID: local.bed.ID.String(), UID: &identity.UID, GID: &identity.GID, Pillows: spec.Pillows})
+	data, err := json.Marshal(localIdentityRecord{SecurityContext: spec.SecurityContext, Volumes: spec.Volumes, ID: local.bed.ID.String(), UID: &identity.UID, GID: &identity.GID, Pillows: spec.Pillows})
 	if err != nil {
 		return err
 	}
@@ -169,11 +169,12 @@ func (m *Manager) saveLocalIdentity(local *localIdentity) error {
 }
 
 type localIdentityRecord struct {
-	UID     *int               `json:"uid"`
-	GID     *int               `json:"gid"`
-	ID      string             `json:"id"`
-	Volumes []model.VolumeSpec `json:"volumes"`
-	Pillows []model.PillowSpec `json:"pillows"`
+	SecurityContext model.SecurityContext `json:"securityContext,omitzero"`
+	UID             *int                  `json:"uid"`
+	GID             *int                  `json:"gid"`
+	ID              string                `json:"id"`
+	Volumes         []model.VolumeSpec    `json:"volumes"`
+	Pillows         []model.PillowSpec    `json:"pillows"`
 }
 
 // waitForLocalCleanup only joins an active attempt. An idle/failed cleanup is

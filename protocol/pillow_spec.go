@@ -1,5 +1,10 @@
 package protocol
 
+// SecurityContext defines the filesystem protection required by every Pillow.
+type SecurityContext struct {
+	ReadOnlyRootFilesystem bool `json:"readOnlyRootFilesystem,omitempty"`
+}
+
 // PillowSpec is the immutable, non-secret definition of a named execution environment
 // and its optional supervised main process. A Bed must explicitly declare at least
 // one Pillow; its first declaration is the default. Runtime addresses never enter it.

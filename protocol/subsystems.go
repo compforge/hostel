@@ -119,12 +119,13 @@ type FilesystemRealization struct {
 }
 
 type FilesystemViewStatus struct {
-	Pillow          string `json:"pillow"`
-	Mode            string `json:"mode"`
-	Rootfs          bool   `json:"rootfs"`
-	ReadWriteMounts bool   `json:"read_write_mounts"`
-	ReadOnlyMounts  bool   `json:"read_only_mounts"`
-	Reason          string `json:"reason,omitempty"`
+	ReadOnlyRootFilesystem bool   `json:"read_only_root_filesystem,omitempty"`
+	Pillow                 string `json:"pillow"`
+	Mode                   string `json:"mode"`
+	Rootfs                 bool   `json:"rootfs"`
+	ReadWriteMounts        bool   `json:"read_write_mounts"`
+	ReadOnlyMounts         bool   `json:"read_only_mounts"`
+	Reason                 string `json:"reason,omitempty"`
 }
 
 // Software access describes runtime preparation and identity authorization;
@@ -137,10 +138,11 @@ type SoftwareAccessStatus struct {
 }
 
 type FilesystemStatus struct {
-	Realization *FilesystemRealization `json:"realization,omitempty"`
-	Room        RoomType               `json:"room,omitempty"`
-	Mounts      []VolumeMountStatus    `json:"mounts,omitempty"`
-	Prepared    bool                   `json:"prepared"`
+	ReadOnlyRootRequested bool                   `json:"read_only_root_requested,omitempty"`
+	Realization           *FilesystemRealization `json:"realization,omitempty"`
+	Room                  RoomType               `json:"room,omitempty"`
+	Mounts                []VolumeMountStatus    `json:"mounts,omitempty"`
+	Prepared              bool                   `json:"prepared"`
 }
 
 type NetworkRule struct {

@@ -12,13 +12,9 @@ import (
 // +case:id=landlock_common_grants,desc=`Landlock compiles shared and private path grants`,expect=`shared userland is available but Carrier scratch and secrets have no broad parent grant`
 func TestLandlockUsesCommonPolicyWithoutGrantingCarrierScratch(t *testing.T) {
 	ro, rw := landlockPaths("/tmp/hostel/beds/a/rootfs")
-	for _, access := range bedfs.ProcessDirectories() {
-		paths := rw
-		if access.ReadOnly {
-			paths = ro
-		}
-		if !slices.Contains(paths, access.Path) {
-			t.Fatalf("missing grant: %+v", access)
+	for _, p := range append(bedfs.SystemPaths(), "/proc", "/sys") {
+		if !slices.Contains(ro, p) {
+			t.Fatalf("missing read-only path %s", p)
 		}
 	}
 	if !slices.Contains(rw, "/tmp/hostel/beds/a/rootfs") {

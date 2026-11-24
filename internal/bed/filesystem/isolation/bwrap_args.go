@@ -17,7 +17,6 @@ package isolation
 import (
 	"path/filepath"
 
-	model "github.com/qiankunli/hostel/internal/bed"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
 	hostprocess "github.com/qiankunli/hostel/internal/host/process"
@@ -43,8 +42,7 @@ import (
 //     bind the host /proc read-only instead. (uts/ipc unshares are cheap and
 //     don't touch mounts.)
 //  2. Bind bed_home to /: command, session and Pillow data share BedFS paths.
-//  3. Introduce existing public directories with their declared access modes;
-//     writable children are rebound after any read-only parent.
+//  3. Project the Carrier system paths read-only.
 //  4. Fresh /dev and existing read-only /proc (no procfs remount under K8s).
 //  5. Mask sensitive paths only if a runtime overlay re-exposed them.
 //  6. Bind workspace and explicit mappings after masks.
@@ -53,29 +51,18 @@ import (
 // maskPaths are host paths that exist. Environment ownership lives in bed's
 // process-env builder, so isolation mechanisms never inherit or filter it.
 // +why=`A private internal data mount only fixes structured API paths; native processes issue literal absolute paths. The Bed data root must be the default process root, with explicit runtime overlays instead of an inherited carrier root.`
-func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths []string, mappings []bedfs.Mount, runtimeRoots ...string) []string {
-	mounts := buildBwrapMounts(bedsRoot, bedHome, maskPaths, mappings, runtimeRoots...)
+func buildBwrapArgs(bedsRoot, bedHome, workspace string, cwd string, maskPaths []string, mappings []bedfs.Mount, readOnlyRoot bool, runtimeRoots ...string) []string {
+	mounts := buildBwrapMounts(bedsRoot, bedHome, maskPaths, mappings, readOnlyRoot, runtimeRoots...)
 	return (hostfs.Bubblewrap{UserNamespace: true, UTSNamespace: true, IPCNamespace: true, Mounts: mounts, Cwd: cwd, DieWithParent: true}).Args()
 }
 
 // buildBwrapMounts describes a Pillow view independently of how a process enters it.
-func buildBwrapMounts(bedsRoot, bedHome string, maskPaths []string, mappings []bedfs.Mount, runtimeRoots ...string) []hostfs.Mount {
+func buildBwrapMounts(bedsRoot, bedHome string, maskPaths []string, mappings []bedfs.Mount, readOnlyRoot bool, runtimeRoots ...string) []hostfs.Mount {
 	mounts := []hostfs.Mount{
 		{Kind: hostfs.Bind, Source: bedHome, Target: "/"},
 	}
 	for _, p := range runtimeRoots {
-		kind := hostfs.ReadOnlyBind
-		for _, access := range bedfs.CommonDirectories() {
-			if access.Path == p && !access.ReadOnly {
-				kind = hostfs.Bind
-			}
-		}
-		mounts = append(mounts, hostfs.Mount{Kind: kind, Source: p, Target: p})
-	}
-	for _, access := range bedfs.CommonDirectories() {
-		if !access.ReadOnly && inRuntime(access.Path, runtimeRoots) {
-			mounts = append(mounts, hostfs.Mount{Kind: hostfs.Bind, Source: access.Path, Target: access.Path})
-		}
+		mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: p, Target: p})
 	}
 	mounts = append(mounts,
 		hostfs.Mount{Kind: hostfs.Dev, Target: "/dev"},
@@ -84,20 +71,21 @@ func buildBwrapMounts(bedsRoot, bedHome string, maskPaths []string, mappings []b
 	for _, p := range append([]string{bedsRoot}, maskPaths...) {
 		if inRuntime(p, runtimeRoots) {
 			mounts = append(mounts, hostfs.Mount{Kind: hostfs.Tmpfs, Target: p})
+			if readOnlyRoot {
+				mounts = append(mounts, hostfs.Mount{Kind: hostfs.RemountReadOnly, Target: p})
+			}
 		}
 	}
 	mounts = append(mounts,
 		hostfs.Mount{Kind: hostfs.Bind, Source: filepath.Join(bedHome, "workspace"), Target: bedfs.DefaultWorkdir},
 	)
+	if readOnlyRoot {
+		mounts = append(mounts, hostfs.Mount{Kind: hostfs.Bind, Source: filepath.Join(bedHome, "tmp"), Target: bedfs.TemporaryDir})
+	}
 	for _, m := range mappings {
 		kind := hostfs.Bind
 		if m.ReadOnly {
 			kind = hostfs.ReadOnlyBind
-			// Public sources remain writable at their Carrier spelling.
-			// Protect the carrier spelling too, or the process could bypass ReadOnly.
-			if sharedWritableSource(m.Source) {
-				mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: m.Source, Target: m.Source})
-			}
 		}
 		mounts = append(mounts, hostfs.Mount{Kind: kind, Source: m.Source, Target: m.Target})
 	}
@@ -107,24 +95,7 @@ func buildBwrapMounts(bedsRoot, bedHome string, maskPaths []string, mappings []b
 	return mounts
 }
 
-func systemFileArgs(fs *bedfs.FS) []string {
-	var args []string
-	for _, file := range fs.SystemFiles() {
-		args = append(args, "--ro-bind", file.Source, file.Target)
-	}
-	return args
-}
-
 // defaultMaskCandidates are host paths masked when they exist: host user data
 // and platform-mounted credentials (e.g. K8s serviceaccount tokens). Secrets
 // belong to Hostel and explicitly configured workloads, never to arbitrary bed code.
 var defaultMaskCandidates = bedfs.ProtectedDirectories()
-
-func sharedWritableSource(source string) bool {
-	for _, access := range bedfs.CommonDirectories() {
-		if !access.ReadOnly && model.PathsOverlap(source, access.Path) {
-			return true
-		}
-	}
-	return false
-}

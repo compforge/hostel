@@ -10,17 +10,6 @@ import (
 	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 )
 
-// Runtime overlays and API routes consume the same BedFS directory policy.
-func existingRuntimePaths() []string {
-	var paths []string
-	for _, access := range bedfs.CommonDirectories() {
-		if _, err := os.Stat(access.Path); err == nil {
-			paths = append(paths, access.Path)
-		}
-	}
-	return paths
-}
-
 func beneath(p, root string) bool {
 	return p == root || strings.HasPrefix(p, root+"/")
 }
@@ -38,9 +27,12 @@ func inRuntime(p string, roots []string) bool {
 // absolute paths. PRoot provides path compatibility, not read-only enforcement.
 func rootProcessMappings(fs *bedfs.FS, support bedfs.MappingSupport) []hostfs.Mapping {
 	var mappings []hostfs.Mapping
-	for _, access := range bedfs.ProcessDirectories() {
-		if _, err := os.Stat(access.Path); err == nil {
-			mappings = append(mappings, hostfs.Mapping{Source: access.Path, Target: access.Path})
+	for _, p := range fs.SystemRoots {
+		mappings = append(mappings, hostfs.Mapping{Source: p, Target: p})
+	}
+	for _, p := range []string{"/proc", "/dev"} {
+		if _, err := os.Stat(p); err == nil {
+			mappings = append(mappings, hostfs.Mapping{Source: p, Target: p})
 		}
 	}
 	mappings = append(mappings, processMappings(fs, support)...)

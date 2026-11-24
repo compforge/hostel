@@ -10,9 +10,12 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/store"
 )
 
-var ErrPathsConflict = errors.New("bed: volume declaration cannot change")
+var ErrPathsConflict = errors.New("bed: filesystem declaration cannot change")
 
 func checkBedPaths(options CreateOptions, actual model.Spec) error {
+	if options.SecurityContext != actual.SecurityContext {
+		return fmt.Errorf("%w: securityContext", ErrPathsConflict)
+	}
 	if options.Volumes != nil && !reflect.DeepEqual(options.Volumes, actual.Volumes) {
 		return fmt.Errorf("%w: volumes", ErrPathsConflict)
 	}
@@ -29,6 +32,10 @@ func (m *Manager) preparePaths(init *bedInitialization) error {
 		return err
 	}
 	if exists {
+		meta, ok := loadMeta(spec.Dir)
+		if !ok || meta.SecurityContext != spec.SecurityContext {
+			return fmt.Errorf("%w: snapshot securityContext", ErrPathsConflict)
+		}
 		if spec.Volumes == nil {
 			spec.Volumes = restored
 		} else if !reflect.DeepEqual(model.PersistentVolumes(spec.Volumes), restored) {

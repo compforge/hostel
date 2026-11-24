@@ -99,6 +99,7 @@ func probeProot(base Boundary, bedsRoot, executable string) hostfacts.ProbeRepor
 		return hostfacts.ProbeReport{Error: "prepare probe bed: " + err.Error()}
 	}
 	defer base.Release(context.Background(), fs)
+	fs.PrepareProcessRoot(false)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

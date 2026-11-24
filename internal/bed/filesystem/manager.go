@@ -7,6 +7,7 @@ import (
 	"log"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
+	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 	"github.com/qiankunli/hostel/protocol"
 )
 
@@ -66,7 +68,7 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 			log.Printf("filesystem: bed=%s path=%s mapping available through API; process mapping unavailable read_only=%t", b.ID.String(), mapping.Target, mapping.ReadOnly)
 		}
 	}
-	m.status.Set(b, bed.FilesystemStatus{FilesystemStatus: protocol.FilesystemStatus{Realization: &protocol.FilesystemRealization{State: "pending"}}, Rootfs: fs.Rootfs(), Workdir: fs.Workdir()})
+	m.status.Set(b, bed.FilesystemStatus{FilesystemStatus: protocol.FilesystemStatus{ReadOnlyRootRequested: b.Spec().SecurityContext.ReadOnlyRootFilesystem, Realization: &protocol.FilesystemRealization{State: "pending"}}, Rootfs: fs.Rootfs(), Workdir: fs.Workdir()})
 	return nil
 }
 
@@ -81,6 +83,10 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 			m.invalidateRealization(b, "pending", "filesystem preparation failed")
 		}
 	}()
+	readOnlyRoot := b.Spec().SecurityContext.ReadOnlyRootFilesystem
+	if readOnlyRoot && !m.isolator.MountsRoot() {
+		return fmt.Errorf("securityContext.readOnlyRootFilesystem requires a read-only process root: filesystem %s cannot enforce it", m.isolator.Name())
+	}
 	if err := m.prepareVolumeOwners(b); err != nil {
 		return err
 	}
@@ -89,6 +95,9 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Mounts = nil })
 	for _, consumer := range slices.Sorted(maps.Keys(views)) {
 		view := views[consumer]
+		if m.isolator.View(view).Rootfs() == "/" {
+			view.PrepareProcessRoot(readOnlyRoot)
+		}
 		for _, file := range files {
 			for _, mapping := range view.Mounts() {
 				if bed.PathsOverlap(file.Target, mapping.Target) {
@@ -106,7 +115,23 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 		if err := m.isolator.Prepare(ctx, view); err != nil {
 			return fmt.Errorf("prepare file view consumer=%q: %w", consumer, err)
 		}
-		realized.Views = append(realized.Views, m.realizedView(consumer, view))
+		if readOnlyRoot && !m.isolator.PrivilegedEntry() {
+			// User-namespace bwrap constructs its mounts at exec. Validate this Pillow
+			// before readiness using Hostel's pinned helper under the Bed credentials.
+			user := b.Status().Privilege
+			cmd := exec.CommandContext(ctx, hostprocess.BedInitPath, "--version")
+			cmd.Env = []string{"PATH=/usr/bin:/bin"}
+			wrap := isolation.BindBedInit(m.isolator, view, int(user.UID), int(user.GID), user.SupplementaryGIDs)
+			if err := wrap(cmd, ""); err != nil {
+				return fmt.Errorf("prepare read-only root for Pillow %q: %w", consumer, err)
+			}
+			if output, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("prepare read-only root for Pillow %q: %w: %s", consumer, err, output)
+			}
+		}
+		status := m.realizedView(consumer, view)
+		status.ReadOnlyRootFilesystem = readOnlyRoot
+		realized.Views = append(realized.Views, status)
 	}
 	m.status.Update(b, func(s *bed.FilesystemStatus) {
 		s.Prepared = true
