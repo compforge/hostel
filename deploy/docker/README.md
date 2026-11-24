@@ -5,6 +5,19 @@ and `linux/arm64`. Run `make image` from the repository root for the current
 architecture, or `make image-multiarch IMAGE=<repository>:<tag>` to build and
 push both architectures.
 
+The runtime image sets `HOSTEL_PUBLIC_GID` to `199999` by default. To reserve a
+different supplementary group for Beds, build with `make image HOSTEL_PUBLIC_GID=198888`.
+The lean and multi-architecture targets accept the same setting. A derived image can
+grant the group access to a specific shared directory using the inherited value:
+
+```dockerfile
+FROM hostel:dev
+RUN install -d -m 2770 -g "${HOSTEL_PUBLIC_GID}" /srv/shared-work
+```
+
+Mount that directory into the intended Bed view with write access. The setgid bit
+lets new entries inherit the directory's group. See the [public resource group contract](../../docs/isolation.md#hostel_public_gid-公共资源组).
+
 ## Process path helpers
 
 The image installs pinned PRoot and pathshim binaries in `/usr/bin`, which is
