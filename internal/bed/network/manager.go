@@ -87,7 +87,7 @@ func NewConfigured(ctx context.Context, cfg Config) *Manager {
 	}
 	m := &Manager{config: cfg}
 	if cfg.NetNS.Effective() != tool.Off {
-		m.pool = hostnetwork.New(ctx)
+		m.pool = hostnetwork.New(cfg.PublicGID)
 	}
 	return m
 }

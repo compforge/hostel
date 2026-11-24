@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/qiankunli/go-stdx/randx"
@@ -23,6 +24,7 @@ import (
 )
 
 type linuxBackend struct {
+	publicGID       int
 	mtu             int
 	store           *AllocationStore
 	ports           *PortManager
@@ -59,12 +61,9 @@ func run(ctx context.Context, input, command string, args ...string) ([]byte, er
 	return out, nil
 }
 
-func probeBackend(ctx context.Context, ports ...*PortManager) (backend, Probe) {
-	return probeBackendWithStore(ctx, nil, DetectMTU(ctx, FallbackMTU).Value, ports...)
-}
-func probeBackendWithStore(ctx context.Context, store *AllocationStore, mtu int, ports ...*PortManager) (backend, Probe) {
+func probeBackendWithStore(ctx context.Context, store *AllocationStore, mtu, publicGID int, ports ...*PortManager) (backend, Probe) {
 	probe := Probe{Stage: "tools", Cause: hostel.CauseCarrier}
-	b := &linuxBackend{mtu: mtu, store: store, prefix: "hn" + randx.Hex(4), endpoints: make(map[string]*linuxEndpoint)}
+	b := &linuxBackend{publicGID: publicGID, mtu: mtu, store: store, prefix: "hn" + randx.Hex(4), endpoints: make(map[string]*linuxEndpoint)}
 	if len(ports) > 0 {
 		b.ports = ports[0]
 	}
@@ -201,6 +200,43 @@ func (b *linuxBackend) allocate(ctx context.Context) (netip.Addr, netip.Addr, er
 	return netip.Addr{}, netip.Addr{}, hostel.WrapError(hostel.ErrLimitExceeded, "network address allocation", hostel.CauseResource, errors.New("no unused /30 network in 198.18.0.0/15"))
 }
 
+// +spec=`Beds can list resolver directories but cannot create or replace resolver entries.`
+// +link=component://docs/isolation.md
+func (e *linuxEndpoint) prepareResolverDir(dir string) error {
+	parent := filepath.Dir(dir)
+	if err := os.Mkdir(parent, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	// Older carriers may already have a 0700 parent. Preserve an accessible
+	// system directory and only prepare the endpoint we just allocated.
+	info, err := os.Lstat(parent)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Sys().(*syscall.Stat_t).Uid != uint32(os.Geteuid()) || info.Mode().Perm()&0022 != 0 {
+		return fmt.Errorf("resolver parent %s must be a daemon-owned directory without group or other write access", parent)
+	}
+	gid := e.owner.publicGID
+	parentGID := int(info.Sys().(*syscall.Stat_t).Gid)
+	access := info.Mode().Perm()
+	if parentGID == gid && access&0050 != 0050 || parentGID != gid && access&0005 != 0005 {
+		if err := os.Chown(parent, -1, gid); err != nil {
+			return err
+		}
+		if err := os.Chmod(parent, info.Mode()|0050); err != nil {
+			return err
+		}
+	}
+	if err := os.Mkdir(dir, 0700); err != nil {
+		return err
+	}
+	e.config = true // Close owns cleanup even if the following grant fails.
+	if err := os.Chown(dir, -1, gid); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0750)
+}
+
 // +spec=`Both veth ends use the startup MTU before either link is brought up.`
 // +link=component://docs/network.md
 func (e *linuxEndpoint) create(ctx context.Context) error {
@@ -211,10 +247,9 @@ func (e *linuxEndpoint) create(ctx context.Context) error {
 	e.namespace = true
 	// ip netns exec gives every process a private resolver view, including suite.
 	dir := filepath.Join("/etc/netns", e.name)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
+	if err := e.prepareResolverDir(dir); err != nil {
+		return fmt.Errorf("prepare resolver directory %s for public gid %d: %w", dir, b.publicGID, err)
 	}
-	e.config = true
 	e.dns = newDNSForwarder(e.gateway.String(), b.resolvers)
 	e.dns.ports = b.ports
 	e.dns.owner = "network/" + e.name + "/dns"

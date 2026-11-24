@@ -173,11 +173,14 @@ RUN restic version
 
 # Carrier software uses ecosystem-standard env names and reaches beds through
 # default inheritance; Hostel filters only its reserved namespaces.
+# Image authors can grant this group access to selected paths in later layers.
+ARG HOSTEL_PUBLIC_GID=199999
 ENV PYTHONUSERBASE=/usr/local \
     NPM_CONFIG_PREFIX=/usr/local \
     UV_TOOL_DIR=/usr/local/share/uv/tools \
     UV_TOOL_BIN_DIR=/usr/local/bin \
     PATH=/usr/local/bin:${PATH} \
+    HOSTEL_PUBLIC_GID=${HOSTEL_PUBLIC_GID} \
     HOSTEL_BEDS_ROOT=/workspace \
     HOSTEL_CHROMIUM_PATH=/usr/bin/chromium
 # No VOLUME: it would bake the default path in at build time and silently

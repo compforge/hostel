@@ -7,6 +7,7 @@ import (
 )
 
 type Config struct {
+	PublicGID     int
 	NetNS, UIDNFT tool.Policy
 	// MTU is used only when startup egress MTU discovery fails.
 	MTU int

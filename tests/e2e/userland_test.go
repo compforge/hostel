@@ -5,7 +5,6 @@ package e2e_test
 import (
 	"context"
 	"fmt"
-	"github.com/qiankunli/hostel/internal/bed/privilege"
 	"github.com/qiankunli/hostel/protocol"
 	"net/http"
 	"net/http/httptest"
@@ -55,6 +54,7 @@ func TestSharedSoftwareAcrossBedUsers(t *testing.T) {
 	requireUserland(t)
 	target := startTarget(t, targetOptions{})
 	c := target.client
+	expectedPublicGID := carrierPublicGID(t, c)
 	for _, name := range []string{"software-a", "software-b"} {
 		must2xx(t, "declare Bed", c.createBed(t, name))
 	}
@@ -77,7 +77,7 @@ func TestSharedSoftwareAcrossBedUsers(t *testing.T) {
 		}
 		must2xx(t, "shared software identity", response)
 		u := detail.Status.Subsystems.Privilege
-		if !u.Assigned || !slices.Equal(u.SupplementaryGIDs, []int{privilege.SoftwareGID}) {
+		if !u.Assigned || !slices.Equal(u.SupplementaryGIDs, []int{expectedPublicGID}) {
 			t.Fatalf("unexpected Carrier-space identity: %+v", u)
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/go-stdx/shellx"
+	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 )
 
 func TestLinuxNetworkTableCleanup(t *testing.T) {
@@ -20,7 +21,7 @@ func TestLinuxNetworkTableCleanup(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
-	backend, probe := probeBackend(ctx)
+	backend, probe := probeBackendWithStore(ctx, nil, DetectMTU(ctx, FallbackMTU).Value, hostprivilege.DefaultPublicGID)
 	if backend == nil || probe.Error != "" {
 		t.Fatalf("network prerequisite: %+v", probe)
 	}

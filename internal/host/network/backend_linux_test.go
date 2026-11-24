@@ -10,7 +10,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -36,7 +38,7 @@ func testLinuxNetwork(t *testing.T, mtu int) {
 	if mode == "" {
 		t.Skip("requires disposable Linux container; set HOSTEL_NETWORK_TEST=enabled or disabled")
 	}
-	m := New(context.Background())
+	m := New(0)
 	if mtu != 0 {
 		m.SetMTU(mtu)
 	}
@@ -199,4 +201,43 @@ func TestNetworkSocketHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	fmt.Println(string(buf[:n]))
+}
+
+// +case:id=public_resolver_group,desc=`Prepare an old private netns parent and a new resolver directory`,expect=`A Bed with the Carrier group can list both directories and cannot write in either`
+func TestResolverDirPublicGID(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires a root Linux test container")
+	}
+	root, err := os.MkdirTemp("", "resolver-group-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	if err := os.Chmod(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(root, "netns")
+	if err := os.Mkdir(parent, 0700); err != nil {
+		t.Fatal(err)
+	}
+	const gid = 198888
+	e := &linuxEndpoint{owner: &linuxBackend{publicGID: gid}}
+	dir := filepath.Join(parent, "ns")
+	if err := e.prepareResolverDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{parent, dir} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0750 || info.Sys().(*syscall.Stat_t).Gid != gid {
+			t.Fatalf("%s mode=%s gid=%d", path, info.Mode(), info.Sys().(*syscall.Stat_t).Gid)
+		}
+	}
+	cmd := exec.Command("/bin/sh", "-ec", `ls "$1" "$2" >/dev/null && test ! -w "$1" && test ! -w "$2"`, "sh", parent, dir)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 200001, Gid: 200001, Groups: []uint32{gid}}}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Bed directory access: %v: %s", err, out)
+	}
 }

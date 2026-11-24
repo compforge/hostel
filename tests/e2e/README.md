@@ -420,13 +420,13 @@ Linux 条件下验证真实 nft、UDP/TCP DNS 重定向、域名解析后的地�
 listener 访问拒绝、TCP/UDP 出站、IPv6 阻断、既有连接撤销和同 UID 重新分配。
 未显式启用时跳过；普通单元测试成功不算已经验证内核执行。不得为准备测试关闭共享节点的 forwarding。
 
-### Bed software group
+### Bed public group
 
-`TestBedSoftwareGroup` validates distinct identity allocation, exact groups and capability removal
+`TestBedPublicGID` verifies the default and custom public GIDs in Carrier and Bed status, then checks group membership and capability removal
 through command/session execution for local and supervisor backends. `TestPrivateFilesWithSharedNetwork`
 checks the same group in a Pillow main process under the private file view.
 `TestSharedSoftwareAcrossBedUsers` (HOSTEL_E2E_USERLAND=1) requires a disposable image or mounted software source whose provider has granted
-the internal software group the required access. It exercises cross-UID pip/npm/uv install,
+the configured public group the required access. It exercises cross-UID pip/npm/uv install,
 load, replacement and uninstall. It mutates carrier-wide packages; never run it on a shared carrier.
 
 ## Verify UID egress across process lifecycles
@@ -434,12 +434,12 @@ load, replacement and uninstall. It mutates carrier-wide packages; never run it 
 The disposable Linux UID policy profile also owns these cases:
 
 - `TestBedUIDPillowEgress`: local/supervisor Pillow main processes use the Bed UID
-  and exactly the internal software group; allow/deny apply at startup and after
+  and exactly the configured public group; allow/deny apply at startup and after
   policy reversal plus an asynchronous Pillow restart.
 - `TestBedIdentityCrashRecovery`: kill only the fixture-owned daemon, start a new
   daemon over its retained beds-root, and admit a newcomer before redeclaring the
   old Bed. Verify UID reservation, Bed identity, private file ownership/access,
-  software group membership, egress updates, and eventual purge/recreation.
+  public group membership, egress updates, and eventual purge/recreation.
 
 Use a disposable carrier netns with root, CAP_NET_ADMIN, nft and ip_forward=0;
 leave the host firewall and host sysctl untouched. The crash case deliberately
