@@ -7,8 +7,13 @@ push both architectures.
 
 The runtime image sets `HOSTEL_PUBLIC_GID` to `199999` by default. To reserve a
 different supplementary group for Beds, build with `make image HOSTEL_PUBLIC_GID=198888`.
-The lean and multi-architecture targets accept the same setting. A derived image can
-grant the group access to a specific shared directory using the inherited value:
+The lean and multi-architecture targets accept the same setting. The image grants
+that group write access to uv's tool environments in `/usr/local/share/uv/tools`
+and its command links in `/usr/local/share/uv/bin`. Images that provide uv can
+reuse these paths. Add the command directory to the consuming Pillow's `PATH`
+to run the installed tools by name.
+
+A derived image can grant the group access to another directory using the inherited value:
 
 ```dockerfile
 FROM hostel:dev

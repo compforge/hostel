@@ -190,13 +190,11 @@ Bed 数据交接给新属主时跳过多硬链接的普通文件，防止改变 
 
 ### HOSTEL_PUBLIC_GID 公共资源组
 
-`HOSTEL_PUBLIC_GID` 是 Hostel 与部署方、资源提供方约定的 Unix 附加组，默认 GID 为 `199999`。
-部署方为 Carrier 预留这个 GID，避开已有特权组和 Bed 私有身份范围 `200000–299999`。
-镜像构建、外部挂载源和 Hostel daemon 使用同一个数值。
+`HOSTEL_PUBLIC_GID` 约定了公共资源授权所用的 Unix 组，默认值为 `199999`。Hostel 负责把这个组附加到 Bed 进程。**哪些资源通过该组开放、开放哪些操作，由资源所有者决定。** 镜像维护者、部署方或挂载源所有者可以在 Hostel 所在的运行环境中调整资源的属组、权限位或 ACL，扩大或收紧该组的访问范围。授权可以直接落在已有目录上。Bed 需要列出和遍历配置目录时，给组 `r-x`；需要在共享安装目录中创建软件包时，给具体的安装目录组 `rwx`。实际访问还要求路径在 Bed 视图中可达，写入还要求挂载可写。
 
-- **资源提供方决定每项资源的权限。** 镜像维护者或挂载源的所有者可以用 Unix 组权限或 ACL 给该 GID 授权。例如，系统配置目录可以授予 `r-x` 以便列出和遍历，需要多个 Bed 写入的共享目录可以授予 `rwx`。文件内容能否读取取决于文件自身的权限，写入还要求 Bed 视图中的挂载可写。
-- **Privilege 将组附加到 Bed 进程。** Linux 具备身份管理能力时，command、Session 和 Pillow 主进程都获得这个 supplementary GID，各自所属 Bed 的 UID 和主 GID 保持原值。rootless 运行缺少组切换能力时沿用实际继承组，可在实例和 Bed 的 Privilege 状态中查看 `supplementary_gids`。
-- **各 Subsystem 为自己创建的公共资源授权。** Network 在准备 resolver 时，让该组能列出和遍历 `/etc/netns` 及本次创建的子目录。其他临时资源也由创建它的 Subsystem 按 Bed 所需操作授权。Bed 私有目录继续按各自的 UID 和主 GID 保护。
+部署方为该组预留 GID，避开已有特权组和 Bed 私有身份范围 `200000–299999`。准备公共资源和启动 Hostel 时使用同一个数值。Linux 具备身份管理能力时，command、Session 和 Pillow 主进程都获得该附加组，Bed 保留自己的 UID 和主 GID。rootless 运行缺少组切换能力时沿用实际继承组，可在实例和 Bed 的 Privilege 状态中查看 `supplementary_gids`。
+
+运行时创建的公共资源也遵循同一约定。Hostel 的 Network Subsystem 为公共组授予其 resolver 目录的列出和遍历权限。Bed 进程也可以为自己创建的资源授权。例如，两个 Bed 挂载同一个属组为公共 GID、模式为 `2770` 的目录时，setgid 位使其中新建的文件继承公共 GID。一个 Bed 创建的 `0640` 文件可由另一个 Bed 读取，`0660` 文件在可写挂载中还可由组成员修改。
 
 `supplementary_gids` 使用 Carrier 身份空间中的数值。在 user namespace 内，未映射的组可能显示为 `65534`，内核仍按实际组身份判断访问权限。
 
