@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/qiankunli/go-stdx/osx"
@@ -159,9 +161,17 @@ func Load(args []string, explicit Options) (*Config, error) {
 		}
 	}
 	explicit.apply(c)
+	if raw, ok := os.LookupEnv("HOSTEL_PUBLIC_GID"); ok {
+		gid, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil || gid == 0 {
+			return nil, fmt.Errorf("invalid HOSTEL_PUBLIC_GID %q", raw)
+		}
+		c.Bed.Privilege.PublicGID = int(gid)
+	}
 	if err := c.Bed.Privilege.Validate(); err != nil {
 		return nil, err
 	}
+	c.Bed.Network.PublicGID = c.Bed.Privilege.PublicGID
 	c.Bed.Filesystem.Level = "private"
 	for _, p := range []*tool.Policy{&c.Bed.Filesystem.Bwrap, &c.Bed.Filesystem.Landlock, &c.Bed.Filesystem.UID, &c.Bed.Filesystem.PRoot, &c.Bed.Filesystem.Pathshim, &c.Bed.Network.NetNS, &c.Bed.Network.UIDNFT, &c.Bed.Resource.Cgroup, &c.Bed.Executor.PIDNS} {
 		*p = p.Effective()

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	hostel "github.com/qiankunli/hostel/internal"
+	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 )
 
 // Status is a cached startup verdict. Reading it never modifies networking.
@@ -52,6 +53,7 @@ type acquisition struct {
 // Pool owns named network allocations. Keys are opaque caller-owned identities.
 // allocationMu serializes address selection without blocking existing networks.
 type Pool struct {
+	publicGID    int
 	mtu          int
 	store        *AllocationStore
 	ports        *PortManager
@@ -69,8 +71,11 @@ type Pool struct {
 
 // New constructs a pool. Start probes the backend with a disposable namespace;
 // callers decide whether an unavailable backend permits their workload to run.
-func New(_ context.Context) *Pool {
-	return &Pool{needsProbe: true, report: Status{Backend: "shared", Reason: "not started"}, allocations: make(map[string]*attachment), pending: make(map[string]*acquisition)}
+func New(publicGID int) *Pool {
+	if publicGID == 0 {
+		publicGID = hostprivilege.DefaultPublicGID
+	}
+	return &Pool{publicGID: publicGID, needsProbe: true, report: Status{Backend: "shared", Reason: "not started"}, allocations: make(map[string]*attachment), pending: make(map[string]*acquisition)}
 }
 
 // SetMTU supplies the startup observation before Start probes or creates networks.
@@ -79,14 +84,11 @@ func (m *Pool) SetMTU(mtu int) { m.mtu = mtu }
 // SetPortManager is startup-only configuration supplied by the daemon.
 func (m *Pool) SetPortManager(ports *PortManager) { m.ports = ports }
 
-func probePool(ctx context.Context, ports ...*PortManager) *Pool {
-	return probePoolWithStore(ctx, nil, DetectMTU(ctx, FallbackMTU).Value, ports...)
-}
-func probePoolWithStore(ctx context.Context, store *AllocationStore, mtu int, ports ...*PortManager) *Pool {
+func probePoolWithStore(ctx context.Context, store *AllocationStore, mtu, publicGID int, ports ...*PortManager) *Pool {
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	b, probe := probeBackendWithStore(ctx, store, mtu, ports...)
+	b, probe := probeBackendWithStore(ctx, store, mtu, publicGID, ports...)
 	report := Status{Available: b != nil && probe.Error == "", Backend: "shared", Probe: probe}
 	report.Probe.DurationMS = time.Since(started).Milliseconds()
 	if report.Available {
@@ -330,7 +332,7 @@ func (m *Pool) Start(ctx context.Context) error {
 	if m.mtu == 0 {
 		m.mtu = DetectMTU(ctx, FallbackMTU).Value
 	}
-	p := probePoolWithStore(ctx, m.store, m.mtu, m.ports)
+	p := probePoolWithStore(ctx, m.store, m.mtu, m.publicGID, m.ports)
 	m.backend, m.report, m.needsProbe = p.backend, p.report, false
 	if p.backend != nil && !p.report.Available {
 		m.startErr = fmt.Errorf("network probe cleanup remains pending: %w", p.report.Probe.Err)

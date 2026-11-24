@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -159,5 +160,28 @@ func TestExplicitGroupsCannotBeSilentlyIgnored(t *testing.T) {
 	cmd.Dir = "/tmp"
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("group requirement: %v: %s", err, out)
+	}
+}
+
+func TestCarrierGroupSelectedForBed(t *testing.T) {
+	facts := hostfacts.Collect()
+	if os.Geteuid() != 0 || len(MissingBedIdentityCapabilities(facts.EffectiveCaps)) != 0 {
+		t.Skip("requires identity capabilities")
+	}
+	root, err := os.MkdirTemp("", "hostel-public-gid-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	if err := os.Chmod(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	const gid = 198888
+	s, err := Resolve(t.Context(), facts, Config{PublicGID: gid}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(s.Policy.SupplementaryGIDs, []int{gid}) {
+		t.Fatalf("policy: %+v", s.Policy)
 	}
 }

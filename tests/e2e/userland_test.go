@@ -77,7 +77,7 @@ func TestSharedSoftwareAcrossBedUsers(t *testing.T) {
 		}
 		must2xx(t, "shared software identity", response)
 		u := detail.Status.Subsystems.Privilege
-		if !u.Assigned || !slices.Equal(u.SupplementaryGIDs, []int{privilege.SoftwareGID}) {
+		if !u.Assigned || !slices.Equal(u.SupplementaryGIDs, []int{privilege.DefaultPublicGID}) {
 			t.Fatalf("unexpected Carrier-space identity: %+v", u)
 		}
 	}

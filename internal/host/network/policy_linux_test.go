@@ -24,7 +24,7 @@ func TestLinuxPolicySeparatesNetworksAndRevokesAccess(t *testing.T) {
 	if os.Getenv("HOSTEL_NETWORK_TEST") != "enabled" {
 		t.Skip("requires disposable privileged Linux container")
 	}
-	m := New(t.Context())
+	m := New(0)
 	if err := m.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}

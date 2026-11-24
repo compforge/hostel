@@ -12,6 +12,7 @@ import (
 	"time"
 
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
+	hostprivilege "github.com/qiankunli/hostel/internal/host/privilege"
 )
 
 type Level string
@@ -21,9 +22,8 @@ const (
 	Dedicated Level = "dedicated"
 	UIDMin          = 200000
 	UIDMax          = 299999
-	// SoftwareGID is a Carrier role, outside the private Bed identity range.
-	// It is a reserved implementation identity, never caller configuration.
-	SoftwareGID = 199999
+	// DefaultPublicGID is reserved for public Carrier resources.
+	DefaultPublicGID = hostprivilege.DefaultPublicGID
 )
 
 type Selection struct {
@@ -43,10 +43,10 @@ func Resolve(ctx context.Context, facts hostfacts.Snapshot, cfg Config, root str
 	if err := cfg.Validate(); err != nil {
 		return s, err
 	}
-	// The software role is granted automatically when group switching is available.
+	// The public resource group is granted automatically when group switching is available.
 	// Rootless execution keeps its actual inherited groups and reports that fact.
 	if cfg.SupplementaryGIDs == nil && runtime.GOOS == "linux" && len(MissingBedIdentityCapabilities(facts.EffectiveCaps)) == 0 {
-		cfg.SupplementaryGIDs = []int{SoftwareGID}
+		cfg.SupplementaryGIDs = []int{cfg.PublicGID}
 	}
 	inherited := CurrentBedUser()
 	if cfg.SupplementaryGIDs != nil {

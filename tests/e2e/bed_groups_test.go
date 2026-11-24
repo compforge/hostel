@@ -51,13 +51,13 @@ func TestBedSoftwareGroup(t *testing.T) {
 			}
 			must2xx(t, "Bed identity", response)
 			identity := detail.Status.Subsystems.Privilege
-			if identity.UID != identity.GID || identity.UID < privilege.UIDMin || len(identity.SupplementaryGIDs) != 1 || identity.SupplementaryGIDs[0] != privilege.SoftwareGID {
+			if identity.UID != identity.GID || identity.UID < privilege.UIDMin || len(identity.SupplementaryGIDs) != 1 || identity.SupplementaryGIDs[0] != privilege.DefaultPublicGID {
 				t.Fatalf("identity: %+v", identity)
 			}
 
 			must2xx(t, "upload as selected user", c.upload(t, bed, "/workspace/seed.txt", []byte("seed")))
 			command := "test \"$(cat seed.txt)\" = seed && /usr/bin/awk '/^Groups:/ { if (NF != 2 || $2 != SOFTWARE_GID) exit 1 }' /proc/self/status && printf identity-ok > identity.txt && id -u && id -g && grep -E '^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):' /proc/self/status"
-			command = strings.ReplaceAll(command, "SOFTWARE_GID", fmt.Sprint(privilege.SoftwareGID))
+			command = strings.ReplaceAll(command, "SOFTWARE_GID", fmt.Sprint(privilege.DefaultPublicGID))
 			check := func(result commandResult) {
 				t.Helper()
 				assertCommandExit(t, result, 0)

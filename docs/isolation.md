@@ -160,11 +160,13 @@ Hostel 不尝试获取缺失权限，也不把 UID 0 等同于具备某个 capab
   root 且具备完整身份管理权限时探测非 root 基线 1000:1000，否则探测继承身份；无法安全启动或清理探测资源时返回错误。
   这是运行条件不足的回退，不提供固定 UID/GID 配置入口。
 
-公共软件的来源权限由镜像或目录提供方准备，不提供固定 Bed UID/GID、extra GIDs 或 shared directories
-配置入口。Linux 具备身份管理条件时，Privilege 自动选择内部软件组 **199999**，与私有
-UID/主 GID 的 200000–299999 区间分开；部署需预留这些数值，不要求创建对应 group 名。
-command、Session 和 Pillow 主进程使用同一实际身份及组集合；文件 API 由 daemon 管理授权数据。
-没有跨身份权限的 rootless 运行沿用实际身份和继承组，并报告软件组不可用。
+Carrier 通过 `HOSTEL_PUBLIC_GID` 约定公共资源的 Unix 组，默认 **199999**。部署方应预留独立的 GID，
+避开已有特权组和 Bed 私有身份范围 200000–299999。镜像构建和 daemon 启动使用同一个值。
+镜像或外部目录提供方准备静态路径的权限，各 Subsystem 在创建自己的公共资源时授权。
+例如 Network 让该组可以列出和遍历 `/etc/netns` 及其创建的 resolver 子目录。启动时无需递归处理 `/etc`。
+
+Linux 具备身份管理能力时，Privilege 将该组附加到 Bed。command、Session 和 Pillow 主进程使用同一实际身份及组集合；
+rootless 运行沿用实际身份和继承组。Bed 私有数据仍由 Bed 专属身份保护。
 
 实例和 Bed 的 privilege 状态披露 Carrier 身份空间中的 `supplementary_gids`，选择必须经过
 真实进程验证，不能把预期配置当作已执行事实。user namespace 内未映射组可能显示为
