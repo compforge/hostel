@@ -178,11 +178,16 @@ ARG HOSTEL_PUBLIC_GID=199999
 ENV PYTHONUSERBASE=/usr/local \
     NPM_CONFIG_PREFIX=/usr/local \
     UV_TOOL_DIR=/usr/local/share/uv/tools \
-    UV_TOOL_BIN_DIR=/usr/local/bin \
+    UV_TOOL_BIN_DIR=/usr/local/share/uv/bin \
     PATH=/usr/local/bin:${PATH} \
     HOSTEL_PUBLIC_GID=${HOSTEL_PUBLIC_GID} \
     HOSTEL_BEDS_ROOT=/workspace \
     HOSTEL_CHROMIUM_PATH=/usr/bin/chromium
+
+# Bed-installed uv commands belong on the Pillow's PATH. The daemon uses system tools.
+RUN /usr/bin/hostel --version \
+    && install -d -m 2770 -g "+$HOSTEL_PUBLIC_GID" "$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR"
+
 # No VOLUME: it would bake the default path in at build time and silently
 # stop applying when HOSTEL_BEDS_ROOT is overridden. To keep beds across
 # container restarts without an object store, mount a volume at the workspace
