@@ -15,11 +15,26 @@ import (
 	"time"
 )
 
+// Shared installs are an explicit grant to this disposable Carrier's provider-prepared prefix.
+func createSoftwareBed(t *testing.T, c *apiClient, name string) httpResult {
+	t.Helper()
+	volumes := []protocol.VolumeSpec{
+		{Name: "workspace", Managed: &protocol.ManagedVolume{Persistence: "none"}},
+		{Name: "software", HostPath: &protocol.HostPathVolume{Path: "/usr/local"}},
+	}
+	pillows := []protocol.PillowSpec{{Name: "main", Mounts: []protocol.VolumeMount{{Volume: "workspace", Path: "/workspace"}, {Volume: "software", Path: "/usr/local"}}}}
+	response, err := c.json(t.Context(), http.MethodPost, "/v1/beds", "", map[string]any{"id": name, "volumes": volumes, "pillows": pillows}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
 func TestPyPIInstallPersistsAcrossExecutions(t *testing.T) {
 	requireUserland(t)
 	target := startTarget(t, targetOptions{})
 	const load = `python -c 'import cowsay; print("HOSTEL_PIP_PATH=" + cowsay.__file__)'`
-	must2xx(t, "declare Bed", target.client.createBed(t, "pypi"))
+	must2xx(t, "declare Bed", createSoftwareBed(t, target.client, "pypi"))
 	install, response := target.client.command(t, "pypi", map[string]any{
 		"command": "python -m pip install --no-cache-dir --force-reinstall cowsay==6.1 && " + load,
 		"timeout": 180_000,
@@ -36,7 +51,7 @@ func TestNPMInstallPersistsAcrossExecutions(t *testing.T) {
 	requireUserland(t)
 	target := startTarget(t, targetOptions{})
 	const load = `node -e 'const root = require("child_process").execFileSync("npm", ["root", "-g"], {encoding: "utf8"}).trim(); const modulePath = root + "/is-number"; const isNumber = require(modulePath); if (!isNumber("42")) process.exit(1); console.log("HOSTEL_NPM_PATH=" + require.resolve(modulePath));'`
-	must2xx(t, "declare Bed", target.client.createBed(t, "npm"))
+	must2xx(t, "declare Bed", createSoftwareBed(t, target.client, "npm"))
 	install, response := target.client.command(t, "npm", map[string]any{
 		"command": "npm install --global --force --prefer-online --no-audit --no-fund is-number@7.0.0 && " + load,
 		"timeout": 180_000,
@@ -56,7 +71,7 @@ func TestSharedSoftwareAcrossBedUsers(t *testing.T) {
 	c := target.client
 	expectedPublicGID := carrierPublicGID(t, c)
 	for _, name := range []string{"software-a", "software-b"} {
-		must2xx(t, "declare Bed", c.createBed(t, name))
+		must2xx(t, "declare Bed", createSoftwareBed(t, c, name))
 	}
 	run := func(t *testing.T, name, command string) string {
 		t.Helper()
@@ -107,7 +122,7 @@ func TestSharedSoftwareProvidedPermissions(t *testing.T) {
 	t.Logf("Carrier startup completed in %s", time.Since(started).Round(time.Millisecond))
 	c := target.client
 	for _, name := range []string{"permissions-a", "permissions-b"} {
-		must2xx(t, "declare Bed", c.createBed(t, name))
+		must2xx(t, "declare Bed", createSoftwareBed(t, c, name))
 	}
 	run := func(name, command string) string {
 		t.Helper()
@@ -137,10 +152,9 @@ func TestSharedSoftwareProvidedPermissions(t *testing.T) {
 	dir := fmt.Sprintf("/usr/local/hostel-permissions-%d", time.Now().UnixNano())
 	run("permissions-a", fmt.Sprintf("umask 022; mkdir -p %s/nested; printf first > %s/nested/package", dir, dir))
 	run("permissions-b", fmt.Sprintf("printf second >> %s/nested/package; mv %s/nested/package %s/nested/replaced; umask 022; printf replacement > %s/nested/package", dir, dir, dir, dir))
-	must2xx(t, "private API upload", c.upload(t, "permissions-a", dir+"/api-package", []byte("api")))
-	run("permissions-b", fmt.Sprintf(`test ! -e %s/api-package`, dir))
-	if got := c.download(t, "permissions-b", dir+"/api-package"); got.Status != http.StatusNotFound {
-		t.Fatalf("implicit shared API data: %d", got.Status)
+	must2xx(t, "shared API upload", c.upload(t, "permissions-a", dir+"/api-package", []byte("api")))
+	if got := c.download(t, "permissions-b", dir+"/api-package"); got.Status != http.StatusOK || string(got.Body) != "api" {
+		t.Fatalf("explicit shared mount read: %d %q", got.Status, got.Body)
 	}
 	run("permissions-a", fmt.Sprintf("printf third >> %s/nested/package; rm -r %s", dir, dir))
 }

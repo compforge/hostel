@@ -1,8 +1,22 @@
 # Bed：身份、声明与生命周期
 
-Bed 是 Hostel 的工作负载与资源归属单位。调用方声明期望状态，Bed Manager 协调数据准备、
-运行资源、请求准入和回收。完整对象关系见 [工作负载关系](../AGENTS.md#工作负载关系)；本篇定义这些动作的
-先后顺序与失败后的责任，数据和进程细节分别见 [volumes.md](volumes.md)、[pillow.md](pillow.md)。
+Bed 是 Hostel 对外提供的工作空间，也是命令执行、文件操作和资源管理的基本单位。
+调用方通过 `BedSpec` 声明需要的执行环境、数据卷、网络和安全约束。创建后，调用方按 Bed 名称发起请求，
+由所选 Pillow 提供执行环境和挂载视图。省略 Pillow 时使用声明中的第一个 Pillow。
+
+Bed Manager 协调 Bed 的数据准备、运行资源、请求准入和回收。完整对象关系见 [工作负载关系](../AGENTS.md#工作负载关系)，
+数据与进程的具体契约分别见 [Volume](volumes.md) 和 [Pillow](pillow.md)。
+
+## Bed 胖瘦有别
+
+Host 指 Hostel 所在的运行环境，例如 Pod、虚拟机或物理机。Bed 的“胖瘦”取决于这个环境能提供哪些隔离和资源管理机制。
+在权限有限的 Linux Pod 中，Hostel 可以用专属 UID 和工作目录管理每个 Bed，多个 Bed 仍复用 Pod 的工具链。
+当内核、节点配置和进程权限允许时，Hostel 还可以用 mount namespace 提供独立的挂载视图，用 network namespace 隔离网络，
+用 cgroup 管理资源。这些能力可以分别具备。当它们都可用时，在 Bed 中执行命令和操作文件的体验就更接近独立容器。
+
+调用方用同一个 `BedSpec` 模型描述需求。Hostel 在 Host 的实际条件下选择可用机制，尽力满足声明，并报告各项能力的实际保证。
+例如，缺少 cgroup 时，Bed 仍可提供命令执行和文件操作；若调用方显式要求只读进程根，而 Host 无法强制只读，Bed 初始化失败。
+具体保证见 [Bed 隔离](isolation.md)。
 
 ## 身份与声明
 
@@ -30,7 +44,7 @@ UID；重新准备 BedFS 时由 Privilege 按确定的身份交接文件并刷�
 Lifecycle 状态是初始化进度与调度视图的唯一来源；Store 统一发布快照/磁盘提示，Executor
 观察自身退出并更新状态，Network 串行提交同一 Bed 的策略与状态，避免旧结果覆盖新结果。
 
-BedSpec 包含有序 Pillows、命名 Volumes、端口及网络需求。本地生命周期内执行环境声明固定，
+本地生命周期内执行环境声明固定，
 创建必须显式提供至少一个 Pillow；重复创建须匹配已有声明，原生 Ensure 仅加入已有初始化。运行期网络策略通过专用接口更新。
 远端卷快照保存数据契约；跨实例重建时，调用方重新提交 Pillow 和宿主资源引用。
 
@@ -94,6 +108,9 @@ Prepare 的失败保留已有冷数据；若资源回滚失败，原 allocation 
 Executor 的实际创建与替换仍按需进行，Store 的 Persist / Delete 仍是领域动作，不扩成通用 hook。
 
 ## 启动恢复与日常运行
+
+Filesystem 是首个启动的子系统。它在实例级 `Start` 中创建 `beds-root`，解析符号链接并确认 Bed 数据目录与
+共享软件目录 `/usr/local` 的实际路径没有重叠。检查通过后，Bed Manager 才继续启动后续子系统。
 
 daemon 组装 Bed Manager 与 Amenity Manager，驱动全局启动。Bed Manager 的 Start 同步完成
 领域初始化、各 subsystem 的遗留资源 reconcile、本地目录恢复和 UID 保留；组合环境探测完成后才开放 Web。

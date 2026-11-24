@@ -9,11 +9,12 @@ type Mount struct {
 type MountKind string
 
 const (
-	Bind         MountKind = "--bind"
-	ReadOnlyBind MountKind = "--ro-bind"
-	Tmpfs        MountKind = "--tmpfs"
-	Dev          MountKind = "--dev"
-	Directory    MountKind = "--dir"
+	Bind            MountKind = "--bind"
+	RemountReadOnly MountKind = "--remount-ro"
+	ReadOnlyBind    MountKind = "--ro-bind"
+	Tmpfs           MountKind = "--tmpfs"
+	Dev             MountKind = "--dev"
+	Directory       MountKind = "--dir"
 )
 
 // Bubblewrap describes the namespace and mount shape of a process. It selects

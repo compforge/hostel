@@ -31,8 +31,11 @@ type bed struct {
 	status Status
 }
 
+type SecurityContext = protocol.SecurityContext
+
 type Spec struct {
-	Volumes []VolumeSpec
+	SecurityContext SecurityContext
+	Volumes         []VolumeSpec
 	// Pillows are ordered; the first is the default execution environment.
 	Pillows         []PillowSpec
 	Dir             string

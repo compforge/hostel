@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/network"
 	"github.com/qiankunli/hostel/internal/bed/resource"
 )
@@ -77,12 +76,11 @@ func TestCloseJoinsBackgroundBeforeReleasingBeds(t *testing.T) {
 	}
 }
 func TestStartFailureDoesNotAdmitBeds(t *testing.T) {
-	m := newTestManager(t)
 	root := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(root, []byte("not a directory"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m.root = root
+	m := newTestManagerAt(t, root)
 	if err := m.Start(t.Context()); err == nil {
 		t.Fatal("invalid root accepted")
 	}
@@ -121,33 +119,25 @@ func TestFailedSubsystemStartRetainsCleanupOwner(t *testing.T) {
 	}
 }
 
-// +case:id=bed_root_outside_common_writes,desc=`A beds-root alias resolves into a writable public directory`,expect=`startup rejects the overlap before any subsystem starts`
-func TestStartRejectsWritableCommonDirectoryAlias(t *testing.T) {
-	for _, access := range bedfs.CommonDirectories() {
-		if access.ReadOnly {
-			continue
-		}
-		t.Run(access.Path, func(t *testing.T) {
-			source, err := filepath.EvalSymlinks(access.Path)
-			if os.IsNotExist(err) {
-				t.Skip("common source is absent on this host")
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			alias := filepath.Join(t.TempDir(), "beds")
-			if err := os.Symlink(source, alias); err != nil {
-				t.Fatal(err)
-			}
-			m := newTestManager(t)
-			m.root = alias
-			err = m.Start(t.Context())
-			if err == nil || !strings.Contains(err.Error(), "overlaps writable common directory") {
-				t.Fatalf("public/private overlap accepted: %v", err)
-			}
-			if len(m.subsystems) != 0 {
-				t.Fatal("started subsystems before rejecting common directory overlap")
-			}
-		})
+// +case:id=bed_root_outside_common_writes,desc=`A beds-root reaches shared software through a symlinked parent`,expect=`Filesystem Start rejects the overlap before later subsystems start`
+func TestStartRejectsSharedSoftwareAlias(t *testing.T) {
+	const sharedSoftwareRoot = "/usr/local"
+	if _, err := os.Stat(sharedSoftwareRoot); errors.Is(err, os.ErrNotExist) {
+		t.Skip("shared software directory is absent")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(t.TempDir(), "software-parent")
+	if err := os.Symlink(filepath.Dir(sharedSoftwareRoot), parent); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestManagerAt(t, filepath.Join(parent, filepath.Base(sharedSoftwareRoot)))
+	later := &partiallyStartedNetwork{}
+	m.network = network.WithProvider(later, m.owners.Network)
+	if err := m.Start(t.Context()); err == nil || !strings.HasPrefix(err.Error(), "start filesystem:") || !strings.Contains(err.Error(), "overlaps shared software") {
+		t.Fatalf("expected shared software overlap, got %v", err)
+	}
+	if later.closes != 0 || len(m.subsystems) != 0 || m.started {
+		t.Fatal("filesystem failure did not stop subsystem startup cleanly")
 	}
 }

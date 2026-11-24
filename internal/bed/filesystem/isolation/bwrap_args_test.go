@@ -33,7 +33,7 @@ func indexOfSeq(argv []string, seq ...string) int {
 }
 
 func TestBuildBwrapArgsUsesBedRootAndMasksReexposedSiblings(t *testing.T) {
-	argv := buildBwrapArgs("/opt/beds", "/opt/beds/alice/data", "/opt/beds/alice/data/workspace", bedfs.DefaultWorkdir, []string{"/root", "/home"}, nil, "/usr", "/opt")
+	argv := buildBwrapArgs("/opt/beds", "/opt/beds/alice/data", "/opt/beds/alice/data/workspace", bedfs.DefaultWorkdir, []string{"/root", "/home"}, nil, false, "/usr", "/opt")
 	bindHome := indexOfSeq(argv, "--bind", "/opt/beds/alice/data", "/")
 	runtime := indexOfSeq(argv, "--ro-bind", "/opt", "/opt")
 	maskRoot := indexOfSeq(argv, "--tmpfs", "/opt/beds")
@@ -66,7 +66,7 @@ func TestBuildBwrapArgsUsesBedRootAndMasksReexposedSiblings(t *testing.T) {
 // procfs remount fails under k8s's masked /proc). Regressing either silently
 // drops suite back to a lower tier on every real cluster.
 func TestBuildBwrapArgsK8sReachable(t *testing.T) {
-	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", bedfs.DefaultWorkdir, nil, nil)
+	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", bedfs.DefaultWorkdir, nil, nil, false)
 	if !slices.Contains(argv, "--unshare-user") {
 		t.Errorf("missing --unshare-user (suite needs userns in a non-privileged pod); argv=%v", argv)
 	}
@@ -81,19 +81,19 @@ func TestBuildBwrapArgsK8sReachable(t *testing.T) {
 	}
 }
 
-func TestBuildBwrapArgsWritableCommonChildOverridesReadOnlyParent(t *testing.T) {
-	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", bedfs.DefaultWorkdir, nil, nil, "/usr")
+func TestBuildBwrapArgsSystemDirectoryHasNoImplicitWritableChild(t *testing.T) {
+	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", bedfs.DefaultWorkdir, nil, nil, false, "/usr")
 	roRoot := indexOfSeq(argv, "--ro-bind", "/usr", "/usr")
 	writableChild := indexOfSeq(argv, "--bind", "/usr/local", "/usr/local")
-	if roRoot < 0 || writableChild < 0 || roRoot >= writableChild {
-		t.Fatalf("writable common child must be rebound after its read-only parent: roRoot=%d writableChild=%d argv=%v", roRoot, writableChild, argv)
+	if roRoot < 0 || writableChild >= 0 {
+		t.Fatalf("unexpected writable system path: roRoot=%d writableChild=%d argv=%v", roRoot, writableChild, argv)
 	}
 }
 
 // The carrier beds root may be /workspace. It is not inherited, so masking that
 // spelling would only hide this Bed's own default directory.
 func TestBuildBwrapArgsRootEqualsMountPoint(t *testing.T) {
-	argv := buildBwrapArgs("/workspace", "/workspace/b1/data", "/workspace/b1/data/workspace", bedfs.DefaultWorkdir, nil, nil)
+	argv := buildBwrapArgs("/workspace", "/workspace/b1/data", "/workspace/b1/data/workspace", bedfs.DefaultWorkdir, nil, nil, false)
 	mask := indexOfSeq(argv, "--tmpfs", "/workspace")
 	bind := indexOfSeq(argv, "--bind", "/workspace/b1/data/workspace", bedfs.DefaultWorkdir)
 	if mask >= 0 || bind < 0 {
@@ -102,7 +102,7 @@ func TestBuildBwrapArgsRootEqualsMountPoint(t *testing.T) {
 }
 
 func TestBuildBwrapArgsUsesProjectedCwd(t *testing.T) {
-	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", "/tmp/job", nil, nil)
+	argv := buildBwrapArgs("/ws", "/ws/b/data", "/ws/b/data/workspace", "/tmp/job", nil, nil, false)
 	if indexOfSeq(argv, "--chdir", "/tmp/job") < 0 {
 		t.Fatalf("missing projected cwd; argv=%v", argv)
 	}
@@ -113,7 +113,7 @@ func TestBuildBwrapArgsAddsBedMappingsAfterWorkspace(t *testing.T) {
 	argv := buildBwrapArgs(
 		"/ws", "/ws/b/data", "/ws/b/data/workspace",
 		bedfs.DefaultWorkdir, nil,
-		[]bedfs.Mount{mapping})
+		[]bedfs.Mount{mapping}, false)
 	workspaceBind := indexOfSeq(argv, "--bind", "/ws/b/data/workspace", bedfs.DefaultWorkdir)
 	mappingBind := indexOfSeq(argv, "--bind", "/volume", "/mnt/memory")
 	if workspaceBind < 0 || mappingBind <= workspaceBind {
@@ -136,14 +136,14 @@ func TestBuildBwrapArgsUsesBedMappings(t *testing.T) {
 		{Source: "/volumes/project", Target: "/project"},
 		{Source: "/usr/local/reference", Target: "/reference", ReadOnly: true},
 	}
-	argv := buildBwrapArgs("/beds", "/beds/b/data", "/beds/b/data/workspace", "/project", nil, mappings)
+	argv := buildBwrapArgs("/beds", "/beds/b/data", "/beds/b/data/workspace", "/project", nil, mappings, false)
 	if indexOfSeq(argv, "--bind", "/volumes/project", "/project") < 0 {
 		t.Fatalf("missing RW mapping: %v", argv)
 	}
 	if indexOfSeq(argv, "--ro-bind", "/usr/local/reference", "/reference") < 0 {
 		t.Fatalf("missing RO mapping: %v", argv)
 	}
-	if indexOfSeq(argv, "--ro-bind", "/usr/local/reference", "/usr/local/reference") < 0 {
+	if indexOfSeq(argv, "--bind", "/usr/local", "/usr/local") >= 0 {
 		t.Fatalf("carrier path bypasses read-only mapping: %v", argv)
 	}
 	if indexOfSeq(argv, "--chdir", "/project") < 0 {

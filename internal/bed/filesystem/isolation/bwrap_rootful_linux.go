@@ -37,6 +37,17 @@ func canPrepareRootful(facts hostfacts.Snapshot) bool {
 	return true
 }
 
+func (b *bwrap) pillowMounts(fs *bedfs.FS) []hostfs.Mount {
+	mounts := buildBwrapMounts(b.root, fs.Rootfs(), b.maskPaths, fs.Mounts(), fs.ReadOnlyRootFilesystem, fs.SystemRoots...)
+	for _, file := range fs.SystemFiles() {
+		mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: file.Source, Target: file.Target})
+	}
+	if fs.ReadOnlyRootFilesystem {
+		mounts = append(mounts, hostfs.Mount{Kind: hostfs.RemountReadOnly, Target: "/"})
+	}
+	return mounts
+}
+
 func (b *bwrap) PrivilegedEntry() bool { return b.rootful != nil }
 
 func (b *bwrap) Prepare(ctx context.Context, fs *bedfs.FS) error {
@@ -56,10 +67,7 @@ func (b *bwrap) Prepare(ctx context.Context, fs *bedfs.FS) error {
 			return fmt.Errorf("rootful filesystem: /proc is reserved for runtime preparation")
 		}
 	}
-	mounts := buildBwrapMounts(b.root, fs.Rootfs(), b.maskPaths, fs.Mounts(), existingRuntimePaths()...)
-	for _, file := range fs.SystemFiles() {
-		mounts = append(mounts, hostfs.Mount{Kind: hostfs.ReadOnlyBind, Source: file.Source, Target: file.Target})
-	}
+	mounts := b.pillowMounts(fs)
 	view, err := hostfs.PrepareMountNamespace(ctx, b.path, b.rootful.helper, mounts)
 	if err != nil {
 		return err
@@ -112,6 +120,7 @@ func (b *bwrap) rootfulSmoke() hostfacts.ProbeReport {
 		return hostfacts.ProbeReport{Error: err.Error()}
 	}
 	defer fs.Close()
+	fs.PrepareProcessRoot(false)
 	if err := os.MkdirAll(fs.Workdir(), 0755); err != nil {
 		return hostfacts.ProbeReport{Error: err.Error()}
 	}

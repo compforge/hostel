@@ -71,6 +71,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 		}
 		meta.Sync = spec.StoreKind
 		meta.Version = 2
+		meta.SecurityContext = spec.SecurityContext
 		meta.Volumes = model.PersistentVolumes(spec.Volumes)
 		if staged.Snapshot != nil {
 			meta.SnapshotGeneration = staged.Snapshot.Generation
@@ -107,6 +108,7 @@ func (m *Manager) initializeResidentBed(ctx context.Context, init *bedInitializa
 	if net := m.network.Attachment(b.Bed); net != nil && net.ResolverPath() != "" {
 		systemFiles = append(systemFiles, hostfs.Mapping{Source: net.ResolverPath(), Target: "/etc/resolv.conf"})
 	}
+	m.updateInitialization(init, "PreparingBedFS", "preparing Pillow filesystem views")
 	if err := trace.stage("prepare_process_view", func() error { return m.files.PrepareView(ctx, b.Bed, systemFiles) }); err != nil {
 		return nil, fmt.Errorf("bed: prepare process view: %w", err)
 	}

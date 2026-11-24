@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -156,8 +155,10 @@ func WithIdentitySelection(identity privilege.Selection) ManagerOption {
 // Start prepares the workspace root and recovers local identities.
 // amenities and st may be nil; maxBeds 0 = unlimited.
 func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.Isolator, amenities *amenity.Manager, maxBeds int, st *store.Manager, opts ...ManagerOption) (*Manager, error) {
-	if model.PathsOverlap(filepath.Clean(root), "/usr/local") {
-		return nil, fmt.Errorf("beds-root overlaps shared software")
+	owners := model.NewOwners()
+	files, err := filesystem.NewManager(root, iso, owners.Filesystem)
+	if err != nil {
+		return nil, err
 	}
 	processEnv, _ := newProcessEnv(os.Environ())
 	shellPath = resolveShellPath(shellPath)
@@ -171,7 +172,8 @@ func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.I
 		cleanupCtx: cleanupCtx, cleanupCancel: cleanupCancel,
 		hostFacts:       host,
 		root:            root,
-		owners:          model.NewOwners(),
+		owners:          owners,
+		files:           files,
 		iso:             iso,
 		bedUser:         privilege.CurrentBedUser(),
 		shellPath:       shellPath,
@@ -209,13 +211,11 @@ func NewManager(host hostfacts.Snapshot, root, shellPath string, iso isolation.I
 		m.pillows = pillow.NewManager(m.portMappings, m.pillowsChanged)
 	}
 	m.pillows.SetConfigurationManager(configurations)
-	m.files = filesystem.NewManager(iso, m.owners.Filesystem)
 	m.executorManager = executor.NewManager(m.executorFactory, m.owners.Executor)
 	m.resourceManager = resource.NewManager(m.resources, m.owners.Resource)
 	m.network.SetStatusWriter(m.owners.Network)
 	m.network.SetPortMappings(m.portMappings)
 	m.store.SetStatusWriter(m.owners.Store)
-	var err error
 	policy := privilege.BedUserReport{Strategy: "fixed", UID: m.bedUser.UID(), GID: m.bedUser.GID(), SupplementaryGIDs: m.bedUser.SupplementaryGIDs()}
 	if m.identitySelection != nil {
 		policy = m.identitySelection.Policy
@@ -570,6 +570,7 @@ func (m *Manager) persistBed(ctx context.Context, b *managedBed, trigger string)
 			meta = bedMeta{Version: 1, BedID: b.Name, CreatedAt: b.Spec().CreatedAt, Sync: b.Spec().StoreKind}
 		}
 		meta.Version = 2
+		meta.SecurityContext = b.Spec().SecurityContext
 		meta.Volumes = model.PersistentVolumes(b.Spec().Volumes)
 		meta.Generation++
 		// Flush counters before packing so they travel with the snapshot.

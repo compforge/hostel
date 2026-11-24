@@ -8,7 +8,6 @@ import (
 
 	hostel "github.com/qiankunli/hostel/internal"
 	"github.com/qiankunli/hostel/internal/bed"
-	"github.com/qiankunli/hostel/internal/bed/filesystem"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/bedfs"
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 	"github.com/qiankunli/hostel/internal/bed/network"
@@ -41,8 +40,7 @@ func reportingManager(t *testing.T, files isolation.Level, private bool) (*Manag
 		}
 	})
 	iso := &ratedFiles{Isolator: m.iso, level: files}
-	m.iso = iso
-	m.files = filesystem.NewManager(iso, m.owners.Filesystem)
+	setTestFilesystem(t, m, iso)
 	if private {
 		m.SetNetworkManager(network.WithProvider(&policyInitializationNetwork{}, m.owners.Network))
 	}

@@ -322,6 +322,7 @@ func (m *Manager) beginInitialization(
 	}
 	localMeta, localPresent := loadMeta(filepath.Join(m.root, id))
 	spec := model.Spec{Dir: filepath.Join(m.root, id), StoreKind: selected, CreatedAt: localMeta.CreatedAt, LocalPresent: localPresent, LocalGeneration: localMeta.Generation}
+	spec.SecurityContext = options.SecurityContext
 	spec.Volumes = options.Volumes
 	spec.Pillows = options.Pillows
 	if options.NetworkPolicy != nil {
@@ -567,9 +568,10 @@ func residentInitializationStatus(resident *managedBed) InitializationStatus {
 // empty). Native Ensure instead joins the existing declaration. After eviction,
 // callers must repeat overrides because the local identity has been removed.
 type CreateOptions struct {
-	Volumes       []model.VolumeSpec
-	Pillows       []model.PillowSpec
-	NetworkPolicy *network.Policy
+	SecurityContext model.SecurityContext
+	Volumes         []model.VolumeSpec
+	Pillows         []model.PillowSpec
+	NetworkPolicy   *network.Policy
 }
 
 var (

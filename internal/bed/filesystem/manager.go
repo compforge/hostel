@@ -3,10 +3,12 @@ package filesystem
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -17,11 +19,15 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/tool"
 	hostfacts "github.com/qiankunli/hostel/internal/host/facts"
 	hostfs "github.com/qiankunli/hostel/internal/host/filesystem"
+	hostprocess "github.com/qiankunli/hostel/internal/host/process"
 	"github.com/qiankunli/hostel/protocol"
 )
 
+const sharedSoftwareRoot = "/usr/local"
+
 type Manager struct {
 	bed.Noop
+	bedsRoot          string
 	mu                sync.Mutex
 	dedicatedIdentity bool
 	files             map[*bed.Bed]*bedfs.FS
@@ -31,9 +37,51 @@ type Manager struct {
 	status            bed.StatusWriter[bed.FilesystemStatus]
 }
 
-func NewManager(iso isolation.Isolator, status bed.StatusWriter[bed.FilesystemStatus]) *Manager {
-	return &Manager{pillows: make(map[*bed.Bed]map[string]*bedfs.FS), volumes: make(map[*bed.Bed]string), files: make(map[*bed.Bed]*bedfs.FS), isolator: iso, status: status}
+func NewManager(root string, iso isolation.Isolator, status bed.StatusWriter[bed.FilesystemStatus]) (*Manager, error) {
+	if bed.PathsOverlap(filepath.Clean(root), sharedSoftwareRoot) {
+		return nil, fmt.Errorf("beds-root overlaps shared software")
+	}
+	return &Manager{
+		bedsRoot: root,
+		pillows:  make(map[*bed.Bed]map[string]*bedfs.FS),
+		volumes:  make(map[*bed.Bed]string),
+		files:    make(map[*bed.Bed]*bedfs.FS),
+		isolator: iso,
+		status:   status,
+	}, nil
 }
+
+// +spec=`Bed data must be outside shared software, including through host path aliases.`
+func (m *Manager) Start(context.Context) error {
+	root := m.bedsRoot
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return err
+	}
+	// Resolve from an absolute path so a relative root also includes symlinks in the working directory.
+	if !filepath.IsAbs(root) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		root = cwd + string(filepath.Separator) + root
+	}
+	beds, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("resolve beds-root %q: %w", root, err)
+	}
+	software, err := filepath.EvalSymlinks(sharedSoftwareRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("resolve shared software %q: %w", sharedSoftwareRoot, err)
+	}
+	if bed.PathsOverlap(beds, software) {
+		return fmt.Errorf("beds-root %q resolves to %q and overlaps shared software %q", root, beds, software)
+	}
+	return nil
+}
+
 func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	if m.Files(b) != nil {
 		return nil
@@ -66,7 +114,7 @@ func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 			log.Printf("filesystem: bed=%s path=%s mapping available through API; process mapping unavailable read_only=%t", b.ID.String(), mapping.Target, mapping.ReadOnly)
 		}
 	}
-	m.status.Set(b, bed.FilesystemStatus{FilesystemStatus: protocol.FilesystemStatus{Realization: &protocol.FilesystemRealization{State: "pending"}}, Rootfs: fs.Rootfs(), Workdir: fs.Workdir()})
+	m.status.Set(b, bed.FilesystemStatus{FilesystemStatus: protocol.FilesystemStatus{ReadOnlyRootRequested: b.Spec().SecurityContext.ReadOnlyRootFilesystem, Realization: &protocol.FilesystemRealization{State: "pending"}}, Rootfs: fs.Rootfs(), Workdir: fs.Workdir()})
 	return nil
 }
 
@@ -81,6 +129,10 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 			m.invalidateRealization(b, "pending", "filesystem preparation failed")
 		}
 	}()
+	readOnlyRoot := b.Spec().SecurityContext.ReadOnlyRootFilesystem
+	if readOnlyRoot && !m.isolator.MountsRoot() {
+		return fmt.Errorf("securityContext.readOnlyRootFilesystem requires a read-only process root: filesystem %s cannot enforce it", m.isolator.Name())
+	}
 	if err := m.prepareVolumeOwners(b); err != nil {
 		return err
 	}
@@ -89,6 +141,9 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 	m.status.Update(b, func(s *bed.FilesystemStatus) { s.Mounts = nil })
 	for _, consumer := range slices.Sorted(maps.Keys(views)) {
 		view := views[consumer]
+		if m.isolator.View(view).Rootfs() == "/" {
+			view.PrepareProcessRoot(readOnlyRoot)
+		}
 		for _, file := range files {
 			for _, mapping := range view.Mounts() {
 				if bed.PathsOverlap(file.Target, mapping.Target) {
@@ -106,7 +161,23 @@ func (m *Manager) PrepareView(ctx context.Context, b *bed.Bed, files []hostfs.Ma
 		if err := m.isolator.Prepare(ctx, view); err != nil {
 			return fmt.Errorf("prepare file view consumer=%q: %w", consumer, err)
 		}
-		realized.Views = append(realized.Views, m.realizedView(consumer, view))
+		if readOnlyRoot && !m.isolator.PrivilegedEntry() {
+			// User-namespace bwrap constructs its mounts at exec. Validate this Pillow
+			// before readiness using Hostel's pinned helper under the Bed credentials.
+			user := b.Status().Privilege
+			cmd := exec.CommandContext(ctx, hostprocess.BedInitPath, "--version")
+			cmd.Env = []string{"PATH=/usr/bin:/bin"}
+			wrap := isolation.BindBedInit(m.isolator, view, int(user.UID), int(user.GID), user.SupplementaryGIDs)
+			if err := wrap(cmd, ""); err != nil {
+				return fmt.Errorf("prepare read-only root for Pillow %q: %w", consumer, err)
+			}
+			if output, err := cmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("prepare read-only root for Pillow %q: %w: %s", consumer, err, output)
+			}
+		}
+		status := m.realizedView(consumer, view)
+		status.ReadOnlyRootFilesystem = readOnlyRoot
+		realized.Views = append(realized.Views, status)
 	}
 	m.status.Update(b, func(s *bed.FilesystemStatus) {
 		s.Prepared = true

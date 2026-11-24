@@ -38,11 +38,9 @@ pathshim 或 Carrier 视图，并分别报告路径体验与访问保护的缺�
 与来源权限决定。镜像或目录提供方负责公共资源的权限，Hostel 不承诺任意系统目录可写，
 也不自动修复已有文件的权限或跨 UID 安装、替换和卸载行为。
 
-公共目录的路径与只读/可写属性由 `bedfs.CommonDirectories` 统一声明，mount
-和 Landlock 消费同一份规则。不存在唯一的软件根路径；公共目录可以有多个，也不限于
-软件安装用途。这些目录不随 Bed 回收，新增路径不应在各机制中增加按路径特判的分支。
-`ProcessDirectories` 额外列出进程设施，它们不作为普通文件 API 数据导出。
-私有根及 Volume 的来源、归属、只读要求继续由 BedFS/Mount 表达。
+创建时可在 BedSpec 设置 `securityContext.readOnlyRootFilesystem: true`。该声明对所有 Pillow 生效。Filesystem 在准备阶段确定进程根视图；挂载后端将私有根和隐式系统路径设为只读，`/workspace`、`/tmp` 和显式可写 Volume 仍可写。无法兑现时初始化失败。省略字段等同于 false。文件 API 仍只访问 Bed 数据和显式挂载，状态中的 `read_only_root_requested` 与每个已准备视图的 `read_only_root_filesystem` 分别报告请求和落实。
+
+使用 Carrier 用户态的根视图在准备时选取存在的系统目录；内核接口由后端准备。共享可写软件通过显式 Volume 提供，由 Pillow 声明来源在进程中的挂载点。使用 Carrier 根的进程还受实际 Unix 身份、目录权限和所选边界的限制。
 
 | 内容 | 访问目标 | 当前机制与边界 |
 |---|---|---|

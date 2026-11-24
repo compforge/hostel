@@ -149,7 +149,13 @@ func bwrapSmoke(path, bedsRoot string, masks []string) hostfacts.ProbeReport {
 	if err := os.MkdirAll(probeWorkspace, 0o755); err != nil {
 		return hostfacts.ProbeReport{Error: fmt.Sprintf("smoke test: workspace: %v", err)}
 	}
-	argv := buildBwrapArgs(bedsRoot, probeHome, probeWorkspace, bedfs.DefaultWorkdir, masks, nil, existingRuntimePaths()...)
+	fs, err := bedfs.New(probeHome)
+	if err != nil {
+		return hostfacts.ProbeReport{Error: err.Error()}
+	}
+	defer fs.Close()
+	fs.PrepareProcessRoot(false)
+	argv := buildBwrapArgs(bedsRoot, probeHome, probeWorkspace, bedfs.DefaultWorkdir, masks, nil, false, fs.SystemRoots...)
 	cmd := exec.Command(path, append(argv, "/bin/sh", "-c", "mkdir -p /mnt/probe && printf root-view > /mnt/probe/file")...)
 	report := hostfacts.RunExecProbe(cmd)
 	if report.Succeeded() {
@@ -183,9 +189,7 @@ func (b *bwrap) Wrap(cmd *exec.Cmd, fs *bedfs.FS, cwd string) error {
 		return err
 	}
 	executable := rootExecutable(fs, cmd.Path, b.View(fs).MappingSupport())
-	argv := buildBwrapArgs(b.root, fs.Rootfs(), fs.Workdir(), processCwd, b.maskPaths, fs.Mounts(), existingRuntimePaths()...)
-	argv = append(argv[:len(argv)-1], systemFileArgs(fs)...)
-	argv = append(argv, "--")
+	argv := (hostfs.Bubblewrap{UserNamespace: true, UTSNamespace: true, IPCNamespace: true, Mounts: b.pillowMounts(fs), Cwd: processCwd, DieWithParent: true}).Args()
 	userArgs := append([]string{executable}, cmd.Args[1:]...)
 	cmd.Args = make([]string, 0, len(argv)+len(userArgs)+1)
 	cmd.Args = append(cmd.Args, b.path)
