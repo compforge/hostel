@@ -60,7 +60,11 @@ func (t *closeTestTenant) Close(context.Context) error {
 
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
-	root := t.TempDir()
+	return newTestManagerAt(t, t.TempDir())
+}
+
+func newTestManagerAt(t *testing.T, root string) *Manager {
+	t.Helper()
 	m, err := NewManager(hostfacts.Collect(), root, "/bin/bash", isolation.New(hostfacts.Collect(), "shared", root), nil, 0, nil)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)

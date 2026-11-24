@@ -76,12 +76,11 @@ func TestCloseJoinsBackgroundBeforeReleasingBeds(t *testing.T) {
 	}
 }
 func TestStartFailureDoesNotAdmitBeds(t *testing.T) {
-	m := newTestManager(t)
 	root := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(root, []byte("not a directory"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m.root = root
+	m := newTestManagerAt(t, root)
 	if err := m.Start(t.Context()); err == nil {
 		t.Fatal("invalid root accepted")
 	}
@@ -120,8 +119,9 @@ func TestFailedSubsystemStartRetainsCleanupOwner(t *testing.T) {
 	}
 }
 
-// +case:id=bed_root_outside_common_writes,desc=`A beds-root reaches shared software through a symlinked parent`,expect=`Start rejects the overlap before starting any subsystem`
+// +case:id=bed_root_outside_common_writes,desc=`A beds-root reaches shared software through a symlinked parent`,expect=`Filesystem Start rejects the overlap before later subsystems start`
 func TestStartRejectsSharedSoftwareAlias(t *testing.T) {
+	const sharedSoftwareRoot = "/usr/local"
 	if _, err := os.Stat(sharedSoftwareRoot); errors.Is(err, os.ErrNotExist) {
 		t.Skip("shared software directory is absent")
 	} else if err != nil {
@@ -131,12 +131,13 @@ func TestStartRejectsSharedSoftwareAlias(t *testing.T) {
 	if err := os.Symlink(filepath.Dir(sharedSoftwareRoot), parent); err != nil {
 		t.Fatal(err)
 	}
-	m := newTestManager(t)
-	m.root = filepath.Join(parent, filepath.Base(sharedSoftwareRoot))
-	if err := m.Start(t.Context()); err == nil || !strings.Contains(err.Error(), "overlaps shared software") {
+	m := newTestManagerAt(t, filepath.Join(parent, filepath.Base(sharedSoftwareRoot)))
+	later := &partiallyStartedNetwork{}
+	m.network = network.WithProvider(later, m.owners.Network)
+	if err := m.Start(t.Context()); err == nil || !strings.HasPrefix(err.Error(), "start filesystem:") || !strings.Contains(err.Error(), "overlaps shared software") {
 		t.Fatalf("expected shared software overlap, got %v", err)
 	}
-	if len(m.subsystems) != 0 || m.started {
-		t.Fatal("started subsystems before rejecting shared software overlap")
+	if later.closes != 0 || len(m.subsystems) != 0 || m.started {
+		t.Fatal("filesystem failure did not stop subsystem startup cleanly")
 	}
 }

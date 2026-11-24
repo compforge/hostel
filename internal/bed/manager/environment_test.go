@@ -12,6 +12,15 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 )
 
+func setTestFilesystem(t *testing.T, m *Manager, iso isolation.Isolator) {
+	t.Helper()
+	files, err := filesystem.NewManager(m.root, iso, m.owners.Filesystem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.iso, m.files = iso, files
+}
+
 func TestEnvironmentDiagnosticsTrackCompositionProbe(t *testing.T) {
 	m := newTestManager(t)
 	if report := m.Status().Environment; report.ProbeStatus != EnvironmentProbeNotRun {
@@ -47,8 +56,7 @@ func TestEnvironmentFailureDoesNotReselectSubsystems(t *testing.T) {
 	})
 	original := errors.New("selected filesystem preparation failed")
 	files := &unavailableProbeFiles{Isolator: m.iso, err: original}
-	m.iso = files
-	m.files = filesystem.NewManager(files, m.owners.Filesystem)
+	setTestFilesystem(t, m, files)
 	before := m.network.Status().Isolation.Level
 	err := m.ProbeEnvironment(t.Context())
 	if !errors.Is(err, original) || files.prepares != 1 || m.iso != files || m.network.Status().Isolation.Level != before {
@@ -76,8 +84,7 @@ func TestEnvironmentFailureRetainsBoundedStderr(t *testing.T) {
 	m := newTestManager(t)
 	defer m.Close(context.Background())
 	files := failingCommandProbe{m.iso}
-	m.iso = files
-	m.files = filesystem.NewManager(files, m.owners.Filesystem)
+	setTestFilesystem(t, m, files)
 	err := m.ProbeEnvironment(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "probe-diagnostic:") || !strings.Contains(err.Error(), "ExitCode:7") || len(err.Error()) > 4500 {
 		t.Fatalf("probe diagnostic: %v", err)

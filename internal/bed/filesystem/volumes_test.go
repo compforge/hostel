@@ -28,7 +28,7 @@ func volumeBed(t *testing.T, name string) *bed.Bed {
 
 // +case:id=volume_consumer_views,desc=`Pillow publishes a token into a shared volume`,expect=`ordinary file APIs can read but cannot alter it; an unmounted Pillow and another Bed cannot read it`
 func TestVolumeConsumerViews(t *testing.T) {
-	m := NewManager(mountedFiles{}, bed.NewOwners().Filesystem)
+	m := newTestFilesystem(t, mountedFiles{}, bed.NewOwners().Filesystem)
 	b := volumeBed(t, "one")
 	if err := m.Prepare(t.Context(), b); err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestVolumeConsumerViews(t *testing.T) {
 }
 
 func TestReadOnlyVolumeCannotSilentlyDegrade(t *testing.T) {
-	m := NewManager(carrierOnly{}, bed.NewOwners().Filesystem)
+	m := newTestFilesystem(t, carrierOnly{}, bed.NewOwners().Filesystem)
 	b := volumeBed(t, "unsupported")
 	if err := m.Prepare(t.Context(), b); err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func (p *partialVolumeViews) Release(_ context.Context, fs *bedfs.FS) error {
 }
 func TestPartialPillowViewReleasesEveryPreparedAllocation(t *testing.T) {
 	iso := &partialVolumeViews{owned: map[*bedfs.FS]bool{}, released: map[*bedfs.FS]bool{}}
-	m := NewManager(iso, bed.NewOwners().Filesystem)
+	m := newTestFilesystem(t, iso, bed.NewOwners().Filesystem)
 	b := volumeBed(t, "partial")
 	if err := m.Prepare(t.Context(), b); err != nil {
 		t.Fatal(err)
@@ -163,7 +163,7 @@ func TestHostVolumeViewsAndSourceOwnership(t *testing.T) {
 
 		Pillows: append([]bed.PillowSpec{{Name: "workspace", Mounts: []bed.VolumeMount{{Volume: "external", Path: "/input", ReadOnly: true}}}}, []bed.PillowSpec{{Name: "writer", Mounts: []bed.VolumeMount{{Volume: "external", Path: "/output"}}}, {Name: "unmounted"}}...),
 	})
-	m := NewManager(mountedFiles{}, bed.NewOwners().Filesystem)
+	m := newTestFilesystem(t, mountedFiles{}, bed.NewOwners().Filesystem)
 	if err := m.Prepare(t.Context(), b); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestHostVolumeRejectsInvalidAndAliasedSources(t *testing.T) {
 				s.Volumes = append(s.Volumes, bed.VolumeSpec{Name: fmt.Sprintf("v%d", i), HostPath: &bed.HostPathVolume{Path: p}})
 			}
 		})
-		m := NewManager(mountedFiles{}, bed.NewOwners().Filesystem)
+		m := newTestFilesystem(t, mountedFiles{}, bed.NewOwners().Filesystem)
 		if err := m.Prepare(t.Context(), b); err == nil {
 			t.Fatalf("invalid sources accepted: %v", paths)
 		}

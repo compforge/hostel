@@ -25,7 +25,7 @@ func (f *releaseFailure) Release(context.Context, *bedfs.FS) error {
 func TestRealizationFollowsPreparationAndCleanup(t *testing.T) {
 	iso := &releaseFailure{fail: true}
 	owners := bed.NewOwners()
-	m := NewManager(iso, owners.Filesystem)
+	m := newTestFilesystem(t, iso, owners.Filesystem)
 	b := bed.New("files", "", bed.Spec{Dir: t.TempDir()})
 	if err := m.Prepare(t.Context(), b); err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestRealizationFollowsPreparationAndCleanup(t *testing.T) {
 }
 
 func TestIndependentIdentityProtectsDataWithoutPathMechanism(t *testing.T) {
-	m := NewManager(carrierOnly{}, bed.NewOwners().Filesystem)
+	m := newTestFilesystem(t, carrierOnly{}, bed.NewOwners().Filesystem)
 	m.SetDedicatedIdentity(true)
 	got := m.preparedRealization()
 	if got.PrivateData != "uid" || got.CoreAccess != "unix_permissions" {
@@ -82,7 +82,7 @@ func (preparationFailure) Prepare(context.Context, *bedfs.FS) error {
 
 // +case:id=fs_realization_prepare_failure,desc=`A selected file mechanism fails during preparation`,expect=`no prepared guarantee is published and cleanup retains its owner`
 func TestFailedViewDoesNotPublishRealization(t *testing.T) {
-	m := NewManager(preparationFailure{}, bed.NewOwners().Filesystem)
+	m := newTestFilesystem(t, preparationFailure{}, bed.NewOwners().Filesystem)
 	b := bed.New("failed", "", bed.Spec{Dir: t.TempDir()})
 	t.Cleanup(func() {
 		if err := m.Release(t.Context(), b); err != nil {

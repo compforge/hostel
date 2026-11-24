@@ -109,6 +109,9 @@ Executor 的实际创建与替换仍按需进行，Store 的 Persist / Delete �
 
 ## 启动恢复与日常运行
 
+Filesystem 是首个启动的子系统。它在实例级 `Start` 中创建 `beds-root`，解析符号链接并确认 Bed 数据目录与
+共享软件目录 `/usr/local` 的实际路径没有重叠。检查通过后，Bed Manager 才继续启动后续子系统。
+
 daemon 组装 Bed Manager 与 Amenity Manager，驱动全局启动。Bed Manager 的 Start 同步完成
 领域初始化、各 subsystem 的遗留资源 reconcile、本地目录恢复和 UID 保留；组合环境探测完成后才开放 Web。
 Network 的 allocation 记录独立于 Bed 目录，在全局 Start 中回收，覆盖 caller 不再访问的

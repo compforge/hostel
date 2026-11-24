@@ -3,6 +3,7 @@ package filesystem
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
@@ -22,8 +23,11 @@ import (
 	"github.com/qiankunli/hostel/protocol"
 )
 
+const sharedSoftwareRoot = "/usr/local"
+
 type Manager struct {
 	bed.Noop
+	bedsRoot          string
 	mu                sync.Mutex
 	dedicatedIdentity bool
 	files             map[*bed.Bed]*bedfs.FS
@@ -33,9 +37,51 @@ type Manager struct {
 	status            bed.StatusWriter[bed.FilesystemStatus]
 }
 
-func NewManager(iso isolation.Isolator, status bed.StatusWriter[bed.FilesystemStatus]) *Manager {
-	return &Manager{pillows: make(map[*bed.Bed]map[string]*bedfs.FS), volumes: make(map[*bed.Bed]string), files: make(map[*bed.Bed]*bedfs.FS), isolator: iso, status: status}
+func NewManager(root string, iso isolation.Isolator, status bed.StatusWriter[bed.FilesystemStatus]) (*Manager, error) {
+	if bed.PathsOverlap(filepath.Clean(root), sharedSoftwareRoot) {
+		return nil, fmt.Errorf("beds-root overlaps shared software")
+	}
+	return &Manager{
+		bedsRoot: root,
+		pillows:  make(map[*bed.Bed]map[string]*bedfs.FS),
+		volumes:  make(map[*bed.Bed]string),
+		files:    make(map[*bed.Bed]*bedfs.FS),
+		isolator: iso,
+		status:   status,
+	}, nil
 }
+
+// +spec=`Bed data must be outside shared software, including through host path aliases.`
+func (m *Manager) Start(context.Context) error {
+	root := m.bedsRoot
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return err
+	}
+	// Resolve from an absolute path so a relative root also includes symlinks in the working directory.
+	if !filepath.IsAbs(root) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		root = cwd + string(filepath.Separator) + root
+	}
+	beds, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("resolve beds-root %q: %w", root, err)
+	}
+	software, err := filepath.EvalSymlinks(sharedSoftwareRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("resolve shared software %q: %w", sharedSoftwareRoot, err)
+	}
+	if bed.PathsOverlap(beds, software) {
+		return fmt.Errorf("beds-root %q resolves to %q and overlaps shared software %q", root, beds, software)
+	}
+	return nil
+}
+
 func (m *Manager) Prepare(ctx context.Context, b *bed.Bed) error {
 	if m.Files(b) != nil {
 		return nil

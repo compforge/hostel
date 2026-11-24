@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -31,10 +29,6 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	if m.started || m.startErr != nil {
 		return m.startErr
-	}
-	if err := prepareBedsRoot(m.root); err != nil {
-		m.startErr = err
-		return err
 	}
 	subsystems := []daemonSubsystem{
 		{"filesystem", m.files}, {"privilege", m.privileges}, {"resource", m.resourceManager},
@@ -62,36 +56,6 @@ func (m *Manager) Start(ctx context.Context) error {
 		return m.startErr
 	}
 	m.started = true
-	return nil
-}
-
-// +spec=`Bed data must be outside shared software, including through host path aliases.`
-func prepareBedsRoot(root string) error {
-	if err := os.MkdirAll(root, 0755); err != nil {
-		return err
-	}
-	// Resolve from an absolute path so a relative root also includes symlinks in the working directory.
-	if !filepath.IsAbs(root) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		root = cwd + string(filepath.Separator) + root
-	}
-	beds, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return fmt.Errorf("resolve beds-root %q: %w", root, err)
-	}
-	software, err := filepath.EvalSymlinks(sharedSoftwareRoot)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("resolve shared software %q: %w", sharedSoftwareRoot, err)
-	}
-	if model.PathsOverlap(beds, software) {
-		return fmt.Errorf("beds-root %q resolves to %q and overlaps shared software %q", root, beds, software)
-	}
 	return nil
 }
 

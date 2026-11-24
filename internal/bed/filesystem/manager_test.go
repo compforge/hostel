@@ -13,6 +13,15 @@ import (
 	"github.com/qiankunli/hostel/internal/bed/filesystem/isolation"
 )
 
+func newTestFilesystem(t *testing.T, iso isolation.Isolator, status bed.StatusWriter[bed.FilesystemStatus]) *Manager {
+	t.Helper()
+	m, err := NewManager(t.TempDir(), iso, status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
 type carrierOnly struct{ isolation.Stateless }
 
 func (carrierOnly) Name() string                            { return "direct" }
@@ -33,7 +42,7 @@ func TestAPIMappingPreparesWithoutProcessMappingAndPreservesSource(t *testing.T)
 		t.Fatal(err)
 	}
 	b := bed.New("one", "", bed.Spec{Dir: filepath.Join(base, "beds", "one"), Volumes: []bed.VolumeSpec{{Name: "project", HostPath: &bed.HostPathVolume{Path: source}}}, Pillows: []bed.PillowSpec{{Name: "main", Mounts: []bed.VolumeMount{{Volume: "project", Path: "/project"}}}}})
-	manager := NewManager(carrierOnly{}, bed.NewOwners().Filesystem)
+	manager := newTestFilesystem(t, carrierOnly{}, bed.NewOwners().Filesystem)
 	err := manager.Prepare(context.Background(), b)
 	if err != nil {
 		t.Fatalf("prepare=%v", err)
@@ -85,7 +94,7 @@ func (p *partialView) Release(_ context.Context, fs *bedfs.FS) error {
 
 func TestPartialViewKeepsCleanupOwnerUntilReleaseSucceeds(t *testing.T) {
 	mechanism := &partialView{}
-	m := NewManager(mechanism, bed.NewOwners().Filesystem)
+	m := newTestFilesystem(t, mechanism, bed.NewOwners().Filesystem)
 	b := bed.New("partial", "", bed.Spec{Dir: t.TempDir()})
 	if err := m.Prepare(t.Context(), b); err != nil {
 		t.Fatal(err)
