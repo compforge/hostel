@@ -9,8 +9,12 @@ and supervised processes, with built-in data synchronization and shared faciliti
 
 ## What makes it stripped-down?
 
-- **Reuse the software base.** Beds share the host or outer container's programs
-  and dependencies; Hostel does not pull and boot a separate container image for each Bed.
+- **Allocate resources per agent workspace.** An agent can return to the same Bed on its next tool call
+  and pick up the files it left there. On hosts that support separate Unix identities, a Bed in its
+  simplest form can be implemented with a name for routing requests, a dedicated UID/GID pair and a
+  private data directory. Hostel runs commands addressed to that Bed under its Unix identity, so file
+  permissions protect each Bed’s private data. Beds share the system and toolchain, saving the cost of
+  starting a container for each workspace.
 - **Declare execution environments.** Configure environment variables, working
   directories, volume mounts and optional main processes, then run commands and
   services in those environments.
